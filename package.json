@@ -143,7 +143,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/react-dropzone": "^5.1.0",
     "@types/react-test-renderer": "^18.0.1",
-    "@types/react-window": "^1.8.8",
+    "@types/react-window": "^2.0.0",
     "@types/semver": "^7.7.1",
     "@types/terser-webpack-plugin": "^5.2.0",
     "@types/tough-cookie": "^4.0.5",
