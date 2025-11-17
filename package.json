@@ -101,7 +101,7 @@
     "adm-zip": "^0.5.10",
     "axios": "^1.13.2",
     "chromadb": "^1.7.3",
-    "dotenv": "^16.5.0",
+    "dotenv": "^17.2.3",
     "electron-debug": "^4.1.0",
     "electron-log": "^4.4.8",
     "electron-updater": "^6.1.4",
