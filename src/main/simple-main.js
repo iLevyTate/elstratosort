@@ -1,0 +1,1958 @@
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  shell,
+  Menu,
+  Tray,
+  nativeImage,
+} = require('electron');
+const { autoUpdater } = require('electron-updater');
+// const { performance } = require('perf_hooks'); // no longer used
+const isDev = process.env.NODE_ENV === 'development';
+
+// Logging utility
+const { logger } = require('../shared/logger');
+
+// Import error handling system (not needed directly in this file)
+
+const { scanDirectory } = require('./folderScanner');
+// const { getOrganizationSuggestions } = require('./llmService'); // not used currently
+const {
+  getOllama,
+  getOllamaModel,
+  getOllamaVisionModel,
+  getOllamaEmbeddingModel,
+  getOllamaHost,
+  setOllamaModel,
+  setOllamaVisionModel,
+  setOllamaEmbeddingModel,
+  setOllamaHost,
+  loadOllamaConfig,
+} = require('./ollamaUtils');
+// const ModelManager = require('./services/ModelManager'); // not used currently
+const { buildOllamaOptions } = require('./services/PerformanceService');
+const {
+  getService: getSettingsService,
+} = require('./services/SettingsService');
+const DownloadWatcher = require('./services/DownloadWatcher');
+
+// Import service integration
+const ServiceIntegration = require('./services/ServiceIntegration');
+
+// Import startup manager
+const { getStartupManager } = require('./services/StartupManager');
+
+// Import shared constants
+const { IPC_CHANNELS } = require('../shared/constants');
+
+// Import services
+const { analyzeDocumentFile } = require('./analysis/ollamaDocumentAnalysis');
+const { analyzeImageFile } = require('./analysis/ollamaImageAnalysis');
+
+// Import OCR library
+const tesseract = require('node-tesseract-ocr');
+const { spawn, spawnSync } = require('child_process');
+const fetch = global.fetch || require('node-fetch');
+const fs = require('fs');
+const path = require('path');
+
+let mainWindow;
+let customFolders = []; // Initialize customFolders at module level
+
+// Initialize service integration
+let serviceIntegration;
+let settingsService;
+let downloadWatcher;
+let currentSettings = {};
+let isQuitting = false;
+let chromaDbProcess = null;
+
+// Track cleanup handlers for proper memory management
+let metricsInterval = null;
+let eventListeners = [];
+let childProcessListeners = [];
+let globalProcessListeners = [];
+
+function resolveChromaCliExecutable() {
+  try {
+    const binName = process.platform === 'win32' ? 'chromadb.cmd' : 'chromadb';
+    const cliPath = path.resolve(__dirname, '../../node_modules/.bin', binName);
+    if (fs.existsSync(cliPath)) {
+      return cliPath;
+    }
+  } catch (error) {
+    logger.warn(
+      '[ChromaDB] Failed to resolve local CLI executable:',
+      error?.message || error,
+    );
+  }
+  return null;
+}
+
+function splitCommandLine(value) {
+  if (!value || typeof value !== 'string') return [];
+  const matches = value.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  return matches.map((token) => token.replace(/^"(.*)"$/, '$1'));
+}
+
+function findPythonLauncher() {
+  const candidates =
+    process.platform === 'win32'
+      ? [
+          { command: 'py', args: ['-3'] },
+          { command: 'python3', args: [] },
+          { command: 'python', args: [] },
+        ]
+      : [
+          { command: 'python3', args: [] },
+          { command: 'python', args: [] },
+        ];
+
+  for (const candidate of candidates) {
+    try {
+      const result = spawnSync(
+        candidate.command,
+        [...candidate.args, '--version'],
+        {
+          stdio: 'pipe',
+          windowsHide: true,
+        },
+      );
+      if (result.status === 0) {
+        return candidate;
+      }
+    } catch {
+      // Ignore and continue checking other candidates
+    }
+  }
+  return null;
+}
+
+function buildChromaSpawnPlan(config) {
+  if (process.env.CHROMA_SERVER_COMMAND) {
+    const parts = splitCommandLine(process.env.CHROMA_SERVER_COMMAND);
+    if (parts.length > 0) {
+      return {
+        command: parts[0],
+        args: parts.slice(1),
+        source: 'custom-command',
+        options: { windowsHide: true },
+      };
+    }
+  }
+
+  const localCli = resolveChromaCliExecutable();
+  if (localCli) {
+    return {
+      command: localCli,
+      args: [
+        'run',
+        '--path',
+        config.dbPath,
+        '--host',
+        config.host,
+        '--port',
+        String(config.port),
+      ],
+      source: 'local-cli',
+      options: { windowsHide: true },
+    };
+  }
+
+  const pythonLauncher = findPythonLauncher();
+  if (pythonLauncher) {
+    return {
+      command: pythonLauncher.command,
+      args: [
+        ...pythonLauncher.args,
+        '-m',
+        'chromadb',
+        'run',
+        '--path',
+        config.dbPath,
+        '--host',
+        config.host,
+        '--port',
+        String(config.port),
+      ],
+      source: 'python',
+      options: { windowsHide: true },
+    };
+  }
+
+  return null;
+}
+
+async function ensureChromaDbRunning() {
+  if (process.env.STRATOSORT_DISABLE_CHROMADB === '1') {
+    logger.warn(
+      '[ChromaDB] Startup skipped because STRATOSORT_DISABLE_CHROMADB=1',
+    );
+    return;
+  }
+
+  if (chromaDbProcess) {
+    return;
+  }
+
+  const chromaDbService = require('./services/ChromaDBService').getInstance();
+  const isUp = await chromaDbService.isServerAvailable();
+  if (isUp) {
+    logger.info('[ChromaDB] Server is already running.');
+    return;
+  }
+
+  const serverConfig = chromaDbService.getServerConfig();
+
+  logger.info('[ChromaDB] Server not available, attempting to start...', {
+    host: serverConfig.host,
+    port: serverConfig.port,
+    dbPath: serverConfig.dbPath,
+  });
+
+  try {
+    await chromaDbService.ensureDbDirectory();
+  } catch (error) {
+    logger.error('[ChromaDB] Failed to ensure database directory:', error);
+    return;
+  }
+
+  const spawnPlan = buildChromaSpawnPlan(serverConfig);
+  if (!spawnPlan) {
+    logger.warn(
+      '[ChromaDB] Unable to locate a suitable startup command. Install the Python "chromadb" package (pip install chromadb) or set CHROMA_SERVER_COMMAND manually. See CHROMADB_MIGRATION.md for details.',
+    );
+    return;
+  }
+
+  const env = { ...process.env };
+  const binPath = path.resolve(__dirname, '../../node_modules/.bin');
+  env.PATH = env.PATH ? `${binPath}${path.delimiter}${env.PATH}` : binPath;
+
+  // Fixed: Don't detach process to ensure proper cleanup on shutdown
+  // detached: true causes orphaned processes on Windows
+  const spawnOptions = {
+    detached: false, // Keep process attached to parent for proper cleanup
+    stdio: ['ignore', 'pipe', 'pipe'], // Capture both stdout and stderr
+    ...spawnPlan.options,
+    env,
+  };
+
+  chromaDbProcess = spawn(spawnPlan.command, spawnPlan.args, spawnOptions);
+
+  // Don't unref() - we need to track this process for proper shutdown
+  // chromaDbProcess.unref(); // REMOVED - was causing orphaned processes
+
+  let stderrLines = 0;
+  chromaDbProcess.stderr?.setEncoding('utf8');
+
+  // Track listeners for cleanup
+  const stderrHandler = (chunk) => {
+    if (stderrLines < 5) {
+      const text = chunk.toString().trim();
+      if (text) {
+        logger.warn('[ChromaDB] server stderr:', text);
+        stderrLines += text.split(/\r?\n/).length;
+      }
+    }
+  };
+
+  const errorHandler = (err) => {
+    logger.error('[ChromaDB] Failed to start ChromaDB process:', err);
+  };
+
+  const exitHandler = (code, signal) => {
+    logger.warn('[ChromaDB] Server process exited', { code, signal });
+    chromaDbProcess = null;
+  };
+
+  chromaDbProcess.stderr?.on('data', stderrHandler);
+  chromaDbProcess.on('error', errorHandler);
+  chromaDbProcess.on('exit', exitHandler);
+
+  // Store cleanup function
+  childProcessListeners.push(() => {
+    if (chromaDbProcess) {
+      chromaDbProcess.stderr?.removeListener('data', stderrHandler);
+      chromaDbProcess.removeListener('error', errorHandler);
+      chromaDbProcess.removeListener('exit', exitHandler);
+    }
+  });
+
+  // Fixed: Don't unref() - we need parent to wait for this process during shutdown
+  // chromaDbProcess.unref(); // REMOVED - would detach and cause orphaned processes
+
+  // Poll for server availability with exponential backoff
+  const pollInterval = 500; // Check every 500ms
+  const maxWaitTime = 15000; // Maximum 15 seconds
+  const maxAttempts = Math.floor(maxWaitTime / pollInterval); // 30 attempts
+  const startTime = Date.now();
+  let lastLogTime = startTime;
+  const logInterval = 2000; // Log progress every 2 seconds
+
+  logger.info('[ChromaDB] Polling for server availability...');
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // Check if we've exceeded max wait time
+    const elapsed = Date.now() - startTime;
+    if (elapsed >= maxWaitTime) {
+      logger.error(
+        `[ChromaDB] ❌ Server did not become available within ${maxWaitTime}ms timeout`,
+      );
+      return;
+    }
+
+    // Log progress every 2 seconds
+    if (Date.now() - lastLogTime >= logInterval) {
+      logger.info(
+        `[ChromaDB] Still waiting for server... (${Math.round(elapsed / 1000)}s elapsed)`,
+      );
+      lastLogTime = Date.now();
+    }
+
+    // Check if server is available
+    const isNowUp = await chromaDbService.isServerAvailable();
+    if (isNowUp) {
+      const totalTime = Date.now() - startTime;
+      logger.info(
+        `[ChromaDB] ✅ Server started successfully after ${totalTime}ms (${attempt + 1} attempts)`,
+      );
+      return;
+    }
+
+    // Wait before next check
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+  }
+
+  // Final check after all attempts
+  const isNowUp = await chromaDbService.isServerAvailable();
+  if (isNowUp) {
+    const totalTime = Date.now() - startTime;
+    logger.info(
+      `[ChromaDB] ✅ Server started successfully after ${totalTime}ms`,
+    );
+  } else {
+    logger.error(
+      `[ChromaDB] ❌ Failed to start ChromaDB server after ${maxAttempts} polling attempts (${maxWaitTime}ms)`,
+    );
+  }
+}
+
+/**
+ * Verify that all critical IPC handlers are registered
+ * This prevents race conditions where the renderer might try to call
+ * IPC methods before handlers are fully registered
+ * Uses exponential backoff retry logic with timeout protection
+ * @returns {Promise<boolean>} true if all handlers are registered, false otherwise
+ */
+async function verifyIpcHandlersRegistered() {
+  // Define all critical IPC channels that must be registered before window creation
+  const requiredHandlers = [
+    // Settings - critical for initial load
+    'get-settings',
+    'save-settings',
+
+    // Smart Folders - needed for UI initialization
+    'get-smart-folders',
+    'save-smart-folders',
+    'get-custom-folders',
+    'update-custom-folders',
+
+    // File operations - core functionality
+    'handle-file-selection',
+    'select-directory',
+    'get-documents-path',
+    'get-file-stats',
+    'get-files-in-directory',
+
+    // Analysis - core functionality
+    'analyze-document',
+    'analyze-image',
+
+    // Organization - core functionality
+    'auto-organize-files',
+    'batch-organize-files',
+
+    // Suggestions - needed for UI
+    'get-file-suggestions',
+    'get-batch-suggestions',
+
+    // System monitoring
+    'get-system-metrics',
+    'get-application-statistics',
+
+    // Ollama - AI features
+    'get-ollama-models',
+    'test-ollama-connection',
+
+    // Window controls (if on Windows)
+    ...(process.platform === 'win32'
+      ? [
+          'window-minimize',
+          'window-maximize',
+          'window-toggle-maximize',
+          'window-is-maximized',
+          'window-close',
+        ]
+      : []),
+  ];
+
+  const maxRetries = 10;
+  const maxTimeout = 5000; // 5 seconds maximum
+  const initialDelay = 50; // Start with 50ms
+  const maxDelay = 500; // Cap at 500ms
+  const startTime = Date.now();
+
+  /**
+   * Check if all handlers are registered
+   * @returns {{allRegistered: boolean, missing: string[]}}
+   */
+  const hasInvokeHandler = (channel) => {
+    const map = ipcMain._invokeHandlers;
+    if (!map) return false;
+    // Electron 28+ stores handlers in a Map with has()
+    if (typeof map.has === 'function') {
+      return map.has(channel);
+    }
+    // Older versions expose get() that returns handler or undefined
+    if (typeof map.get === 'function') {
+      return !!map.get(channel);
+    }
+    return false;
+  };
+
+  const checkHandlers = () => {
+    const missing = [];
+    for (const handler of requiredHandlers) {
+      const listenerCount = ipcMain.listenerCount(handler);
+      const handled = listenerCount > 0 || hasInvokeHandler(handler);
+      if (!handled) {
+        missing.push(handler);
+      } else {
+        logger.debug(
+          `[IPC-VERIFY] Handler verified: ${handler} (${listenerCount} listener${listenerCount > 1 ? 's' : ''}${
+            listenerCount === 0 ? ', invoke handler' : ''
+          })`,
+        );
+      }
+    }
+    return {
+      allRegistered: missing.length === 0,
+      missing,
+    };
+  };
+
+  // Initial check
+  let checkResult = checkHandlers();
+  if (checkResult.allRegistered) {
+    logger.info(
+      `[IPC-VERIFY] ✅ Verified ${requiredHandlers.length} critical handlers are registered`,
+    );
+    return true;
+  }
+
+  logger.warn(
+    `[IPC-VERIFY] ⚠️ Missing ${checkResult.missing.length} handlers: ${checkResult.missing.join(', ')}`,
+  );
+  logger.info(`[IPC-VERIFY] Starting retry logic with exponential backoff...`);
+
+  // Retry with exponential backoff
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    // Check timeout
+    const elapsed = Date.now() - startTime;
+    if (elapsed >= maxTimeout) {
+      logger.error(
+        `[IPC-VERIFY] ❌ Timeout after ${elapsed}ms. Still missing ${checkResult.missing.length} handlers: ${checkResult.missing.join(', ')}`,
+      );
+      return false;
+    }
+
+    // Calculate delay with exponential backoff
+    const delay = Math.min(initialDelay * Math.pow(2, attempt), maxDelay);
+
+    // Wait before retry
+    await new Promise((resolve) => setTimeout(resolve, delay));
+
+    // Re-check handlers
+    checkResult = checkHandlers();
+
+    if (checkResult.allRegistered) {
+      const totalTime = Date.now() - startTime;
+      logger.info(
+        `[IPC-VERIFY] ✅ All handlers registered after ${attempt + 1} attempt(s) in ${totalTime}ms`,
+      );
+      return true;
+    }
+
+    // Log progress every 2 attempts
+    if (attempt % 2 === 1) {
+      logger.debug(
+        `[IPC-VERIFY] Attempt ${attempt + 1}/${maxRetries}: Still missing ${checkResult.missing.length} handlers`,
+      );
+    }
+  }
+
+  // Final check after all retries
+  checkResult = checkHandlers();
+  if (checkResult.allRegistered) {
+    logger.info(`[IPC-VERIFY] ✅ All handlers registered after retries`);
+    return true;
+  }
+
+  logger.error(
+    `[IPC-VERIFY] ❌ Failed to register all handlers after ${maxRetries} attempts. Missing: ${checkResult.missing.join(', ')}`,
+  );
+  return false;
+}
+
+async function ensureOllamaRunning() {
+  if (process.env.CI) return;
+
+  await loadOllamaConfig();
+  const host = getOllamaHost();
+
+  // Try to use the enhanced setup script if available
+  try {
+    const setupScript = path.join(__dirname, '../../setup-ollama.js');
+    if (fs.existsSync(setupScript)) {
+      const {
+        isOllamaInstalled,
+        isOllamaRunning,
+        startOllamaServer,
+        getInstalledModels,
+      } = require(setupScript);
+
+      // Check if Ollama is installed
+      if (!isOllamaInstalled()) {
+        logger.warn(
+          '[STARTUP] Ollama is not installed. Please run: npm run setup:ollama',
+        );
+        // Continue anyway, the app can work without Ollama
+        return;
+      }
+
+      // Check if server is running
+      if (!(await isOllamaRunning())) {
+        logger.info('[STARTUP] Starting Ollama server...');
+        const started = await startOllamaServer();
+        if (!started) {
+          logger.warn('[STARTUP] Could not start Ollama server automatically');
+        }
+      }
+
+      // Check if we have any models
+      const models = await getInstalledModels();
+      if (models.length === 0) {
+        logger.warn(
+          '[STARTUP] No Ollama models installed. Run: npm run setup:ollama',
+        );
+      } else {
+        logger.info(`[STARTUP] Found ${models.length} Ollama models`);
+      }
+
+      return;
+    }
+  } catch (e) {
+    logger.debug(
+      '[STARTUP] Enhanced Ollama setup not available, using fallback',
+    );
+  }
+
+  // Fallback to original simple check
+  async function check() {
+    try {
+      const res = await fetch(`${host}/api/tags`);
+      return res && res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  if (await check()) {
+    return;
+  }
+
+  try {
+    logger.info(`[STARTUP] Ollama not reachable at ${host}, starting server`);
+    const child = spawn('ollama', ['serve'], {
+      detached: true,
+      stdio: 'ignore',
+      shell: process.platform === 'win32',
+    });
+    child.unref();
+  } catch (e) {
+    logger.warn('[STARTUP] Failed to launch ollama serve', e);
+    return;
+  }
+
+  for (let i = 0; i < 10; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 500));
+    if (await check()) {
+      logger.info('[STARTUP] Ollama server started');
+      return;
+    }
+  }
+  logger.warn('[STARTUP] Ollama did not respond after start attempt');
+}
+
+// ===== GPU PREFERENCES (Windows rendering stability) =====
+const forceSoftwareRenderer =
+  process.env.STRATOSORT_FORCE_SOFTWARE_GPU === '1' ||
+  process.env.ELECTRON_FORCE_SOFTWARE === '1';
+
+try {
+  if (forceSoftwareRenderer) {
+    app.disableHardwareAcceleration();
+    logger.warn(
+      '[GPU] Hardware acceleration disabled via STRATOSORT_FORCE_SOFTWARE_GPU',
+    );
+  } else {
+    // Use ANGLE with D3D11 backend for better Windows compatibility
+    const angleBackend = process.env.ANGLE_BACKEND || 'd3d11'; // d3d11 is most stable on Windows
+    app.commandLine.appendSwitch('use-angle', angleBackend);
+
+    // Only set use-gl if explicitly requested, otherwise let Electron/Chromium choose
+    const glImplementation = process.env.STRATOSORT_GL_IMPLEMENTATION;
+    if (glImplementation) {
+      app.commandLine.appendSwitch('use-gl', glImplementation);
+      logger.info(`[GPU] Custom GL implementation set: ${glImplementation}`);
+    }
+
+    // Safer GPU settings - remove conflicting switches
+    app.commandLine.appendSwitch('ignore-gpu-blocklist');
+
+    logger.info(`[GPU] Flags set: ANGLE=${angleBackend}`);
+  }
+} catch (e) {
+  logger.warn(
+    '[GPU] Failed to apply GPU flags:',
+    e?.message || 'Unknown error',
+  );
+}
+
+let gpuFailureCount = 0;
+const gpuProcessHandler = (event, details) => {
+  if (details?.type === 'GPU') {
+    gpuFailureCount += 1;
+    logger.error('[GPU] Process exited', {
+      reason: details?.reason,
+      exitCode: details?.exitCode,
+      crashCount: gpuFailureCount,
+    });
+    if (
+      gpuFailureCount >= 2 &&
+      process.env.STRATOSORT_FORCE_SOFTWARE_GPU !== '1'
+    ) {
+      logger.warn(
+        '[GPU] Repeated GPU failures detected. Set STRATOSORT_FORCE_SOFTWARE_GPU=1 to force software rendering.',
+      );
+    }
+  }
+};
+app.on('child-process-gone', gpuProcessHandler);
+
+// Track for cleanup
+eventListeners.push(() =>
+  app.removeListener('child-process-gone', gpuProcessHandler),
+);
+
+// Custom folders helpers
+const {
+  loadCustomFolders,
+  saveCustomFolders,
+} = require('./core/customFolders');
+
+// System monitoring and analytics
+const systemAnalytics = require('./core/systemAnalytics');
+
+// Window creation
+const createMainWindow = require('./core/createWindow');
+
+// Create themed application menu
+function createApplicationMenu() {
+  const template = [
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Select Files',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send('menu-action', 'select-files');
+            }
+          },
+        },
+        {
+          label: 'Select Folder',
+          accelerator: 'CmdOrCtrl+Shift+O',
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send('menu-action', 'select-folder');
+            }
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Settings',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send('menu-action', 'open-settings');
+            }
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Exit',
+          accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Ctrl+Q',
+          click: () => {
+            app.quit();
+          },
+        },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', role: 'undo' },
+        { label: 'Redo', accelerator: 'CmdOrCtrl+Y', role: 'redo' },
+        { type: 'separator' },
+        { label: 'Cut', accelerator: 'CmdOrCtrl+X', role: 'cut' },
+        { label: 'Copy', accelerator: 'CmdOrCtrl+C', role: 'copy' },
+        { label: 'Paste', accelerator: 'CmdOrCtrl+V', role: 'paste' },
+        { label: 'Select All', accelerator: 'CmdOrCtrl+A', role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { label: 'Reload', accelerator: 'CmdOrCtrl+R', role: 'reload' },
+        {
+          label: 'Force Reload',
+          accelerator: 'CmdOrCtrl+Shift+R',
+          role: 'forceReload',
+        },
+        { type: 'separator' },
+        {
+          label: 'Toggle Fullscreen',
+          accelerator: 'F11',
+          role: 'togglefullscreen',
+        },
+        ...(isDev
+          ? [
+              { type: 'separator' },
+              {
+                label: 'Toggle Developer Tools',
+                accelerator: 'F12',
+                role: 'toggleDevTools',
+              },
+            ]
+          : []),
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { label: 'Minimize', accelerator: 'CmdOrCtrl+M', role: 'minimize' },
+        { label: 'Close', accelerator: 'CmdOrCtrl+W', role: 'close' },
+      ],
+    },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'About StratoSort',
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send('menu-action', 'show-about');
+            }
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Documentation',
+          click: () => {
+            shell.openExternal('https://github.com');
+          },
+        },
+      ],
+    },
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
+function createWindow() {
+  logger.debug('[DEBUG] createWindow() called');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    logger.debug('[DEBUG] Window already exists, restoring state...');
+
+    // Window state machine: Handle states in proper order
+    // State priority: fullscreen > minimized > maximized > hidden > normal
+
+    // 1. Fullscreen state - preserve and focus
+    if (mainWindow.isFullScreen()) {
+      logger.debug('[WINDOW] Window is fullscreen, focusing');
+      mainWindow.focus();
+      return;
+    }
+
+    // 2. Minimized state - must restore before showing
+    // restore() brings window back from taskbar/dock and makes it visible
+    if (mainWindow.isMinimized()) {
+      logger.debug('[WINDOW] Window is minimized, restoring...');
+      mainWindow.restore();
+      // restore() should make window visible, but verify
+      if (!mainWindow.isVisible()) {
+        logger.debug(
+          '[WINDOW] Window still not visible after restore, showing...',
+        );
+        mainWindow.show();
+      }
+      // After restore, window might be maximized, so check that next
+      if (mainWindow.isMaximized()) {
+        logger.debug('[WINDOW] Window is maximized after restore');
+        mainWindow.focus();
+        // Handle off-screen check and Windows foreground forcing below
+      } else {
+        // Normal window state after restore
+        mainWindow.focus();
+      }
+    }
+    // 3. Maximized state (but not minimized) - show if hidden, preserve maximized
+    else if (mainWindow.isMaximized()) {
+      logger.debug('[WINDOW] Window is maximized');
+      if (!mainWindow.isVisible()) {
+        logger.debug('[WINDOW] Maximized window is hidden, showing it');
+        mainWindow.show();
+      }
+      mainWindow.focus();
+    }
+    // 4. Hidden state (not minimized, not maximized) - just show
+    else if (!mainWindow.isVisible()) {
+      logger.debug('[WINDOW] Window is hidden, showing it');
+      mainWindow.show();
+      mainWindow.focus();
+    }
+    // 5. Normal visible state - just focus
+    else {
+      logger.debug('[WINDOW] Window is visible, focusing');
+      mainWindow.focus();
+    }
+
+    // 6. Ensure window is on screen (handle multi-monitor issues)
+    // Only check if window is actually visible and not minimized
+    if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+      try {
+        const bounds = mainWindow.getBounds();
+        const { screen } = require('electron');
+        const displays = screen.getAllDisplays();
+
+        // Check if window center is visible on any display
+        const windowCenter = {
+          x: bounds.x + bounds.width / 2,
+          y: bounds.y + bounds.height / 2,
+        };
+
+        const isOnScreen = displays.some((display) => {
+          const { x, y, width, height } = display.bounds;
+          return (
+            windowCenter.x >= x &&
+            windowCenter.x <= x + width &&
+            windowCenter.y >= y &&
+            windowCenter.y <= y + height
+          );
+        });
+
+        if (!isOnScreen) {
+          logger.warn(
+            '[WINDOW] Window was off-screen, centering on primary display',
+          );
+          mainWindow.center();
+        }
+      } catch (error) {
+        logger.debug('[WINDOW] Could not check screen bounds:', error.message);
+      }
+    }
+
+    // 7. On Windows, force window to foreground after state restoration
+    if (process.platform === 'win32' && mainWindow.isVisible()) {
+      // Use setAlwaysOnTop trick to bring window to front
+      mainWindow.setAlwaysOnTop(true);
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.setAlwaysOnTop(false);
+        }
+      }, 100);
+    }
+
+    return;
+  }
+
+  // No existing window, create a new one
+  mainWindow = createMainWindow();
+
+  // Add state change event listeners for debugging
+  mainWindow.on('minimize', () => {
+    logger.debug('[WINDOW] Window minimized');
+  });
+
+  mainWindow.on('restore', () => {
+    logger.debug('[WINDOW] Window restored');
+  });
+
+  mainWindow.on('show', () => {
+    logger.debug('[WINDOW] Window shown');
+  });
+
+  mainWindow.on('hide', () => {
+    logger.debug('[WINDOW] Window hidden');
+  });
+
+  mainWindow.on('focus', () => {
+    logger.debug('[WINDOW] Window focused');
+  });
+
+  mainWindow.on('blur', () => {
+    logger.debug('[WINDOW] Window lost focus');
+  });
+
+  mainWindow.on('close', (e) => {
+    if (!isQuitting && currentSettings?.backgroundMode) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+}
+
+function updateDownloadWatcher(settings) {
+  const enabled = settings?.autoOrganize;
+  if (enabled) {
+    if (!downloadWatcher) {
+      downloadWatcher = new DownloadWatcher({
+        analyzeDocumentFile,
+        analyzeImageFile,
+        getCustomFolders: () => customFolders,
+        autoOrganizeService: serviceIntegration?.autoOrganizeService,
+        settingsService: settingsService,
+      });
+      downloadWatcher.start();
+    }
+  } else if (downloadWatcher) {
+    downloadWatcher.stop();
+    downloadWatcher = null;
+  }
+}
+
+function handleSettingsChanged(settings) {
+  currentSettings = settings || {};
+  updateDownloadWatcher(settings);
+  try {
+    updateTrayMenu();
+  } catch (error) {
+    logger.warn('[SETTINGS] Failed to update tray menu:', error);
+  }
+}
+
+// ===== IPC HANDLERS =====
+const { registerAllIpc } = require('./ipc');
+
+// Prevent multiple instances
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  const secondInstanceHandler = () => {
+    // Someone tried to run a second instance, restore and focus our window
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      logger.debug(
+        '[SECOND-INSTANCE] Restoring window for second instance attempt',
+      );
+
+      // Handle fullscreen state
+      if (mainWindow.isFullScreen()) {
+        mainWindow.focus();
+        return;
+      }
+
+      // Handle maximized state
+      if (mainWindow.isMaximized()) {
+        if (!mainWindow.isVisible()) mainWindow.show();
+        mainWindow.focus();
+        return;
+      }
+
+      // Restore if minimized
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+
+      // Show if hidden
+      if (!mainWindow.isVisible()) {
+        mainWindow.show();
+      }
+
+      // Focus and bring to front
+      mainWindow.focus();
+
+      // Windows-specific foreground forcing
+      if (process.platform === 'win32') {
+        mainWindow.setAlwaysOnTop(true);
+        mainWindow.setAlwaysOnTop(false);
+      }
+    } else {
+      // No window exists, create one
+      createWindow();
+    }
+  };
+  app.on('second-instance', secondInstanceHandler);
+
+  // Track for cleanup
+  eventListeners.push(() =>
+    app.removeListener('second-instance', secondInstanceHandler),
+  );
+
+  // Production optimizations - ensure GPU acceleration
+  if (!isDev) {
+    // Production GPU optimizations - minimal set to avoid conflicts
+    if (!forceSoftwareRenderer) {
+      app.commandLine.appendSwitch('enable-gpu-rasterization');
+      app.commandLine.appendSwitch('enable-zero-copy');
+    }
+
+    logger.info('[PRODUCTION] GPU acceleration optimizations enabled');
+  } else {
+    // Even in dev, prefer GPU acceleration where possible
+    if (!forceSoftwareRenderer) {
+      app.commandLine.appendSwitch('enable-gpu-rasterization');
+      app.commandLine.appendSwitch('enable-zero-copy');
+    }
+    logger.info('[DEVELOPMENT] GPU acceleration flags enabled for development');
+  }
+} // End of else block for single instance lock
+
+// Initialize services after app is ready
+app.whenReady().then(async () => {
+  try {
+    // Get the startup manager instance
+    const startupManager = getStartupManager();
+
+    // Check for first run (check if we've set up before)
+    const setupMarker = path.join(
+      app.getPath('userData'),
+      'ollama-setup-complete.marker',
+    );
+    const isFirstRun = !fs.existsSync(setupMarker);
+
+    if (isFirstRun) {
+      logger.info('[STARTUP] First run detected - will check Ollama setup');
+
+      // Check if installation marker exists (from installer)
+      const installerMarker = path.join(
+        app.getPath('exe'),
+        '..',
+        'first-run.marker',
+      );
+      if (fs.existsSync(installerMarker)) {
+        try {
+          fs.unlinkSync(installerMarker);
+        } catch (e) {
+          logger.debug(
+            '[STARTUP] Could not remove installer marker:',
+            e.message,
+          );
+        }
+      }
+
+      // Run Ollama setup check
+      const setupScript = path.join(__dirname, '../../setup-ollama.js');
+      if (fs.existsSync(setupScript)) {
+        const {
+          isOllamaInstalled,
+          getInstalledModels,
+          installEssentialModels,
+        } = require(setupScript);
+
+        // Check if Ollama is installed and has models
+        if (isOllamaInstalled()) {
+          const models = await getInstalledModels();
+          if (models.length === 0) {
+            logger.info(
+              '[STARTUP] No AI models found, installing essential models...',
+            );
+            try {
+              await installEssentialModels();
+              logger.info('[STARTUP] AI models installed successfully');
+            } catch (e) {
+              logger.warn(
+                '[STARTUP] Could not install AI models automatically:',
+                e.message,
+              );
+            }
+          }
+        } else {
+          logger.warn(
+            '[STARTUP] Ollama not installed - AI features will be limited',
+          );
+          // Could show a dialog here prompting user to install Ollama
+        }
+      }
+
+      // Mark setup as complete
+      try {
+        fs.writeFileSync(setupMarker, new Date().toISOString());
+      } catch (e) {
+        logger.debug('[STARTUP] Could not create setup marker:', e.message);
+      }
+    }
+
+    // Run the new startup manager sequence
+    let startupResult;
+    try {
+      startupResult = await startupManager.startup();
+      logger.info('[STARTUP] Startup manager completed successfully');
+    } catch (error) {
+      // Log full error details for debugging
+      logger.error('[STARTUP] Startup manager failed:', {
+        message: error?.message || 'Unknown error',
+        stack: error?.stack,
+        error: error,
+      });
+      // Continue in degraded mode - don't block startup
+      logger.warn('[STARTUP] Continuing startup in degraded mode');
+    }
+
+    // Load custom folders
+    customFolders = await loadCustomFolders();
+    logger.info(
+      '[STARTUP] Loaded custom folders:',
+      customFolders.length,
+      'folders',
+    );
+
+    // Initialize service integration
+    serviceIntegration = new ServiceIntegration();
+    await serviceIntegration.initialize();
+    logger.info('[MAIN] Service integration initialized successfully');
+
+    // Initialize settings service
+    settingsService = getSettingsService();
+    const initialSettings = await settingsService.load();
+
+    // Resume any incomplete organize batches (best-effort)
+    try {
+      const incompleteBatches =
+        serviceIntegration?.processingState?.getIncompleteOrganizeBatches?.() ||
+        [];
+      if (incompleteBatches.length > 0) {
+        logger.warn(
+          `[RESUME] Found ${incompleteBatches.length} incomplete organize batch(es). They will resume when a new organize request starts.`,
+        );
+      }
+    } catch (resumeErr) {
+      logger.warn(
+        '[RESUME] Failed to check incomplete batches:',
+        resumeErr.message,
+      );
+    }
+
+    // Verify AI models on startup (only if Ollama is running)
+    if (startupResult?.services?.ollama?.success) {
+      const ModelVerifier = require('./services/ModelVerifier');
+      const modelVerifier = new ModelVerifier();
+      const modelStatus = await modelVerifier.verifyEssentialModels();
+
+      if (!modelStatus.success) {
+        logger.warn(
+          '[STARTUP] Missing AI models detected:',
+          modelStatus.missingModels,
+        );
+        logger.info('[STARTUP] Install missing models:');
+        modelStatus.installationCommands.forEach((cmd) =>
+          logger.info('  ', cmd),
+        );
+      } else {
+        logger.info('[STARTUP] ✅ All essential AI models verified and ready');
+        if (modelStatus.hasWhisper) {
+          logger.info(
+            '[STARTUP] ✅ Whisper model available for audio analysis',
+          );
+        }
+      }
+    }
+
+    // Register IPC groups now that services and state are ready
+    const getMainWindow = () => mainWindow;
+    const getServiceIntegration = () => serviceIntegration;
+    const getCustomFolders = () => customFolders;
+    const setCustomFolders = (folders) => {
+      customFolders = folders;
+    };
+
+    // Grouped IPC registration (single entry)
+    registerAllIpc({
+      ipcMain,
+      IPC_CHANNELS,
+      logger,
+      dialog,
+      shell,
+      systemAnalytics,
+      getMainWindow,
+      getServiceIntegration,
+      getCustomFolders,
+      setCustomFolders,
+      saveCustomFolders,
+      analyzeDocumentFile,
+      analyzeImageFile,
+      tesseract,
+      getOllama,
+      getOllamaModel,
+      getOllamaVisionModel,
+      getOllamaEmbeddingModel,
+      getOllamaHost,
+      buildOllamaOptions,
+      scanDirectory,
+      settingsService,
+      setOllamaHost,
+      setOllamaModel,
+      setOllamaVisionModel,
+      setOllamaEmbeddingModel,
+      onSettingsChanged: handleSettingsChanged,
+    });
+
+    // Create application menu with theme
+    createApplicationMenu();
+
+    // Fixed: Give IPC handlers a moment to fully register before verification
+    // Some handlers may have async initialization
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // VERIFY all critical IPC handlers are registered before creating the window
+    // This prevents race conditions where the renderer tries to call IPC methods before they're ready
+    const handlersReady = await verifyIpcHandlersRegistered();
+    if (!handlersReady) {
+      logger.warn(
+        '[STARTUP] Some IPC handlers not registered, continuing in degraded mode',
+      );
+      // Don't throw - allow app to start in degraded mode
+      // The handlers may register later or may be optional
+    } else {
+      logger.info('[STARTUP] All IPC handlers verified and ready');
+    }
+
+    createWindow();
+    handleSettingsChanged(initialSettings);
+
+    // Start periodic system metrics broadcast to renderer
+    try {
+      // Clear any existing interval before creating a new one
+      if (metricsInterval) {
+        clearInterval(metricsInterval);
+        metricsInterval = null;
+      }
+
+      metricsInterval = setInterval(async () => {
+        try {
+          const win = BrowserWindow.getAllWindows()[0];
+          if (!win || win.isDestroyed()) return;
+          const metrics = await systemAnalytics.collectMetrics();
+          win.webContents.send('system-metrics', metrics);
+        } catch (error) {
+          logger.error('[METRICS] Failed to collect or send metrics:', error);
+        }
+      }, 10000);
+      try {
+        metricsInterval.unref();
+      } catch (error) {
+        logger.warn('[METRICS] Failed to unref interval:', error.message);
+      }
+    } catch (error) {
+      logger.error('[METRICS] Failed to start metrics interval:', error);
+    }
+
+    // Create system tray with quick actions
+    try {
+      createSystemTray();
+    } catch (e) {
+      logger.warn('[TRAY] Failed to initialize tray:', e.message);
+    }
+
+    // Handle app command-line tasks (Windows Jump List)
+    try {
+      const args = process.argv.slice(1);
+      if (args.includes('--open-documents')) {
+        try {
+          const docs = app.getPath('documents');
+          shell.openPath(docs);
+        } catch (error) {
+          logger.error('[JUMP-LIST] Failed to open documents folder:', error);
+        }
+      }
+      if (args.includes('--analyze-folder')) {
+        // Bring window to front and trigger select directory
+        const win = BrowserWindow.getAllWindows()[0];
+        if (win) {
+          win.focus();
+          try {
+            win.webContents.send('operation-progress', {
+              type: 'hint',
+              message: 'Use Select Directory to analyze a folder',
+            });
+          } catch (error) {
+            logger.error('[JUMP-LIST] Failed to send hint message:', error);
+          }
+        }
+      }
+    } catch (error) {
+      logger.error('[JUMP-LIST] Failed to handle command-line tasks:', error);
+    }
+    // Windows Jump List tasks
+    try {
+      if (process.platform === 'win32') {
+        app.setAppUserModelId('com.stratosort.app');
+        app.setJumpList([
+          {
+            type: 'tasks',
+            items: [
+              {
+                type: 'task',
+                title: 'Analyze Folder…',
+                program: process.execPath,
+                args: '--analyze-folder',
+                iconPath: process.execPath,
+                iconIndex: 0,
+              },
+              {
+                type: 'task',
+                title: 'Open Documents Folder',
+                program: process.execPath,
+                args: '--open-documents',
+                iconPath: process.execPath,
+                iconIndex: 0,
+              },
+            ],
+          },
+        ]);
+      }
+    } catch (error) {
+      logger.error('[JUMP-LIST] Failed to set Windows Jump List:', error);
+    }
+    // Fire-and-forget resume of incomplete batches shortly after window is ready
+    const resumeTimeout = setTimeout(() => {
+      try {
+        const getMainWindow = () => mainWindow;
+        resumeIncompleteBatches(serviceIntegration, logger, getMainWindow);
+      } catch (e) {
+        logger.warn(
+          '[RESUME] Failed to schedule resume of incomplete batches:',
+          e?.message,
+        );
+      }
+    }, 500);
+    try {
+      resumeTimeout.unref();
+    } catch (error) {
+      logger.warn('[RESUME] Failed to unref timeout:', error.message);
+    }
+
+    // Load Ollama config and apply any saved selections
+    const cfg = await loadOllamaConfig();
+    if (cfg.selectedTextModel) await setOllamaModel(cfg.selectedTextModel);
+    if (cfg.selectedVisionModel)
+      await setOllamaVisionModel(cfg.selectedVisionModel);
+    if (cfg.selectedEmbeddingModel)
+      await setOllamaEmbeddingModel(cfg.selectedEmbeddingModel);
+    logger.info('[STARTUP] Ollama configuration loaded');
+
+    // Install React DevTools in development (opt-in to avoid noisy warnings)
+    try {
+      if (isDev && process.env.REACT_DEVTOOLS === 'true') {
+        const {
+          default: installExtension,
+          REACT_DEVELOPER_TOOLS,
+        } = require('electron-devtools-installer');
+        await installExtension(REACT_DEVELOPER_TOOLS).catch((error) => {
+          logger.warn(
+            '[DEVTOOLS] Failed to install React DevTools:',
+            error.message,
+          );
+        });
+      }
+    } catch (error) {
+      logger.error('[DEVTOOLS] Failed to setup React DevTools:', error);
+    }
+
+    // Auto-updates (production only)
+    try {
+      if (!isDev) {
+        autoUpdater.autoDownload = true;
+        autoUpdater.on('error', (err) => logger.error('[UPDATER] Error:', err));
+        autoUpdater.on('update-available', () => {
+          logger.info('[UPDATER] Update available');
+          try {
+            const win = BrowserWindow.getAllWindows()[0];
+            if (win && !win.isDestroyed())
+              win.webContents.send('app:update', { status: 'available' });
+          } catch (error) {
+            logger.error(
+              '[UPDATER] Failed to send update-available message:',
+              error,
+            );
+          }
+        });
+        autoUpdater.on('update-not-available', () => {
+          logger.info('[UPDATER] No updates available');
+          try {
+            const win = BrowserWindow.getAllWindows()[0];
+            if (win && !win.isDestroyed())
+              win.webContents.send('app:update', { status: 'none' });
+          } catch (error) {
+            logger.error(
+              '[UPDATER] Failed to send update-not-available message:',
+              error,
+            );
+          }
+        });
+        autoUpdater.on('update-downloaded', () => {
+          logger.info('[UPDATER] Update downloaded');
+          try {
+            const win = BrowserWindow.getAllWindows()[0];
+            if (win && !win.isDestroyed())
+              win.webContents.send('app:update', { status: 'ready' });
+          } catch (error) {
+            logger.error(
+              '[UPDATER] Failed to send update-downloaded message:',
+              error,
+            );
+          }
+        });
+        autoUpdater
+          .checkForUpdatesAndNotify()
+          .catch((e) => logger.error('[UPDATER] check failed', e));
+      }
+    } catch (error) {
+      logger.error('[UPDATER] Failed to setup auto-updater:', error);
+    }
+  } catch (error) {
+    // Log full error details for debugging
+    logger.error('[STARTUP] Failed to initialize:', {
+      message: error?.message || 'Unknown error',
+      stack: error?.stack,
+      error: error,
+    });
+    // Still create window even if startup fails - allow degraded mode
+    logger.warn(
+      '[STARTUP] Creating window in degraded mode due to startup errors',
+    );
+    createWindow();
+  }
+});
+
+// ===== APP LIFECYCLE =====
+logger.info(
+  '[STARTUP] Organizer AI App - Main Process Started with Full AI Features',
+);
+logger.info('[UI] Modern UI loaded with GPU acceleration');
+
+// App lifecycle
+app.on('before-quit', async () => {
+  isQuitting = true;
+
+  // Clean up all intervals first
+  if (metricsInterval) {
+    clearInterval(metricsInterval);
+    metricsInterval = null;
+    logger.info('[CLEANUP] Metrics interval cleared');
+  }
+
+  // Clean up download watcher
+  if (downloadWatcher) {
+    try {
+      downloadWatcher.stop();
+      downloadWatcher = null;
+      logger.info('[CLEANUP] Download watcher stopped');
+    } catch (error) {
+      logger.error('[CLEANUP] Failed to stop download watcher:', error);
+    }
+  }
+
+  // Clean up child process listeners
+  for (const cleanup of childProcessListeners) {
+    try {
+      cleanup();
+    } catch (error) {
+      logger.error(
+        '[CLEANUP] Failed to clean up child process listener:',
+        error,
+      );
+    }
+  }
+  childProcessListeners = [];
+
+  // Clean up global process listeners
+  for (const cleanup of globalProcessListeners) {
+    try {
+      cleanup();
+    } catch (error) {
+      logger.error(
+        '[CLEANUP] Failed to clean up global process listener:',
+        error,
+      );
+    }
+  }
+  globalProcessListeners = [];
+
+  // Clean up app event listeners
+  for (const cleanup of eventListeners) {
+    try {
+      cleanup();
+    } catch (error) {
+      logger.error('[CLEANUP] Failed to clean up app event listener:', error);
+    }
+  }
+  eventListeners = [];
+
+  // Clean up IPC listeners
+  try {
+    ipcMain.removeAllListeners();
+    logger.info('[CLEANUP] All IPC listeners removed');
+  } catch (error) {
+    logger.error('[CLEANUP] Failed to remove IPC listeners:', error);
+  }
+
+  // Clean up tray
+  if (tray) {
+    try {
+      tray.destroy();
+      tray = null;
+      logger.info('[CLEANUP] System tray destroyed');
+    } catch (error) {
+      logger.error('[CLEANUP] Failed to destroy tray:', error);
+    }
+  }
+
+  // Use StartupManager for graceful shutdown
+  try {
+    const startupManager = getStartupManager();
+    await startupManager.shutdown();
+    logger.info('[SHUTDOWN] StartupManager cleanup completed');
+  } catch (error) {
+    logger.error('[SHUTDOWN] StartupManager cleanup failed:', error);
+  }
+
+  // Legacy chromaDbProcess cleanup (fallback if StartupManager didn't handle it)
+  if (chromaDbProcess) {
+    logger.info(
+      '[ChromaDB] Stopping ChromaDB server process (PID: ' +
+        chromaDbProcess.pid +
+        ')',
+    );
+    try {
+      // Remove all listeners first
+      chromaDbProcess.removeAllListeners();
+
+      // Fixed: Use synchronous kill to ensure completion before continuing
+      if (process.platform === 'win32') {
+        // On Windows, use synchronous taskkill with force flag
+        const { spawnSync } = require('child_process');
+        const result = spawnSync(
+          'taskkill',
+          ['/pid', chromaDbProcess.pid, '/f', '/t'],
+          {
+            windowsHide: true,
+            timeout: 5000, // 5 second timeout for taskkill
+            encoding: 'utf8',
+          },
+        );
+
+        if (result.status === 0) {
+          logger.info(
+            '[ChromaDB] ✓ Process terminated successfully (taskkill)',
+          );
+        } else if (result.error) {
+          logger.error('[ChromaDB] Taskkill error:', result.error.message);
+        } else {
+          logger.warn('[ChromaDB] Taskkill exited with code:', result.status);
+          if (result.stderr) {
+            logger.warn('[ChromaDB] Taskkill stderr:', result.stderr.trim());
+          }
+        }
+      } else {
+        // On Unix-like systems, use synchronous kill commands
+        const { execSync } = require('child_process');
+        try {
+          // Try SIGTERM first for graceful shutdown
+          execSync(`kill -TERM -${chromaDbProcess.pid}`, { timeout: 100 });
+          logger.info('[ChromaDB] Sent SIGTERM to process group');
+
+          // Synchronous sleep for 2 seconds using shell command
+          try {
+            execSync('sleep 2', { timeout: 3000 });
+          } catch (e) {
+            // Timeout or error is fine, continue
+          }
+
+          // Force kill if still alive
+          try {
+            execSync(`kill -KILL -${chromaDbProcess.pid}`, { timeout: 100 });
+            logger.info('[ChromaDB] Sent SIGKILL to process group');
+          } catch (killError) {
+            // Process already dead, this is fine
+            logger.info('[ChromaDB] Process already terminated');
+          }
+        } catch (termError) {
+          // ESRCH means process not found, which is fine
+          logger.info('[ChromaDB] Process already terminated or not found');
+        }
+      }
+
+      // Synchronous sleep for cleanup
+      const { execSync } = require('child_process');
+      try {
+        if (process.platform === 'win32') {
+          execSync('timeout /t 1 /nobreak', {
+            timeout: 2000,
+            windowsHide: true,
+          });
+        } else {
+          execSync('sleep 0.5', { timeout: 1000 });
+        }
+      } catch (e) {
+        // Timeout is fine
+      }
+
+      // Verify process is actually terminated
+      try {
+        process.kill(chromaDbProcess.pid, 0); // Signal 0 just checks if process exists
+        logger.warn(
+          '[ChromaDB] ⚠️ Process may still be running after kill attempt!',
+        );
+      } catch (e) {
+        if (e.code === 'ESRCH') {
+          logger.info('[ChromaDB] ✓ Process confirmed terminated');
+        } else {
+          logger.warn('[ChromaDB] Process check error:', e.message);
+        }
+      }
+    } catch (e) {
+      logger.error('[ChromaDB] Error stopping ChromaDB process:', e);
+    }
+    chromaDbProcess = null;
+  }
+
+  // Clean up service integration
+  if (serviceIntegration) {
+    try {
+      // Ensure all services are properly shut down
+      await serviceIntegration.shutdown?.();
+      logger.info('[CLEANUP] Service integration shut down');
+    } catch (error) {
+      logger.error('[CLEANUP] Failed to shut down service integration:', error);
+    }
+  }
+
+  // Fixed: Clean up settings service file watcher
+  if (settingsService) {
+    try {
+      settingsService.shutdown?.();
+      logger.info('[CLEANUP] Settings service shut down');
+    } catch (error) {
+      logger.error('[CLEANUP] Failed to shut down settings service:', error);
+    }
+  }
+
+  // Clean up system analytics
+  try {
+    systemAnalytics.destroy();
+    logger.info('[CLEANUP] System analytics destroyed');
+  } catch {
+    // Silently ignore destroy errors on quit
+  }
+
+  // Post-shutdown verification: Verify all resources are released
+  const shutdownTimeout = 10000; // 10 seconds max for shutdown
+
+  try {
+    await Promise.race([
+      verifyShutdownCleanup(),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error('Shutdown verification timeout')),
+          shutdownTimeout,
+        ),
+      ),
+    ]);
+  } catch (error) {
+    logger.warn(
+      '[SHUTDOWN-VERIFY] Verification failed or timed out:',
+      error.message,
+    );
+  }
+});
+
+/**
+ * Verify that all resources are properly released after shutdown
+ * @returns {Promise<void>}
+ */
+async function verifyShutdownCleanup() {
+  const issues = [];
+
+  // 1. Verify intervals are cleared
+  if (metricsInterval !== null) {
+    issues.push('metricsInterval is not null');
+  }
+
+  // 2. Verify child process listeners are cleared
+  if (childProcessListeners.length > 0) {
+    issues.push(
+      `childProcessListeners still has ${childProcessListeners.length} entries`,
+    );
+  }
+
+  // 3. Verify global process listeners are cleared
+  if (globalProcessListeners.length > 0) {
+    issues.push(
+      `globalProcessListeners still has ${globalProcessListeners.length} entries`,
+    );
+  }
+
+  // 4. Verify app event listeners are cleared
+  if (eventListeners.length > 0) {
+    issues.push(`eventListeners still has ${eventListeners.length} entries`);
+  }
+
+  // 5. Verify ChromaDB process is terminated
+  if (chromaDbProcess !== null) {
+    issues.push('chromaDbProcess is not null');
+    // Try to verify process is actually dead
+    try {
+      if (chromaDbProcess.pid) {
+        process.kill(chromaDbProcess.pid, 0);
+        issues.push(
+          `ChromaDB process ${chromaDbProcess.pid} may still be running`,
+        );
+      }
+    } catch (e) {
+      if (e.code !== 'ESRCH') {
+        // ESRCH means process doesn't exist (good), other errors are issues
+        issues.push(`ChromaDB process check failed: ${e.message}`);
+      }
+    }
+  }
+
+  // 6. Verify service integration is nullified
+  if (serviceIntegration && serviceIntegration.initialized !== false) {
+    issues.push('ServiceIntegration may not be fully shut down');
+  }
+
+  // 7. Verify download watcher is cleared
+  if (downloadWatcher !== null) {
+    issues.push('downloadWatcher is not null');
+  }
+
+  // 8. Verify tray is destroyed
+  if (tray !== null) {
+    issues.push('tray is not null');
+  }
+
+  // Log verification results
+  if (issues.length === 0) {
+    logger.info('[SHUTDOWN-VERIFY] ✅ All resources verified as released');
+  } else {
+    logger.warn(
+      `[SHUTDOWN-VERIFY] ⚠️ Found ${issues.length} potential resource leaks:`,
+    );
+    issues.forEach((issue) => logger.warn(`[SHUTDOWN-VERIFY]   - ${issue}`));
+  }
+}
+
+const windowAllClosedHandler = () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+};
+app.on('window-all-closed', windowAllClosedHandler);
+
+const activateHandler = () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
+};
+app.on('activate', activateHandler);
+
+// Track for cleanup
+eventListeners.push(() => {
+  app.removeListener('window-all-closed', windowAllClosedHandler);
+  app.removeListener('activate', activateHandler);
+});
+
+// Smart folders add moved to ipc/smartFolders.js
+
+// SmartFolders LLM enhancement moved to services/SmartFoldersLLMService.js
+
+// Error handling
+logger.info('✅ StratoSort main process initialized');
+
+// Add comprehensive error handling (single registration)
+const uncaughtExceptionHandler = (error) => {
+  logger.error('UNCAUGHT EXCEPTION:', {
+    message: error.message,
+    stack: error.stack,
+  });
+};
+
+const unhandledRejectionHandler = (reason, promise) => {
+  logger.error('UNHANDLED REJECTION', { reason, promise: String(promise) });
+};
+
+process.on('uncaughtException', uncaughtExceptionHandler);
+process.on('unhandledRejection', unhandledRejectionHandler);
+
+// Track for cleanup
+globalProcessListeners.push(() => {
+  process.removeListener('uncaughtException', uncaughtExceptionHandler);
+  process.removeListener('unhandledRejection', unhandledRejectionHandler);
+});
+
+// Keep the process alive for debugging
+logger.debug(
+  '[DEBUG] Process should stay alive. If you see this and the app closes, check for errors above.',
+);
+
+// All Analysis History and System metrics handlers are registered via ./ipc/* modules
+
+// Audio analysis handler REMOVED - audio analysis disabled
+// ipcMain.handle(IPC_CHANNELS.ANALYSIS.ANALYZE_AUDIO, async (event, filePath) => {
+//   try {
+//     logger.info(`[IPC-AUDIO-ANALYSIS] Starting audio analysis for: ${filePath}`);
+//
+//     // Get current smart folders to pass to analysis
+//     const smartFolders = customFolders.filter(f => !f.isDefault || f.path);
+//     const folderCategories = smartFolders.map(f => ({
+//       name: f.name,
+//       description: f.description || '',
+//       id: f.id
+//     }));
+//
+//     logger.info(`[IPC-AUDIO-ANALYSIS] Using ${folderCategories.length} smart folders for context:`, folderCategories.map(f => f.name).join(', '));
+//
+//     const result = await analyzeAudioFile(filePath, folderCategories);
+//
+//     logger.info(`[IPC-AUDIO-ANALYSIS] Result:`, {
+//       success: !result.error,
+//       category: result.category,
+//       keywords: result.keywords?.length || 0,
+//       confidence: result.confidence,
+//       has_transcription: result.has_transcription
+//     });
+//
+//     return result;
+//   } catch (error) {
+//     logger.error(`[IPC] Audio analysis failed for ${filePath}:`, error);
+//     return {
+//       error: error.message,
+//       suggestedName: path.basename(filePath, path.extname(filePath)),
+//       category: 'audio',
+//       keywords: [],
+//       confidence: 0,
+//       has_transcription: false
+//     };
+//   }
+// });
+
+// NOTE: Duplicate TRANSCRIBE_AUDIO handler removed to prevent registration error
+
+// ===== TRAY INTEGRATION =====
+let tray = null;
+function createSystemTray() {
+  try {
+    const path = require('path');
+    const iconPath = path.join(
+      __dirname,
+      process.platform === 'win32'
+        ? '../../assets/icons/icons/win/icon.ico'
+        : process.platform === 'darwin'
+          ? '../../assets/icons/icons/png/24x24.png'
+          : '../../assets/icons/icons/png/16x16.png',
+    );
+    const trayIcon = nativeImage.createFromPath(iconPath);
+    if (process.platform === 'darwin') {
+      trayIcon.setTemplateImage(true);
+    }
+    tray = new Tray(trayIcon);
+    tray.setToolTip('StratoSort');
+    updateTrayMenu();
+  } catch (e) {
+    logger.warn('[TRAY] initialization failed', e);
+  }
+}
+
+function updateTrayMenu() {
+  if (!tray) return;
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Open StratoSort',
+      click: () => {
+        const win = BrowserWindow.getAllWindows()[0] || createWindow();
+        if (win && win.isMinimized()) win.restore();
+        if (win) {
+          win.show();
+          win.focus();
+        }
+      },
+    },
+    {
+      label: downloadWatcher ? 'Pause Auto-Sort' : 'Resume Auto-Sort',
+      click: async () => {
+        const enable = !downloadWatcher;
+        try {
+          if (settingsService) {
+            const merged = await settingsService.save({
+              autoOrganize: enable,
+            });
+            handleSettingsChanged(merged);
+          } else {
+            handleSettingsChanged({ autoOrganize: enable });
+          }
+        } catch (err) {
+          logger.warn('[TRAY] Failed to toggle auto-sort:', err.message);
+        }
+        updateTrayMenu();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+  tray.setContextMenu(contextMenu);
+}
+
+// Smart Folders matching and helpers moved to ipc/smartFolders.js
+
+// Resume service
+const { resumeIncompleteBatches } = require('./services/OrganizeResumeService');
+
+// Delete folder and its contents
+// File-related handlers moved to ipc/files.js
+
+// Export helper functions for StartupManager
+module.exports = {
+  buildChromaSpawnPlan,
+  ensureChromaDbRunning,
+  ensureOllamaRunning,
+};

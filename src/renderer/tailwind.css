@@ -1,0 +1,425 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --app-nav-height: 72px;
+  --surface-primary: #ffffff;
+  --surface-muted: #f8fafc;
+  --surface-contrast: #0f172a;
+  --glass-layer: rgba(255, 255, 255, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.55);
+  --border-soft: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --shadow-soft: 0 30px 45px rgba(15, 23, 42, 0.12);
+  --shadow-glow: 0 25px 55px rgba(37, 99, 235, 0.35);
+  --blur-strength: 18px;
+}
+
+@media (min-width: 1440px) {
+  :root {
+    --app-nav-height: 80px;
+  }
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    @apply antialiased;
+  }
+
+  html {
+    @apply min-h-screen scroll-smooth bg-surface-muted;
+  }
+
+  body {
+    @apply font-sans text-system-gray-700 bg-surface-muted min-h-screen;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-semibold text-system-gray-900 tracking-tight;
+  }
+
+  ::selection {
+    @apply bg-stratosort-blue/15 text-stratosort-blue;
+  }
+
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    @apply outline-none ring-2 ring-stratosort-blue ring-offset-2 ring-offset-surface-primary;
+  }
+
+  /* Checkbox focus states */
+  input[type='checkbox']:focus-visible {
+    @apply outline-none ring-2 ring-stratosort-blue ring-offset-2;
+  }
+}
+
+@layer components {
+  .app-surface {
+    @apply h-screen bg-surface-muted text-system-gray-800;
+  }
+
+  .app-region-drag {
+    -webkit-app-region: drag;
+  }
+  .app-region-no-drag {
+    -webkit-app-region: no-drag;
+  }
+
+  .content-container {
+    @apply w-full max-w-5xl mx-auto px-6 sm:px-8 lg:px-12;
+  }
+
+  .container-enhanced {
+    @apply w-full max-w-5xl mx-auto px-6 sm:px-8;
+  }
+
+  .container-centered {
+    @apply w-full max-w-4xl mx-auto px-6 sm:px-8;
+  }
+
+  .container-narrow {
+    @apply w-full max-w-3xl mx-auto px-6 sm:px-8;
+  }
+
+  .main-content-wrapper {
+    @apply w-full max-w-5xl mx-auto px-6 lg:px-10;
+  }
+
+  /* Responsive container system for desktop optimization */
+  .container-responsive {
+    @apply w-full mx-auto px-6 sm:px-8;
+    max-width: 1280px;
+  }
+
+  @media (min-width: 1440px) {
+    .container-responsive {
+      max-width: 1360px;
+      padding-left: 2.5rem;
+      padding-right: 2.5rem;
+    }
+  }
+
+  @media (min-width: 1600px) {
+    .container-responsive {
+      max-width: 1480px;
+    }
+  }
+
+  @media (min-width: 1920px) {
+    .container-responsive {
+      max-width: 1680px;
+    }
+  }
+
+  .glass-panel {
+    background: var(--glass-layer);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: blur(var(--blur-strength));
+    -webkit-backdrop-filter: blur(var(--blur-strength));
+    @apply rounded-glass;
+  }
+
+  .glass-card {
+    @apply glass-panel p-8 shadow-glass;
+  }
+
+  .glass-subtle {
+    @apply glass-panel bg-white/75;
+  }
+
+  .glass-medium {
+    @apply glass-panel bg-white/85;
+  }
+
+  .glass-strong {
+    @apply glass-panel bg-white/95;
+  }
+
+  .section-card {
+    @apply glass-panel p-8 md:p-10 space-y-5;
+  }
+
+  .section-grid {
+    @apply grid gap-8 sm:gap-11;
+  }
+
+  .section-heading {
+    @apply text-3xl md:text-4xl font-semibold text-system-gray-900 tracking-tight;
+  }
+
+  .section-subheading {
+    @apply text-lg text-system-gray-600 max-w-2xl;
+  }
+
+  .heading-primary {
+    @apply text-3xl md:text-4xl font-semibold text-system-gray-900 tracking-tight mb-6;
+  }
+
+  .heading-secondary {
+    @apply text-2xl font-semibold text-system-gray-800 mb-4;
+  }
+
+  .heading-tertiary {
+    @apply text-xl font-medium text-system-gray-800 mb-3;
+  }
+
+  .text-muted {
+    @apply text-system-gray-500;
+  }
+
+  .text-gradient {
+    color: #2563eb;
+    background: linear-gradient(90deg, #667eea 0%, #3b82f6 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .btn-base {
+    @apply inline-flex items-center justify-center gap-2 rounded-full font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed;
+    padding: 0.65rem 1.5rem;
+  }
+
+  .btn-primary {
+    @apply btn-base text-white shadow-md shadow-stratosort-blue/25;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  }
+  .btn-primary:hover {
+    @apply shadow-lg shadow-stratosort-blue/35;
+    transform: translateY(-1px);
+  }
+
+  .btn-secondary {
+    @apply btn-base bg-white/90 border border-border-soft text-system-gray-700 shadow-sm;
+  }
+
+  .btn-ghost {
+    @apply btn-base bg-transparent text-system-gray-700 border border-transparent hover:border-border-soft;
+  }
+
+  .btn-outline {
+    @apply btn-base border-2 border-stratosort-blue text-stratosort-blue bg-transparent;
+  }
+
+  .btn-subtle {
+    @apply btn-base bg-system-gray-100 text-system-gray-700 border border-border-soft;
+  }
+
+  .btn-success {
+    @apply btn-base bg-stratosort-success text-white shadow-md hover:shadow-lg hover:-translate-y-0.5;
+  }
+
+  .btn-danger {
+    @apply btn-base bg-stratosort-danger text-white shadow-md hover:shadow-lg hover:-translate-y-0.5;
+  }
+
+  .btn-ghost-minimal {
+    @apply btn-base bg-transparent text-system-gray-600 border border-transparent hover:border-border-soft;
+  }
+
+  .form-input-enhanced {
+    @apply w-full rounded-xl border border-border-soft bg-white/90 text-system-gray-800 placeholder-system-gray-400 transition-all duration-200 shadow-sm;
+    padding: 0.65rem 1rem;
+  }
+  .form-input-enhanced:focus {
+    @apply border-stratosort-blue shadow-md;
+  }
+  .form-textarea-enhanced {
+    @apply form-input-enhanced resize-y min-h-[6rem];
+  }
+
+  .toast-enhanced {
+    @apply glass-panel px-6 py-4 text-sm shadow-lg translate-x-full transition-all duration-300;
+    max-width: 22rem;
+  }
+  .toast-enhanced.show {
+    @apply translate-x-0;
+  }
+
+  .tooltip-enhanced {
+    @apply glass-panel text-xs py-1.5 px-3 rounded-lg pointer-events-none opacity-0 transition-all duration-150 z-toast;
+    transform: translate3d(0, -6px, 0);
+  }
+  .tooltip-enhanced.show {
+    @apply opacity-100 translate-y-0;
+  }
+
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+  .status-dot.success {
+    @apply bg-stratosort-success;
+  }
+  .status-dot.warning {
+    @apply bg-stratosort-warning;
+  }
+  .status-dot.error {
+    @apply bg-stratosort-danger;
+  }
+  .status-dot.info {
+    @apply bg-stratosort-blue;
+  }
+
+  .status-pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide;
+  }
+  .status-success {
+    @apply status-pill border-stratosort-success/40 bg-stratosort-success/10 text-stratosort-success;
+  }
+  .status-warning {
+    @apply status-pill border-stratosort-warning/40 bg-stratosort-warning/10 text-stratosort-warning;
+  }
+  .status-error {
+    @apply status-pill border-stratosort-danger/40 bg-stratosort-danger/10 text-stratosort-danger;
+  }
+  .status-info {
+    @apply status-pill border-stratosort-blue/40 bg-stratosort-blue/10 text-stratosort-blue;
+  }
+
+  .loading-spinner {
+    @apply inline-block h-6 w-6 rounded-full border-2 border-border-soft border-t-stratosort-blue animate-spin;
+  }
+
+  .skip-link {
+    @apply sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:px-4 focus:py-2 focus:bg-stratosort-blue focus:text-white focus:rounded-lg;
+  }
+}
+
+@layer utilities {
+  .layout-stack {
+    @apply flex flex-col gap-6;
+  }
+
+  .layout-stack-lg {
+    @apply flex flex-col gap-8;
+  }
+
+  .card-grid {
+    @apply grid gap-6 sm:grid-cols-2;
+  }
+
+  .interactive-scale {
+    @apply transition-transform duration-200 ease-smooth hover:-translate-y-1 hover:scale-[1.01];
+  }
+
+  .interactive-lift {
+    @apply transition-all duration-200 hover:shadow-xl hover:-translate-y-0.5;
+  }
+
+  .section-padding {
+    @apply py-12 sm:py-16;
+  }
+
+  .section-padding-lg {
+    @apply py-16 sm:py-24;
+  }
+
+  .gradient-primary {
+    @apply bg-gradient-to-br from-gradient-primary-start to-gradient-primary-end;
+  }
+
+  .gradient-secondary {
+    @apply bg-gradient-to-br from-gradient-secondary-start to-gradient-secondary-end;
+  }
+
+  .gradient-accent {
+    @apply bg-gradient-to-br from-gradient-accent-start to-gradient-accent-end;
+  }
+
+  .gradient-bg {
+    @apply bg-gradient-to-br from-stratosort-blue/5 via-white to-stratosort-blue/5;
+  }
+
+  .glass-surface {
+    background-image: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.95),
+      rgba(248, 250, 252, 0.7)
+    );
+    @apply border border-white/60 shadow-glass;
+  }
+
+  .modern-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .modern-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .modern-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .modern-scrollbar::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #e2e8f0, #cbd5e1);
+    border-radius: 999px;
+  }
+
+  /* Desktop-specific grid utilities */
+  .desktop-grid-2 {
+    @apply grid gap-6;
+  }
+
+  @media (min-width: 1280px) {
+    .desktop-grid-2 {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  .desktop-grid-3 {
+    @apply grid gap-6;
+  }
+
+  @media (min-width: 1440px) {
+    .desktop-grid-3 {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  /* Desktop sidebar layout */
+  .desktop-sidebar-layout {
+    @apply flex flex-col gap-6;
+  }
+
+  @media (min-width: 1280px) {
+    .desktop-sidebar-layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 2rem;
+    }
+  }
+
+  @media (min-width: 1600px) {
+    .desktop-sidebar-layout {
+      grid-template-columns: 320px 1fr;
+    }
+  }
+
+  /* Responsive spacing utilities for desktop */
+  .desktop-spacing-lg {
+    @apply gap-6;
+  }
+
+  @media (min-width: 1440px) {
+    .desktop-spacing-lg {
+      gap: 2rem;
+    }
+  }
+
+  @media (min-width: 1920px) {
+    .desktop-spacing-lg {
+      gap: 2.5rem;
+    }
+  }
+}

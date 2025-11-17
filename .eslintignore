@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+coverage/
+assets/
+tmpUserData/
+release/build/
+
+**/*.min.js
+**/*.bundle.js
+**/*.map

@@ -1,0 +1,129 @@
+{
+  "productName": "StratoSort",
+  "appId": "com.stratosort.app",
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "stratosort",
+      "repo": "stratosort"
+    }
+  ],
+  "artifactName": "StratoSort-${version}-${os}-${arch}.${ext}",
+  "asar": true,
+  "asarUnpack": "**\\*.{node,dll}",
+  "files": [
+    "dist/**/*",
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/shared/**/*",
+    "package.json",
+    "setup-ollama.js",
+    "!**/*.map",
+    "!test/**",
+    "!coverage/**",
+    "!**/*.test.*",
+    "!**/__tests__/**"
+  ],
+  "extraMetadata": {
+    "main": "src/main/simple-main.js",
+    "version": "1.0.0"
+  },
+  "directories": {
+    "buildResources": "assets",
+    "output": "release/build"
+  },
+  "win": {
+    "icon": "assets/icons/icons/win/icon.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64", "ia32"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "fileAssociations": [
+      { "ext": "pdf", "name": "PDF Document" },
+      { "ext": "doc" },
+      { "ext": "docx" },
+      { "ext": "xlsx" },
+      { "ext": "pptx" },
+      { "ext": "txt" },
+      { "ext": "md" }
+    ],
+    "publisherName": "StratoSort Team"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": "always",
+    "createStartMenuShortcut": true,
+    "shortcutName": "StratoSort",
+    "runAfterFinish": true,
+    "allowElevation": true,
+    "installerIcon": "assets/icons/icons/win/icon.ico",
+    "uninstallerIcon": "assets/icons/icons/win/icon.ico",
+    "installerHeaderIcon": "assets/icons/icons/win/icon.ico",
+    "include": "build/installer.nsh",
+    "artifactName": "StratoSort-Setup-${version}.exe"
+  },
+  "mac": {
+    "icon": "assets/icons/icons/png/512x512.png",
+    "category": "public.app-category.productivity",
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "entitlements": "assets/entitlements.mac.plist",
+    "entitlementsInherit": "assets/entitlements.mac.plist",
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["arm64", "x64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["arm64", "x64"]
+      }
+    ]
+  },
+  "dmg": {
+    "title": "StratoSort ${version}",
+    "icon": "assets/icons/png/512x512.png",
+    "background": "assets/installer/dmg-background.png",
+    "contents": [
+      {
+        "x": 130,
+        "y": 220
+      },
+      {
+        "x": 410,
+        "y": 220,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ]
+  },
+  "linux": {
+    "icon": "assets/icons/icons/png/512x512.png",
+    "target": [
+      {
+        "target": "AppImage",
+        "arch": ["x64"]
+      },
+      {
+        "target": "deb",
+        "arch": ["x64"]
+      }
+    ],
+    "category": "Office"
+  },
+  "extraResources": [
+    {
+      "from": "assets/",
+      "to": "assets/",
+      "filter": ["icons/**", "stratosort-logo.png"]
+    }
+  ]
+}
