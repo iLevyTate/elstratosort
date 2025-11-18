@@ -103,7 +103,7 @@
     "chromadb": "^1.7.3",
     "dotenv": "^17.2.3",
     "electron-debug": "^4.1.0",
-    "electron-log": "^4.4.8",
+    "electron-log": "^5.4.3",
     "electron-updater": "^6.1.4",
     "electron-window-state": "^5.0.3",
     "framer-motion": "^12.23.24",
