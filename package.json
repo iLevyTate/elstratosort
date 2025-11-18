@@ -202,7 +202,7 @@
     "react-refresh": "^0.18.0",
     "react-test-renderer": "^18.2.0",
     "rimraf": "^6.1.0",
-    "sass": "^1.94.0",
+    "sass": "^1.94.1",
     "sass-loader": "^16.0.6",
     "stream-browserify": "^3.0.0",
     "stream-http": "^3.2.0",
