@@ -86,6 +86,12 @@ function sanitizePath(filePath) {
   // 5. Normalize the path (resolves .., ., etc.)
   normalized = path.normalize(normalized);
 
+  // 5a. Remove any remaining ./ or .\ segments that normalize might leave
+  // Replace patterns like /./ or \.\ with just the separator
+  normalized = normalized.replace(/[/\\]\.[/\\]/g, path.sep);
+  // Remove trailing /. or \.
+  normalized = normalized.replace(/[/\\]\.$/g, '');
+
   // 6. Validate path depth to prevent deep nesting attacks
   const pathParts = normalized
     .split(path.sep)

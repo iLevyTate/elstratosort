@@ -23,9 +23,9 @@ describe('AutoOrganizeService - Batch Processing', () => {
 
     // Mock OrganizationSuggestionService
     mockSuggestionService = {
-      getSuggestionsForFile: jest.fn(),
-      getBatchSuggestions: jest.fn(),
-      recordFeedback: jest.fn(),
+      getSuggestionsForFile: jest.fn().mockResolvedValue(null),
+      getBatchSuggestions: jest.fn().mockResolvedValue({ success: false, groups: [] }),
+      recordFeedback: jest.fn().mockResolvedValue(undefined),
     };
 
     mockSettingsService = {

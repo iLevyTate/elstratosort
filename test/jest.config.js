@@ -39,6 +39,7 @@ module.exports = {
     '^xlsx-populate$': '<rootDir>/mocks/xlsx.js',
     '^sanitize-html$': '<rootDir>/mocks/sanitize-html.js',
     '^music-metadata$': '<rootDir>/mocks/music-metadata.js',
+    '^pdf-parse$': '<rootDir>/mocks/pdf-parse.js',
   },
 
   // Global setup for DOM-dependent packages

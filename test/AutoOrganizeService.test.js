@@ -120,7 +120,7 @@ describe('AutoOrganizeService', () => {
         const result = await service.organizeFiles(files, mockSmartFolders);
 
         expect(result.organized).toHaveLength(1);
-        expect(result.organized[0].method).toBe('automatic');
+        expect(result.organized[0].method).toBe('individual-automatic');
         expect(result.organized[0].confidence).toBe(0.9);
         expect(result.needsReview).toHaveLength(0);
         expect(result.failed).toHaveLength(0);
@@ -253,7 +253,7 @@ describe('AutoOrganizeService', () => {
         const result = await service.organizeFiles(files, mockSmartFolders);
 
         expect(result.organized).toHaveLength(1);
-        expect(result.organized[0].method).toBe('low-confidence-fallback');
+        expect(result.organized[0].method).toBe('individual-low-confidence-fallback');
         expect(result.organized[0].confidence).toBe(0.2);
       });
 
@@ -274,7 +274,7 @@ describe('AutoOrganizeService', () => {
         const result = await service.organizeFiles(files, mockSmartFolders);
 
         expect(result.organized).toHaveLength(1);
-        expect(result.organized[0].method).toBe('fallback');
+        expect(result.organized[0].method).toBe('individual-fallback');
         expect(result.organized[0].confidence).toBe(0.3);
       });
     });
@@ -296,7 +296,7 @@ describe('AutoOrganizeService', () => {
         expect(result.failed).toHaveLength(0);
         // Should have low confidence and use no-analysis-default method
         expect(result.organized[0].confidence).toBe(0.1);
-        expect(result.organized[0].method).toBe('no-analysis-default');
+        expect(result.organized[0].method).toBe('no-analysis-default-batch');
       });
 
       test('handles suggestion service errors', async () => {
@@ -320,7 +320,7 @@ describe('AutoOrganizeService', () => {
         // service is unavailable.
         expect(result.organized).toHaveLength(1);
         expect(result.failed).toHaveLength(0);
-        expect(result.organized[0].method).toBe('suggestion-error-fallback');
+        expect(result.organized[0].method).toBe('individual-suggestion-error-fallback');
         expect(result.organized[0].confidence).toBe(0.2);
       });
 
