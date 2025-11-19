@@ -13,6 +13,7 @@ const isDev = process.env.NODE_ENV === 'development';
 
 // Logging utility
 const { logger } = require('../shared/logger');
+logger.setContext('Main');
 
 // Import error handling system (not needed directly in this file)
 
@@ -294,15 +295,31 @@ try {
   );
 }
 
+// MEDIUM PRIORITY FIX (MED-2): Time-based sliding window for GPU failure tracking
 let gpuFailureCount = 0;
+let lastGpuFailureTime = 0;
+const GPU_FAILURE_RESET_WINDOW = 60 * 60 * 1000; // Reset counter after 1 hour of stability
+
 const gpuProcessHandler = (event, details) => {
   if (details?.type === 'GPU') {
+    const now = Date.now();
+
+    // Reset counter if last failure was more than 1 hour ago
+    if (now - lastGpuFailureTime > GPU_FAILURE_RESET_WINDOW) {
+      gpuFailureCount = 0;
+      logger.debug('[GPU] Failure counter reset after stability window');
+    }
+
     gpuFailureCount += 1;
+    lastGpuFailureTime = now;
+
     logger.error('[GPU] Process exited', {
       reason: details?.reason,
       exitCode: details?.exitCode,
       crashCount: gpuFailureCount,
+      lastFailure: new Date(lastGpuFailureTime).toISOString(),
     });
+
     if (
       gpuFailureCount >= 2 &&
       process.env.STRATOSORT_FORCE_SOFTWARE_GPU !== '1'
@@ -632,13 +649,16 @@ function createWindow() {
   mainWindow.on('close', closeHandler);
 
   const closedHandler = () => {
-    // Remove all event listeners before nulling reference
+    // CRITICAL FIX: Enhanced cleanup with proper error handling and null checks
     if (windowEventHandlers.size > 0) {
       for (const [event, handler] of windowEventHandlers) {
         try {
-          mainWindow.removeListener(event, handler);
+          // Check if window still exists and is not destroyed before removing listener
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.removeListener(event, handler);
+          }
         } catch (e) {
-          // Window already destroyed
+          logger.error(`[WINDOW] Failed to remove ${event} listener:`, e);
         }
       }
       windowEventHandlers.clear();
@@ -647,6 +667,14 @@ function createWindow() {
   };
   windowEventHandlers.set('closed', closedHandler);
   mainWindow.on('closed', closedHandler);
+
+  // CRITICAL FIX: Also register cleanup on 'destroy' event to catch cases where window
+  // is destroyed without triggering 'closed' event
+  const destroyHandler = () => {
+    logger.warn('[WINDOW] Window destroyed - forcing cleanup');
+    closedHandler();
+  };
+  mainWindow.once('destroy', destroyHandler);
 }
 
 function updateDownloadWatcher(settings) {
@@ -669,7 +697,14 @@ function updateDownloadWatcher(settings) {
 }
 
 function handleSettingsChanged(settings) {
-  currentSettings = settings || {};
+  // MEDIUM PRIORITY FIX (MED-1): Validate settings structure before use
+  if (!settings || typeof settings !== 'object') {
+    logger.warn('[SETTINGS] Invalid settings received, using defaults');
+    currentSettings = {};
+    return;
+  }
+
+  currentSettings = settings;
   updateDownloadWatcher(settings);
   try {
     updateTrayMenu();
@@ -846,11 +881,12 @@ app.whenReady().then(async () => {
     let startupResult;
     try {
       // Add a hard timeout to prevent hanging
+      const { TIMEOUTS } = require('../shared/performanceConstants');
       const startupPromise = startupManager.startup();
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
           reject(new Error('Startup manager timeout after 30 seconds'));
-        }, 30000); // 30 second hard timeout
+        }, TIMEOUTS.SERVICE_STARTUP); // 30 second hard timeout
       });
 
       startupResult = await Promise.race([startupPromise, timeoutPromise]);
@@ -868,12 +904,62 @@ app.whenReady().then(async () => {
     }
 
     // Load custom folders
-    customFolders = await loadCustomFolders();
-    logger.info(
-      '[STARTUP] Loaded custom folders:',
-      customFolders.length,
-      'folders',
-    );
+    // MEDIUM PRIORITY FIX (MED-3): Validate custom folders structure
+    try {
+      const loadedFolders = await loadCustomFolders();
+
+      // Validate loaded data
+      if (!Array.isArray(loadedFolders)) {
+        logger.warn(
+          '[STARTUP] Invalid custom folders data (not an array), using empty array',
+        );
+        customFolders = [];
+      } else {
+        // Filter out invalid folder entries
+        customFolders = loadedFolders.filter((folder) => {
+          if (!folder || typeof folder !== 'object') {
+            logger.warn(
+              '[STARTUP] Skipping invalid folder entry (not an object)',
+            );
+            return false;
+          }
+          if (!folder.id || typeof folder.id !== 'string') {
+            logger.warn('[STARTUP] Skipping folder without valid id:', folder);
+            return false;
+          }
+          if (!folder.name || typeof folder.name !== 'string') {
+            logger.warn(
+              '[STARTUP] Skipping folder without valid name:',
+              folder,
+            );
+            return false;
+          }
+          if (!folder.path || typeof folder.path !== 'string') {
+            logger.warn(
+              '[STARTUP] Skipping folder without valid path:',
+              folder,
+            );
+            return false;
+          }
+          return true;
+        });
+
+        if (customFolders.length !== loadedFolders.length) {
+          logger.warn(
+            `[STARTUP] Filtered out ${loadedFolders.length - customFolders.length} invalid folder entries`,
+          );
+        }
+      }
+
+      logger.info(
+        '[STARTUP] Loaded custom folders:',
+        customFolders.length,
+        'folders',
+      );
+    } catch (error) {
+      logger.error('[STARTUP] Failed to load custom folders:', error.message);
+      customFolders = [];
+    }
 
     // Ensure default "Uncategorized" folder exists
     // CRITICAL FIX: Add null checks with optional chaining to prevent NULL dereference
@@ -1036,21 +1122,42 @@ app.whenReady().then(async () => {
     // Create application menu with theme
     createApplicationMenu();
 
-    // Fixed: Give IPC handlers a moment to fully register before verification
-    // Some handlers may have async initialization
-    await new Promise((resolve) => setImmediate(resolve));
+    // Register IPC event listeners (not handlers) for renderer-to-main communication
+    ipcMain.on('renderer-error-report', (event, errorData) => {
+      try {
+        logger.error('[RENDERER ERROR]', {
+          message: errorData?.message || 'Unknown error',
+          stack: errorData?.stack,
+          componentStack: errorData?.componentStack,
+          type: errorData?.type || 'unknown',
+          timestamp: errorData?.timestamp || new Date().toISOString(),
+        });
+      } catch (err) {
+        logger.error('[RENDERER ERROR] Failed to process error report:', err);
+      }
+    });
+
+    // HIGH PRIORITY FIX (HIGH-1): Removed unreliable setImmediate delay
+    // The verifyIpcHandlersRegistered() function has robust retry logic with
+    // exponential backoff and timeout, so no pre-delay is needed
 
     // VERIFY all critical IPC handlers are registered before creating the window
     // This prevents race conditions where the renderer tries to call IPC methods before they're ready
+    logger.info('[STARTUP] Verifying IPC handlers are registered...');
     const handlersReady = await verifyIpcHandlersRegistered();
+
     if (!handlersReady) {
-      logger.warn(
-        '[STARTUP] Some IPC handlers not registered, continuing in degraded mode',
+      logger.error(
+        '[STARTUP] ⚠️ CRITICAL: Some IPC handlers not registered after verification timeout',
+      );
+      logger.error(
+        '[STARTUP] App may not function correctly. Consider increasing timeout or checking handler registration logic.',
       );
       // Don't throw - allow app to start in degraded mode
       // The handlers may register later or may be optional
+      // This prevents complete app failure, but user will see errors for missing functionality
     } else {
-      logger.info('[STARTUP] All IPC handlers verified and ready');
+      logger.info('[STARTUP] ✅ All critical IPC handlers verified and ready');
     }
 
     createWindow();
@@ -1184,12 +1291,14 @@ app.whenReady().then(async () => {
           default: installExtension,
           REACT_DEVELOPER_TOOLS,
         } = require('electron-devtools-installer');
-        await installExtension(REACT_DEVELOPER_TOOLS).catch((error) => {
-          logger.warn(
-            '[DEVTOOLS] Failed to install React DevTools:',
-            error.message,
-          );
-        });
+        try {
+          await installExtension(REACT_DEVELOPER_TOOLS);
+        } catch (error) {
+          logger.warn('Failed to install React DevTools', {
+            error: error.message,
+            stack: error.stack,
+          });
+        }
       }
     } catch (error) {
       logger.error('[DEVTOOLS] Failed to setup React DevTools:', error);
@@ -1239,9 +1348,14 @@ app.whenReady().then(async () => {
             );
           }
         });
-        autoUpdater
-          .checkForUpdatesAndNotify()
-          .catch((e) => logger.error('[UPDATER] check failed', e));
+        try {
+          await autoUpdater.checkForUpdatesAndNotify();
+        } catch (e) {
+          logger.error('Update check failed', {
+            error: e.message,
+            stack: e.stack,
+          });
+        }
       }
     } catch (error) {
       logger.error('[UPDATER] Failed to setup auto-updater:', error);
@@ -1271,235 +1385,277 @@ logger.info('[UI] Modern UI loaded with GPU acceleration');
 app.on('before-quit', async () => {
   isQuitting = true;
 
-  // Clean up all intervals first
-  if (metricsInterval) {
-    clearInterval(metricsInterval);
-    metricsInterval = null;
-    logger.info('[CLEANUP] Metrics interval cleared');
-  }
+  // HIGH PRIORITY FIX (HIGH-2): Add hard timeout for all cleanup operations
+  // Prevents hanging on shutdown and ensures app quits even if cleanup fails
+  const CLEANUP_TIMEOUT = 5000; // 5 seconds max for all cleanup
+  const cleanupStartTime = Date.now();
 
-  // Clean up download watcher
-  if (downloadWatcher) {
-    try {
-      downloadWatcher.stop();
-      downloadWatcher = null;
-      logger.info('[CLEANUP] Download watcher stopped');
-    } catch (error) {
-      logger.error('[CLEANUP] Failed to stop download watcher:', error);
+  logger.info('[SHUTDOWN] Starting cleanup with 5-second timeout...');
+
+  // Wrap ALL cleanup in a timeout promise
+  const cleanupPromise = (async () => {
+    // Clean up all intervals first
+    if (metricsInterval) {
+      clearInterval(metricsInterval);
+      metricsInterval = null;
+      logger.info('[CLEANUP] Metrics interval cleared');
     }
-  }
 
-  // Clean up child process listeners
-  for (const cleanup of childProcessListeners) {
-    try {
-      cleanup();
-    } catch (error) {
-      logger.error(
-        '[CLEANUP] Failed to clean up child process listener:',
-        error,
-      );
+    // Clean up download watcher
+    if (downloadWatcher) {
+      try {
+        downloadWatcher.stop();
+        downloadWatcher = null;
+        logger.info('[CLEANUP] Download watcher stopped');
+      } catch (error) {
+        logger.error('[CLEANUP] Failed to stop download watcher:', error);
+      }
     }
-  }
-  childProcessListeners = [];
 
-  // Clean up global process listeners
-  for (const cleanup of globalProcessListeners) {
-    try {
-      cleanup();
-    } catch (error) {
-      logger.error(
-        '[CLEANUP] Failed to clean up global process listener:',
-        error,
-      );
-    }
-  }
-  globalProcessListeners = [];
-
-  // Clean up app event listeners
-  for (const cleanup of eventListeners) {
-    try {
-      cleanup();
-    } catch (error) {
-      logger.error('[CLEANUP] Failed to clean up app event listener:', error);
-    }
-  }
-  eventListeners = [];
-
-  // Clean up IPC listeners
-  try {
-    ipcMain.removeAllListeners();
-    logger.info('[CLEANUP] All IPC listeners removed');
-  } catch (error) {
-    logger.error('[CLEANUP] Failed to remove IPC listeners:', error);
-  }
-
-  // Clean up tray
-  if (tray) {
-    try {
-      tray.destroy();
-      tray = null;
-      logger.info('[CLEANUP] System tray destroyed');
-    } catch (error) {
-      logger.error('[CLEANUP] Failed to destroy tray:', error);
-    }
-  }
-
-  // Use StartupManager for graceful shutdown
-  try {
-    const startupManager = getStartupManager();
-    await startupManager.shutdown();
-    logger.info('[SHUTDOWN] StartupManager cleanup completed');
-  } catch (error) {
-    logger.error('[SHUTDOWN] StartupManager cleanup failed:', error);
-  }
-
-  // Legacy chromaDbProcess cleanup (fallback if StartupManager didn't handle it)
-  if (chromaDbProcess) {
-    logger.info(
-      '[ChromaDB] Stopping ChromaDB server process (PID: ' +
-        chromaDbProcess.pid +
-        ')',
-    );
-    try {
-      // Remove all listeners first
-      chromaDbProcess.removeAllListeners();
-
-      // Fixed: Use synchronous kill to ensure completion before continuing
-      if (process.platform === 'win32') {
-        // On Windows, use async taskkill with force flag to avoid blocking
-        const { asyncSpawn } = require('./utils/asyncSpawnUtils');
-        const result = await asyncSpawn(
-          'taskkill',
-          ['/pid', chromaDbProcess.pid, '/f', '/t'],
-          {
-            windowsHide: true,
-            timeout: 5000, // 5 second timeout for taskkill
-            encoding: 'utf8',
-          },
+    // Clean up child process listeners
+    for (const cleanup of childProcessListeners) {
+      try {
+        cleanup();
+      } catch (error) {
+        logger.error(
+          '[CLEANUP] Failed to clean up child process listener:',
+          error,
         );
+      }
+    }
+    childProcessListeners = [];
 
-        if (result.status === 0) {
-          logger.info(
-            '[ChromaDB] ✓ Process terminated successfully (taskkill)',
+    // Clean up global process listeners
+    for (const cleanup of globalProcessListeners) {
+      try {
+        cleanup();
+      } catch (error) {
+        logger.error(
+          '[CLEANUP] Failed to clean up global process listener:',
+          error,
+        );
+      }
+    }
+    globalProcessListeners = [];
+
+    // Clean up app event listeners
+    for (const cleanup of eventListeners) {
+      try {
+        cleanup();
+      } catch (error) {
+        logger.error('[CLEANUP] Failed to clean up app event listener:', error);
+      }
+    }
+    eventListeners = [];
+
+    // Clean up IPC listeners
+    try {
+      ipcMain.removeAllListeners();
+      logger.info('[CLEANUP] All IPC listeners removed');
+    } catch (error) {
+      logger.error('[CLEANUP] Failed to remove IPC listeners:', error);
+    }
+
+    // Clean up tray
+    if (tray) {
+      try {
+        tray.destroy();
+        tray = null;
+        logger.info('[CLEANUP] System tray destroyed');
+      } catch (error) {
+        logger.error('[CLEANUP] Failed to destroy tray:', error);
+      }
+    }
+
+    // Use StartupManager for graceful shutdown
+    try {
+      const startupManager = getStartupManager();
+      await startupManager.shutdown();
+      logger.info('[SHUTDOWN] StartupManager cleanup completed');
+    } catch (error) {
+      logger.error('[SHUTDOWN] StartupManager cleanup failed:', error);
+    }
+
+    // Legacy chromaDbProcess cleanup (fallback if StartupManager didn't handle it)
+    if (chromaDbProcess) {
+      logger.info(
+        '[ChromaDB] Stopping ChromaDB server process (PID: ' +
+          chromaDbProcess.pid +
+          ')',
+      );
+      try {
+        // Remove all listeners first
+        chromaDbProcess.removeAllListeners();
+
+        // Fixed: Use synchronous kill to ensure completion before continuing
+        if (process.platform === 'win32') {
+          // On Windows, use async taskkill with force flag to avoid blocking
+          const { asyncSpawn } = require('./utils/asyncSpawnUtils');
+          const result = await asyncSpawn(
+            'taskkill',
+            ['/pid', chromaDbProcess.pid, '/f', '/t'],
+            {
+              windowsHide: true,
+              timeout: 5000, // 5 second timeout for taskkill
+              encoding: 'utf8',
+            },
           );
-        } else if (result.error) {
-          logger.error('[ChromaDB] Taskkill error:', result.error.message);
+
+          if (result.status === 0) {
+            logger.info(
+              '[ChromaDB] ✓ Process terminated successfully (taskkill)',
+            );
+          } else if (result.error) {
+            logger.error('[ChromaDB] Taskkill error:', result.error.message);
+          } else {
+            logger.warn('[ChromaDB] Taskkill exited with code:', result.status);
+            if (result.stderr) {
+              logger.warn('[ChromaDB] Taskkill stderr:', result.stderr.trim());
+            }
+          }
         } else {
-          logger.warn('[ChromaDB] Taskkill exited with code:', result.status);
-          if (result.stderr) {
-            logger.warn('[ChromaDB] Taskkill stderr:', result.stderr.trim());
+          // On Unix-like systems, use synchronous kill commands
+          const { execSync } = require('child_process');
+          try {
+            // Try SIGTERM first for graceful shutdown
+            execSync(`kill -TERM -${chromaDbProcess.pid}`, { timeout: 100 });
+            logger.info('[ChromaDB] Sent SIGTERM to process group');
+
+            // Synchronous sleep for 2 seconds using shell command
+            try {
+              execSync('sleep 2', { timeout: 3000 });
+            } catch (e) {
+              // Timeout or error is fine, continue
+            }
+
+            // Force kill if still alive
+            try {
+              execSync(`kill -KILL -${chromaDbProcess.pid}`, { timeout: 100 });
+              logger.info('[ChromaDB] Sent SIGKILL to process group');
+            } catch (killError) {
+              // Process already dead, this is fine
+              logger.info('[ChromaDB] Process already terminated');
+            }
+          } catch (termError) {
+            // ESRCH means process not found, which is fine
+            logger.info('[ChromaDB] Process already terminated or not found');
           }
         }
-      } else {
-        // On Unix-like systems, use synchronous kill commands
+
+        // Synchronous sleep for cleanup
         const { execSync } = require('child_process');
         try {
-          // Try SIGTERM first for graceful shutdown
-          execSync(`kill -TERM -${chromaDbProcess.pid}`, { timeout: 100 });
-          logger.info('[ChromaDB] Sent SIGTERM to process group');
-
-          // Synchronous sleep for 2 seconds using shell command
-          try {
-            execSync('sleep 2', { timeout: 3000 });
-          } catch (e) {
-            // Timeout or error is fine, continue
+          if (process.platform === 'win32') {
+            execSync('timeout /t 1 /nobreak', {
+              timeout: 2000,
+              windowsHide: true,
+            });
+          } else {
+            execSync('sleep 0.5', { timeout: 1000 });
           }
-
-          // Force kill if still alive
-          try {
-            execSync(`kill -KILL -${chromaDbProcess.pid}`, { timeout: 100 });
-            logger.info('[ChromaDB] Sent SIGKILL to process group');
-          } catch (killError) {
-            // Process already dead, this is fine
-            logger.info('[ChromaDB] Process already terminated');
-          }
-        } catch (termError) {
-          // ESRCH means process not found, which is fine
-          logger.info('[ChromaDB] Process already terminated or not found');
+        } catch (e) {
+          // Timeout is fine
         }
-      }
 
-      // Synchronous sleep for cleanup
-      const { execSync } = require('child_process');
-      try {
-        if (process.platform === 'win32') {
-          execSync('timeout /t 1 /nobreak', {
-            timeout: 2000,
-            windowsHide: true,
-          });
-        } else {
-          execSync('sleep 0.5', { timeout: 1000 });
+        // Verify process is actually terminated
+        try {
+          process.kill(chromaDbProcess.pid, 0); // Signal 0 just checks if process exists
+          logger.warn(
+            '[ChromaDB] ⚠️ Process may still be running after kill attempt!',
+          );
+        } catch (e) {
+          if (e.code === 'ESRCH') {
+            logger.info('[ChromaDB] ✓ Process confirmed terminated');
+          } else {
+            logger.warn('[ChromaDB] Process check error:', e.message);
+          }
         }
       } catch (e) {
-        // Timeout is fine
+        logger.error('[ChromaDB] Error stopping ChromaDB process:', e);
       }
+      chromaDbProcess = null;
+    }
 
-      // Verify process is actually terminated
+    // Clean up service integration
+    if (serviceIntegration) {
       try {
-        process.kill(chromaDbProcess.pid, 0); // Signal 0 just checks if process exists
-        logger.warn(
-          '[ChromaDB] ⚠️ Process may still be running after kill attempt!',
+        // Ensure all services are properly shut down
+        await serviceIntegration.shutdown?.();
+        logger.info('[CLEANUP] Service integration shut down');
+      } catch (error) {
+        logger.error(
+          '[CLEANUP] Failed to shut down service integration:',
+          error,
         );
-      } catch (e) {
-        if (e.code === 'ESRCH') {
-          logger.info('[ChromaDB] ✓ Process confirmed terminated');
-        } else {
-          logger.warn('[ChromaDB] Process check error:', e.message);
-        }
       }
-    } catch (e) {
-      logger.error('[ChromaDB] Error stopping ChromaDB process:', e);
     }
-    chromaDbProcess = null;
-  }
 
-  // Clean up service integration
-  if (serviceIntegration) {
+    // Fixed: Clean up settings service file watcher
+    if (settingsService) {
+      try {
+        settingsService.shutdown?.();
+        logger.info('[CLEANUP] Settings service shut down');
+      } catch (error) {
+        logger.error('[CLEANUP] Failed to shut down settings service:', error);
+      }
+    }
+
+    // Clean up system analytics
     try {
-      // Ensure all services are properly shut down
-      await serviceIntegration.shutdown?.();
-      logger.info('[CLEANUP] Service integration shut down');
-    } catch (error) {
-      logger.error('[CLEANUP] Failed to shut down service integration:', error);
+      systemAnalytics.destroy();
+      logger.info('[CLEANUP] System analytics destroyed');
+    } catch {
+      // Silently ignore destroy errors on quit
     }
-  }
 
-  // Fixed: Clean up settings service file watcher
-  if (settingsService) {
+    // Post-shutdown verification: Verify all resources are released
+    const shutdownTimeout = 10000; // 10 seconds max for shutdown
+
     try {
-      settingsService.shutdown?.();
-      logger.info('[CLEANUP] Settings service shut down');
-    } catch (error) {
-      logger.error('[CLEANUP] Failed to shut down settings service:', error);
-    }
-  }
-
-  // Clean up system analytics
-  try {
-    systemAnalytics.destroy();
-    logger.info('[CLEANUP] System analytics destroyed');
-  } catch {
-    // Silently ignore destroy errors on quit
-  }
-
-  // Post-shutdown verification: Verify all resources are released
-  const shutdownTimeout = 10000; // 10 seconds max for shutdown
-
-  try {
-    await Promise.race([
-      verifyShutdownCleanup(),
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error('Shutdown verification timeout')),
-          shutdownTimeout,
+      await Promise.race([
+        verifyShutdownCleanup(),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Shutdown verification timeout')),
+            shutdownTimeout,
+          ),
         ),
-      ),
-    ]);
+      ]);
+    } catch (error) {
+      logger.warn(
+        '[SHUTDOWN-VERIFY] Verification failed or timed out:',
+        error.message,
+      );
+    }
+  })(); // Close cleanup promise wrapper
+
+  // HIGH PRIORITY FIX (HIGH-2): Race cleanup against timeout
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(
+      () => reject(new Error('Cleanup timeout exceeded')),
+      CLEANUP_TIMEOUT,
+    ),
+  );
+
+  try {
+    await Promise.race([cleanupPromise, timeoutPromise]);
+    const elapsed = Date.now() - cleanupStartTime;
+    logger.info(`[SHUTDOWN] ✅ Cleanup completed successfully in ${elapsed}ms`);
   } catch (error) {
-    logger.warn(
-      '[SHUTDOWN-VERIFY] Verification failed or timed out:',
-      error.message,
-    );
+    const elapsed = Date.now() - cleanupStartTime;
+    if (error.message === 'Cleanup timeout exceeded') {
+      logger.error(
+        `[SHUTDOWN] ⚠️ Cleanup timed out after ${elapsed}ms (max: ${CLEANUP_TIMEOUT}ms)`,
+      );
+      logger.error(
+        '[SHUTDOWN] Forcing app quit to prevent hanging. Some resources may not be properly released.',
+      );
+    } else {
+      logger.error(
+        `[SHUTDOWN] Cleanup failed after ${elapsed}ms:`,
+        error.message,
+      );
+    }
   }
 });
 

@@ -1,11 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
+import { logger } from '../../../shared/logger';
 import { Card, Button } from '../ui';
 import OrganizationSuggestions from './OrganizationSuggestions';
 import BatchOrganizationSuggestions from './BatchOrganizationSuggestions';
 import OrganizationPreview from './OrganizationPreview';
 // HIGH PRIORITY FIX #8: Use GlobalErrorBoundary for better error handling and reporting
 import GlobalErrorBoundary from '../GlobalErrorBoundary';
+
+// Set logger context for this component
+logger.setContext('SmartOrganizer');
 
 /**
  * SmartOrganizer - Simplified, intuitive interface for file organization
@@ -56,7 +60,10 @@ function SmartOrganizer({
         await window.electronAPI.suggestions.analyzeFolderStructure(files);
       setFolderImprovements(improvements.improvements || []);
     } catch (error) {
-      console.error('Failed to analyze files:', error);
+      logger.error('Failed to analyze files', {
+        error: error.message,
+        stack: error.stack,
+      });
     } finally {
       setIsAnalyzing(false);
     }
@@ -92,20 +99,38 @@ function SmartOrganizer({
     }));
 
     // Record feedback for learning
-    window.electronAPI.suggestions
-      .recordFeedback(file, suggestion, true)
-      .catch((error) => {
-        console.error('Failed to record feedback:', error);
-      });
+    (async () => {
+      try {
+        await window.electronAPI.suggestions.recordFeedback(
+          file,
+          suggestion,
+          true,
+        );
+      } catch (error) {
+        logger.error('Failed to record feedback', {
+          error: error.message,
+          stack: error.stack,
+        });
+      }
+    })();
   };
 
   const handleRejectSuggestion = (file, suggestion) => {
     // Record feedback for learning
-    window.electronAPI.suggestions
-      .recordFeedback(file, suggestion, false)
-      .catch((error) => {
-        console.error('Failed to record feedback:', error);
-      });
+    (async () => {
+      try {
+        await window.electronAPI.suggestions.recordFeedback(
+          file,
+          suggestion,
+          false,
+        );
+      } catch (error) {
+        logger.error('Failed to record feedback', {
+          error: error.message,
+          stack: error.stack,
+        });
+      }
+    })();
   };
 
   const handleConfirmOrganization = () => {
@@ -266,7 +291,10 @@ function SmartOrganizer({
                     size="sm"
                     variant="secondary"
                     className="mt-2"
-                    onClick={() => console.log('Show improvements')}
+                    onClick={() => {
+                      // LOW PRIORITY FIX (LOW-2): Remove console.log placeholder
+                      // TODO: Implement show improvements functionality
+                    }}
                   >
                     View Improvements
                   </Button>
@@ -291,13 +319,14 @@ function SmartOrganizer({
             <GlobalErrorBoundary>
               <BatchOrganizationSuggestions
                 batchSuggestions={batchSuggestions}
-                onAcceptStrategy={(strategy) => {
+                onAcceptStrategy={() => {
+                  // LOW PRIORITY FIX (LOW-2): Remove console.log debug statement
                   // Apply strategy to all files
-                  console.log('Applying strategy:', strategy);
                   setCurrentStep('preview');
                 }}
-                onCustomizeGroup={(groupIndex, group) => {
-                  console.log('Customizing group:', groupIndex, group);
+                onCustomizeGroup={() => {
+                  // LOW PRIORITY FIX (LOW-2): Remove console.log debug statement
+                  // TODO: Implement customize group functionality
                 }}
                 onRejectAll={onCancel}
               />

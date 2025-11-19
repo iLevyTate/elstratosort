@@ -7,7 +7,11 @@ import React, {
   useCallback,
 } from 'react';
 import PropTypes from 'prop-types';
+import { logger } from '../../shared/logger';
 import { ConfirmModal } from './Modal';
+
+// Set logger context for this component
+logger.setContext('UndoRedoSystem');
 
 // Undo/Redo Context
 const UndoRedoContext = createContext();
@@ -16,16 +20,19 @@ const UndoRedoContext = createContext();
 function useSimpleNotifications() {
   return {
     showSuccess: (title, description) => {
-      console.log(`✅ ${title}: ${description}`);
-      // Could integrate with window.electronAPI for toast notifications if available
+      // Debug logging in development mode
+      if (process.env.NODE_ENV === 'development') {
+        logger.debug('Undo/Redo success', { title, description });
+      }
     },
     showError: (title, description) => {
-      console.error(`❌ ${title}: ${description}`);
-      // Could integrate with window.electronAPI for toast notifications if available
+      logger.error('Undo/Redo error', { title, description });
     },
     showInfo: (title, description) => {
-      console.log(`ℹ️ ${title}: ${description}`);
-      // Could integrate with window.electronAPI for toast notifications if available
+      // Debug logging in development mode
+      if (process.env.NODE_ENV === 'development') {
+        logger.debug('Undo/Redo info', { title, description });
+      }
     },
   };
 }

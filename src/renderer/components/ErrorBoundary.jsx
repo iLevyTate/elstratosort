@@ -1,5 +1,8 @@
 import React from 'react';
 import PropTypes from 'prop-types';
+import { logger } from '../../shared/logger';
+
+logger.setContext('ErrorBoundary');
 
 /**
  * Simple React error boundary that logs errors to the console and
@@ -19,20 +22,18 @@ class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, info) {
     // Log the error for visibility in development and production logs
-    // eslint-disable-next-line no-console
-    console.error(
-      '[RENDERER] Unhandled error caught by ErrorBoundary:',
-      error,
-      info,
-    );
+    logger.error('Unhandled error caught by ErrorBoundary', {
+      error: error.message,
+      stack: error.stack,
+      componentStack: info?.componentStack,
+    });
   }
 
   handleReset() {
+    // MEDIUM PRIORITY FIX (MED-2): Remove window.confirm usage
+    // Reset error state to attempt recovery without full reload
+    // User can use "Reload App" button if recovery doesn't work
     this.setState({ hasError: false, error: null });
-    // Optionally reload the window for a fresh start
-    if (window.confirm('Would you like to reload the application?')) {
-      window.location.reload();
-    }
   }
 
   render() {

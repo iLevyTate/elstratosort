@@ -13,19 +13,45 @@ import {
   PHASE_METADATA,
   UI_WORKFLOW,
 } from '../../shared/constants';
+import { logger } from '../../shared/logger';
+logger.setContext('PhaseContext');
 
 function phaseReducer(state, action) {
   switch (action.type) {
     case 'ADVANCE_PHASE': {
+      // MEDIUM PRIORITY FIX (MED-1): Validate payload structure
+      if (!action.payload || typeof action.payload !== 'object') {
+        logger.error('Invalid payload in ADVANCE_PHASE action', {
+          payload: action.payload,
+        });
+        return state;
+      }
+
       const { targetPhase, data = {} } = action.payload;
+
+      // Validate targetPhase
+      if (!targetPhase || typeof targetPhase !== 'string') {
+        logger.error('Invalid or missing targetPhase in ADVANCE_PHASE action', {
+          targetPhase,
+        });
+        return state;
+      }
+
+      // Validate data is an object
+      if (data !== null && typeof data !== 'object') {
+        logger.error('Invalid data in ADVANCE_PHASE action', { data });
+        return state;
+      }
+
       const allowedTransitions = PHASE_TRANSITIONS[state.currentPhase] || [];
       if (
         targetPhase !== state.currentPhase &&
         !allowedTransitions.includes(targetPhase)
       ) {
-        console.warn(
-          `Invalid transition from ${state.currentPhase} to ${targetPhase}`,
-        );
+        logger.warn('Invalid phase transition', {
+          from: state.currentPhase,
+          to: targetPhase,
+        });
         return state;
       }
       return {
@@ -35,6 +61,21 @@ function phaseReducer(state, action) {
       };
     }
     case 'SET_PHASE_DATA':
+      // MEDIUM PRIORITY FIX (MED-1): Validate payload structure
+      if (!action.payload || typeof action.payload !== 'object') {
+        logger.error('Invalid payload in SET_PHASE_DATA action', {
+          payload: action.payload,
+        });
+        return state;
+      }
+
+      if (!action.payload.key || typeof action.payload.key !== 'string') {
+        logger.error('Invalid or missing key in SET_PHASE_DATA action', {
+          key: action.payload.key,
+        });
+        return state;
+      }
+
       return {
         ...state,
         phaseData: {
@@ -43,14 +84,41 @@ function phaseReducer(state, action) {
         },
       };
     case 'SET_LOADING':
+      // MEDIUM PRIORITY FIX (MED-1): Validate payload
+      if (!action.payload || typeof action.payload.isLoading !== 'boolean') {
+        logger.error('Invalid isLoading in SET_LOADING action', {
+          payload: action.payload,
+        });
+        return state;
+      }
       return { ...state, isLoading: action.payload.isLoading };
+
     case 'TOGGLE_SETTINGS':
       return { ...state, showSettings: !state.showSettings };
+
     case 'RESTORE_STATE':
+      // MEDIUM PRIORITY FIX (MED-1): Validate payload
+      if (!action.payload || typeof action.payload !== 'object') {
+        logger.error('Invalid payload in RESTORE_STATE action', {
+          payload: action.payload,
+        });
+        return state;
+      }
+
+      if (
+        !action.payload.currentPhase ||
+        typeof action.payload.currentPhase !== 'string'
+      ) {
+        logger.error('Invalid currentPhase in RESTORE_STATE action', {
+          currentPhase: action.payload.currentPhase,
+        });
+        return state;
+      }
+
       return {
         ...state,
         currentPhase: action.payload.currentPhase,
-        phaseData: action.payload.phaseData,
+        phaseData: action.payload.phaseData || state.phaseData,
       };
     case 'RESET_WORKFLOW':
       return {
@@ -94,7 +162,10 @@ export function PhaseProvider({ children }) {
         }
       }
     } catch (error) {
-      console.error('Failed to load workflow state:', error);
+      logger.error('Failed to load workflow state', {
+        error: error.message,
+        stack: error.stack,
+      });
       // Fixed: Clear corrupt localStorage data to prevent reload loops
       try {
         localStorage.removeItem('stratosort_workflow_state');
@@ -162,9 +233,7 @@ export function PhaseProvider({ children }) {
       } catch (error) {
         // Fixed: Handle QuotaExceededError specifically
         if (error.name === 'QuotaExceededError') {
-          console.warn(
-            '[PHASE] LocalStorage quota exceeded, clearing old state',
-          );
+          logger.warn('LocalStorage quota exceeded, clearing old state');
           try {
             // Clear the old state and try saving minimal data
             localStorage.removeItem('stratosort_workflow_state');
@@ -180,13 +249,19 @@ export function PhaseProvider({ children }) {
               'stratosort_workflow_state',
               JSON.stringify(minimalState),
             );
-          } catch {
-            console.error(
-              '[PHASE] Cannot save even minimal state, continuing without persistence',
+          } catch (saveError) {
+            logger.error(
+              'Cannot save even minimal state, continuing without persistence',
+              {
+                error: saveError.message,
+              },
             );
           }
         } else {
-          console.error('Failed to save workflow state:', error);
+          logger.error('Failed to save workflow state', {
+            error: error.message,
+            stack: error.stack,
+          });
         }
       }
     };
@@ -217,10 +292,9 @@ export function PhaseProvider({ children }) {
       localStorage.removeItem('stratosort_workflow_state');
     } catch (error) {
       // Fixed: Log localStorage errors instead of silently swallowing
-      console.warn(
-        '[PHASE] Failed to clear workflow state from localStorage:',
-        error,
-      );
+      logger.warn('Failed to clear workflow state from localStorage', {
+        error: error.message,
+      });
     }
     dispatch({ type: 'RESET_WORKFLOW' });
   }, [dispatch]);
@@ -236,13 +310,28 @@ export function PhaseProvider({ children }) {
     [advancePhase, setPhaseData, setLoading, toggleSettings, resetWorkflow],
   );
 
+  // HIGH PRIORITY FIX (HIGH-1): Optimize memoization by destructuring state
+  // This prevents unnecessary re-renders by depending on specific state values
+  const contextValue = useMemo(() => {
+    const getCurrentMetadata = () => PHASE_METADATA[state.currentPhase];
+    return {
+      currentPhase: state.currentPhase,
+      phaseData: state.phaseData,
+      isLoading: state.isLoading,
+      showSettings: state.showSettings,
+      actions,
+      getCurrentMetadata,
+    };
+  }, [
+    state.currentPhase,
+    state.phaseData,
+    state.isLoading,
+    state.showSettings,
+    actions,
+  ]);
+
   return (
-    <PhaseContext.Provider
-      value={useMemo(() => {
-        const getCurrentMetadata = () => PHASE_METADATA[state.currentPhase];
-        return { ...state, actions, getCurrentMetadata };
-      }, [state, actions])}
-    >
+    <PhaseContext.Provider value={contextValue}>
       {children}
     </PhaseContext.Provider>
   );

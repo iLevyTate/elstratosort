@@ -8,6 +8,7 @@ const { app } = require('electron');
 const fs = require('fs').promises;
 const path = require('path');
 const { logger } = require('../../shared/logger');
+logger.setContext('ModelManager');
 
 class ModelManager {
   constructor(host = 'http://127.0.0.1:11434') {
@@ -88,21 +89,32 @@ class ModelManager {
     if (this._isInitializing) {
       // Wait for the ongoing initialization
       return new Promise((resolve) => {
-        let checkInterval;
-        let timeoutId;
+        // HIGH PRIORITY FIX (HIGH-12): Comprehensive timer cleanup
+        let checkInterval = null;
+        let timeoutId = null;
+
+        const cleanup = () => {
+          if (checkInterval !== null) {
+            clearInterval(checkInterval);
+            checkInterval = null;
+          }
+          if (timeoutId !== null) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+        };
 
         try {
           checkInterval = setInterval(() => {
             if (!this._isInitializing) {
-              clearInterval(checkInterval);
-              if (timeoutId) clearTimeout(timeoutId);
+              cleanup();
               resolve(this.initialized);
             }
           }, 100);
 
           // Add timeout to prevent infinite waiting
           timeoutId = setTimeout(() => {
-            if (checkInterval) clearInterval(checkInterval);
+            cleanup();
             resolve(false);
           }, 10000); // 10 second timeout
 
@@ -115,8 +127,7 @@ class ModelManager {
           }
         } catch (error) {
           // Cleanup on error
-          if (checkInterval) clearInterval(checkInterval);
-          if (timeoutId) clearTimeout(timeoutId);
+          cleanup();
           logger.error(
             '[ModelManager] Error setting up initialization wait:',
             error,
@@ -603,6 +614,35 @@ class ModelManager {
       capabilities: this.modelCapabilities.get(model.name) || {},
       isSelected: model.name === this.selectedModel,
     }));
+  }
+
+  /**
+   * HIGH PRIORITY FIX (HIGH-12): Cleanup method to prevent memory leaks
+   * Clears all timers, resources, and pending operations
+   */
+  async cleanup() {
+    logger.info('[ModelManager] Starting cleanup...');
+
+    try {
+      // Reset initialization state to prevent race conditions
+      this._isInitializing = false;
+      this.initialized = false;
+      this._initPromise = null;
+
+      // Clear model data
+      this.availableModels = [];
+      this.modelCapabilities.clear();
+      this.selectedModel = null;
+      this.lastHealthCheck = null;
+
+      // Note: Individual timers in initialize() and testModel() are already
+      // cleaned up in their respective finally blocks with proper unref() calls
+      // This cleanup method ensures the instance state is reset
+
+      logger.info('[ModelManager] Cleanup completed successfully');
+    } catch (error) {
+      logger.error('[ModelManager] Error during cleanup:', error);
+    }
   }
 }
 

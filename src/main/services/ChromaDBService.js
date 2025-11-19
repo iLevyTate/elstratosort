@@ -3,6 +3,7 @@ const { ChromaClient } = require('chromadb');
 const path = require('path');
 const fs = require('fs').promises;
 const { logger } = require('../../shared/logger');
+logger.setContext('ChromaDBService');
 const { sanitizeMetadata } = require('../../shared/pathSanitization');
 
 // FIXED Bug #26: Named constants for magic numbers
@@ -727,17 +728,82 @@ class ChromaDBService {
         return [];
       }
 
-      // First get the file's embedding
-      const fileResult = await this.fileCollection.get({
-        ids: [fileId],
-      });
+      // CRITICAL FIX: Get file embedding with retry logic for read-after-write consistency
+      // Implement exponential backoff: 50ms, 100ms, 200ms
+      let fileResult = null;
+      let lastError = null;
+      const maxRetries = 3;
+      const retryDelays = [50, 100, 200]; // Exponential backoff in ms
 
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          // CRITICAL FIX: Explicitly request embeddings in get() call
+          // ChromaDB may not return embeddings by default
+          fileResult = await this.fileCollection.get({
+            ids: [fileId],
+            include: ['embeddings', 'metadatas', 'documents'],
+          });
+
+          // DIAGNOSTIC FIX: Log actual response structure for debugging
+          if (attempt > 0 || !fileResult?.embeddings?.length) {
+            logger.debug('[ChromaDB] File get response:', {
+              fileId,
+              attempt: attempt + 1,
+              hasResult: !!fileResult,
+              hasEmbeddings: !!fileResult?.embeddings,
+              embeddingsLength: fileResult?.embeddings?.length || 0,
+              resultKeys: fileResult ? Object.keys(fileResult) : [],
+            });
+          }
+
+          // Check if we got valid embeddings
+          if (
+            fileResult &&
+            fileResult.embeddings &&
+            fileResult.embeddings.length > 0
+          ) {
+            if (attempt > 0) {
+              logger.info(
+                `[ChromaDB] File found on retry attempt ${attempt + 1}/${maxRetries}`,
+                fileId,
+              );
+            }
+            break; // Success!
+          }
+
+          // No embeddings found, retry if we have attempts left
+          if (attempt < maxRetries - 1) {
+            const delay = retryDelays[attempt];
+            logger.debug(
+              `[ChromaDB] File not found on attempt ${attempt + 1}, retrying in ${delay}ms...`,
+              fileId,
+            );
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
+        } catch (error) {
+          lastError = error;
+          logger.warn(
+            `[ChromaDB] Error getting file on attempt ${attempt + 1}:`,
+            error.message,
+          );
+          if (attempt < maxRetries - 1) {
+            const delay = retryDelays[attempt];
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
+        }
+      }
+
+      // Final validation after retries
       if (
         !fileResult ||
         !fileResult.embeddings ||
         fileResult.embeddings.length === 0
       ) {
-        logger.warn('[ChromaDB] File not found for querying:', fileId);
+        logger.warn('[ChromaDB] File not found after retries:', {
+          fileId,
+          attempts: maxRetries,
+          lastError: lastError?.message,
+        });
         return [];
       }
 
@@ -1166,7 +1232,12 @@ class ChromaDBService {
           // Wait for all in-flight queries with a timeout
           await Promise.race([
             Promise.allSettled(Array.from(this.inflightQueries.values())),
-            new Promise((resolve) => setTimeout(resolve, 5000)), // 5 second timeout
+            (() => {
+              const { TIMEOUTS } = require('../../shared/performanceConstants');
+              return new Promise((resolve) =>
+                setTimeout(resolve, TIMEOUTS.HEALTH_CHECK),
+              );
+            })(), // 5 second timeout
           ]);
         } catch (error) {
           logger.warn(

@@ -1,8 +1,12 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { logger } from './shared/logger';
 import App from './App.js';
 import GlobalErrorBoundary from './components/GlobalErrorBoundary.jsx';
 import './tailwind.css';
+
+// Set logger context for renderer entry point
+logger.setContext('Renderer');
 
 // Enable smooth scrolling globally
 if (typeof window !== 'undefined') {
@@ -52,7 +56,10 @@ if (typeof window !== 'undefined') {
 // Wait for DOM to be ready before initializing React
 function initializeApp() {
   try {
-    console.log('[RENDERER] Initializing React application...');
+    // Debug logging in development mode
+    if (process.env.NODE_ENV === 'development') {
+      logger.debug('Initializing React application');
+    }
 
     // Find the root container
     const container = document.getElementById('root');
@@ -62,7 +69,10 @@ function initializeApp() {
       );
     }
 
-    console.log('[RENDERER] Root container found, creating React root...');
+    // Debug logging in development mode
+    if (process.env.NODE_ENV === 'development') {
+      logger.debug('Root container found, creating React root');
+    }
 
     // Create React root
     const root = createRoot(container);
@@ -82,9 +92,15 @@ function initializeApp() {
       if (initialLoading) initialLoading.remove();
     });
 
-    console.log('[RENDERER] React application initialized successfully');
+    // Debug logging in development mode
+    if (process.env.NODE_ENV === 'development') {
+      logger.debug('React application initialized successfully');
+    }
   } catch (error) {
-    console.error('[RENDERER] Failed to initialize React application:', error);
+    logger.error('Failed to initialize React application', {
+      error: error.message,
+      stack: error.stack,
+    });
 
     // Show error message in the initial loading screen
     const initialLoading = document.getElementById('initial-loading');
