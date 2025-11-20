@@ -34,6 +34,7 @@ describe('SettingsService cache', () => {
 
     jest.doMock('../src/shared/logger', () => ({
       logger: {
+        setContext: jest.fn(),
         info: jest.fn(),
         warn: jest.fn(),
         error: jest.fn(),

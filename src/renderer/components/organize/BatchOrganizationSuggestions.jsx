@@ -270,7 +270,6 @@ function BatchOrganizationSuggestions({
           <Button
             variant="secondary"
             onClick={() => {
-              // LOW PRIORITY FIX (LOW-2): Remove console.log placeholder
               // TODO: Implement preview functionality
             }}
           >

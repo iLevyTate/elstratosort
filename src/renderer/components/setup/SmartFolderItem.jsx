@@ -104,7 +104,10 @@ function SmartFolderItem({
             <div className="font-medium text-system-gray-700 mb-2 break-words">
               {folder.name}
             </div>
-            <div className="text-small text-muted mb-3 break-all">
+            <div
+              className="text-small text-muted mb-3 break-words"
+              style={{ overflowWrap: 'break-word', wordBreak: 'break-word' }}
+            >
               {folder.path}
             </div>
             {folder.description && (

@@ -628,6 +628,65 @@ async function handleBatchOrganize({
       } catch {
         // Non-fatal if undo recording fails
       }
+
+      // CRITICAL FIX: Update database paths after successful file organization
+      // This ensures ChromaDB file paths stay in sync with actual file locations
+      if (successCount > 0 && results.length > 0) {
+        try {
+          const {
+            getInstance: getChromaDB,
+          } = require('../services/ChromaDBService');
+          const chromaDbService = getChromaDB();
+
+          if (chromaDbService) {
+            // Collect path updates from successful operations
+            const pathUpdates = results
+              .filter((r) => r.success && r.source && r.destination)
+              .map((r) => {
+                const path = require('path');
+                const oldId = `file:${r.source}`;
+                const newId = `file:${r.destination}`;
+                return {
+                  oldId,
+                  newId,
+                  newMeta: {
+                    path: r.destination,
+                    name: path.basename(r.destination),
+                  },
+                };
+              });
+
+            if (pathUpdates.length > 0) {
+              logger.info(
+                '[FILE-OPS] Updating database paths after organization',
+                {
+                  count: pathUpdates.length,
+                  batchId,
+                },
+              );
+
+              // Update paths in database (non-blocking - don't fail batch if this fails)
+              await chromaDbService
+                .updateFilePaths(pathUpdates)
+                .catch((error) => {
+                  logger.warn(
+                    '[FILE-OPS] Failed to update database paths (non-fatal)',
+                    {
+                      error: error.message,
+                      batchId,
+                    },
+                  );
+                });
+            }
+          }
+        } catch (error) {
+          // Non-fatal - log but don't fail the batch operation
+          logger.warn('[FILE-OPS] Error updating database paths (non-fatal)', {
+            error: error.message,
+            batchId,
+          });
+        }
+      }
     }
   } catch {
     // Non-fatal if batch processing service fails
@@ -986,11 +1045,17 @@ function registerFilesIpc({
     z && opSchema
       ? withValidation(logger, opSchema, async (event, operation) => {
           try {
-            logger.info('[FILE-OPS] Performing operation:', operation.type);
-            logger.info(
-              '[FILE-OPS] Operation details:',
-              JSON.stringify(operation, null, 2),
-            );
+            // PERFORMANCE FIX: Removed expensive JSON.stringify logging
+            // Only log essential info to reduce overhead
+            logger.info('[FILE-OPS] Performing operation:', {
+              type: operation.type,
+              source: operation.source
+                ? path.basename(operation.source)
+                : 'N/A',
+              destination: operation.destination
+                ? path.basename(operation.destination)
+                : 'N/A',
+            });
             switch (operation.type) {
               case 'move':
                 await fs.rename(operation.source, operation.destination);
@@ -1005,6 +1070,43 @@ function registerFilesIpc({
                 } catch {
                   // Non-fatal if undo recording fails
                 }
+
+                // Update database path
+                try {
+                  const {
+                    getInstance: getChromaDB,
+                  } = require('../services/ChromaDBService');
+                  const chromaDbService = getChromaDB();
+                  if (chromaDbService) {
+                    const path = require('path');
+                    const oldId = `file:${operation.source}`;
+                    const newId = `file:${operation.destination}`;
+                    // Non-blocking path update
+                    chromaDbService
+                      .updateFilePaths([
+                        {
+                          oldId,
+                          newId,
+                          newMeta: {
+                            path: operation.destination,
+                            name: path.basename(operation.destination),
+                          },
+                        },
+                      ])
+                      .catch((err) => {
+                        logger.warn(
+                          '[FILE-OPS] Failed to update database path (async)',
+                          { error: err.message },
+                        );
+                      });
+                  }
+                } catch (dbError) {
+                  logger.warn(
+                    '[FILE-OPS] Failed to initiate database path update',
+                    { error: dbError.message },
+                  );
+                }
+
                 return {
                   success: true,
                   message: `Moved ${operation.source} to ${operation.destination}`,
@@ -1017,6 +1119,31 @@ function registerFilesIpc({
                 };
               case 'delete':
                 await fs.unlink(operation.source);
+
+                // Delete from database
+                try {
+                  const {
+                    getInstance: getChromaDB,
+                  } = require('../services/ChromaDBService');
+                  const chromaDbService = getChromaDB();
+                  if (chromaDbService) {
+                    // Non-blocking delete
+                    chromaDbService
+                      .deleteFileEmbedding(`file:${operation.source}`)
+                      .catch((err) => {
+                        logger.warn(
+                          '[FILE-OPS] Failed to delete database entry (async)',
+                          { error: err.message },
+                        );
+                      });
+                  }
+                } catch (dbError) {
+                  logger.warn(
+                    '[FILE-OPS] Failed to initiate database entry delete',
+                    { error: dbError.message },
+                  );
+                }
+
                 return {
                   success: true,
                   message: `Deleted ${operation.source}`,
@@ -1044,11 +1171,17 @@ function registerFilesIpc({
         })
       : withErrorLogging(logger, async (event, operation) => {
           try {
-            logger.info('[FILE-OPS] Performing operation:', operation.type);
-            logger.info(
-              '[FILE-OPS] Operation details:',
-              JSON.stringify(operation, null, 2),
-            );
+            // PERFORMANCE FIX: Removed expensive JSON.stringify logging
+            // Only log essential info to reduce overhead
+            logger.info('[FILE-OPS] Performing operation:', {
+              type: operation.type,
+              source: operation.source
+                ? path.basename(operation.source)
+                : 'N/A',
+              destination: operation.destination
+                ? path.basename(operation.destination)
+                : 'N/A',
+            });
             switch (operation.type) {
               case 'move':
                 await fs.rename(operation.source, operation.destination);
@@ -1063,6 +1196,43 @@ function registerFilesIpc({
                 } catch {
                   // Non-fatal if undo recording fails
                 }
+
+                // Update database path
+                try {
+                  const {
+                    getInstance: getChromaDB,
+                  } = require('../services/ChromaDBService');
+                  const chromaDbService = getChromaDB();
+                  if (chromaDbService) {
+                    const path = require('path');
+                    const oldId = `file:${operation.source}`;
+                    const newId = `file:${operation.destination}`;
+                    // Non-blocking path update
+                    chromaDbService
+                      .updateFilePaths([
+                        {
+                          oldId,
+                          newId,
+                          newMeta: {
+                            path: operation.destination,
+                            name: path.basename(operation.destination),
+                          },
+                        },
+                      ])
+                      .catch((err) => {
+                        logger.warn(
+                          '[FILE-OPS] Failed to update database path (async)',
+                          { error: err.message },
+                        );
+                      });
+                  }
+                } catch (dbError) {
+                  logger.warn(
+                    '[FILE-OPS] Failed to initiate database path update',
+                    { error: dbError.message },
+                  );
+                }
+
                 return {
                   success: true,
                   message: `Moved ${operation.source} to ${operation.destination}`,
@@ -1075,6 +1245,31 @@ function registerFilesIpc({
                 };
               case 'delete':
                 await fs.unlink(operation.source);
+
+                // Delete from database
+                try {
+                  const {
+                    getInstance: getChromaDB,
+                  } = require('../services/ChromaDBService');
+                  const chromaDbService = getChromaDB();
+                  if (chromaDbService) {
+                    // Non-blocking delete
+                    chromaDbService
+                      .deleteFileEmbedding(`file:${operation.source}`)
+                      .catch((err) => {
+                        logger.warn(
+                          '[FILE-OPS] Failed to delete database entry (async)',
+                          { error: err.message },
+                        );
+                      });
+                  }
+                } catch (dbError) {
+                  logger.warn(
+                    '[FILE-OPS] Failed to initiate database entry delete',
+                    { error: dbError.message },
+                  );
+                }
+
                 return {
                   success: true,
                   message: `Deleted ${operation.source}`,
@@ -1125,6 +1320,30 @@ function registerFilesIpc({
         }
         const stats = await fs.stat(filePath);
         await fs.unlink(filePath);
+
+        // Delete from database
+        try {
+          const {
+            getInstance: getChromaDB,
+          } = require('../services/ChromaDBService');
+          const chromaDbService = getChromaDB();
+          if (chromaDbService) {
+            // Non-blocking delete
+            chromaDbService
+              .deleteFileEmbedding(`file:${filePath}`)
+              .catch((err) => {
+                logger.warn(
+                  '[FILE-OPS] Failed to delete database entry (async)',
+                  { error: err.message },
+                );
+              });
+          }
+        } catch (dbError) {
+          logger.warn('[FILE-OPS] Failed to initiate database entry delete', {
+            error: dbError.message,
+          });
+        }
+
         logger.info(
           '[FILE-OPS] Deleted file:',
           filePath,

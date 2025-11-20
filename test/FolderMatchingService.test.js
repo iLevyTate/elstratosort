@@ -15,6 +15,7 @@ jest.mock('../src/main/ollamaUtils', () => ({
 // Mock logger
 jest.mock('../src/shared/logger', () => ({
   logger: {
+    setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
@@ -384,9 +385,7 @@ describe('FolderMatchingService', () => {
         { fileId: 'file-3', score: 0.8, name: 'another-doc.pdf' },
       ];
 
-      mockChromaDBService.querySimilarFiles.mockResolvedValue(
-        mockSimilarFiles,
-      );
+      mockChromaDBService.querySimilarFiles.mockResolvedValue(mockSimilarFiles);
 
       const results = await service.findSimilarFiles('file-1', 10);
 

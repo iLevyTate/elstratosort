@@ -125,6 +125,94 @@ class FolderMatchingService {
     }
   }
 
+  /**
+   * Batch upsert multiple folder embeddings
+   * @param {Array<Object>} folders - Array of folders to upsert
+   * @returns {Promise<Object>} Result with count and skipped items
+   */
+  async batchUpsertFolders(folders) {
+    try {
+      if (!folders || folders.length === 0) {
+        return { count: 0, skipped: [] };
+      }
+
+      // CRITICAL FIX: Ensure ChromaDB is initialized before upserting
+      if (!this.chromaDbService) {
+        throw new Error('ChromaDB service not available');
+      }
+
+      await this.chromaDbService.initialize();
+
+      // Process embeddings in parallel with concurrency limit
+      // We use a limit to avoid overwhelming Ollama
+      const CONCURRENCY_LIMIT = 3;
+      const payloads = [];
+      const skipped = [];
+
+      // Helper for batched processing
+      const processBatch = async (batch) => {
+        const promises = batch.map(async (folder) => {
+          try {
+            const folderText = [folder.name, folder.description]
+              .filter(Boolean)
+              .join(' - ');
+
+            const { vector, model } = await this.embedText(folderText);
+            const folderId = folder.id || this.generateFolderId(folder);
+
+            return {
+              id: folderId,
+              name: folder.name,
+              description: folder.description || '',
+              path: folder.path || '',
+              vector,
+              model,
+              updatedAt: new Date().toISOString(),
+            };
+          } catch (error) {
+            logger.warn(
+              `[FolderMatchingService] Failed to generate embedding for folder: ${folder.name}`,
+              { error: error.message },
+            );
+            skipped.push({ folder, error: error.message });
+            return null;
+          }
+        });
+        return Promise.all(promises);
+      };
+
+      // Process in chunks
+      for (let i = 0; i < folders.length; i += CONCURRENCY_LIMIT) {
+        const batch = folders.slice(i, i + CONCURRENCY_LIMIT);
+        const results = await processBatch(batch);
+        payloads.push(...results.filter(Boolean));
+      }
+
+      if (payloads.length > 0) {
+        await this.chromaDbService.batchUpsertFolders(payloads);
+        logger.debug(
+          '[FolderMatchingService] Batch upserted folder embeddings',
+          {
+            count: payloads.length,
+            skipped: skipped.length,
+          },
+        );
+      }
+
+      return { count: payloads.length, skipped };
+    } catch (error) {
+      logger.error(
+        '[FolderMatchingService] Failed to batch upsert folder embeddings:',
+        {
+          totalFolders: folders.length,
+          error: error.message,
+          errorStack: error.stack,
+        },
+      );
+      throw error;
+    }
+  }
+
   async upsertFileEmbedding(fileId, contentSummary, fileMeta = {}) {
     try {
       // CRITICAL FIX: Ensure ChromaDB is initialized before upserting
@@ -200,6 +288,63 @@ class FolderMatchingService {
         error: error.message,
         errorStack: error.stack,
       });
+      return [];
+    }
+  }
+
+  /**
+   * Batch match multiple files to folders
+   * @param {Array<string>} fileIds - Array of file IDs to match
+   * @param {number} topK - Number of matches per file
+   * @returns {Promise<Object>} Map of fileId -> Array of folder matches
+   */
+  async batchMatchFilesToFolders(fileIds, topK = 5) {
+    try {
+      if (!this.chromaDbService) {
+        logger.error('[FolderMatchingService] ChromaDB service not available');
+        return {};
+      }
+
+      await this.chromaDbService.initialize();
+
+      logger.debug('[FolderMatchingService] Batch querying folder matches', {
+        fileCount: fileIds.length,
+        topK,
+      });
+
+      return await this.chromaDbService.batchQueryFolders(fileIds, topK);
+    } catch (error) {
+      logger.error('[FolderMatchingService] Failed to batch match files:', {
+        fileCount: fileIds.length,
+        error: error.message,
+      });
+      return {};
+    }
+  }
+
+  /**
+   * Match a raw embedding vector to folders
+   * @param {Array<number>} vector - Embedding vector
+   * @param {number} topK - Number of matches
+   * @returns {Promise<Array>} Array of folder matches
+   */
+  async matchVectorToFolders(vector, topK = 5) {
+    try {
+      if (!this.chromaDbService) {
+        logger.error('[FolderMatchingService] ChromaDB service not available');
+        return [];
+      }
+
+      await this.chromaDbService.initialize();
+
+      return await this.chromaDbService.queryFoldersByEmbedding(vector, topK);
+    } catch (error) {
+      logger.error(
+        '[FolderMatchingService] Failed to match vector to folders:',
+        {
+          error: error.message,
+        },
+      );
       return [];
     }
   }

@@ -881,15 +881,46 @@ function DiscoverPhase() {
               'file-actions',
             );
             break;
-          case 'reveal':
-            await window.electronAPI.files.reveal(filePath);
+          case 'reveal': {
+            // Fix: Check if file exists at current path, if not try originalPath
+            // This handles cases where files were organized and then undone
+            let pathToReveal = filePath;
+            try {
+              // Check if file exists at current path
+              const stats = await window.electronAPI.files.getStats(filePath);
+              if (!stats || !stats.exists) {
+                // File doesn't exist at current path, check if it's in organizedFiles
+                const organizedFile = phaseData.organizedFiles?.find(
+                  (f) => f.path === filePath || f.originalPath === filePath,
+                );
+                if (organizedFile?.originalPath) {
+                  // Try original path
+                  const originalStats = await window.electronAPI.files.getStats(
+                    organizedFile.originalPath,
+                  );
+                  if (originalStats?.exists) {
+                    pathToReveal = organizedFile.originalPath;
+                  }
+                }
+              }
+            } catch {
+              // If stats check fails, try original path anyway
+              const organizedFile = phaseData.organizedFiles?.find(
+                (f) => f.path === filePath || f.originalPath === filePath,
+              );
+              if (organizedFile?.originalPath) {
+                pathToReveal = organizedFile.originalPath;
+              }
+            }
+            await window.electronAPI.files.reveal(pathToReveal);
             addNotification(
-              `Revealed: ${filePath.split(/[\\/]/).pop()}`,
+              `Revealed: ${pathToReveal.split(/[\\/]/).pop()}`,
               'success',
               2000,
               'file-actions',
             );
             break;
+          }
           case 'delete': {
             const fileName = filePath.split(/[\\/]/).pop();
             const confirmDelete = await showConfirm({
@@ -959,6 +990,7 @@ function DiscoverPhase() {
       actions,
       updateFileState,
       showConfirm, // CRITICAL FIX: Missing dependency for delete confirmation
+      phaseData, // Added for organizedFiles lookup in reveal
     ],
   );
 
@@ -1280,6 +1312,7 @@ function DiscoverPhase() {
                 name: fileInfo.name,
                 size: fileInfo.size,
                 type: fileInfo.type,
+                confidence: fileInfo.confidence,
               });
             }
           } catch (error) {
@@ -1562,330 +1595,351 @@ function DiscoverPhase() {
   }, [actions, addNotification]);
 
   return (
-    <div className="container-responsive gap-6 py-6 flex flex-col">
-      <div className="text-center space-y-3 flex-shrink-0">
-        <h1 className="heading-primary">🔍 Discover & Analyze</h1>
-        <p className="text-lg text-system-gray-600 leading-relaxed max-w-3xl mx-auto">
-          Select folders, drag files, or run a system scan, then let StratoSort
-          prepare clean insights.
-        </p>
-      </div>
-      <div className="flex flex-col items-center justify-center gap-3 text-xs text-system-gray-500 sm:flex-row flex-shrink-0">
-        <button
-          className="hover:text-system-gray-800 underline"
-          onClick={() => {
-            try {
-              const keys = [
-                'discover-naming',
-                'discover-selection',
-                'discover-dnd',
-                'discover-results',
-              ];
-              keys.forEach((k) =>
-                window.localStorage.setItem(`collapsible:${k}`, 'true'),
-              );
-              window.dispatchEvent(new Event('storage'));
-            } catch {
-              // Non-fatal if localStorage fails
-            }
-          }}
-        >
-          Expand all
-        </button>
-        <span className="text-system-gray-300 hidden sm:inline">•</span>
-        <button
-          className="hover:text-system-gray-800 underline"
-          onClick={() => {
-            try {
-              const keys = [
-                'discover-naming',
-                'discover-selection',
-                'discover-dnd',
-                'discover-results',
-              ];
-              keys.forEach((k) =>
-                window.localStorage.setItem(`collapsible:${k}`, 'false'),
-              );
-              window.dispatchEvent(new Event('storage'));
-            } catch {
-              // Non-fatal if localStorage fails
-            }
-          }}
-        >
-          Collapse all
-        </button>
-        <span className="text-system-gray-300 hidden sm:inline">•</span>
-        <button
-          className="hover:text-stratosort-blue underline"
-          onClick={() => setShowAnalysisHistory(true)}
-        >
-          Open Analysis History
-        </button>
-      </div>
-      <div className="flex flex-col gap-6 desktop-grid-2">
-        <Collapsible
-          title="Naming Settings"
-          defaultOpen
-          persistKey="discover-naming"
-          className="glass-panel"
-        >
-          <NamingSettings
-            namingConvention={namingConvention}
-            setNamingConvention={setNamingConvention}
-            dateFormat={dateFormat}
-            setDateFormat={setDateFormat}
-            caseConvention={caseConvention}
-            setCaseConvention={setCaseConvention}
-            separator={separator}
-            setSeparator={setSeparator}
-          />
-        </Collapsible>
+    <div className="h-full w-full flex flex-col overflow-hidden">
+      <div className="container-responsive flex flex-col h-full gap-6 py-6 overflow-hidden">
+        <div className="text-center space-y-3 flex-shrink-0">
+          <h1 className="heading-primary">🔍 Discover & Analyze</h1>
+          <p className="text-lg text-system-gray-600 leading-relaxed max-w-3xl mx-auto">
+            Select folders, drag files, or run a system scan, then let
+            StratoSort prepare clean insights.
+          </p>
+        </div>
+        <div className="flex flex-col items-center justify-center gap-3 text-xs text-system-gray-500 sm:flex-row flex-shrink-0">
+          <button
+            className="hover:text-system-gray-800 underline"
+            onClick={() => {
+              try {
+                const keys = [
+                  'discover-naming',
+                  'discover-selection',
+                  'discover-dnd',
+                  'discover-results',
+                ];
+                keys.forEach((k) =>
+                  window.localStorage.setItem(`collapsible:${k}`, 'true'),
+                );
+                window.dispatchEvent(new Event('storage'));
+              } catch {
+                // Non-fatal if localStorage fails
+              }
+            }}
+          >
+            Expand all
+          </button>
+          <span className="text-system-gray-300 hidden sm:inline">•</span>
+          <button
+            className="hover:text-system-gray-800 underline"
+            onClick={() => {
+              try {
+                const keys = [
+                  'discover-naming',
+                  'discover-selection',
+                  'discover-dnd',
+                  'discover-results',
+                ];
+                keys.forEach((k) =>
+                  window.localStorage.setItem(`collapsible:${k}`, 'false'),
+                );
+                window.dispatchEvent(new Event('storage'));
+              } catch {
+                // Non-fatal if localStorage fails
+              }
+            }}
+          >
+            Collapse all
+          </button>
+          <span className="text-system-gray-300 hidden sm:inline">•</span>
+          <button
+            className="hover:text-stratosort-blue underline"
+            onClick={() => setShowAnalysisHistory(true)}
+          >
+            Open Analysis History
+          </button>
+        </div>
 
-        <Collapsible
-          title="Select Files or Folder"
-          defaultOpen
-          persistKey="discover-selection"
-          className="glass-panel"
-        >
-          <SelectionControls
-            onSelectFiles={handleFileSelection}
-            onSelectFolder={handleFolderSelection}
-            isScanning={isScanning}
-          />
-          {selectedFiles.length > 0 && (
-            <div className="mt-4 flex items-center justify-between p-8 bg-system-gray-50 rounded-lg border border-system-gray-200">
-              <div className="text-sm text-system-gray-600">
-                <span className="font-medium">{selectedFiles.length}</span> file
-                {selectedFiles.length !== 1 ? 's' : ''} in queue
-                {analysisResults.length > 0 && (
-                  <span className="ml-2">
-                    •{' '}
-                    <span className="font-medium">
-                      {analysisResults.filter((r) => r.analysis).length}
-                    </span>{' '}
-                    analyzed
-                    {analysisResults.filter((r) => r.error).length > 0 && (
-                      <span className="ml-2 text-red-600">
+        <div className="flex-1 min-h-0 flex flex-col gap-6 overflow-hidden">
+          {/* Controls Grid */}
+          <div
+            className={`grid gap-6 desktop-grid-2 flex-shrink-0 ${
+              analysisResults.length > 0
+                ? 'max-h-[40%] overflow-y-auto pr-2 modern-scrollbar'
+                : 'overflow-y-auto modern-scrollbar'
+            }`}
+          >
+            <Collapsible
+              title="Naming Settings"
+              defaultOpen
+              persistKey="discover-naming"
+              className="glass-panel"
+            >
+              <NamingSettings
+                namingConvention={namingConvention}
+                setNamingConvention={setNamingConvention}
+                dateFormat={dateFormat}
+                setDateFormat={setDateFormat}
+                caseConvention={caseConvention}
+                setCaseConvention={setCaseConvention}
+                separator={separator}
+                setSeparator={setSeparator}
+              />
+            </Collapsible>
+
+            <Collapsible
+              title="Select Files or Folder"
+              defaultOpen
+              persistKey="discover-selection"
+              className="glass-panel"
+            >
+              <SelectionControls
+                onSelectFiles={handleFileSelection}
+                onSelectFolder={handleFolderSelection}
+                isScanning={isScanning}
+              />
+              {selectedFiles.length > 0 && (
+                <div className="mt-4 flex items-center justify-between p-8 bg-system-gray-50 rounded-lg border border-system-gray-200">
+                  <div className="text-sm text-system-gray-600">
+                    <span className="font-medium">{selectedFiles.length}</span>{' '}
+                    file
+                    {selectedFiles.length !== 1 ? 's' : ''} in queue
+                    {analysisResults.length > 0 && (
+                      <span className="ml-2">
                         •{' '}
                         <span className="font-medium">
-                          {analysisResults.filter((r) => r.error).length}
+                          {analysisResults.filter((r) => r.analysis).length}
                         </span>{' '}
-                        failed
+                        analyzed
+                        {analysisResults.filter((r) => r.error).length > 0 && (
+                          <span className="ml-2 text-red-600">
+                            •{' '}
+                            <span className="font-medium">
+                              {analysisResults.filter((r) => r.error).length}
+                            </span>{' '}
+                            failed
+                          </span>
+                        )}
                       </span>
                     )}
-                  </span>
-                )}
-                {analysisLockRef.current && (
-                  <span className="ml-2 text-orange-600">
-                    • 🔒 Analysis locked
-                  </span>
-                )}
-              </div>
-              <div className="flex gap-5">
-                <button
-                  onClick={clearAnalysisQueue}
-                  className="px-8 py-5 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
-                  title="Clear all files from the analysis queue"
-                >
-                  Clear Queue
-                </button>
-                {isAnalyzing && (
-                  <button
-                    onClick={() => {
-                      setIsAnalyzing(false);
-                      setCurrentAnalysisFile('');
-                      setAnalysisProgress({ current: 0, total: 0 });
-                      actions.setPhaseData('isAnalyzing', false);
-                      actions.setPhaseData('currentAnalysisFile', '');
-                      actions.setPhaseData('analysisProgress', {
-                        current: 0,
-                        total: 0,
-                      });
-                      addNotification(
-                        'Analysis state reset',
-                        'info',
-                        2000,
-                        'analysis-reset',
-                      );
-                    }}
-                    className="px-8 py-5 text-sm bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 transition-colors"
-                    title="Reset stuck analysis state"
-                  >
-                    Reset Analysis
-                  </button>
-                )}
-                {analysisLockRef.current && !isAnalyzing && (
-                  <button
-                    onClick={forceReleaseAnalysisLock}
-                    className="px-8 py-5 text-sm bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors"
-                    title="Release stuck analysis lock"
-                  >
-                    Release Lock
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-        </Collapsible>
-
-        <Collapsible
-          title="Drag & Drop"
-          defaultOpen
-          persistKey="discover-dnd"
-          className="glass-panel"
-        >
-          <DragAndDropZone isDragging={isDragging} dragProps={dragProps} />
-        </Collapsible>
-
-        {isAnalyzing && (
-          <Collapsible
-            title="Analysis Progress"
-            defaultOpen
-            persistKey="discover-progress"
-            className="glass-panel"
-          >
-            <AnalysisProgress
-              progress={analysisProgress}
-              currentFile={currentAnalysisFile}
-            />
-            {/* Add reset button if analysis appears stuck */}
-            {analysisProgress.lastActivity &&
-              Date.now() - analysisProgress.lastActivity > 2 * 60 * 1000 && (
-                <div className="mt-8 p-8 bg-amber-50 border border-amber-200 rounded-lg">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-5">
-                      <span className="text-amber-600">⚠️</span>
-                      <span className="text-sm text-amber-800">
-                        Analysis appears to be stuck. Last activity:{' '}
-                        {new Date(
-                          analysisProgress.lastActivity,
-                        ).toLocaleTimeString()}
+                    {analysisLockRef.current && (
+                      <span className="ml-2 text-orange-600">
+                        • 🔒 Analysis locked
                       </span>
-                    </div>
+                    )}
+                  </div>
+                  <div className="flex gap-5">
                     <button
-                      onClick={resetAnalysisState}
-                      className="px-8 py-5 text-sm bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 transition-colors"
-                      title="Reset stuck analysis state"
+                      onClick={clearAnalysisQueue}
+                      className="px-8 py-5 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+                      title="Clear all files from the analysis queue"
                     >
-                      Reset Analysis
+                      Clear Queue
                     </button>
+                    {isAnalyzing && (
+                      <button
+                        onClick={() => {
+                          setIsAnalyzing(false);
+                          setCurrentAnalysisFile('');
+                          setAnalysisProgress({ current: 0, total: 0 });
+                          actions.setPhaseData('isAnalyzing', false);
+                          actions.setPhaseData('currentAnalysisFile', '');
+                          actions.setPhaseData('analysisProgress', {
+                            current: 0,
+                            total: 0,
+                          });
+                          addNotification(
+                            'Analysis state reset',
+                            'info',
+                            2000,
+                            'analysis-reset',
+                          );
+                        }}
+                        className="px-8 py-5 text-sm bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 transition-colors"
+                        title="Reset stuck analysis state"
+                      >
+                        Reset Analysis
+                      </button>
+                    )}
+                    {analysisLockRef.current && !isAnalyzing && (
+                      <button
+                        onClick={forceReleaseAnalysisLock}
+                        className="px-8 py-5 text-sm bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors"
+                        title="Release stuck analysis lock"
+                      >
+                        Release Lock
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
-          </Collapsible>
-        )}
+            </Collapsible>
 
-        {analysisResults.length > 0 && (
-          <Collapsible
-            title="Analysis Results"
-            defaultOpen
-            persistKey="discover-results"
-            contentClassName="p-8"
-            className="glass-panel lg:col-span-2"
-          >
-            <AnalysisResultsList
-              results={analysisResults}
-              onFileAction={handleFileAction}
-              getFileStateDisplay={getFileStateDisplay}
-            />
-          </Collapsible>
-        )}
-      </div>
+            <Collapsible
+              title="Drag & Drop"
+              defaultOpen
+              persistKey="discover-dnd"
+              className="glass-panel"
+            >
+              <DragAndDropZone isDragging={isDragging} dragProps={dragProps} />
+            </Collapsible>
 
-      {/* Navigation Buttons */}
-      <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between flex-shrink-0">
-        <Button
-          onClick={() => actions.advancePhase(PHASES.SETUP)}
-          variant="secondary"
-          className="w-full sm:w-auto"
-        >
-          ← Back to Setup
-        </Button>
-        <div className="flex gap-8">
-          <Button
-            onClick={clearAnalysisQueue}
-            variant="outline"
-            className="w-full sm:w-auto"
-            disabled={
-              selectedFiles.length === 0 && analysisResults.length === 0
-            }
-          >
-            Clear Queue
-          </Button>
-          <Button
-            onClick={() => {
-              // Fixed: Add comprehensive validation before phase transition
-              // Check if analysis is still running
-              if (isAnalyzing) {
-                addNotification(
-                  'Please wait for analysis to complete before proceeding',
-                  'warning',
-                  3000,
-                );
-                return;
-              }
+            {isAnalyzing && (
+              <Collapsible
+                title="Analysis Progress"
+                defaultOpen
+                persistKey="discover-progress"
+                className="glass-panel"
+              >
+                <AnalysisProgress
+                  progress={analysisProgress}
+                  currentFile={currentAnalysisFile}
+                />
+                {/* Add reset button if analysis appears stuck */}
+                {analysisProgress.lastActivity &&
+                  Date.now() - analysisProgress.lastActivity >
+                    2 * 60 * 1000 && (
+                    <div className="mt-8 p-8 bg-amber-50 border border-amber-200 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-5">
+                          <span className="text-amber-600">⚠️</span>
+                          <span className="text-sm text-amber-800">
+                            Analysis appears to be stuck. Last activity:{' '}
+                            {new Date(
+                              analysisProgress.lastActivity,
+                            ).toLocaleTimeString()}
+                          </span>
+                        </div>
+                        <button
+                          onClick={resetAnalysisState}
+                          className="px-8 py-5 text-sm bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 transition-colors"
+                          title="Reset stuck analysis state"
+                        >
+                          Reset Analysis
+                        </button>
+                      </div>
+                    </div>
+                  )}
+              </Collapsible>
+            )}
+          </div>
 
-              const readyCount = analysisResults.filter(
-                (r) => r.analysis && !r.error,
-              ).length;
-              const errorCount = analysisResults.filter((r) => r.error).length;
-
-              if (readyCount === 0 && errorCount === 0) {
-                addNotification(
-                  'Please analyze at least one file before proceeding',
-                  'warning',
-                  3000,
-                );
-                return;
-              }
-
-              if (readyCount === 0) {
-                addNotification(
-                  'All files failed analysis. Please check your files or Ollama service and try again',
-                  'error',
-                  4000,
-                );
-                return;
-              }
-
-              if (readyCount > 0) {
-                addNotification(
-                  `Proceeding to organize ${readyCount} analyzed file${readyCount > 1 ? 's' : ''}`,
-                  'info',
-                  2000,
-                );
-              }
-
-              actions.advancePhase(PHASES.ORGANIZE);
-            }}
-            variant="primary"
-            className="w-full sm:w-auto"
-            disabled={
-              isAnalyzing ||
-              (analysisResults.length === 0 &&
-                selectedFiles.filter((f) => getFileState(f.path) === 'ready')
-                  .length === 0)
-            }
-          >
-            Continue to Organize →
-          </Button>
+          {/* Results - Filling */}
+          {analysisResults.length > 0 && (
+            <div className="flex-1 min-h-0 flex flex-col">
+              <Collapsible
+                title="Analysis Results"
+                defaultOpen
+                persistKey="discover-results"
+                className="glass-panel h-full flex flex-col"
+                contentClassName="flex-1 overflow-hidden relative flex flex-col"
+              >
+                <div className="absolute inset-0 overflow-y-auto p-6 modern-scrollbar">
+                  <AnalysisResultsList
+                    results={analysisResults}
+                    onFileAction={handleFileAction}
+                    getFileStateDisplay={getFileStateDisplay}
+                  />
+                </div>
+              </Collapsible>
+            </div>
+          )}
         </div>
-      </div>
 
-      <ConfirmDialog />
-      {showAnalysisHistory && (
-        <Suspense
-          fallback={
-            <ModalLoadingOverlay message="Loading Analysis History..." />
-          }
-        >
-          <AnalysisHistoryModal
-            onClose={() => setShowAnalysisHistory(false)}
-            analysisStats={analysisStats}
-            setAnalysisStats={setAnalysisStats}
-          />
-        </Suspense>
-      )}
+        {/* Navigation Buttons */}
+        <div className="mt-2 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between flex-shrink-0">
+          <Button
+            onClick={() => actions.advancePhase(PHASES.SETUP)}
+            variant="secondary"
+            className="w-full sm:w-auto"
+          >
+            ← Back to Setup
+          </Button>
+          <div className="flex gap-8">
+            <Button
+              onClick={clearAnalysisQueue}
+              variant="outline"
+              className="w-full sm:w-auto"
+              disabled={
+                selectedFiles.length === 0 && analysisResults.length === 0
+              }
+            >
+              Clear Queue
+            </Button>
+            <Button
+              onClick={() => {
+                // Fixed: Add comprehensive validation before phase transition
+                // Check if analysis is still running
+                if (isAnalyzing) {
+                  addNotification(
+                    'Please wait for analysis to complete before proceeding',
+                    'warning',
+                    3000,
+                  );
+                  return;
+                }
+
+                const readyCount = analysisResults.filter(
+                  (r) => r.analysis && !r.error,
+                ).length;
+                const errorCount = analysisResults.filter(
+                  (r) => r.error,
+                ).length;
+
+                if (readyCount === 0 && errorCount === 0) {
+                  addNotification(
+                    'Please analyze at least one file before proceeding',
+                    'warning',
+                    3000,
+                  );
+                  return;
+                }
+
+                if (readyCount === 0) {
+                  addNotification(
+                    'All files failed analysis. Please check your files or Ollama service and try again',
+                    'error',
+                    4000,
+                  );
+                  return;
+                }
+
+                if (readyCount > 0) {
+                  addNotification(
+                    `Proceeding to organize ${readyCount} analyzed file${readyCount > 1 ? 's' : ''}`,
+                    'info',
+                    2000,
+                  );
+                }
+
+                actions.advancePhase(PHASES.ORGANIZE);
+              }}
+              variant="primary"
+              className="w-full sm:w-auto"
+              disabled={
+                isAnalyzing ||
+                (analysisResults.length === 0 &&
+                  selectedFiles.filter((f) => getFileState(f.path) === 'ready')
+                    .length === 0)
+              }
+            >
+              Continue to Organize →
+            </Button>
+          </div>
+        </div>
+
+        <ConfirmDialog />
+        {showAnalysisHistory && (
+          <Suspense
+            fallback={
+              <ModalLoadingOverlay message="Loading Analysis History..." />
+            }
+          >
+            <AnalysisHistoryModal
+              onClose={() => setShowAnalysisHistory(false)}
+              analysisStats={analysisStats}
+              setAnalysisStats={setAnalysisStats}
+            />
+          </Suspense>
+        )}
+      </div>
     </div>
   );
 }

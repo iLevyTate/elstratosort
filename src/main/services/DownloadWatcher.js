@@ -40,7 +40,24 @@ class DownloadWatcher {
     try {
       const downloadsPath = path.join(os.homedir(), 'Downloads');
       logger.info('[DOWNLOAD-WATCHER] Watching', downloadsPath);
-      this.watcher = chokidar.watch(downloadsPath, { ignoreInitial: true });
+      // PERFORMANCE FIX: Optimize chokidar watcher configuration
+      // - ignoreInitial: Don't process existing files on startup
+      // - ignored: Ignore common temp/system files to reduce overhead
+      // - awaitWriteFinish: Wait for file writes to complete before processing
+      this.watcher = chokidar.watch(downloadsPath, {
+        ignoreInitial: true,
+        ignored: [
+          /(^|[\\/\\])\../, // Ignore dotfiles
+          /\.tmp$/, // Ignore temp files
+          /\.crdownload$/, // Chrome download temp files
+          /\.part$/, // Firefox download temp files
+          /\.!qB$/, // qBittorrent temp files
+        ],
+        awaitWriteFinish: {
+          stabilityThreshold: 2000, // Wait 2s after last change
+          pollInterval: 100, // Check every 100ms
+        },
+      });
 
       this.watcher.on('add', async (filePath) => {
         try {

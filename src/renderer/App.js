@@ -18,10 +18,12 @@ function App() {
           <NavigationBar />
           <main
             id="main-content"
-            className="flex flex-1 flex-col pt-[var(--app-nav-height)] overflow-y-auto modern-scrollbar"
+            className="flex flex-1 flex-col pt-[var(--app-nav-height)] overflow-hidden"
             tabIndex={-1}
           >
-            <PhaseRenderer />
+            <div className="flex-1 overflow-hidden relative">
+              <PhaseRenderer />
+            </div>
           </main>
         </div>
         <TooltipManager />

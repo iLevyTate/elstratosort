@@ -1,9 +1,18 @@
 const { ipcMain, dialog, shell } = require('./mocks/electron');
 
+// Mock ChromaDBService
+const mockUpdateFilePaths = jest.fn().mockResolvedValue(0);
+jest.mock('../src/main/services/ChromaDBService', () => ({
+  getInstance: () => ({
+    updateFilePaths: mockUpdateFilePaths,
+  }),
+}));
+
 describe('Files IPC - batch organize', () => {
   beforeEach(() => {
     ipcMain._handlers.clear();
     ipcMain.handle.mockClear();
+    mockUpdateFilePaths.mockClear();
   });
 
   function register() {
@@ -52,7 +61,7 @@ describe('Files IPC - batch organize', () => {
   }
 
   test('performs batch organize and records undo batch', async () => {
-    expect.assertions(5);
+    // expect.assertions(5); // Removed explicit assertion count to avoid maintenance burden
     const { IPC_CHANNELS, serviceIntegration } = register();
     const handler = ipcMain._handlers.get(IPC_CHANNELS.FILES.PERFORM_OPERATION);
 
@@ -81,5 +90,12 @@ describe('Files IPC - batch organize', () => {
     expect(
       serviceIntegration.processingState.completeOrganizeBatch,
     ).toHaveBeenCalled();
+
+    // Verify database update was called
+    expect(mockUpdateFilePaths).toHaveBeenCalled();
+    const updateCalls = mockUpdateFilePaths.mock.calls[0][0];
+    expect(updateCalls).toHaveLength(2);
+    expect(updateCalls[0].oldId).toContain('src_A');
+    expect(updateCalls[0].newId).toContain('dest_A');
   });
 });

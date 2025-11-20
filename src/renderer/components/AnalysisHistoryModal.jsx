@@ -135,7 +135,7 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
             </button>
           </div>
         </div>
-        <div className="p-21 overflow-y-auto max-h-[70vh]">
+        <div className="p-21 overflow-y-auto max-h-[70vh] modern-scrollbar">
           {isLoading ? (
             <div className="text-center py-21">
               <div className="animate-spin w-21 h-21 border-3 border-stratosort-blue border-t-transparent rounded-full mx-auto mb-8"></div>
@@ -227,7 +227,7 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
                       Reset
                     </Button>
                   </div>
-                  <div className="space-y-8">
+                  <div className="space-y-8 max-h-[50vh] overflow-y-auto modern-scrollbar">
                     {historyData.map((entry, index) => (
                       <div
                         key={index}

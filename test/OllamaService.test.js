@@ -9,6 +9,7 @@ const OllamaService = require('../src/main/services/OllamaService');
 // Mock logger
 jest.mock('../src/shared/logger', () => ({
   logger: {
+    setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
@@ -150,9 +151,7 @@ describe('OllamaService', () => {
       expect(setOllamaHost).toHaveBeenCalledWith('http://localhost:11435');
       expect(setOllamaModel).toHaveBeenCalledWith('mistral');
       expect(setOllamaVisionModel).toHaveBeenCalledWith('bakllava');
-      expect(setOllamaEmbeddingModel).toHaveBeenCalledWith(
-        'nomic-embed-text',
-      );
+      expect(setOllamaEmbeddingModel).toHaveBeenCalledWith('nomic-embed-text');
       expect(saveOllamaConfig).toHaveBeenCalled();
     });
 
@@ -333,7 +332,10 @@ describe('OllamaService', () => {
         .mockResolvedValueOnce({ status: 'success' })
         .mockRejectedValueOnce(new Error('Model not found'));
 
-      const result = await OllamaService.pullModels(['llama2', 'invalid-model']);
+      const result = await OllamaService.pullModels([
+        'llama2',
+        'invalid-model',
+      ]);
 
       expect(result.success).toBe(true); // At least one succeeded
       expect(result.results[0].success).toBe(true);

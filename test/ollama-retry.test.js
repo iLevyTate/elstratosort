@@ -152,12 +152,15 @@ describe('Ollama API Retry Logic', () => {
         initialDelay: 100,
       });
 
+      // Use expect().rejects to properly catch the rejection
+      // eslint-disable-next-line jest/valid-expect
+      const assertionPromise = expect(promise).rejects.toThrow('Network error');
+
       // Fast-forward all timers to allow retries to complete
       jest.advanceTimersByTime(1000);
       await jest.runAllTimersAsync();
 
-      // Use expect().rejects to properly catch the rejection
-      await expect(promise).rejects.toThrow('Network error');
+      await assertionPromise;
 
       // Should be called initial + maxRetries times
       expect(mockApiCall).toHaveBeenCalledTimes(3); // initial + 2 retries
@@ -256,12 +259,17 @@ describe('Ollama API Retry Logic', () => {
         },
       );
 
+      // Use expect().rejects to properly catch the rejection
+      // eslint-disable-next-line jest/valid-expect
+      const assertionPromise = expect(promise).rejects.toThrow(
+        /HTTP 500|Server error/,
+      );
+
       // Advance timers to trigger retries
       jest.advanceTimersByTime(1000); // Advance enough for all retries
       await jest.runAllTimersAsync();
 
-      // Use expect().rejects to properly catch the rejection
-      await expect(promise).rejects.toThrow(/HTTP 500|Server error/);
+      await assertionPromise;
 
       expect(global.fetch).toHaveBeenCalledTimes(3); // initial + 2 retries
     }, 10000);

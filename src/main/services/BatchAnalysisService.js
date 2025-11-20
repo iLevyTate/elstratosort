@@ -148,6 +148,36 @@ class BatchAnalysisService {
     const duration = Date.now() - startTime;
     const avgTime = duration / filePaths.length;
 
+    // CRITICAL FIX: Flush any remaining embeddings in queue after batch analysis completes
+    // This ensures all embeddings are persisted even if batch size wasn't reached
+    try {
+      const {
+        flushAllEmbeddings: flushDocumentEmbeddings,
+      } = require('../analysis/ollamaDocumentAnalysis');
+      const {
+        flushAllEmbeddings: flushImageEmbeddings,
+      } = require('../analysis/ollamaImageAnalysis');
+
+      // Flush both queues to ensure all embeddings are persisted
+      await Promise.allSettled([
+        flushDocumentEmbeddings().catch((error) => {
+          logger.warn('[BATCH-ANALYSIS] Failed to flush document embeddings', {
+            error: error.message,
+          });
+        }),
+        flushImageEmbeddings().catch((error) => {
+          logger.warn('[BATCH-ANALYSIS] Failed to flush image embeddings', {
+            error: error.message,
+          });
+        }),
+      ]);
+    } catch (error) {
+      // Non-fatal - log but don't fail batch
+      logger.warn('[BATCH-ANALYSIS] Error flushing embedding queues', {
+        error: error.message,
+      });
+    }
+
     logger.info('[BATCH-ANALYSIS] Batch analysis complete', {
       total: filePaths.length,
       successful: batchResult.successful,

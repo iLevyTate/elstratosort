@@ -292,7 +292,6 @@ function SmartOrganizer({
                     variant="secondary"
                     className="mt-2"
                     onClick={() => {
-                      // LOW PRIORITY FIX (LOW-2): Remove console.log placeholder
                       // TODO: Implement show improvements functionality
                     }}
                   >
@@ -320,12 +319,10 @@ function SmartOrganizer({
               <BatchOrganizationSuggestions
                 batchSuggestions={batchSuggestions}
                 onAcceptStrategy={() => {
-                  // LOW PRIORITY FIX (LOW-2): Remove console.log debug statement
                   // Apply strategy to all files
                   setCurrentStep('preview');
                 }}
                 onCustomizeGroup={() => {
-                  // LOW PRIORITY FIX (LOW-2): Remove console.log debug statement
                   // TODO: Implement customize group functionality
                 }}
                 onRejectAll={onCancel}

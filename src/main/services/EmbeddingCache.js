@@ -49,8 +49,9 @@ class EmbeddingCache {
       return;
     }
 
-    // Fixed: Start cleanup interval only after successful initialization
-    this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+    // PERFORMANCE FIX: Increased cleanup interval from 60s to 300s (5 minutes)
+    // Cache cleanup doesn't need to run so frequently when app is idle
+    this.cleanupInterval = setInterval(() => this.cleanup(), 300000); // 5 minutes
 
     // Use unref() to allow process to exit even with active interval
     if (this.cleanupInterval.unref) {
