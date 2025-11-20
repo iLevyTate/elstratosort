@@ -93,7 +93,9 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       const intelligentCategory = getIntelligentCategory(
         fileName,
         fileExtension,
+        96,
         smartFolders,
+        97,
       );
       const intelligentKeywords = getIntelligentKeywords(
         fileName,
@@ -721,6 +723,10 @@ async function flushEmbeddingQueue() {
     logger.debug('[DocumentAnalysis] Flushing embedding queue', {
       count: queueCopy.length,
     });
+
+    // Get ChromaDB service (instance)
+    const chromaDbService =
+      require('../services/ChromaDBService').getInstance();
 
     // Ensure ChromaDB is initialized
     await chromaDbService.initialize();
