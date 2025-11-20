@@ -530,471 +530,552 @@ function OrganizePhase() {
     );
   }, [bulkCategory, selectedFiles, editingFiles, addNotification]);
 
-  // PERFORMANCE FIX #10: Debounce approve operation to prevent rapid-fire clicks
-  const debouncedApproveRef = useRef(null);
-
-  if (!debouncedApproveRef.current) {
-    debouncedApproveRef.current = debounce((selected, notify) => {
-      if (selected.size === 0) return;
-      notify(`Approved ${selected.size} files for organization`, 'success');
-      setSelectedFiles(new Set());
-    }, 300); // 300ms debounce delay
-  }
-
-  const approveSelectedFiles = useCallback(() => {
-    if (selectedFiles.size === 0) return;
-    debouncedApproveRef.current(selectedFiles, addNotification);
-  }, [selectedFiles, addNotification]);
-
-  const handleOrganizeFiles = async () => {
-    try {
-      setIsOrganizing(true);
-      const filesToProcess = unprocessedFiles.filter((f) => f.analysis);
-      if (filesToProcess.length === 0) return;
-      setBatchProgress({
-        current: 0,
-        total: filesToProcess.length,
-        currentFile: '',
-      });
-
-      // Check if auto-organize with suggestions is available
-      const useAutoOrganize = window.electronAPI?.organize?.auto;
-
-      let operations;
-      if (useAutoOrganize) {
-        // Use the new auto-organize service with suggestions
-        const result = await window.electronAPI.organize.auto({
-          files: filesToProcess,
-          smartFolders,
-          options: {
-            defaultLocation,
-            confidenceThreshold: 0.7, // Use medium confidence for manual trigger
-            preserveNames: false,
-          },
+  const handleOrganizeFiles = useCallback(
+    async (filesToOrganize = null) => {
+      try {
+        setIsOrganizing(true);
+        // Use provided files or fall back to all unprocessed files
+        const filesToProcess =
+          filesToOrganize || unprocessedFiles.filter((f) => f.analysis);
+        if (filesToProcess.length === 0) return;
+        setBatchProgress({
+          current: 0,
+          total: filesToProcess.length,
+          currentFile: '',
         });
 
-        operations = result.operations || [];
+        // Check if auto-organize with suggestions is available
+        const useAutoOrganize = window.electronAPI?.organize?.auto;
 
-        // Handle files that need review
-        if (result.needsReview && result.needsReview.length > 0) {
+        let operations;
+        if (useAutoOrganize) {
+          // Use the new auto-organize service with suggestions
+          const result = await window.electronAPI.organize.auto({
+            files: filesToProcess,
+            smartFolders,
+            options: {
+              defaultLocation,
+              confidenceThreshold: 0.7, // Use medium confidence for manual trigger
+              preserveNames: false,
+            },
+          });
+
+          operations = result.operations || [];
+
+          // Handle files that need review
+          if (result.needsReview && result.needsReview.length > 0) {
+            addNotification(
+              `${result.needsReview.length} files need manual review due to low confidence`,
+              'info',
+              4000,
+              'organize-needs-review',
+            );
+          }
+        } else {
+          // Fallback to original logic
+          // Map files to their indices in unprocessedFiles for editing lookup
+          const fileIndexMap = new Map();
+          filesToProcess.forEach((file) => {
+            const index = unprocessedFiles.findIndex(
+              (f) => f.path === file.path,
+            );
+            if (index >= 0) fileIndexMap.set(file.path, index);
+          });
+
+          operations = filesToProcess.map((file) => {
+            const fileIndex = fileIndexMap.get(file.path) ?? -1;
+            const edits = fileIndex >= 0 ? editingFiles[fileIndex] || {} : {};
+            const fileWithEdits =
+              fileIndex >= 0 ? getFileWithEdits(file, fileIndex) : file;
+            let currentCategory =
+              edits.category || fileWithEdits.analysis?.category;
+            // Fix: Filter out "document" category if it's not a smart folder
+            if (currentCategory === 'document') {
+              const documentFolder = findSmartFolderForCategory('document');
+              if (!documentFolder) {
+                // Replace with "Uncategorized" if "document" is not a smart folder
+                currentCategory = 'Uncategorized';
+              }
+            }
+            const smartFolder = findSmartFolderForCategory(currentCategory);
+            const destinationDir = smartFolder
+              ? smartFolder.path || `${defaultLocation}/${smartFolder.name}`
+              : `${defaultLocation}/${currentCategory || 'Uncategorized'}`;
+            const suggestedName =
+              edits.suggestedName ||
+              fileWithEdits.analysis?.suggestedName ||
+              file.name;
+
+            // Defensive check: Ensure extension is present to prevent unopenable files
+            const originalExt = file.name.includes('.')
+              ? '.' + file.name.split('.').pop()
+              : '';
+            const newName =
+              suggestedName.includes('.') || !originalExt
+                ? suggestedName // Already has extension or no extension to preserve
+                : suggestedName + originalExt; // Add extension back
+
+            const dest = `${destinationDir}/${newName}`;
+            const normalized =
+              window.electronAPI?.files?.normalizePath?.(dest) || dest;
+            return { type: 'move', source: file.path, destination: normalized };
+          });
+        }
+
+        if (!operations || operations.length === 0) {
           addNotification(
-            `${result.needsReview.length} files need manual review due to low confidence`,
+            'No confident file moves were generated. Review files manually before organizing.',
             'info',
             4000,
-            'organize-needs-review',
+            'organize-no-operations',
           );
+          setIsOrganizing(false);
+          setBatchProgress({ current: 0, total: 0, currentFile: '' });
+          return;
         }
-      } else {
-        // Fallback to original logic
-        operations = filesToProcess.map((file, i) => {
-          const edits = editingFiles[i] || {};
-          const fileWithEdits = getFileWithEdits(file, i);
-          const currentCategory =
-            edits.category || fileWithEdits.analysis?.category;
-          const smartFolder = findSmartFolderForCategory(currentCategory);
-          const destinationDir = smartFolder
-            ? smartFolder.path || `${defaultLocation}/${smartFolder.name}`
-            : `${defaultLocation}/${currentCategory || 'Uncategorized'}`;
-          const suggestedName =
-            edits.suggestedName ||
-            fileWithEdits.analysis?.suggestedName ||
-            file.name;
 
-          // Defensive check: Ensure extension is present to prevent unopenable files
-          const originalExt = file.name.includes('.')
-            ? '.' + file.name.split('.').pop()
-            : '';
-          const newName =
-            suggestedName.includes('.') || !originalExt
-              ? suggestedName // Already has extension or no extension to preserve
-              : suggestedName + originalExt; // Add extension back
+        // Prepare a lightweight preview list for the progress UI
+        try {
+          // Map files to their indices in unprocessedFiles for editing lookup
+          const fileIndexMap = new Map();
+          filesToProcess.forEach((file) => {
+            const index = unprocessedFiles.findIndex(
+              (f) => f.path === file.path,
+            );
+            if (index >= 0) fileIndexMap.set(file.path, index);
+          });
 
-          const dest = `${destinationDir}/${newName}`;
-          const normalized =
-            window.electronAPI?.files?.normalizePath?.(dest) || dest;
-          return { type: 'move', source: file.path, destination: normalized };
-        });
-      }
+          const preview = filesToProcess.map((file) => {
+            const fileIndex = fileIndexMap.get(file.path) ?? -1;
+            const edits = fileIndex >= 0 ? editingFiles[fileIndex] || {} : {};
+            const fileWithEdits =
+              fileIndex >= 0 ? getFileWithEdits(file, fileIndex) : file;
+            let currentCategory =
+              edits.category || fileWithEdits.analysis?.category;
+            // Fix: Filter out "document" category if it's not a smart folder
+            if (currentCategory === 'document') {
+              const documentFolder = findSmartFolderForCategory('document');
+              if (!documentFolder) {
+                // Replace with "Uncategorized" if "document" is not a smart folder
+                currentCategory = 'Uncategorized';
+              }
+            }
+            const smartFolder = findSmartFolderForCategory(currentCategory);
+            const destinationDir = smartFolder
+              ? smartFolder.path || `${defaultLocation}/${smartFolder.name}`
+              : `${defaultLocation}/${currentCategory || 'Uncategorized'}`;
+            const suggestedName =
+              edits.suggestedName ||
+              fileWithEdits.analysis?.suggestedName ||
+              file.name;
 
-      if (!operations || operations.length === 0) {
-        addNotification(
-          'No confident file moves were generated. Review files manually before organizing.',
-          'info',
-          4000,
-          'organize-no-operations',
-        );
-        setIsOrganizing(false);
-        setBatchProgress({ current: 0, total: 0, currentFile: '' });
-        return;
-      }
+            // Defensive check: Ensure extension is present to prevent unopenable files
+            const originalExt = file.name.includes('.')
+              ? '.' + file.name.split('.').pop()
+              : '';
+            const newName =
+              suggestedName.includes('.') || !originalExt
+                ? suggestedName // Already has extension or no extension to preserve
+                : suggestedName + originalExt; // Add extension back
 
-      // Prepare a lightweight preview list for the progress UI
-      try {
-        const preview = filesToProcess.map((file, i) => {
-          const edits = editingFiles[i] || {};
-          const fileWithEdits = getFileWithEdits(file, i);
-          const currentCategory =
-            edits.category || fileWithEdits.analysis?.category;
-          const smartFolder = findSmartFolderForCategory(currentCategory);
-          const destinationDir = smartFolder
-            ? smartFolder.path || `${defaultLocation}/${smartFolder.name}`
-            : `${defaultLocation}/${currentCategory || 'Uncategorized'}`;
-          const suggestedName =
-            edits.suggestedName ||
-            fileWithEdits.analysis?.suggestedName ||
-            file.name;
+            const dest = `${destinationDir}/${newName}`;
+            const normalized =
+              window.electronAPI?.files?.normalizePath?.(dest) || dest;
+            return { fileName: newName, destination: normalized };
+          });
+          setOrganizePreview(preview);
+        } catch {
+          // Non-fatal if preview generation fails
+        }
 
-          // Defensive check: Ensure extension is present to prevent unopenable files
-          const originalExt = file.name.includes('.')
-            ? '.' + file.name.split('.').pop()
-            : '';
-          const newName =
-            suggestedName.includes('.') || !originalExt
-              ? suggestedName // Already has extension or no extension to preserve
-              : suggestedName + originalExt; // Add extension back
+        const sourcePathsSet = new Set(operations.map((op) => op.source));
 
-          const dest = `${destinationDir}/${newName}`;
-          const normalized =
-            window.electronAPI?.files?.normalizePath?.(dest) || dest;
-          return { fileName: newName, destination: normalized };
-        });
-        setOrganizePreview(preview);
-      } catch {
-        // Non-fatal if preview generation fails
-      }
-
-      const sourcePathsSet = new Set(operations.map((op) => op.source));
-
-      const stateCallbacks = {
-        onExecute: (result) => {
-          try {
-            const resArray = Array.isArray(result?.results)
-              ? result.results
-              : [];
-            const uiResults = resArray
-              .filter((r) => r.success)
-              .map((r) => {
-                const original =
-                  analysisResults.find((a) => a.path === r.source) || {};
-                return {
-                  originalPath: r.source,
-                  path: r.destination,
-                  originalName:
-                    original.name ||
-                    (original.path ? original.path.split(/[\\/]/).pop() : ''),
-                  newName: r.destination
-                    ? r.destination.split(/[\\/]/).pop()
-                    : '',
-                  smartFolder: 'Organized',
-                  organizedAt: new Date().toISOString(),
-                };
-              });
-            if (uiResults.length > 0) {
+        const stateCallbacks = {
+          onExecute: (result) => {
+            try {
+              const resArray = Array.isArray(result?.results)
+                ? result.results
+                : [];
+              const uiResults = resArray
+                .filter((r) => r.success)
+                .map((r) => {
+                  const original =
+                    analysisResults.find((a) => a.path === r.source) || {};
+                  return {
+                    originalPath: r.source,
+                    path: r.destination,
+                    originalName:
+                      original.name ||
+                      (original.path ? original.path.split(/[\\/]/).pop() : ''),
+                    newName: r.destination
+                      ? r.destination.split(/[\\/]/).pop()
+                      : '',
+                    smartFolder: 'Organized',
+                    organizedAt: new Date().toISOString(),
+                  };
+                });
+              if (uiResults.length > 0) {
+                setOrganizedFiles((prev) => [...prev, ...uiResults]);
+                markFilesAsProcessed(uiResults.map((r) => r.originalPath));
+                actions.setPhaseData('organizedFiles', [
+                  ...(phaseData.organizedFiles || []),
+                  ...uiResults,
+                ]);
+                addNotification(
+                  `Organized ${uiResults.length} files`,
+                  'success',
+                );
+                // Mark visual progress complete
+                setBatchProgress({
+                  current: filesToProcess.length,
+                  total: filesToProcess.length,
+                  currentFile: '',
+                });
+              }
+            } catch {
+              // Non-fatal if state callback fails
+            }
+          },
+          onUndo: () => {
+            try {
+              // Remove any organized entries that belong to this batch
+              setOrganizedFiles((prev) =>
+                prev.filter((of) => !sourcePathsSet.has(of.originalPath)),
+              );
+              unmarkFilesAsProcessed(Array.from(sourcePathsSet));
+              actions.setPhaseData(
+                'organizedFiles',
+                (phaseData.organizedFiles || []).filter(
+                  (of) => !sourcePathsSet.has(of.originalPath),
+                ),
+              );
+              addNotification(
+                'Undo complete. Restored files to original locations.',
+                'info',
+              );
+            } catch {
+              // Non-fatal if state callback fails
+            }
+          },
+          onRedo: () => {
+            try {
+              // Best-effort: re-add based on operations
+              const uiResults = operations.map((op) => ({
+                originalPath: op.source,
+                path: op.destination,
+                originalName: op.source.split(/[\\/]/).pop(),
+                newName: op.destination.split(/[\\/]/).pop(),
+                smartFolder: 'Organized',
+                organizedAt: new Date().toISOString(),
+              }));
               setOrganizedFiles((prev) => [...prev, ...uiResults]);
               markFilesAsProcessed(uiResults.map((r) => r.originalPath));
               actions.setPhaseData('organizedFiles', [
                 ...(phaseData.organizedFiles || []),
                 ...uiResults,
               ]);
-              addNotification(`Organized ${uiResults.length} files`, 'success');
-              // Mark visual progress complete
-              setBatchProgress({
-                current: filesToProcess.length,
-                total: filesToProcess.length,
-                currentFile: '',
-              });
+              addNotification('Redo complete. Files re-organized.', 'info');
+            } catch {
+              // Non-fatal if state callback fails
             }
-          } catch {
-            // Non-fatal if state callback fails
-          }
-        },
-        onUndo: () => {
-          try {
-            // Remove any organized entries that belong to this batch
-            setOrganizedFiles((prev) =>
-              prev.filter((of) => !sourcePathsSet.has(of.originalPath)),
-            );
-            unmarkFilesAsProcessed(Array.from(sourcePathsSet));
-            actions.setPhaseData(
-              'organizedFiles',
-              (phaseData.organizedFiles || []).filter(
-                (of) => !sourcePathsSet.has(of.originalPath),
-              ),
-            );
-            addNotification(
-              'Undo complete. Restored files to original locations.',
-              'info',
-            );
-          } catch {
-            // Non-fatal if state callback fails
-          }
-        },
-        onRedo: () => {
-          try {
-            // Best-effort: re-add based on operations
-            const uiResults = operations.map((op) => ({
-              originalPath: op.source,
-              path: op.destination,
-              originalName: op.source.split(/[\\/]/).pop(),
-              newName: op.destination.split(/[\\/]/).pop(),
-              smartFolder: 'Organized',
-              organizedAt: new Date().toISOString(),
-            }));
-            setOrganizedFiles((prev) => [...prev, ...uiResults]);
-            markFilesAsProcessed(uiResults.map((r) => r.originalPath));
-            actions.setPhaseData('organizedFiles', [
-              ...(phaseData.organizedFiles || []),
-              ...uiResults,
-            ]);
-            addNotification('Redo complete. Files re-organized.', 'info');
-          } catch {
-            // Non-fatal if state callback fails
-          }
-        },
-      };
+          },
+        };
 
-      // Execute as a single undoable action
-      const result = await executeAction(
-        createOrganizeBatchAction(
-          `Organize ${operations.length} files`,
-          operations,
-          stateCallbacks,
-        ),
-      );
-      // Only advance if at least one file organized successfully
-      const successCount = Array.isArray(result?.results)
-        ? result.results.filter((r) => r.success).length
-        : 0;
-      if (successCount > 0) actions.advancePhase(PHASES.COMPLETE);
-    } catch (error) {
-      addNotification(`Organization failed: ${error.message}`, 'error');
-    } finally {
-      setIsOrganizing(false);
-      setBatchProgress({ current: 0, total: 0, currentFile: '' });
+        // Execute as a single undoable action
+        const result = await executeAction(
+          createOrganizeBatchAction(
+            `Organize ${operations.length} files`,
+            operations,
+            stateCallbacks,
+          ),
+        );
+        // Only advance if at least one file organized successfully
+        const successCount = Array.isArray(result?.results)
+          ? result.results.filter((r) => r.success).length
+          : 0;
+        if (successCount > 0) actions.advancePhase(PHASES.COMPLETE);
+      } catch (error) {
+        addNotification(`Organization failed: ${error.message}`, 'error');
+      } finally {
+        setIsOrganizing(false);
+        setBatchProgress({ current: 0, total: 0, currentFile: '' });
+      }
+    },
+    [
+      unprocessedFiles,
+      editingFiles,
+      getFileWithEdits,
+      findSmartFolderForCategory,
+      defaultLocation,
+      smartFolders,
+      analysisResults,
+      markFilesAsProcessed,
+      unmarkFilesAsProcessed,
+      actions,
+      phaseData,
+      addNotification,
+      executeAction,
+    ],
+  );
+
+  const approveSelectedFiles = useCallback(() => {
+    if (selectedFiles.size === 0) return;
+    // Organize only the selected files
+    const selectedIndices = Array.from(selectedFiles);
+    const filesToProcess = selectedIndices
+      .map((index) => unprocessedFiles[index])
+      .filter((f) => f && f.analysis);
+
+    if (filesToProcess.length === 0) {
+      addNotification('No valid files selected for organization', 'warning');
+      return;
     }
-  };
 
-  // The rest of Organize UI (lists, bulk ops, progress) should be moved here as needed.
+    // Call handleOrganizeFiles with the selected files
+    handleOrganizeFiles(filesToProcess);
+    setSelectedFiles(new Set());
+  }, [selectedFiles, unprocessedFiles, addNotification, handleOrganizeFiles]);
+
   return (
-    <div className="container-responsive gap-6 py-6 flex flex-col">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between flex-shrink-0">
-        <div className="space-y-3">
-          <h1 className="heading-primary">📂 Review & Organize</h1>
-          <p className="text-lg text-system-gray-600 leading-relaxed max-w-2xl">
-            Inspect suggestions, fine-tune smart folders, and execute the batch
-            once you&apos;re ready.
-          </p>
-          {isAnalysisRunning && (
-            <div className="flex items-center gap-4 rounded-2xl border border-stratosort-blue/30 bg-stratosort-blue/5 px-5 py-4 text-sm text-stratosort-blue">
-              <span className="loading-spinner h-5 w-5 border-t-transparent" />
-              Analysis continuing in background:{' '}
-              {analysisProgressFromDiscover.current}/
-              {analysisProgressFromDiscover.total} files
+    <div className="h-full w-full flex flex-col overflow-hidden">
+      <div className="container-responsive flex flex-col h-full gap-6 py-6 overflow-hidden">
+        {/* Header */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between flex-shrink-0">
+          <div className="space-y-3">
+            <h1 className="heading-primary">📂 Review & Organize</h1>
+            <p className="text-lg text-system-gray-600 leading-relaxed max-w-2xl">
+              Inspect suggestions, fine-tune smart folders, and execute the
+              batch once you&apos;re ready.
+            </p>
+            {isAnalysisRunning && (
+              <div className="flex items-center gap-4 rounded-2xl border border-stratosort-blue/30 bg-stratosort-blue/5 px-5 py-4 text-sm text-stratosort-blue">
+                <span className="loading-spinner h-5 w-5 border-t-transparent" />
+                Analysis continuing in background:{' '}
+                {analysisProgressFromDiscover.current}/
+                {analysisProgressFromDiscover.total} files
+              </div>
+            )}
+          </div>
+          <UndoRedoToolbar className="flex-shrink-0" />
+        </div>
+
+        {/* Main Content */}
+        <div className="flex-1 min-h-0 flex flex-col gap-6 overflow-hidden">
+          {/* Controls Grid */}
+          <div className="grid gap-6 desktop-grid-2 flex-shrink-0 max-h-[40%] overflow-y-auto pr-2 modern-scrollbar">
+            {smartFolders.length > 0 && (
+              <Collapsible
+                title="📁 Target Smart Folders"
+                defaultOpen={false}
+                persistKey="organize-target-folders"
+                contentClassName="p-8"
+                className="glass-panel"
+              >
+                <TargetFolderList
+                  folders={smartFolders}
+                  defaultLocation={defaultLocation}
+                />
+              </Collapsible>
+            )}
+            {(unprocessedFiles.length > 0 || processedFiles.length > 0) && (
+              <Collapsible
+                title="📊 File Status Overview"
+                defaultOpen
+                persistKey="organize-status"
+                className="glass-panel"
+              >
+                <StatusOverview
+                  unprocessedCount={unprocessedFiles.length}
+                  processedCount={processedFiles.length}
+                  failedCount={
+                    analysisResults.filter((f) => !f.analysis).length
+                  }
+                />
+              </Collapsible>
+            )}
+            {unprocessedFiles.length > 0 && (
+              <Collapsible
+                title="Bulk Operations"
+                defaultOpen
+                persistKey="organize-bulk"
+                className="glass-panel"
+              >
+                <BulkOperations
+                  total={unprocessedFiles.length}
+                  selectedCount={selectedFiles.size}
+                  onSelectAll={selectAllFiles}
+                  onApproveSelected={approveSelectedFiles}
+                  bulkEditMode={bulkEditMode}
+                  setBulkEditMode={setBulkEditMode}
+                  bulkCategory={bulkCategory}
+                  setBulkCategory={setBulkCategory}
+                  onApplyBulkCategory={applyBulkCategoryChange}
+                  smartFolders={smartFolders}
+                />
+              </Collapsible>
+            )}
+            {processedFiles.length > 0 && (
+              <Collapsible
+                title="✅ Previously Organized Files"
+                defaultOpen={false}
+                persistKey="organize-history"
+                contentClassName="p-8"
+                className="glass-panel"
+              >
+                <div className="space-y-5">
+                  {processedFiles.map((file, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between p-8 bg-green-50 rounded-lg border border-green-200"
+                    >
+                      <div className="flex items-center gap-8">
+                        <span className="text-green-600">✅</span>
+                        <div>
+                          <div className="text-sm font-medium text-system-gray-900">
+                            {file.originalName} → {file.newName}
+                          </div>
+                          <div className="text-xs text-system-gray-500">
+                            Moved to {file.smartFolder} •{' '}
+                            {new Date(file.organizedAt).toLocaleDateString()}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-green-600 font-medium">
+                        Organized
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Collapsible>
+            )}
+          </div>
+
+          {/* Files Ready - Filling */}
+          <div className="flex-1 min-h-0 flex flex-col">
+            <Collapsible
+              title="Files Ready for Organization"
+              defaultOpen
+              persistKey="organize-ready-list"
+              className="glass-panel h-full flex flex-col"
+              contentClassName="flex-1 overflow-hidden relative flex flex-col"
+            >
+              <div className="absolute inset-0 overflow-y-auto p-6 modern-scrollbar">
+                {unprocessedFiles.length === 0 ? (
+                  <div className="text-center py-21">
+                    <div className="text-4xl mb-13">
+                      {processedFiles.length > 0 ? '✅' : '📭'}
+                    </div>
+                    <p className="text-system-gray-500 italic">
+                      {processedFiles.length > 0
+                        ? 'All files have been organized! Check the results below.'
+                        : 'No files ready for organization yet.'}
+                    </p>
+                    {processedFiles.length === 0 && (
+                      <Button
+                        onClick={() => actions.advancePhase(PHASES.DISCOVER)}
+                        variant="primary"
+                        className="mt-13"
+                      >
+                        ← Go Back to Select Files
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
+                    {unprocessedFiles.map((file, index) => {
+                      const fileWithEdits = getFileWithEdits(file, index);
+                      const currentCategory =
+                        editingFiles[index]?.category ||
+                        fileWithEdits.analysis?.category;
+                      const smartFolder =
+                        findSmartFolderForCategory(currentCategory);
+                      const isSelected = selectedFiles.has(index);
+                      const stateDisplay = getFileStateDisplay(
+                        file.path,
+                        !!file.analysis,
+                      );
+                      const destination = smartFolder
+                        ? smartFolder.path ||
+                          `${defaultLocation}/${smartFolder.name}`
+                        : 'No matching folder';
+                      return (
+                        <ReadyFileItem
+                          key={index}
+                          file={fileWithEdits}
+                          index={index}
+                          isSelected={isSelected}
+                          onToggleSelected={toggleFileSelection}
+                          stateDisplay={stateDisplay}
+                          smartFolders={smartFolders}
+                          editing={editingFiles[index]}
+                          onEdit={handleEditFile}
+                          destination={destination}
+                          category={currentCategory}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </Collapsible>
+          </div>
+
+          {/* Action Area - Fixed Bottom of Content */}
+          {unprocessedFiles.length > 0 && (
+            <div className="flex-shrink-0 glass-panel p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-system-gray-600 font-medium">
+                    Ready to move{' '}
+                    {unprocessedFiles.filter((f) => f.analysis).length} files
+                  </p>
+                  <p className="text-xs text-system-gray-500">
+                    You can undo this operation if needed
+                  </p>
+                </div>
+                {isOrganizing ? (
+                  <div className="w-1/2">
+                    <OrganizeProgress
+                      isOrganizing={isOrganizing}
+                      batchProgress={batchProgress}
+                      preview={organizePreview}
+                    />
+                  </div>
+                ) : (
+                  <Button
+                    onClick={handleOrganizeFiles}
+                    variant="success"
+                    className="text-lg px-8 py-4"
+                    disabled={
+                      unprocessedFiles.filter((f) => f.analysis).length === 0
+                    }
+                  >
+                    ✨ Organize Files Now
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </div>
-        <UndoRedoToolbar className="flex-shrink-0" />
-      </div>
-      <div className="flex flex-col gap-6">
-        {smartFolders.length > 0 && (
-          <Collapsible
-            title="📁 Target Smart Folders"
-            defaultOpen={false}
-            persistKey="organize-target-folders"
-            contentClassName="p-8"
-            className="glass-panel"
+
+        {/* Footer Buttons */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between flex-shrink-0 mt-2">
+          <Button
+            onClick={() => actions.advancePhase(PHASES.DISCOVER)}
+            variant="secondary"
+            disabled={isOrganizing}
+            className="w-full sm:w-auto"
           >
-            <TargetFolderList
-              folders={smartFolders}
-              defaultLocation={defaultLocation}
-            />
-          </Collapsible>
-        )}
-        {(unprocessedFiles.length > 0 || processedFiles.length > 0) && (
-          <Collapsible
-            title="📊 File Status Overview"
-            defaultOpen
-            persistKey="organize-status"
-            className="glass-panel"
+            ← Back to Discovery
+          </Button>
+          <Button
+            onClick={() => actions.advancePhase(PHASES.COMPLETE)}
+            disabled={processedFiles.length === 0 || isOrganizing}
+            className={`w-full sm:w-auto ${processedFiles.length === 0 || isOrganizing ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            <StatusOverview
-              unprocessedCount={unprocessedFiles.length}
-              processedCount={processedFiles.length}
-              failedCount={analysisResults.filter((f) => !f.analysis).length}
-            />
-          </Collapsible>
-        )}
-        {unprocessedFiles.length > 0 && (
-          <Collapsible
-            title="Bulk Operations"
-            defaultOpen
-            persistKey="organize-bulk"
-            className="glass-panel"
-          >
-            <BulkOperations
-              total={unprocessedFiles.length}
-              selectedCount={selectedFiles.size}
-              onSelectAll={selectAllFiles}
-              onApproveSelected={approveSelectedFiles}
-              bulkEditMode={bulkEditMode}
-              setBulkEditMode={setBulkEditMode}
-              bulkCategory={bulkCategory}
-              setBulkCategory={setBulkCategory}
-              onApplyBulkCategory={applyBulkCategoryChange}
-              smartFolders={smartFolders}
-            />
-          </Collapsible>
-        )}
-        <Collapsible
-          title="Files Ready for Organization"
-          defaultOpen
-          persistKey="organize-ready-list"
-          contentClassName="p-8"
-          className="glass-panel"
-        >
-          {unprocessedFiles.length === 0 ? (
-            <div className="text-center py-21">
-              <div className="text-4xl mb-13">
-                {processedFiles.length > 0 ? '✅' : '📭'}
-              </div>
-              <p className="text-system-gray-500 italic">
-                {processedFiles.length > 0
-                  ? 'All files have been organized! Check the results below.'
-                  : 'No files ready for organization yet.'}
-              </p>
-              {processedFiles.length === 0 && (
-                <Button
-                  onClick={() => actions.advancePhase(PHASES.DISCOVER)}
-                  variant="primary"
-                  className="mt-13"
-                >
-                  ← Go Back to Select Files
-                </Button>
-              )}
-            </div>
-          ) : (
-            <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
-              {unprocessedFiles.map((file, index) => {
-                const fileWithEdits = getFileWithEdits(file, index);
-                const currentCategory =
-                  editingFiles[index]?.category ||
-                  fileWithEdits.analysis?.category;
-                const smartFolder = findSmartFolderForCategory(currentCategory);
-                const isSelected = selectedFiles.has(index);
-                const stateDisplay = getFileStateDisplay(
-                  file.path,
-                  !!file.analysis,
-                );
-                const destination = smartFolder
-                  ? smartFolder.path || `${defaultLocation}/${smartFolder.name}`
-                  : 'No matching folder';
-                return (
-                  <ReadyFileItem
-                    key={index}
-                    file={fileWithEdits}
-                    index={index}
-                    isSelected={isSelected}
-                    onToggleSelected={toggleFileSelection}
-                    stateDisplay={stateDisplay}
-                    smartFolders={smartFolders}
-                    editing={editingFiles[index]}
-                    onEdit={handleEditFile}
-                    destination={destination}
-                    category={currentCategory}
-                  />
-                );
-              })}
-            </div>
-          )}
-        </Collapsible>
-        {processedFiles.length > 0 && (
-          <Collapsible
-            title="✅ Previously Organized Files"
-            defaultOpen={false}
-            persistKey="organize-history"
-            contentClassName="p-8"
-            className="glass-panel"
-          >
-            <div className="space-y-5">
-              {processedFiles.map((file, index) => (
-                <div
-                  key={index}
-                  className="flex items-center justify-between p-8 bg-green-50 rounded-lg border border-green-200"
-                >
-                  <div className="flex items-center gap-8">
-                    <span className="text-green-600">✅</span>
-                    <div>
-                      <div className="text-sm font-medium text-system-gray-900">
-                        {file.originalName} → {file.newName}
-                      </div>
-                      <div className="text-xs text-system-gray-500">
-                        Moved to {file.smartFolder} •{' '}
-                        {new Date(file.organizedAt).toLocaleDateString()}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-xs text-green-600 font-medium">
-                    Organized
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Collapsible>
-        )}
-        {unprocessedFiles.length > 0 && (
-          <Collapsible
-            title="Ready to Organize"
-            defaultOpen
-            persistKey="organize-action"
-            className="glass-panel"
-          >
-            <p className="text-system-gray-600 mb-13">
-              StratoSort will move and rename{' '}
-              <strong>
-                {unprocessedFiles.filter((f) => f.analysis).length} files
-              </strong>{' '}
-              according to AI suggestions.
-            </p>
-            <p className="text-xs text-system-gray-500 mb-13">
-              💡 Don&apos;t worry - you can undo this operation if needed
-            </p>
-            {isOrganizing ? (
-              <OrganizeProgress
-                isOrganizing={isOrganizing}
-                batchProgress={batchProgress}
-                preview={organizePreview}
-              />
-            ) : (
-              <Button
-                onClick={handleOrganizeFiles}
-                variant="success"
-                className="text-lg px-21 py-13"
-                disabled={
-                  unprocessedFiles.filter((f) => f.analysis).length === 0
-                }
-              >
-                ✨ Organize Files Now
-              </Button>
-            )}
-          </Collapsible>
-        )}
-      </div>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between flex-shrink-0">
-        <Button
-          onClick={() => actions.advancePhase(PHASES.DISCOVER)}
-          variant="secondary"
-          disabled={isOrganizing}
-          className="w-full sm:w-auto"
-        >
-          ← Back to Discovery
-        </Button>
-        <Button
-          onClick={() => actions.advancePhase(PHASES.COMPLETE)}
-          disabled={processedFiles.length === 0 || isOrganizing}
-          className={`w-full sm:w-auto ${processedFiles.length === 0 || isOrganizing ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          View Results →
-        </Button>
+            View Results →
+          </Button>
+        </div>
       </div>
     </div>
   );

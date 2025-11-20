@@ -50,6 +50,11 @@ class ChromaDBService {
     // Query optimization: In-flight query deduplication
     this.inflightQueries = new Map(); // Track in-flight queries to deduplicate
 
+    // Connection health monitoring
+    this.isOnline = false;
+    this.healthCheckInterval = null;
+    this.HEALTH_CHECK_INTERVAL_MS = 30000; // Check every 30 seconds
+
     // FIXED Bug #40: Validate and sanitize environment variables
     this.serverProtocol = DEFAULT_SERVER_PROTOCOL;
     this.serverHost = DEFAULT_SERVER_HOST;
@@ -151,6 +156,37 @@ class ChromaDBService {
   }
 
   /**
+   * Start periodic health check
+   */
+  startHealthCheck() {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+
+    // Initial check
+    this.checkHealth().catch(() => {});
+
+    this.healthCheckInterval = setInterval(() => {
+      this.checkHealth().catch(() => {});
+    }, this.HEALTH_CHECK_INTERVAL_MS);
+
+    // Unref to allow process to exit
+    if (this.healthCheckInterval.unref) {
+      this.healthCheckInterval.unref();
+    }
+  }
+
+  /**
+   * Stop periodic health check
+   */
+  stopHealthCheck() {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+  }
+
+  /**
    * Check if ChromaDB connection is healthy
    * @returns {boolean} true if healthy, false otherwise
    */
@@ -162,16 +198,19 @@ class ChromaDBService {
       const baseUrl = this.serverUrl;
 
       // Try multiple endpoints for compatibility with different ChromaDB versions
+      // PERFORMANCE FIX: Try all endpoints in parallel instead of sequentially
+      // Reduces blocking time from 6+ seconds to ~500ms
       const endpoints = [
         '/api/v2/heartbeat', // v2 endpoint (current version)
         '/api/v1/heartbeat', // v1 endpoint (ChromaDB 1.0.x)
         '/api/v1', // Some versions just have this
       ];
 
-      for (const endpoint of endpoints) {
+      // Try all endpoints in parallel for faster health check
+      const healthCheckPromises = endpoints.map(async (endpoint) => {
         try {
           const response = await axios.get(`${baseUrl}${endpoint}`, {
-            timeout: 2000,
+            timeout: 500, // Reduced from 2000ms to 500ms for faster failure
             validateStatus: () => true, // Accept any status code for checking
           });
 
@@ -183,7 +222,7 @@ class ChromaDBService {
                 logger.debug(
                   `[ChromaDB] Health check endpoint ${endpoint} returned error: ${response.data.error}`,
                 );
-                continue;
+                return null;
               }
 
               // Check for valid heartbeat response
@@ -196,7 +235,7 @@ class ChromaDBService {
                 logger.debug(
                   `[ChromaDB] Health check successful on ${endpoint}`,
                 );
-                return true;
+                return endpoint;
               }
             }
 
@@ -204,14 +243,27 @@ class ChromaDBService {
             logger.debug(
               `[ChromaDB] Health check successful (generic 200) on ${endpoint}`,
             );
-            return true;
+            return endpoint;
           }
         } catch (error) {
-          // Continue to next endpoint
+          // Endpoint failed, return null
           logger.debug(
             `[ChromaDB] Health check failed on ${endpoint}: ${error.message}`,
           );
         }
+        return null;
+      });
+
+      // Wait for first successful endpoint (or all to fail)
+      const results = await Promise.all(healthCheckPromises);
+      const successfulEndpoint = results.find((result) => result !== null);
+
+      if (successfulEndpoint) {
+        if (!this.isOnline) {
+          logger.info('[ChromaDB] Connection restored/established');
+          this.isOnline = true;
+        }
+        return true;
       }
 
       // If none of the endpoints worked, try the client heartbeat as fallback
@@ -226,6 +278,10 @@ class ChromaDBService {
             logger.debug(
               '[ChromaDB] Health check successful via client.heartbeat()',
             );
+            if (!this.isOnline) {
+              logger.info('[ChromaDB] Connection restored via client');
+              this.isOnline = true;
+            }
           }
           return isHealthy;
         } catch (error) {
@@ -233,9 +289,17 @@ class ChromaDBService {
         }
       }
 
+      if (this.isOnline) {
+        logger.warn('[ChromaDB] Connection lost');
+        this.isOnline = false;
+      }
       return false;
     } catch (error) {
       logger.debug('[ChromaDB] Health check failed:', error.message);
+      if (this.isOnline) {
+        logger.warn('[ChromaDB] Connection lost due to error:', error.message);
+        this.isOnline = false;
+      }
       return false;
     }
   }
@@ -368,6 +432,9 @@ class ChromaDBService {
         // 2. Then clear the initializing flag (allows new init attempts)
         // This ordering ensures no window where both are false
         this.initialized = true;
+        this.isOnline = true; // Assume online after successful init
+        this.startHealthCheck(); // Start monitoring
+
         // Memory barrier - ensure initialized is set before clearing lock
         process.nextTick(() => {
           this._isInitializing = false; // Clear lock flag after initialization is visible
@@ -673,6 +740,77 @@ class ChromaDBService {
   }
 
   /**
+   * Query folders to find the best matches for a given embedding vector
+   * @param {Array} embedding - The embedding vector to query
+   * @param {number} topK - Number of top results to return
+   * @returns {Array} Sorted array of folder matches with scores
+   */
+  async queryFoldersByEmbedding(embedding, topK = 5) {
+    await this.initialize();
+
+    try {
+      // Validate embedding
+      if (!Array.isArray(embedding) || embedding.length === 0) {
+        logger.warn('[ChromaDB] Invalid embedding for folder query');
+        return [];
+      }
+
+      // Query the folder collection
+      const results = await this.folderCollection.query({
+        queryEmbeddings: [embedding],
+        nResults: topK,
+      });
+
+      // Fixed: Comprehensive validation to prevent array access errors
+      if (
+        !results ||
+        !results.ids ||
+        !Array.isArray(results.ids) ||
+        results.ids.length === 0 ||
+        !Array.isArray(results.ids[0]) ||
+        results.ids[0].length === 0
+      ) {
+        return [];
+      }
+
+      // Format results to match expected interface
+      const matches = [];
+      const idsArray = results.ids[0];
+      const distancesArray = results.distances[0];
+      const metadatasArray = results.metadatas?.[0] || [];
+
+      const resultCount = Math.min(idsArray.length, distancesArray.length);
+
+      for (let i = 0; i < resultCount; i++) {
+        const folderId = idsArray[i];
+        const distance = distancesArray[i];
+        const metadata = metadatasArray[i];
+
+        // Validate required fields
+        if (!folderId || distance === undefined) {
+          continue;
+        }
+
+        // Convert distance to similarity score
+        const score = Math.max(0, 1 - distance / 2);
+
+        matches.push({
+          folderId,
+          name: metadata?.name || folderId,
+          score,
+          description: metadata?.description,
+          path: metadata?.path,
+        });
+      }
+
+      return matches.sort((a, b) => b.score - a.score);
+    } catch (error) {
+      logger.error('[ChromaDB] Failed to query folders by embedding:', error);
+      return [];
+    }
+  }
+
+  /**
    * Query folders to find the best matches for a given file
    * @param {string} fileId - The file ID to query
    * @param {number} topK - Number of top results to return
@@ -709,6 +847,124 @@ class ChromaDBService {
     } finally {
       // Remove from in-flight queries
       this.inflightQueries.delete(cacheKey);
+    }
+  }
+
+  /**
+   * Batch query folders to find the best matches for multiple files
+   * @param {Array<string>} fileIds - Array of file IDs to query
+   * @param {number} topK - Number of top results to return
+   * @returns {Promise<Object>} Map of fileId -> Array of folder matches
+   */
+  async batchQueryFolders(fileIds, topK = 5) {
+    await this.initialize();
+
+    if (!fileIds || fileIds.length === 0) {
+      return {};
+    }
+
+    try {
+      // 1. Get embeddings for all files
+      // We use a loop with retries similar to single query for robustness
+      let fileResults = null;
+      const maxRetries = 3;
+
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          fileResults = await this.fileCollection.get({
+            ids: fileIds,
+            include: ['embeddings'],
+          });
+
+          if (
+            fileResults &&
+            fileResults.embeddings &&
+            fileResults.embeddings.length > 0
+          ) {
+            break;
+          }
+
+          if (attempt < maxRetries - 1) {
+            await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
+          }
+        } catch (e) {
+          if (attempt === maxRetries - 1) throw e;
+          await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
+        }
+      }
+
+      if (!fileResults || !fileResults.ids || fileResults.ids.length === 0) {
+        logger.warn('[ChromaDB] No embeddings found for batch query', {
+          count: fileIds.length,
+        });
+        return {};
+      }
+
+      // Map embeddings by ID to ensure correct order
+      const embeddingMap = new Map();
+      for (let i = 0; i < fileResults.ids.length; i++) {
+        if (fileResults.embeddings[i]) {
+          embeddingMap.set(fileResults.ids[i], fileResults.embeddings[i]);
+        }
+      }
+
+      // Filter out files without embeddings
+      const validFileIds = fileIds.filter((id) => embeddingMap.has(id));
+      const queryEmbeddings = validFileIds.map((id) => embeddingMap.get(id));
+
+      if (queryEmbeddings.length === 0) {
+        return {};
+      }
+
+      // 2. Batch query folders
+      const results = await this.folderCollection.query({
+        queryEmbeddings: queryEmbeddings,
+        nResults: topK,
+      });
+
+      // 3. Process results
+      const resultMap = {};
+
+      if (
+        results &&
+        results.ids &&
+        results.ids.length === queryEmbeddings.length
+      ) {
+        for (let i = 0; i < queryEmbeddings.length; i++) {
+          const fileId = validFileIds[i];
+          const matches = [];
+
+          const idsArray = results.ids[i];
+          const distancesArray = results.distances[i];
+          const metadatasArray = results.metadatas?.[i] || [];
+
+          const count = Math.min(idsArray.length, distancesArray.length);
+
+          for (let j = 0; j < count; j++) {
+            const distance = distancesArray[j];
+            const score = Math.max(0, 1 - distance / 2);
+
+            matches.push({
+              folderId: idsArray[j],
+              name: metadatasArray[j]?.name || idsArray[j],
+              score,
+              description: metadatasArray[j]?.description,
+              path: metadatasArray[j]?.path,
+            });
+          }
+
+          resultMap[fileId] = matches.sort((a, b) => b.score - a.score);
+
+          // Cache individual results
+          const cacheKey = `query:folders:${fileId}:${topK}`;
+          this._setCachedQuery(cacheKey, resultMap[fileId]);
+        }
+      }
+
+      return resultMap;
+    } catch (error) {
+      logger.error('[ChromaDB] Failed to batch query folders:', error);
+      return {};
     }
   }
 
@@ -897,6 +1153,190 @@ class ChromaDBService {
     } catch (error) {
       logger.error('[ChromaDB] Failed to query folders:', error);
       return [];
+    }
+  }
+
+  /**
+   * Delete a file embedding from the database
+   * @param {string} fileId - The file ID to delete
+   * @returns {boolean} True if deleted, false if failed
+   */
+  async deleteFileEmbedding(fileId) {
+    await this.initialize();
+
+    try {
+      await this.fileCollection.delete({ ids: [fileId] });
+
+      // Invalidate cache
+      this._invalidateCacheForFile(fileId);
+
+      logger.debug('[ChromaDB] Deleted file embedding', { fileId });
+      return true;
+    } catch (error) {
+      logger.error('[ChromaDB] Failed to delete file embedding:', {
+        fileId,
+        error: error.message,
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Batch delete file embeddings
+   * @param {Array<string>} fileIds - Array of file IDs to delete
+   * @returns {number} Number of deleted files (or at least attempted)
+   */
+  async batchDeleteFileEmbeddings(fileIds) {
+    await this.initialize();
+
+    if (!fileIds || fileIds.length === 0) {
+      return 0;
+    }
+
+    try {
+      await this.fileCollection.delete({ ids: fileIds });
+
+      // Invalidate cache for all
+      fileIds.forEach((id) => this._invalidateCacheForFile(id));
+
+      logger.info('[ChromaDB] Batch deleted file embeddings', {
+        count: fileIds.length,
+      });
+      return fileIds.length;
+    } catch (error) {
+      logger.error('[ChromaDB] Failed to batch delete file embeddings:', {
+        count: fileIds.length,
+        error: error.message,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Update file paths in batch after file organization
+   * @param {Array<Object>} pathUpdates - Array of path update objects with oldId, newId, and newMeta
+   * @returns {number} Number of successfully updated files
+   */
+  async updateFilePaths(pathUpdates) {
+    await this.initialize();
+
+    if (!pathUpdates || pathUpdates.length === 0) {
+      return 0;
+    }
+
+    let updatedCount = 0;
+
+    try {
+      // Process updates in batches to avoid overwhelming the database
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < pathUpdates.length; i += BATCH_SIZE) {
+        const batch = pathUpdates.slice(i, i + BATCH_SIZE);
+
+        // Collect updates that need to be processed
+        const updatesToProcess = [];
+
+        for (const update of batch) {
+          if (!update.oldId || !update.newId) {
+            logger.warn('[ChromaDB] Skipping invalid path update', {
+              oldId: update.oldId,
+              newId: update.newId,
+            });
+            continue;
+          }
+
+          // Get the existing file to preserve its embedding and other metadata
+          try {
+            const existingFile = await this.fileCollection.get({
+              ids: [update.oldId],
+              include: ['embeddings', 'metadatas', 'documents'],
+            });
+
+            if (
+              existingFile &&
+              existingFile.ids &&
+              existingFile.ids.length > 0 &&
+              existingFile.embeddings &&
+              existingFile.embeddings.length > 0
+            ) {
+              // Prepare updated metadata
+              const existingMeta = existingFile.metadatas?.[0] || {};
+              const updatedMeta = sanitizeMetadata({
+                ...existingMeta,
+                ...update.newMeta,
+                path: update.newMeta.path || existingMeta.path,
+                name: update.newMeta.name || existingMeta.name,
+                updatedAt: new Date().toISOString(),
+              });
+
+              updatesToProcess.push({
+                id: update.newId,
+                embedding: existingFile.embeddings[0],
+                metadata: updatedMeta,
+                document: update.newMeta.path || update.newId,
+              });
+
+              // Delete old entry if ID changed
+              if (update.oldId !== update.newId) {
+                try {
+                  await this.fileCollection.delete({ ids: [update.oldId] });
+                  logger.debug('[ChromaDB] Deleted old file entry', {
+                    oldId: update.oldId,
+                  });
+                } catch (deleteError) {
+                  // Non-fatal if delete fails (file might not exist)
+                  logger.debug('[ChromaDB] Could not delete old file entry', {
+                    oldId: update.oldId,
+                    error: deleteError.message,
+                  });
+                }
+              }
+            } else {
+              logger.warn('[ChromaDB] File not found for path update', {
+                oldId: update.oldId,
+              });
+            }
+          } catch (getError) {
+            logger.warn('[ChromaDB] Error getting file for path update', {
+              oldId: update.oldId,
+              error: getError.message,
+            });
+          }
+        }
+
+        // Batch upsert updated files
+        if (updatesToProcess.length > 0) {
+          await this.fileCollection.upsert({
+            ids: updatesToProcess.map((u) => u.id),
+            embeddings: updatesToProcess.map((u) => u.embedding),
+            metadatas: updatesToProcess.map((u) => u.metadata),
+            documents: updatesToProcess.map((u) => u.document),
+          });
+
+          // Invalidate cache for all affected files
+          updatesToProcess.forEach((u) => this._invalidateCacheForFile(u.id));
+
+          updatedCount += updatesToProcess.length;
+          logger.debug('[ChromaDB] Batch updated file paths', {
+            count: updatesToProcess.length,
+            batch: i / BATCH_SIZE + 1,
+          });
+        }
+      }
+
+      logger.info('[ChromaDB] Batch updated file paths', {
+        total: pathUpdates.length,
+        updated: updatedCount,
+      });
+
+      return updatedCount;
+    } catch (error) {
+      logger.error('[ChromaDB] Failed to update file paths', {
+        error: error.message,
+        errorStack: error.stack,
+        totalUpdates: pathUpdates.length,
+        updatedCount,
+      });
+      throw error;
     }
   }
 
@@ -1250,6 +1690,8 @@ class ChromaDBService {
       // Clear caches
       this.queryCache.clear();
       this.inflightQueries.clear();
+
+      this.stopHealthCheck(); // Stop monitoring
 
       // ChromaDB client doesn't require explicit cleanup in JS
       // but we'll reset our references

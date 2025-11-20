@@ -57,7 +57,6 @@ export default function TabContainer() {
 
   const ActiveComponent = TABS.find((tab) => tab.id === activeTab)?.component;
 
-  // LOW PRIORITY FIX (LOW-2): Remove console.log in production
   // Debug logging removed - use React DevTools for component debugging
 
   return (

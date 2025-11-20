@@ -64,10 +64,11 @@ const SystemMonitoring = React.memo(function SystemMonitoring() {
         // Initial fetch
         await fetchMetrics();
 
-        // Set up interval for updates - store in ref to ensure cleanup
+        // PERFORMANCE FIX: Increased interval from 5s to 10s to reduce polling overhead
+        // Main process also sends metrics via IPC, so less frequent polling is sufficient
         intervalRef.current = setInterval(() => {
           fetchMetrics();
-        }, 5000);
+        }, 10000); // Increased from 5000ms to 10000ms (10 seconds)
       } catch (error) {
         logger.error('Failed to start system monitoring', {
           error: error.message,
@@ -102,7 +103,8 @@ const SystemMonitoring = React.memo(function SystemMonitoring() {
 
       setIsMonitoring(false);
     };
-  }, [fetchMetrics]);
+  }, []); // PERFORMANCE FIX: Removed fetchMetrics from deps to prevent unnecessary re-renders
+  // fetchMetrics is stable (useCallback with empty deps), so it doesn't need to be in dependency array
 
   if (!isMonitoring || error) {
     return (

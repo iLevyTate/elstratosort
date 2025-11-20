@@ -117,6 +117,22 @@ jest.mock('chromadb', () => {
   };
 });
 
+// Mock logger
+jest.mock('../src/shared/logger', () => ({
+  logger: {
+    setContext: jest.fn(),
+    info: jest.fn(),
+    debug: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
+}));
+
+// Mock axios for health checks
+jest.mock('axios', () => ({
+  get: jest.fn().mockResolvedValue({ status: 200, data: { status: 'ok' } }),
+}));
+
 describe('ChromaDBService', () => {
   let tmpDir;
   let chromaDbService;

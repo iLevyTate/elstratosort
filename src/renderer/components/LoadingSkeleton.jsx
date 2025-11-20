@@ -151,8 +151,53 @@ export const AnalysisProgressSkeleton = () => (
   </div>
 );
 
-// Alias for backward compatibility
-export const SmartFolderSkeleton = FolderGridSkeleton;
+/**
+ * Composite loading state for smart folder list UI (vertical list layout)
+ * @param {number} count - Number of skeleton items to display
+ */
+export const SmartFolderListSkeleton = ({
+  count = ANIMATION_CONFIG.DEFAULT_FOLDER_COUNT,
+}) => (
+  <div className="space-y-8" role="status" aria-label="Loading smart folders">
+    {Array.from({ length: count }, (_, i) => (
+      <div key={i} className="p-13 bg-surface-secondary rounded-lg">
+        <div className="flex items-start justify-between gap-13">
+          <div className="flex-1 min-w-0">
+            <LoadingSkeleton className="w-3/4 mb-2" />
+            <LoadingSkeleton variant="text" className="w-full mb-3" />
+            <div className="text-sm bg-stratosort-blue/5 p-8 rounded-lg border-l-4 border-stratosort-blue/30">
+              <LoadingSkeleton className="w-1/4 mb-2" />
+              <LoadingSkeleton variant="text" className="w-2/3" />
+            </div>
+          </div>
+          <div className="flex items-center gap-8 shrink-0">
+            <div className="flex items-center gap-5">
+              <LoadingSkeleton
+                variant="avatar"
+                className="w-3 h-3 rounded-full"
+              />
+              <LoadingSkeleton className="w-12 h-4" />
+            </div>
+            <div className="flex gap-5">
+              <LoadingSkeleton variant="button" className="w-8 h-8 rounded" />
+              <LoadingSkeleton variant="button" className="w-8 h-8 rounded" />
+              <LoadingSkeleton variant="button" className="w-8 h-8 rounded" />
+              <LoadingSkeleton variant="button" className="w-8 h-8 rounded" />
+            </div>
+          </div>
+        </div>
+      </div>
+    ))}
+    <span className="sr-only">Loading smart folder list...</span>
+  </div>
+);
+
+SmartFolderListSkeleton.propTypes = {
+  count: PropTypes.number,
+};
+
+// Alias for backward compatibility - now uses vertical list skeleton
+export const SmartFolderSkeleton = SmartFolderListSkeleton;
 
 // Enhanced loading spinner for lazy-loaded components
 export const LazyLoadingSpinner = ({ message = 'Loading...' }) => (

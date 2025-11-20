@@ -280,7 +280,14 @@ function NavigationBar() {
           className="flex items-center gap-2"
           style={{ WebkitAppRegion: 'no-drag' }}
         >
-          <button className="btn-ghost inline-flex items-center gap-2 px-3 py-2 text-sm text-system-gray-500">
+          <button
+            className="btn-ghost inline-flex items-center gap-2 px-3 py-2 text-sm text-system-gray-500 hover:text-stratosort-blue hover:bg-white/80"
+            onClick={() => {
+              // TODO: Implement search functionality
+              logger.info('Search clicked - functionality to be implemented');
+            }}
+            title="Search (Coming soon)"
+          >
             <SearchIcon className="h-4 w-4 text-system-gray-400" />
             Search
           </button>
@@ -304,11 +311,11 @@ function NavigationBar() {
                 });
               }
             }}
-            className="btn-ghost h-10 w-10 rounded-2xl border border-border-soft/60 bg-white/80 text-system-gray-600 hover:text-stratosort-blue"
+            className="btn-ghost h-10 w-10 rounded-2xl border border-border-soft/60 bg-white/80 text-system-gray-700 hover:text-stratosort-blue hover:bg-white"
             aria-label="Open Settings"
             title="Settings"
           >
-            <SettingsIcon className="h-5 w-5" />
+            <SettingsIcon className="h-5 w-5 text-current" />
           </button>
         </div>
       </div>

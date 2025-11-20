@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
-import { logger } from '../shared/logger';
+import { logger } from '../../shared/logger';
 
 logger.setContext('ReactEdgeCaseUtils');
 
@@ -18,7 +18,7 @@ logger.setContext('ReactEdgeCaseUtils');
  * @param {*} value - Value to track
  * @returns {Object} Ref containing latest value
  */
-function useLatest(value) {
+export function useLatest(value) {
   const ref = useRef(value);
 
   useEffect(() => {
@@ -34,7 +34,7 @@ function useLatest(value) {
  * @param {Function} callback - Callback function
  * @returns {Function} Stable callback with latest values
  */
-function useStableCallback(callback) {
+export function useStableCallback(callback) {
   const callbackRef = useLatest(callback);
 
   return useCallback((...args) => {
@@ -48,7 +48,7 @@ function useStableCallback(callback) {
  * @param {*} value - Value to track
  * @returns {*} Previous value
  */
-function usePrevious(value) {
+export function usePrevious(value) {
   const ref = useRef();
 
   useEffect(() => {
@@ -63,7 +63,7 @@ function usePrevious(value) {
  * @param {*} initialValue - Initial state value
  * @returns {Array} [state, setState] - Safe state tuple
  */
-function useSafeState(initialValue) {
+export function useSafeState(initialValue) {
   const [state, setState] = useState(initialValue);
   const mountedRef = useRef(true);
 
@@ -93,7 +93,12 @@ function useSafeState(initialValue) {
  * @param {Object} target - Event target (default: window)
  * @param {Object} options - Event listener options
  */
-function useEventListener(eventName, handler, target = null, options = {}) {
+export function useEventListener(
+  eventName,
+  handler,
+  target = null,
+  options = {},
+) {
   const savedHandler = useLatest(handler);
 
   useEffect(() => {
@@ -119,7 +124,7 @@ function useEventListener(eventName, handler, target = null, options = {}) {
  * @param {Function} callback - Callback to run on resize
  * @param {number} delay - Debounce delay in ms (default: 200)
  */
-function useWindowResize(callback, delay = 200) {
+export function useWindowResize(callback, delay = 200) {
   const savedCallback = useLatest(callback);
   const timeoutRef = useRef(null);
 
@@ -155,7 +160,7 @@ function useWindowResize(callback, delay = 200) {
  * @param {Object} ref - Ref to element
  * @param {Function} callback - Callback when clicked outside
  */
-function useClickOutside(ref, callback) {
+export function useClickOutside(ref, callback) {
   const savedCallback = useLatest(callback);
 
   useEffect(() => {
@@ -189,7 +194,7 @@ function useClickOutside(ref, callback) {
  * @param {number} delay - Debounce delay in ms
  * @returns {*} Debounced value
  */
-function useDebounce(value, delay) {
+export function useDebounce(value, delay) {
   const [debouncedValue, setDebouncedValue] = useState(value);
 
   useEffect(() => {
@@ -211,7 +216,7 @@ function useDebounce(value, delay) {
  * @param {number} delay - Debounce delay in ms
  * @returns {Function} Debounced callback
  */
-function useDebouncedCallback(callback, delay) {
+export function useDebouncedCallback(callback, delay) {
   const savedCallback = useLatest(callback);
   const timeoutRef = useRef(null);
 
@@ -245,7 +250,7 @@ function useDebouncedCallback(callback, delay) {
  * @param {number} limit - Throttle limit in ms
  * @returns {Function} Throttled callback
  */
-function useThrottledCallback(callback, limit) {
+export function useThrottledCallback(callback, limit) {
   const savedCallback = useLatest(callback);
   const inThrottleRef = useRef(false);
 
@@ -276,7 +281,7 @@ function useThrottledCallback(callback, limit) {
  * @param {Array} deps - Dependencies array
  * @returns {Object} { data, loading, error, refetch }
  */
-function useAsync(asyncFn, deps = []) {
+export function useAsync(asyncFn, deps = []) {
   const [state, setState] = useSafeState({
     data: null,
     loading: true,
@@ -308,7 +313,7 @@ function useAsync(asyncFn, deps = []) {
  * Hook for cancellable async operation
  * @returns {Object} { makeCancellable, cancelAll }
  */
-function useCancellablePromises() {
+export function useCancellablePromises() {
   const pendingPromises = useRef(new Set());
 
   useEffect(() => {
@@ -369,7 +374,7 @@ function useCancellablePromises() {
  * Useful for debugging and preventing memory leaks
  * @param {string} componentName - Component name for logging
  */
-function useMountTracking(componentName) {
+export function useMountTracking(componentName) {
   useEffect(() => {
     if (process.env.NODE_ENV === 'development') {
       logger.debug('Component mounted', { componentName });
@@ -388,7 +393,7 @@ function useMountTracking(componentName) {
  * Use sparingly - usually indicates a design issue
  * @returns {Function} Function to force update
  */
-function useForceUpdate() {
+export function useForceUpdate() {
   const [, setValue] = useState(0);
   return useCallback(() => setValue((value) => value + 1), []);
 }
@@ -398,7 +403,7 @@ function useForceUpdate() {
  * @param {Function} callback - Callback to run at interval
  * @param {number} delay - Interval delay in ms (null to pause)
  */
-function useInterval(callback, delay) {
+export function useInterval(callback, delay) {
   const savedCallback = useLatest(callback);
 
   useEffect(() => {
@@ -419,7 +424,7 @@ function useInterval(callback, delay) {
  * @param {Function} callback - Callback to run after timeout
  * @param {number} delay - Timeout delay in ms (null to cancel)
  */
-function useTimeout(callback, delay) {
+export function useTimeout(callback, delay) {
   const savedCallback = useLatest(callback);
 
   useEffect(() => {
@@ -446,7 +451,7 @@ function useTimeout(callback, delay) {
  * @param {*} fallback - Fallback value if validation fails
  * @returns {*} Validated value or fallback
  */
-function useValidatedProp(prop, validator, fallback) {
+export function useValidatedProp(prop, validator, fallback) {
   return useMemo(() => {
     if (typeof validator !== 'function') {
       return prop !== undefined ? prop : fallback;
@@ -466,7 +471,7 @@ function useValidatedProp(prop, validator, fallback) {
  * @param {Array} fallback - Fallback array
  * @returns {Array} Valid non-empty array
  */
-function useNonEmptyArray(arr, fallback = []) {
+export function useNonEmptyArray(arr, fallback = []) {
   return useMemo(() => {
     if (Array.isArray(arr) && arr.length > 0) {
       return arr;
@@ -481,7 +486,7 @@ function useNonEmptyArray(arr, fallback = []) {
  * @param {string} fallback - Fallback string
  * @returns {string} Valid non-empty string
  */
-function useNonEmptyString(str, fallback = '') {
+export function useNonEmptyString(str, fallback = '') {
   return useMemo(() => {
     if (typeof str === 'string' && str.trim().length > 0) {
       return str;
@@ -498,7 +503,7 @@ function useNonEmptyString(str, fallback = '') {
  * Hook to detect if component is mounted
  * @returns {Object} Ref with current mount status
  */
-function useIsMounted() {
+export function useIsMounted() {
   const isMounted = useRef(false);
 
   useEffect(() => {
@@ -516,7 +521,7 @@ function useIsMounted() {
  * Hook for window focus detection
  * @returns {boolean} True if window is focused
  */
-function useWindowFocus() {
+export function useWindowFocus() {
   const [focused, setFocused] = useState(
     typeof document !== 'undefined' ? document.hasFocus() : true,
   );
@@ -539,7 +544,7 @@ function useWindowFocus() {
  * Hook for online/offline detection
  * @returns {boolean} True if online
  */
-function useOnlineStatus() {
+export function useOnlineStatus() {
   const [online, setOnline] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : true,
   );
@@ -558,7 +563,7 @@ function useOnlineStatus() {
   return online;
 }
 
-module.exports = {
+export default {
   useLatest,
   useStableCallback,
   usePrevious,

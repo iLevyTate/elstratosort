@@ -25,7 +25,9 @@ class SettingsService {
     this._cacheTtlMs = 2_000; // short TTL to avoid repeated disk reads
     this._fileWatcher = null;
     this._debounceTimer = null;
-    this._debounceDelay = 500; // 500ms debounce
+    // PERFORMANCE FIX: Increased debounce delay from 500ms to 1000ms
+    // Settings file changes are not time-critical, so longer delay reduces overhead
+    this._debounceDelay = 1000; // 1000ms (1 second) debounce
     this._isInternalChange = false; // Flag to ignore changes we made ourselves
 
     // Fixed: Add mutex to prevent concurrent save operations
@@ -638,8 +640,10 @@ class SettingsService {
             return;
           }
 
-          // Handle file changes with debouncing
-          if (eventType === 'change' || eventType === 'rename') {
+          // PERFORMANCE FIX: Only handle 'change' events, ignore 'rename' events
+          // 'rename' events are often false positives on Windows (file metadata changes)
+          // This reduces unnecessary file reloads
+          if (eventType === 'change') {
             // Clear existing debounce timer
             if (this._debounceTimer) {
               clearTimeout(this._debounceTimer);
@@ -650,6 +654,7 @@ class SettingsService {
               this._handleExternalFileChange(eventType, filename);
             }, this._debounceDelay);
           }
+          // Ignore 'rename' events - they're often false positives on Windows
         },
       );
 

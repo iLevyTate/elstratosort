@@ -38,6 +38,13 @@ function setImageCache(signature, value) {
   }
 }
 
+// Batch embedding queue for efficient database operations
+const BATCH_SIZE = 50;
+const embeddingQueue = [];
+let flushTimer = null;
+const FLUSH_DELAY_MS = 500; // Flush queue after 500ms of inactivity
+let isFlushing = false; // Mutex to prevent concurrent flushes
+
 // App configuration for image analysis - Optimized for speed
 const AppConfig = {
   ai: {
@@ -555,11 +562,8 @@ async function analyzeImageFile(filePath, smartFolders = []) {
               );
 
               if (validFolders.length > 0) {
-                await Promise.all(
-                  validFolders.map((f) =>
-                    folderMatcher.upsertFolderEmbedding(f),
-                  ),
-                );
+                // BATCH OPTIMIZATION: Use batch upsert instead of individual calls
+                await folderMatcher.batchUpsertFolders(validFolders);
               }
             } catch (upsertError) {
               logger.warn(
@@ -591,22 +595,41 @@ async function analyzeImageFile(filePath, smartFolders = []) {
                 await chromaDbService.initialize();
               }
 
-              await folderMatcher.upsertFileEmbedding(fileId, summary, {
-                path: filePath,
+              logger.debug('[IMAGE] Generating embedding for folder matching', {
+                fileId,
+                summaryLength: summary.length,
               });
 
-              // CRITICAL FIX: Add delay to ensure write consistency before querying
-              // ChromaDB has retry logic with delays of 50ms, 100ms, 200ms
-              // We wait slightly longer than the max retry delay to ensure consistency
-              const { TIMEOUTS } = require('../../shared/performanceConstants');
-              await new Promise((resolve) =>
-                setTimeout(resolve, TIMEOUTS.DELAY_SHORT),
+              // Generate embedding immediately using in-memory service
+              const { vector, model } = await folderMatcher.embedText(
+                summary || '',
               );
 
-              const candidates = await folderMatcher.matchFileToFolders(
+              // Match against folders using the vector directly
+              logger.debug('[IMAGE] Querying folder matches using vector', {
                 fileId,
+              });
+              const candidates = await folderMatcher.matchVectorToFolders(
+                vector,
                 5,
               );
+
+              // Queue embedding for batch persistence
+              embeddingQueue.push({
+                id: fileId,
+                vector,
+                model,
+                meta: { path: filePath },
+                updatedAt: new Date().toISOString(),
+              });
+
+              // Flush queue if it reaches batch size
+              if (embeddingQueue.length >= BATCH_SIZE) {
+                await flushEmbeddingQueue();
+              } else {
+                // Schedule delayed flush if not already scheduled
+                scheduleDelayedFlush();
+              }
 
               // Validate candidates structure before accessing
               if (Array.isArray(candidates) && candidates.length > 0) {
@@ -792,7 +815,117 @@ async function extractTextFromImage(filePath) {
 
 // Fallback image helpers sourced from fallbackUtils
 
+/**
+ * Flush the embedding queue by batch upserting all queued embeddings
+ * @private
+ */
+async function flushEmbeddingQueue() {
+  // Prevent concurrent flushes
+  if (isFlushing) {
+    logger.debug('[IMAGE] Flush already in progress, skipping');
+    return;
+  }
+
+  if (embeddingQueue.length === 0) {
+    return;
+  }
+
+  // Set mutex flag
+  isFlushing = true;
+
+  try {
+    // Clear any pending flush timer
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+
+    // Copy queue and clear it immediately to prevent concurrent modifications
+    const queueCopy = [...embeddingQueue];
+    embeddingQueue.length = 0;
+
+    if (queueCopy.length === 0) {
+      return;
+    }
+
+    logger.debug('[IMAGE] Flushing embedding queue', {
+      count: queueCopy.length,
+    });
+
+    // Get ChromaDB service
+    const chromaDbService =
+      chromaDbSingleton || (chromaDbSingleton = getChromaDB());
+    if (!chromaDbService) {
+      logger.warn('[IMAGE] ChromaDB service not available for batch upsert');
+      return;
+    }
+
+    // Ensure ChromaDB is initialized
+    await chromaDbService.initialize();
+
+    // Connection recovery: Check if database is online before flushing
+    if (!chromaDbService.isOnline) {
+      logger.warn('[IMAGE] Database offline, pausing flush', {
+        queueSize: queueCopy.length,
+      });
+      // Re-queue items at the front
+      embeddingQueue.unshift(...queueCopy);
+
+      // Schedule retry with longer delay
+      setTimeout(() => {
+        flushEmbeddingQueue().catch((err) => {
+          logger.error('[IMAGE] Error in retry flush:', err.message);
+        });
+      }, 5000); // Retry in 5 seconds
+
+      return;
+    }
+
+    // Batch upsert all pre-calculated embeddings
+    await chromaDbService.batchUpsertFiles(queueCopy);
+
+    logger.info('[IMAGE] Batch upserted file embeddings', {
+      count: queueCopy.length,
+    });
+  } catch (error) {
+    logger.error('[IMAGE] Failed to flush embedding queue', {
+      error: error.message,
+    });
+    // Re-queue failed items for retry (optional - could also just log and continue)
+  } finally {
+    // Always clear mutex flag
+    isFlushing = false;
+  }
+}
+
+/**
+ * Schedule a delayed flush of the embedding queue
+ * @private
+ */
+function scheduleDelayedFlush() {
+  if (flushTimer) {
+    return; // Already scheduled
+  }
+
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    flushEmbeddingQueue().catch((error) => {
+      logger.error('[IMAGE] Error in delayed flush', {
+        error: error.message,
+      });
+    });
+  }, FLUSH_DELAY_MS);
+}
+
+/**
+ * Force flush the embedding queue (useful for cleanup or end of batch)
+ */
+async function flushAllEmbeddings() {
+  await flushEmbeddingQueue();
+}
+
 module.exports = {
   analyzeImageFile,
   extractTextFromImage,
+  flushAllEmbeddings,
 };

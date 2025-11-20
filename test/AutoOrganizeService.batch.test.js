@@ -1,7 +1,15 @@
 const AutoOrganizeService = require('../src/main/services/AutoOrganizeService');
 
 // Mock dependencies
-jest.mock('../src/shared/logger');
+jest.mock('../src/shared/logger', () => ({
+  logger: {
+    setContext: jest.fn(),
+    info: jest.fn(),
+    debug: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
+}));
 jest.mock('electron', () => ({
   app: {
     getPath: jest.fn(() => '/Users/test/Documents'),

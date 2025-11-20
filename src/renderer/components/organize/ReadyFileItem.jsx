@@ -91,7 +91,13 @@ function ReadyFileItem({
               {destination && (
                 <div className="text-sm text-system-gray-600">
                   <strong>Destination:</strong>{' '}
-                  <span className="text-stratosort-blue break-all">
+                  <span
+                    className="text-stratosort-blue break-words"
+                    style={{
+                      overflowWrap: 'break-word',
+                      wordBreak: 'break-word',
+                    }}
+                  >
                     {destination}
                   </span>
                 </div>

@@ -1171,6 +1171,8 @@ app.whenReady().then(async () => {
         metricsInterval = null;
       }
 
+      // PERFORMANCE FIX: Increased interval from 10s to 30s to reduce overhead
+      // Renderer component polls directly, so main process doesn't need to poll as frequently
       metricsInterval = setInterval(async () => {
         try {
           const win = BrowserWindow.getAllWindows()[0];
@@ -1180,7 +1182,7 @@ app.whenReady().then(async () => {
         } catch (error) {
           logger.error('[METRICS] Failed to collect or send metrics:', error);
         }
-      }, 10000);
+      }, 30000); // Increased from 10000ms to 30000ms (30 seconds)
       try {
         metricsInterval.unref();
       } catch (error) {

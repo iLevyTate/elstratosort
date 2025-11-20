@@ -4,11 +4,15 @@
  * Testing text analysis and AI-powered document understanding
  */
 
-const { analyzeTextWithOllama, AppConfig } = require('../src/main/analysis/documentLlm');
+const {
+  analyzeTextWithOllama,
+  AppConfig,
+} = require('../src/main/analysis/documentLlm');
 
 // Mock logger
 jest.mock('../src/shared/logger', () => ({
   logger: {
+    setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
@@ -25,7 +29,11 @@ jest.mock('../src/main/ollamaUtils', () => ({
 
 describe('documentLlm', () => {
   let mockOllamaClient;
-  const { loadOllamaConfig, getOllamaModel, getOllamaClient } = require('../src/main/ollamaUtils');
+  const {
+    loadOllamaConfig,
+    getOllamaModel,
+    getOllamaClient,
+  } = require('../src/main/ollamaUtils');
 
   beforeEach(() => {
     // Setup mock Ollama client
@@ -47,7 +55,8 @@ describe('documentLlm', () => {
 
   describe('analyzeTextWithOllama', () => {
     test('should analyze text and return structured result', async () => {
-      const textContent = 'This is a financial invoice for Q1 2024. Amount: $1,000';
+      const textContent =
+        'This is a financial invoice for Q1 2024. Amount: $1,000';
       const fileName = 'invoice_q1_2024.pdf';
       const smartFolders = [
         { name: 'Invoices', description: 'Financial invoices and receipts' },
@@ -65,7 +74,11 @@ describe('documentLlm', () => {
         }),
       });
 
-      const result = await analyzeTextWithOllama(textContent, fileName, smartFolders);
+      const result = await analyzeTextWithOllama(
+        textContent,
+        fileName,
+        smartFolders,
+      );
 
       expect(result).toBeDefined();
       expect(result.project).toBe('Q1 Financial');
@@ -100,7 +113,11 @@ describe('documentLlm', () => {
         }),
       });
 
-      const result = await analyzeTextWithOllama('Test content', 'test.txt', []);
+      const result = await analyzeTextWithOllama(
+        'Test content',
+        'test.txt',
+        [],
+      );
 
       expect(result).toBeDefined();
       expect(result.keywords).toEqual(['test', 'document']);
@@ -204,7 +221,7 @@ describe('documentLlm', () => {
           project: 'Test Project',
           purpose: 'Test purpose',
           category: 'test',
-          suggestedName: 'test_doc'
+          suggestedName: 'test_doc',
         }),
       });
 
@@ -248,7 +265,11 @@ describe('documentLlm', () => {
           }),
         });
 
-        const result = await analyzeTextWithOllama(`test${testCase.input}`, 'test.txt', []);
+        const result = await analyzeTextWithOllama(
+          `test${testCase.input}`,
+          'test.txt',
+          [],
+        );
 
         if (testCase.expected) {
           // eslint-disable-next-line jest/no-conditional-expect
@@ -313,7 +334,11 @@ describe('documentLlm', () => {
       });
 
       const uniqueText = `test content for filtering ${Date.now()}`; // Unique to avoid cache hits
-      const result = await analyzeTextWithOllama(uniqueText, 'test.txt', smartFolders);
+      const result = await analyzeTextWithOllama(
+        uniqueText,
+        'test.txt',
+        smartFolders,
+      );
 
       // Verify result has expected fields (filtering works if we get valid results)
       expect(result.keywords).toBeDefined();
@@ -353,7 +378,11 @@ describe('documentLlm', () => {
           response: JSON.stringify({ ...testCase, confidence: 75 }),
         });
 
-        const result = await analyzeTextWithOllama(JSON.stringify(testCase), 'test.txt', []);
+        const result = await analyzeTextWithOllama(
+          JSON.stringify(testCase),
+          'test.txt',
+          [],
+        );
 
         expect(Array.isArray(result.keywords)).toBe(true);
       }

@@ -138,7 +138,13 @@ function OrganizeProgress({
                   <div className="font-medium text-system-gray-900 break-words">
                     {op.fileName}
                   </div>
-                  <div className="text-xs text-system-gray-600 break-all">
+                  <div
+                    className="text-xs text-system-gray-600 break-words"
+                    style={{
+                      overflowWrap: 'break-word',
+                      wordBreak: 'break-word',
+                    }}
+                  >
                     → {op.destination}
                   </div>
                 </div>

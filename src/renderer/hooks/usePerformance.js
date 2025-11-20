@@ -147,7 +147,15 @@ export function useAsyncMemo(asyncFn, deps = [], options = {}) {
   const cacheRef = useRef(new Map());
 
   const fetchData = useCallback(async () => {
-    const key = cacheKey || JSON.stringify(deps);
+    // PERFORMANCE FIX: Use cacheKey if provided, otherwise create lightweight key
+    // Only stringify deps if they're small (primitives or small arrays)
+    const key =
+      cacheKey ||
+      (deps.length === 0
+        ? 'empty'
+        : deps.length === 1 && typeof deps[0] !== 'object'
+          ? String(deps[0])
+          : JSON.stringify(deps)); // Fallback to JSON.stringify for complex deps
 
     // Check cache
     if (cacheRef.current.has(key)) {

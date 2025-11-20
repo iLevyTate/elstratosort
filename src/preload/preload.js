@@ -470,9 +470,8 @@ class SecureIPCManager {
 
     // Relative path with typical file extensions
     // Support Unicode letters, numbers, combining marks, spaces
-    // eslint-disable-next-line no-useless-escape
     if (
-      /^[\p{L}\p{N}\p{M}\s_.-]+\/[\p{L}\p{N}\p{M}\s_.\/-]+\.[\p{L}\p{N}]+$/u.test(
+      /^[\p{L}\p{N}\p{M}\s_.-]+\/[\p{L}\p{N}\p{M}\s_./-]+\.[\p{L}\p{N}]+$/u.test(
         str,
       )
     ) {

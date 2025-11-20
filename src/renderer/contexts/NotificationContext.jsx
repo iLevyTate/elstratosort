@@ -6,7 +6,7 @@ import React, {
   useMemo,
 } from 'react';
 import PropTypes from 'prop-types';
-import { logger } from '../shared/logger';
+import { logger } from '../../shared/logger';
 import { ToastContainer, useToast } from '../components/Toast';
 
 logger.setContext('NotificationContext');

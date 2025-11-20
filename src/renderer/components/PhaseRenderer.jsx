@@ -81,7 +81,7 @@ function PhaseRenderer() {
   };
 
   return (
-    <div className="flex flex-col w-full">
+    <div className="flex flex-col w-full h-full overflow-hidden">
       <Suspense fallback={<LazyLoadingSpinner message="Loading phase..." />}>
         <AnimatePresence mode="wait">
           <motion.div
@@ -91,7 +91,7 @@ function PhaseRenderer() {
             exit="out"
             variants={pageVariants}
             transition={pageTransition}
-            className="w-full flex flex-col"
+            className="w-full h-full flex flex-col overflow-hidden"
           >
             {renderCurrentPhase()}
           </motion.div>

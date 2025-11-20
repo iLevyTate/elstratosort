@@ -425,6 +425,11 @@ function registerSmartFoldersIpc({
             errorCode: 'FOLDER_NOT_FOUND',
           };
         if (updatedFolder.name) {
+          // Fix for issue where " > Subfolder" might be appended
+          if (updatedFolder.name.includes(' > ')) {
+            updatedFolder.name = updatedFolder.name.split(' > ')[0].trim();
+          }
+
           const illegalChars = /([<>:"|?*])/g;
           if (illegalChars.test(updatedFolder.name)) {
             return {
@@ -630,8 +635,15 @@ function registerSmartFoldersIpc({
             errorCode: 'INVALID_FOLDER_PATH',
           };
 
+        // CRITICAL FIX: Sanitize folder name to remove any accidental path separators or suffixes
+        // This addresses an issue where names like "Work > Project Management Templates" were being created
+        let sanitizedName = folder.name.trim();
+        if (sanitizedName.includes(' > ')) {
+          sanitizedName = sanitizedName.split(' > ')[0].trim();
+        }
+
         const illegalChars = /([<>:"|?*])/g;
-        if (illegalChars.test(folder.name))
+        if (illegalChars.test(sanitizedName))
           return {
             success: false,
             error:
@@ -655,7 +667,7 @@ function registerSmartFoldersIpc({
 
         const existingFolder = customFolders.find(
           (f) =>
-            f.name.toLowerCase() === folder.name.trim().toLowerCase() ||
+            f.name.toLowerCase() === sanitizedName.toLowerCase() ||
             f.path === normalizedPath,
         );
         if (existingFolder)
@@ -710,12 +722,12 @@ function registerSmartFoldersIpc({
 
         const newFolder = {
           id: Date.now().toString(),
-          name: folder.name.trim(),
+          name: sanitizedName,
           path: normalizedPath,
           description:
             llmEnhancedData.enhancedDescription ||
             folder.description?.trim() ||
-            `Smart folder for ${folder.name.trim()}`,
+            `Smart folder for ${sanitizedName}`,
           keywords: llmEnhancedData.suggestedKeywords || [],
           category: llmEnhancedData.suggestedCategory || 'general',
           isDefault: folder.isDefault || false,

@@ -5,7 +5,6 @@ const axios = require('axios');
 const { axiosWithRetry } = require('../utils/ollamaApiRetry');
 const path = require('path');
 const fs = require('fs').promises;
-const fsSync = require('fs'); // Sync version for simple operations
 const { app } = require('electron');
 const { hasPythonModuleAsync } = require('../utils/asyncSpawnUtils');
 
@@ -34,7 +33,7 @@ class StartupManager {
     this.serviceProcesses = new Map();
     this.config = {
       startupTimeout: 60000, // 60 seconds overall timeout
-      healthCheckInterval: 30000, // 30 seconds between health checks
+      healthCheckInterval: 120000, // 120 seconds (2 minutes) between health checks - reduced frequency to prevent UI blocking
       maxRetries: 3,
       baseRetryDelay: 1000, // Base delay for exponential backoff
       axiosTimeout: DEFAULT_AXIOS_TIMEOUT, // Default axios timeout
@@ -136,9 +135,12 @@ class StartupManager {
 
       const testFile = path.join(userDataPath, '.write-test');
       logger.debug(`[PREFLIGHT] Testing write access with file: ${testFile}`);
-      // Use sync fs for simple write test to avoid hanging on Windows
-      fsSync.writeFileSync(testFile, 'test');
-      fsSync.unlinkSync(testFile);
+      // Use async fs with timeout to avoid hanging on Windows
+      await this._withTimeout(
+        fs.writeFile(testFile, 'test').then(() => fs.unlink(testFile)),
+        5000,
+        'Write access test',
+      );
       logger.debug('[PREFLIGHT] Data directory write test passed');
       checks.push({ name: 'Data Directory', status: 'ok' });
     } catch (error) {
@@ -1152,7 +1154,7 @@ class StartupManager {
       // CRITICAL FIX: Add timeout protection and reset mechanism to prevent race conditions
       // Track when health check started for timeout detection
       const healthCheckStartTime = Date.now();
-      const healthCheckTimeout = 30000; // 30 second timeout for health checks
+      const healthCheckTimeout = 5000; // 5 second timeout for health checks (reduced from 30s to prevent blocking)
 
       // Skip if previous health check is still in progress
       if (this.healthCheckInProgress) {
@@ -1357,7 +1359,16 @@ class StartupManager {
     }
 
     // Check ChromaDB
-    if (this.serviceStatus.chromadb.status === 'running') {
+    // PERFORMANCE FIX: Skip health check if ChromaDB is permanently failed
+    // Prevents wasting time checking a service that won't recover
+    if (
+      this.serviceStatus.chromadb.status === 'permanently_failed' ||
+      this.serviceStatus.chromadb.health === 'permanently_failed'
+    ) {
+      logger.debug(
+        '[HEALTH] Skipping ChromaDB health check - service permanently failed',
+      );
+    } else if (this.serviceStatus.chromadb.status === 'running') {
       try {
         // PERFORMANCE FIX: Reuse ChromaDBService's built-in check instead of
         // creating new axios connections which cause TIME_WAIT accumulation
