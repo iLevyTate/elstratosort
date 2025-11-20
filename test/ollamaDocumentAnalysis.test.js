@@ -16,14 +16,6 @@ jest.mock('../src/shared/logger', () => ({
     error: jest.fn(),
     setContext: jest.fn(),
   },
-  appLogger: {
-    createLogger: jest.fn(() => ({
-      info: jest.fn(),
-      debug: jest.fn(),
-      warn: jest.fn(),
-      error: jest.fn(),
-    })),
-  },
 }));
 
 // Mock constants
