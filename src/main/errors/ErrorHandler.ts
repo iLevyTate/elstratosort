@@ -1,0 +1,296 @@
+import { app, dialog, BrowserWindow } from 'electron';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import { ERROR_TYPES } from '../../shared/constants';
+import { logger } from '../../shared/logger';
+
+logger.setContext('ErrorHandler');
+
+/**
+ * Centralized Error Handler
+ * Manages all application errors with proper logging and user notification
+ */
+class ErrorHandler {
+  logPath: string;
+  currentLogFile: string | null;
+  errorQueue: any[];
+  isInitialized: boolean;
+
+  constructor() {
+    this.logPath = path.join(app.getPath('userData'), 'logs');
+    this.currentLogFile = null;
+    this.errorQueue = [];
+    this.isInitialized = false;
+  }
+
+  async initialize(): Promise<void> {
+    try {
+      // Create logs directory
+      await fs.mkdir(this.logPath, { recursive: true });
+
+      // Set up log file
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      this.currentLogFile = path.join(
+        this.logPath,
+        `stratosort-${timestamp}.log`,
+      );
+
+      // Set up global error handlers
+      this.setupGlobalHandlers();
+      this.isInitialized = true;
+      await this.log('info', 'ErrorHandler initialized successfully');
+    } catch (error: any) {
+      logger.error('Failed to initialize ErrorHandler:', {
+        error: error.message,
+        stack: error.stack,
+      });
+    }
+  }
+
+  setupGlobalHandlers(): void {
+    // Handle uncaught exceptions
+    process.on('uncaughtException', (error) => {
+      this.handleCriticalError('Uncaught Exception', error);
+    });
+
+    // Handle unhandled promise rejections
+    process.on('unhandledRejection', (reason) => {
+      this.handleCriticalError('Unhandled Promise Rejection', reason);
+    });
+
+    // Handle Electron errors
+    app.on('render-process-gone', (event, webContents, details) => {
+      this.handleCriticalError('Renderer Process Crashed', details);
+    });
+
+    app.on('child-process-gone', (event, details) => {
+      this.handleCriticalError('Child Process Crashed', details);
+    });
+  }
+
+  /**
+   * Handle different types of errors
+   */
+  async handleError(error: any, context: any = {}): Promise<any> {
+    const errorInfo = this.parseError(error);
+    const severity = this.determineSeverity(errorInfo.type);
+
+    // Log the error
+    await this.log(severity, errorInfo.message, {
+      ...errorInfo,
+      context,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Handle based on severity
+    switch (severity) {
+      case 'critical':
+        await this.handleCriticalError(errorInfo.message, error);
+        break;
+      case 'error':
+        await this.notifyUser(errorInfo.message, 'error');
+        break;
+      case 'warning':
+        await this.notifyUser(errorInfo.message, 'warning');
+        break;
+      default:
+        // Info level errors are just logged
+        break;
+    }
+
+    return errorInfo;
+  }
+
+  /**
+   * Parse error to extract useful information
+   */
+  parseError(error: any): any {
+    const errorInfo: any = {
+      type: ERROR_TYPES.UNKNOWN,
+      message: 'An unexpected error occurred',
+      details: {},
+      stack: error?.stack,
+    };
+
+    if (error instanceof Error) {
+      errorInfo.message = error.message;
+
+      // Determine error type
+      if ((error as any).code === 'ENOENT') {
+        errorInfo.type = ERROR_TYPES.FILE_NOT_FOUND;
+        errorInfo.message = 'File or directory not found';
+      } else if ((error as any).code === 'EACCES' || (error as any).code === 'EPERM') {
+        errorInfo.type = ERROR_TYPES.PERMISSION_DENIED;
+        errorInfo.message = 'Permission denied';
+      } else if (
+        error.message.includes('network') ||
+        (error as any).code === 'ENOTFOUND'
+      ) {
+        errorInfo.type = ERROR_TYPES.NETWORK_ERROR;
+        errorInfo.message = 'Network connection error';
+      } else if (
+        error.message.includes('AI') ||
+        error.message.includes('Ollama')
+      ) {
+        errorInfo.type = ERROR_TYPES.AI_UNAVAILABLE;
+        errorInfo.message = 'AI service is unavailable';
+      }
+    }
+
+    return errorInfo;
+  }
+
+  /**
+   * Determine error severity
+   */
+  determineSeverity(errorType: string): string {
+    switch (errorType) {
+      case ERROR_TYPES.PERMISSION_DENIED:
+      case ERROR_TYPES.UNKNOWN:
+        return 'critical';
+      case ERROR_TYPES.FILE_NOT_FOUND:
+      case ERROR_TYPES.AI_UNAVAILABLE:
+        return 'error';
+      case ERROR_TYPES.INVALID_FORMAT:
+      case ERROR_TYPES.FILE_TOO_LARGE:
+        return 'warning';
+      default:
+        return 'info';
+    }
+  }
+
+  /**
+   * Handle critical errors that may crash the app
+   */
+  async handleCriticalError(message: string, error: any): Promise<void> {
+    logger.error('[CRITICAL ERROR]', {
+      message,
+      error: error?.toString(),
+      stack: error?.stack,
+    });
+
+    // Log to file
+    await this.log('critical', message, {
+      error: error?.toString(),
+      stack: error?.stack,
+    });
+
+    // Show error dialog
+    const response = await dialog.showMessageBox({
+      type: 'error',
+      title: 'Critical Error',
+      message: 'Stratosort encountered a critical error',
+      detail: `${message}\n\nWould you like to restart the application?`,
+      buttons: ['Restart', 'Quit'],
+      defaultId: 0,
+    });
+
+    if (response.response === 0) {
+      app.relaunch();
+    }
+    app.quit();
+  }
+
+  /**
+   * Notify user of errors
+   */
+  async notifyUser(message: string, type: string = 'error'): Promise<void> {
+    const mainWindow = BrowserWindow.getFocusedWindow();
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      // Send to renderer process
+      mainWindow.webContents.send('app:error', {
+        message,
+        type,
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      // Fallback to dialog
+      await dialog.showMessageBox({
+        type: type as any,
+        title: type.charAt(0).toUpperCase() + type.slice(1),
+        message,
+        buttons: ['OK'],
+      });
+    }
+  }
+
+  /**
+   * Log messages to file
+   */
+  async log(level: string, message: string, data: any = {}): Promise<void> {
+    if (!this.isInitialized) {
+      (logger as any)[level](`[${level.toUpperCase()}] ${message}`, data);
+      return;
+    }
+
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      level: level.toUpperCase(),
+      message,
+      data,
+    };
+
+    try {
+      const logLine = JSON.stringify(logEntry) + '\n';
+      await fs.appendFile(this.currentLogFile!, logLine);
+    } catch (error: any) {
+      logger.error('Failed to write to log file:', { error: error.message });
+    }
+  }
+
+  /**
+   * Get recent errors for debugging
+   */
+  async getRecentErrors(count: number = 50): Promise<any[]> {
+    try {
+      const logContent = await fs.readFile(this.currentLogFile!, 'utf-8');
+      const lines = logContent.trim().split('\n');
+      const errors = lines
+        .slice(-count)
+        .map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return null;
+          }
+        })
+        .filter(
+          (entry) => entry && ['ERROR', 'CRITICAL'].includes(entry.level),
+        );
+
+      return errors;
+    } catch (error: any) {
+      logger.error('Failed to read error log:', { error: error.message });
+      return [];
+    }
+  }
+
+  /**
+   * Clean up old log files
+   */
+  async cleanupLogs(daysToKeep: number = 7): Promise<void> {
+    try {
+      const files = await fs.readdir(this.logPath);
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+
+      for (const file of files) {
+        if (file.startsWith('stratosort-') && file.endsWith('.log')) {
+          const filePath = path.join(this.logPath, file);
+          const stats = await fs.stat(filePath);
+
+          if (stats.mtime < cutoffDate) {
+            await fs.unlink(filePath);
+            await this.log('info', `Cleaned up old log file: ${file}`);
+          }
+        }
+      }
+    } catch (error: any) {
+      logger.error('Failed to cleanup logs:', { error: error.message });
+    }
+  }
+}
+
+// Export singleton instance
+export default new ErrorHandler();

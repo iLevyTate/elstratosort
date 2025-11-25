@@ -33,7 +33,7 @@
     "output": "release/build"
   },
   "win": {
-    "icon": "assets/icons/icons/win/icon.ico",
+    "icon": "assets/icons/win/icon.ico",
     "target": [
       {
         "target": "nsis",
@@ -71,7 +71,7 @@
     "artifactName": "StratoSort-Setup-${version}.exe"
   },
   "mac": {
-    "icon": "assets/icons/icons/png/512x512.png",
+    "icon": "assets/icons/png/512x512.png",
     "category": "public.app-category.productivity",
     "hardenedRuntime": true,
     "gatekeeperAssess": false,
@@ -106,7 +106,7 @@
     ]
   },
   "linux": {
-    "icon": "assets/icons/icons/png/512x512.png",
+    "icon": "assets/icons/png/512x512.png",
     "target": [
       {
         "target": "AppImage",

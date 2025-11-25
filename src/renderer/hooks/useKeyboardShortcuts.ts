@@ -1,0 +1,116 @@
+import { useEffect } from 'react';
+import { useSelector, useDispatch } from 'react-redux';import { logger } from '../../shared/logger';
+import {
+  selectCurrentPhase,
+  selectActiveModal,
+  advancePhase,
+  openModal,
+  closeModal,
+  addNotification,
+} from '../store/slices/uiSlice';
+import {
+  PHASES,
+  PHASE_TRANSITIONS,
+  PHASE_METADATA,} from '../../shared/constants';
+
+logger.setContext('useKeyboardShortcuts');
+
+export function useKeyboardShortcuts() {
+  const dispatch = useDispatch();
+  const currentPhase = useSelector(selectCurrentPhase);
+  const activeModal = useSelector(selectActiveModal);
+  const showSettings = activeModal === 'settings';
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      // Ctrl/Cmd + Z for Undo
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === 'z' &&
+        !event.shiftKey
+      ) {
+        event.preventDefault();
+        try {          window.electronAPI?.undoRedo?.undo?.();
+        } catch (error) {
+          logger.error('Undo shortcut failed', {
+            error: error.message,
+            stack: error.stack,
+          });
+        }
+      }
+
+      // Ctrl/Cmd + Shift + Z for Redo (also support Ctrl+Y on Windows)
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        ((event.key.toLowerCase() === 'z' && event.shiftKey) ||
+          event.key.toLowerCase() === 'y')
+      ) {
+        event.preventDefault();
+        try {          window.electronAPI?.undoRedo?.redo?.();
+        } catch (error) {
+          logger.error('Redo shortcut failed', {
+            error: error.message,
+            stack: error.stack,
+          });
+        }
+      }
+
+      // Ctrl/Cmd + , for Settings
+      if ((event.ctrlKey || event.metaKey) && event.key === ',') {
+        event.preventDefault();
+        if (showSettings) {
+          dispatch(closeModal());
+        } else {
+          dispatch(openModal({ modal: 'settings' }));
+        }
+      }
+
+      // Escape to close settings if open
+      if (event.key === 'Escape' && showSettings) {
+        dispatch(closeModal());
+      }
+
+      // Alt + Arrow keys for phase navigation
+      if (event.altKey) {
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault();
+          const phases = Object.values(PHASES);
+          const currentIndex = phases.indexOf(currentPhase);
+          if (currentIndex > 0) {
+            const previousPhase = phases[currentIndex - 1];
+            const allowedTransitions = PHASE_TRANSITIONS[currentPhase] || [];
+            if (allowedTransitions.includes(previousPhase)) {
+              dispatch(advancePhase({ targetPhase: previousPhase }));
+              dispatch(addNotification({
+                message: `Navigated to ${PHASE_METADATA[previousPhase].title}`,
+                type: 'info',
+                duration: 2000,
+              }));
+            }
+          }
+        }
+
+        if (event.key === 'ArrowRight') {
+          event.preventDefault();
+          const phases = Object.values(PHASES);
+          const currentIndex = phases.indexOf(currentPhase);
+          if (currentIndex < phases.length - 1) {
+            const nextPhase = phases[currentIndex + 1];
+            const allowedTransitions = PHASE_TRANSITIONS[currentPhase] || [];
+            if (allowedTransitions.includes(nextPhase)) {
+              dispatch(advancePhase({ targetPhase: nextPhase }));
+              dispatch(addNotification({
+                message: `Navigated to ${PHASE_METADATA[nextPhase].title}`,
+                type: 'info',
+                duration: 2000,
+              }));
+            }
+          }
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [dispatch, currentPhase, showSettings]);
+}

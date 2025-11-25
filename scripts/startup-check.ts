@@ -1,0 +1,105 @@
+#!/usr/bin/env node
+'use strict';
+const path = require('path');
+const fs = require('fs');
+const { asyncSpawn } = require('../src/main/utils/asyncSpawnUtils');
+
+// Simple chalk replacement for CJS compatibility with Chalk 5+
+const colors = {
+  reset: '\x1b[0m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  cyan: '\x1b[36m',
+  gray: '\x1b[90m',
+  bold: '\x1b[1m',
+};
+const chalk = {
+  green: (text) => `${colors.green}${text}${colors.reset}`,
+  red: (text) => `${colors.red}${text}${colors.reset}`,
+  yellow: (text) => `${colors.yellow}${text}${colors.reset}`,
+  cyan: (text) => `${colors.cyan}${text}${colors.reset}`,
+  gray: (text) => `${colors.gray}${text}${colors.reset}`,
+  bold: (text) => `${colors.bold}${text}${colors.reset}`,
+};
+// Add chaining support for cyan.bold (simplified)
+chalk.cyan.bold = (text) => `${colors.cyan}${colors.bold}${text}${colors.reset}`;
+
+try {
+  // eslint-disable-next-line global-require
+  require('dotenv').config({ path: path.join(__dirname, '../.env') });
+} catch (_) {
+  // Silently ignore dotenv errors (file may not exist)
+}
+
+function checkFileExists(relativePath) {
+  const fullPath = path.join(__dirname, '..', relativePath);
+  return fs.existsSync(fullPath);
+}
+
+function printStatus(ok, label, details) {
+  const icon = ok ? chalk.green('✓') : chalk.red('✗');
+  // eslint-disable-next-line no-console
+  console.log(`${icon} ${label}${details ? chalk.gray(` — ${details}`) : ''}`);
+}
+
+async function runCmd(cmd, args = []) {
+  return await asyncSpawn(cmd, args, {
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+}
+async function main() {
+  // eslint-disable-next-line no-console
+  console.log(chalk.cyan.bold('\nStratoSort Startup Checklist'));
+  // Basic file presence
+  const hasDistIndex = checkFileExists('dist/index.html');
+  const hasWebpackConfig = checkFileExists('webpack.config.js');
+  const hasRendererIndex = checkFileExists('src/renderer/index.html');
+  printStatus(hasWebpackConfig, 'Webpack config present', 'webpack.config.js');
+  printStatus(
+    hasRendererIndex,
+    'Renderer index present',
+    'src/renderer/index.html',
+  );
+  printStatus(hasDistIndex, 'Built renderer present', 'dist/index.html');
+
+  // Check Ollama (optional) - using async spawn to avoid blocking
+  const ollamaHost = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
+  const curl = await runCmd(
+    process.platform === 'win32' ? 'powershell.exe' : 'curl',
+    process.platform === 'win32'
+      ? [
+          '-NoProfile',
+          '-Command',
+          `try { (Invoke-WebRequest -Uri "${ollamaHost}/api/tags" -UseBasicParsing).StatusCode } catch { 0 }`,
+        ]
+      : [
+          '-s',
+          '-o',
+          '/dev/null',
+          '-w',
+          '%{http_code}',
+          `${ollamaHost}/api/tags`,
+        ],
+  );
+  const httpCode = (curl.stdout || '').toString().trim();
+  const connected = httpCode && httpCode !== '0' && httpCode !== '000';
+  printStatus(
+    connected,
+    'Ollama reachable',
+    connected ? `${ollamaHost}` : 'Optional: start with "ollama serve"',
+  );
+
+  // Final hint
+  // eslint-disable-next-line no-console
+  console.log(
+    `\n${chalk.gray('Tip:')} Run ${chalk.yellow('npm run dev')} to build and launch in development mode.`,
+  );
+}
+
+// Run async main function
+main().catch((error) => {
+  console.error('Startup check failed:', error);
+  process.exit(1);
+});

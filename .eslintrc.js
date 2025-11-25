@@ -8,6 +8,7 @@ module.exports = {
   extends: [
     'eslint:recommended',
     'plugin:react/recommended',
+    'plugin:react-hooks/recommended',
     'plugin:jest/recommended',
   ],
   parserOptions: {
@@ -17,7 +18,7 @@ module.exports = {
     ecmaVersion: 2022,
     sourceType: 'module',
   },
-  plugins: ['react', 'jest'],
+  plugins: ['react', 'react-hooks', 'jest'],
   rules: {
     'react/react-in-jsx-scope': 'off',
   },

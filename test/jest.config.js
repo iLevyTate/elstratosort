@@ -24,23 +24,28 @@ module.exports = {
     ],
   },
   // No transforms needed for plain JS
-  collectCoverageFrom: ['../src/**/*.js', '!../src/**/node_modules/**'],
+  collectCoverageFrom: ['../src/**/*.ts', '../src/**/*.tsx', '!../src/**/node_modules/**'],
   coverageDirectory: '../coverage',
-  setupFilesAfterEnv: ['<rootDir>/test-setup.js'],
+  setupFilesAfterEnv: ['<rootDir>/test-setup.ts'],
   // Sequential execution keeps Ollama mocks deterministic
   maxWorkers: 1,
 
   moduleNameMapper: {
-    '^electron$': '<rootDir>/mocks/electron.js',
-    '^ollama$': '<rootDir>/mocks/ollama.js',
-    '^officeparser$': '<rootDir>/mocks/officeparser.js',
-    '^node-tesseract-ocr$': '<rootDir>/mocks/tesseract.js',
-    '^sharp$': '<rootDir>/mocks/sharp.js',
-    '^xlsx-populate$': '<rootDir>/mocks/xlsx.js',
-    '^sanitize-html$': '<rootDir>/mocks/sanitize-html.js',
-    '^music-metadata$': '<rootDir>/mocks/music-metadata.js',
+    '^electron$': '<rootDir>/mocks/electron.ts',
+    '^ollama$': '<rootDir>/mocks/ollama.ts',
+    '^officeparser$': '<rootDir>/mocks/officeparser.ts',
+    '^node-tesseract-ocr$': '<rootDir>/mocks/tesseract.ts',
+    '^sharp$': '<rootDir>/mocks/sharp.ts',
+    '^xlsx-populate$': '<rootDir>/mocks/xlsx.ts',
+    '^sanitize-html$': '<rootDir>/mocks/sanitize-html.ts',
+    '^music-metadata$': '<rootDir>/mocks/music-metadata.ts',
   },
 
   // Global setup for DOM-dependent packages
-  setupFiles: ['<rootDir>/test-globals.js'],
+  setupFiles: ['<rootDir>/test-globals.ts'],
+
+  // Transform ESM packages that Jest can't handle natively
+  transformIgnorePatterns: [
+    'node_modules/(?!(nanoid)/)',
+  ],
 };

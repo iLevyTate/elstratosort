@@ -1,6 +1,12 @@
 {
   "permissions": {
-    "allow": ["Bash(dir:*)", "Bash(find:*)", "WebSearch", "Bash(node -e:*)"],
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(find:*)",
+      "WebSearch",
+      "Bash(node -e:*)",
+      "Bash(cat:*)"
+    ],
     "deny": [],
     "ask": []
   }

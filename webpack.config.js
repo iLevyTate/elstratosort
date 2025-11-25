@@ -10,7 +10,7 @@ module.exports = (env, argv) => {
 
   return {
     mode: argv.mode || 'development',
-    entry: ['./src/renderer/polyfills.js', './src/renderer/index.js'],
+    entry: ['./src/renderer/polyfills.ts', './src/renderer/index.tsx'],
     output: {
       path: path.resolve(__dirname, 'dist'),
       filename: 'renderer.js',
@@ -23,12 +23,12 @@ module.exports = (env, argv) => {
     module: {
       rules: [
         {
-          test: /\.(js|jsx)$/,
+          test: /\.(js|jsx|ts|tsx)$/,
           exclude: /node_modules/,
           use: {
             loader: 'babel-loader',
             options: {
-              presets: ['@babel/preset-react'],
+              presets: ['@babel/preset-react', '@babel/preset-typescript'],
               plugins: [
                 '@babel/plugin-transform-react-jsx',
                 ...(process.env.WEBPACK_DEV_SERVER === 'true'
@@ -49,10 +49,15 @@ module.exports = (env, argv) => {
       ],
     },
     resolve: {
-      extensions: ['.js', '.jsx'],
+      extensions: ['.ts', '.tsx', '.js', '.jsx'],
+      alias: {
+        'process/browser': require.resolve('process/browser.js'),
+      },
       fallback: isProduction
         ? {
-            // In prod, drop most Node polyfills for smaller bundle
+            // In prod, keep minimal polyfills for Redux Toolkit
+            process: require.resolve('process/browser.js'),
+            buffer: require.resolve('buffer'),
             fs: false,
             child_process: false,
             worker_threads: false,
@@ -62,7 +67,7 @@ module.exports = (env, argv) => {
             os: require.resolve('os-browserify/browser'),
             crypto: require.resolve('crypto-browserify'),
             buffer: require.resolve('buffer'),
-            process: require.resolve('process/browser'),
+            process: require.resolve('process/browser.js'),
             stream: require.resolve('stream-browserify'),
             util: require.resolve('util'),
             url: require.resolve('url'),

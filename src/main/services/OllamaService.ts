@@ -1,0 +1,477 @@
+import { logger } from '../../shared/logger';
+logger.setContext('OllamaService');
+
+import { Ollama } from 'ollama'; // MEDIUM PRIORITY FIX (MED-10): Import Ollama for temporary instances
+
+import {
+  getOllama,
+  getOllamaModel,
+  getOllamaVisionModel,
+  getOllamaEmbeddingModel,
+  getOllamaHost,
+  setOllamaModel,
+  setOllamaVisionModel,
+  setOllamaEmbeddingModel,
+  setOllamaHost,
+  loadOllamaConfig,
+  saveOllamaConfig,
+} from '../ollamaUtils';
+
+// Note: ollamaApiRetry uses CommonJS exports
+const { withOllamaRetry } = require('../utils/ollamaApiRetry');
+
+/**
+ * Configuration interface for Ollama
+ */
+interface OllamaConfig {
+  host?: string;
+  textModel?: string;
+  visionModel?: string;
+  embeddingModel?: string;
+}
+
+/**
+ * Options interface for Ollama operations
+ */
+interface OllamaOperationOptions {
+  model?: string;
+  ollamaOptions?: Record<string, any>;
+}
+
+/**
+ * Centralized service for Ollama operations
+ * Reduces code duplication and provides consistent error handling
+ */
+class OllamaService {
+  private initialized: boolean;
+
+  constructor() {
+    this.initialized = false;
+  }
+
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+    try {
+      await loadOllamaConfig();
+      this.initialized = true;
+      logger.info('[OllamaService] Initialized successfully');
+    } catch (error) {
+      logger.error('[OllamaService] Failed to initialize:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get the current Ollama configuration
+   */
+  async getConfig(): Promise<OllamaConfig & { host: string; textModel: string; visionModel: string; embeddingModel: string }> {
+    await this.initialize();
+    return {
+      host: getOllamaHost(),
+      textModel: getOllamaModel(),
+      visionModel: getOllamaVisionModel(),
+      embeddingModel: getOllamaEmbeddingModel(),
+    };
+  }
+
+  /**
+   * Update Ollama configuration
+   */
+  async updateConfig(config: OllamaConfig): Promise<{ success: boolean; error?: string }> {
+    await this.initialize();
+    try {
+      if (config.host) await setOllamaHost(config.host);
+      if (config.textModel) await setOllamaModel(config.textModel);
+      if (config.visionModel) await setOllamaVisionModel(config.visionModel);
+      if (config.embeddingModel)
+        await setOllamaEmbeddingModel(config.embeddingModel);
+
+      // Get current config and save with updates
+      const currentConfig = await loadOllamaConfig();
+      await saveOllamaConfig(currentConfig);
+      logger.info('[OllamaService] Configuration updated');
+      return { success: true };
+    } catch (error: any) {
+      logger.error('[OllamaService] Failed to update config:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Test connection to Ollama server
+   * MEDIUM PRIORITY FIX (MED-10): Create temporary instance to actually test specified host
+   */
+  async testConnection(hostUrl?: string): Promise<{
+    success: boolean;
+    ollamaHealth: {
+      status: string;
+      modelCount?: number;
+      host: string;
+      error?: string;
+    };
+    modelCount?: number;
+    error?: string;
+  }> {
+    try {
+      const testHost = hostUrl || getOllamaHost();
+
+      // Create a temporary Ollama instance with the test host
+      // This ensures we're actually testing the specified host, not the current one
+      const testOllama = new Ollama({ host: testHost });
+
+      // Try to list models as a connection test
+      const response = await testOllama.list();
+      const modelCount = response?.models?.length || 0;
+
+      logger.info(`[OllamaService] Connection test successful for ${testHost}`);
+      return {
+        success: true,
+        ollamaHealth: {
+          status: 'healthy',
+          modelCount,
+          host: testHost,
+        },
+        modelCount,
+      };
+    } catch (error: any) {
+      logger.error('[OllamaService] Connection test failed:', error);
+      return {
+        success: false,
+        error: error.message,
+        ollamaHealth: {
+          status: 'unhealthy',
+          error: error.message,
+          host: hostUrl || getOllamaHost(),
+        },
+      };
+    }
+  }
+
+  /**
+   * Get available models organized by category
+   */
+  async getModels(): Promise<{
+    success: boolean;
+    models: any[];
+    categories: {
+      text: string[];
+      vision: string[];
+      embedding: string[];
+    };
+    selected?: {
+      textModel: string;
+      visionModel: string;
+      embeddingModel: string;
+    };
+    host?: string;
+    ollamaHealth: {
+      status: string;
+      modelCount?: number;
+      error?: string;
+    };
+    error?: string;
+  }> {
+    try {
+      const ollama = getOllama();
+      const response = await ollama.list();
+      const models = response?.models || [];
+
+      // Categorize models
+      const categories = {
+        text: [] as string[],
+        vision: [] as string[],
+        embedding: [] as string[],
+      };
+
+      models.forEach((model: any) => {
+        const name = model.name || model;
+        const lowerName = name.toLowerCase();
+
+        // Categorize based on model name patterns
+        if (lowerName.includes('embed') || lowerName.includes('mxbai')) {
+          categories.embedding.push(name);
+        } else if (
+          lowerName.includes('llava') ||
+          lowerName.includes('vision')
+        ) {
+          categories.vision.push(name);
+        } else {
+          categories.text.push(name);
+        }
+      });
+
+      return {
+        success: true,
+        models,
+        categories,
+        selected: {
+          textModel: getOllamaModel(),
+          visionModel: getOllamaVisionModel(),
+          embeddingModel: getOllamaEmbeddingModel(),
+        },
+        host: getOllamaHost(),
+        ollamaHealth: {
+          status: 'healthy',
+          modelCount: models.length,
+        },
+      };
+    } catch (error: any) {
+      logger.error('[OllamaService] Failed to get models:', error);
+      return {
+        success: false,
+        error: error.message,
+        models: [],
+        categories: { text: [], vision: [], embedding: [] },
+        ollamaHealth: {
+          status: 'unhealthy',
+          error: error.message,
+        },
+      };
+    }
+  }
+
+  /**
+   * Pull models from Ollama registry
+   */
+  async pullModels(modelNames: string[]): Promise<{
+    success: boolean;
+    error?: string;
+    results: Array<{
+      model: string;
+      success: boolean;
+      error?: string;
+    }>;
+  }> {
+    if (!Array.isArray(modelNames) || modelNames.length === 0) {
+      return { success: false, error: 'No models specified', results: [] };
+    }
+
+    // LOW PRIORITY FIX (LOW-10): Validate model names before pulling
+    const invalidModels = modelNames.filter((name) => {
+      if (typeof name !== 'string' || !name.trim()) return true;
+      // Valid Ollama model names: alphanumeric, hyphens, underscores, dots, colons (for tags)
+      // Reject path traversal and invalid characters
+      return !/^[a-zA-Z0-9._-]+(?::[a-zA-Z0-9._-]+)?$/.test(name.trim());
+    });
+
+    if (invalidModels.length > 0) {
+      logger.warn('[OllamaService] Invalid model names rejected', {
+        invalidModels,
+      });
+      return {
+        success: false,
+        error: `Invalid model name(s): ${invalidModels.join(', ')}`,
+        results: [],
+      };
+    }
+
+    const results: Array<{
+      model: string;
+      success: boolean;
+      error?: string;
+    }> = [];
+    const ollama = getOllama();
+
+    for (const modelName of modelNames) {
+      try {
+        logger.info(`[OllamaService] Pulling model: ${modelName}`);
+        await ollama.pull({ model: modelName });
+        results.push({ model: modelName, success: true });
+      } catch (error: any) {
+        logger.error(`[OllamaService] Failed to pull ${modelName}:`, error);
+        results.push({
+          model: modelName,
+          success: false,
+          error: error.message,
+        });
+      }
+    }
+
+    return {
+      success: results.some((r) => r.success),
+      results,
+    };
+  }
+
+  /**
+   * Generate embeddings for text
+   */
+  async generateEmbedding(text: string, options: OllamaOperationOptions = {}): Promise<{
+    success: boolean;
+    embedding?: number[];
+    error?: string;
+  }> {
+    return withOllamaRetry(
+      async () => {
+        const ollama = getOllama();
+        const model = options.model || getOllamaEmbeddingModel();
+
+        const response = await ollama.embeddings({
+          model,
+          prompt: text,
+          options: options.ollamaOptions || {},
+        });
+
+        return {
+          success: true,
+          embedding: response.embedding,
+        };
+      },
+      {
+        operation: 'generateEmbedding',
+        maxRetries: 3,
+      },
+    ).catch((error: any) => {
+      // Final error handling after retries exhausted
+      logger.error('[OllamaService] Failed to generate embedding:', error);
+      return {
+        success: false,
+        error: error.message,
+      };
+    });
+  }
+
+  /**
+   * Analyze text with LLM
+   */
+  async analyzeText(prompt: string, options: OllamaOperationOptions = {}): Promise<{
+    success: boolean;
+    response?: string;
+    error?: string;
+  }> {
+    return withOllamaRetry(
+      async () => {
+        const ollama = getOllama();
+        const model = options.model || getOllamaModel();
+
+        const response = await ollama.generate({
+          model,
+          prompt,
+          options: options.ollamaOptions || {},
+          stream: false,
+        });
+
+        return {
+          success: true,
+          response: response.response,
+        };
+      },
+      {
+        operation: 'analyzeText',
+        maxRetries: 3,
+      },
+    ).catch((error: any) => {
+      logger.error('[OllamaService] Failed to analyze text:', error);
+      return {
+        success: false,
+        error: error.message,
+      };
+    });
+  }
+
+  /**
+   * Analyze image with vision model
+   */
+  async analyzeImage(prompt: string, imageBase64: string, options: OllamaOperationOptions = {}): Promise<{
+    success: boolean;
+    response?: string;
+    error?: string;
+  }> {
+    return withOllamaRetry(
+      async () => {
+        const ollama = getOllama();
+        const model = options.model || getOllamaVisionModel();
+
+        const response = await ollama.generate({
+          model,
+          prompt,
+          images: [imageBase64],
+          options: options.ollamaOptions || {},
+          stream: false,
+        });
+
+        return {
+          success: true,
+          response: response.response,
+        };
+      },
+      {
+        operation: 'analyzeImage',
+        maxRetries: 3,
+      },
+    ).catch((error: any) => {
+      logger.error('[OllamaService] Failed to analyze image:', error);
+      return {
+        success: false,
+        error: error.message,
+      };
+    });
+  }
+
+  /**
+   * Health check for service monitoring
+   * @returns {Promise<boolean>} True if service is healthy
+   */
+  async healthCheck(): Promise<boolean> {
+    try {
+      // Check if initialized
+      if (!this.initialized) {
+        logger.warn('[OllamaService] Health check failed: not initialized');
+        return false;
+      }
+
+      // Use existing testConnection method to verify Ollama server is reachable
+      // Fix: Pass undefined explicitly to satisfy the optional parameter
+      const testResult = await this.testConnection(undefined);
+
+      if (!testResult.success) {
+        logger.warn('[OllamaService] Health check failed: connection test failed', {
+          error: testResult.error,
+        });
+        return false;
+      }
+
+      // Verify required models are available
+      const config = await this.getConfig();
+      if (!config.textModel || !config.embeddingModel) {
+        logger.warn('[OllamaService] Health check failed: missing required models', {
+          textModel: config.textModel,
+          embeddingModel: config.embeddingModel,
+        });
+        return false;
+      }
+
+      logger.debug('[OllamaService] Health check passed');
+      return true;
+    } catch (error: any) {
+      logger.error('[OllamaService] Health check error', {
+        error: error.message,
+        stack: error.stack,
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Get service state for monitoring
+   * @returns {Object} Service state information
+   */
+  getState(): {
+    initialized: boolean;
+    host: string;
+    textModel: string;
+    visionModel: string;
+    embeddingModel: string;
+  } {
+    return {
+      initialized: this.initialized,
+      host: getOllamaHost(),
+      textModel: getOllamaModel(),
+      visionModel: getOllamaVisionModel(),
+      embeddingModel: getOllamaEmbeddingModel(),
+    };
+  }
+}
+
+// Export singleton instance
+export default new OllamaService();
