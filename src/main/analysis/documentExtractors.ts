@@ -8,9 +8,8 @@ import { promises as fs } from 'fs';
 // const officeParser = require('officeparser');
 // const XLSX = require('xlsx-populate');
 // const AdmZip = require('adm-zip');
-import { FileProcessingError } from '../errors/AnalysisError';
 import { logger } from '../../shared/logger';
-import { getErrorMessage } from '../../shared/errors';
+import { FileProcessingError, getErrorMessage } from '../../shared/errors';
 logger.setContext('DocumentExtractors');
 
 // Memory management constants
