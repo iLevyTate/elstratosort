@@ -2,8 +2,8 @@
  * React Edge Case Utilities
  * Provides hooks and utilities for handling common React edge cases
  */
-const { useEffect, useRef, useCallback, useState, useMemo } = require('react');
-const { logger } = require('../../shared/logger');
+import { useEffect, useRef, useCallback, useState, useMemo, MutableRefObject, SetStateAction, Dispatch } from 'react';
+import { logger } from '../../shared/logger';
 
 logger.setContext('ReactEdgeCaseUtils');
 
@@ -14,11 +14,11 @@ logger.setContext('ReactEdgeCaseUtils');
 /**
  * Hook to get latest value without causing re-renders
  * Prevents stale closure issues in event handlers and callbacks
- * @param {*} value - Value to track
- * @returns {Object} Ref containing latest value
+ * @param value - Value to track
+ * @returns Ref containing latest value
  */
-function useLatest(value) {
-  const ref = useRef(value);
+function useLatest<T>(value: T): MutableRefObject<T> {
+  const ref = useRef<T>(value);
 
   useEffect(() => {
     ref.current = value;
@@ -30,25 +30,27 @@ function useLatest(value) {
 /**
  * Hook for stable callback that always uses latest props/state
  * Prevents stale closures in async operations and event handlers
- * @param {Function} callback - Callback function
- * @returns {Function} Stable callback with latest values
+ * @param callback - Callback function
+ * @returns Stable callback with latest values
  */
-function useStableCallback(callback) {
+function useStableCallback<T extends (...args: unknown[]) => unknown>(
+  callback: T
+): (...args: Parameters<T>) => ReturnType<T> | undefined {
   const callbackRef = useLatest(callback);
 
-  return useCallback((...args) => {
-    return callbackRef.current?.(...args);
+  return useCallback((...args: Parameters<T>) => {
+    return callbackRef.current?.(...args) as ReturnType<T> | undefined;
   }, []);
 }
 
 /**
  * Hook for previous value tracking
  * Useful for detecting changes and handling transitions
- * @param {*} value - Value to track
- * @returns {*} Previous value
+ * @param value - Value to track
+ * @returns Previous value
  */
-function usePrevious(value) {
-  const ref = useRef();
+function usePrevious<T>(value: T): T | undefined {
+  const ref = useRef<T>();
 
   useEffect(() => {
     ref.current = value;
@@ -61,11 +63,11 @@ function usePrevious(value) {
 
 /**
  * Hook for safe async state updates (prevents updates after unmount)
- * @param {*} initialValue - Initial state value
- * @returns {Array} [state, setState] - Safe state tuple
+ * @param initialValue - Initial state value
+ * @returns [state, setState] - Safe state tuple
  */
-function useSafeState(initialValue) {
-  const [state, setState] = useState(initialValue);
+function useSafeState<T>(initialValue: T): [T, Dispatch<SetStateAction<T>>] {
+  const [state, setState] = useState<T>(initialValue);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -74,7 +76,7 @@ function useSafeState(initialValue) {
     };
   }, []);
 
-  const safeSetState = useCallback((value) => {
+  const safeSetState = useCallback((value: SetStateAction<T>) => {
     if (mountedRef.current) {
       setState(value);
     }
@@ -87,325 +89,56 @@ function useSafeState(initialValue) {
  * CATEGORY 2: EVENT LISTENER CLEANUP
  */
 
+interface EventListenerOptions {
+  passive?: boolean;
+  capture?: boolean;
+  once?: boolean;
+}
+
 /**
  * Hook for safe event listener with automatic cleanup
- * @param {string} eventName - Event name
- * @param {Function} handler - Event handler
- * @param {Object} target - Event target (default: window)
- * @param {Object} options - Event listener options
+ * @param eventName - Event name
+ * @param handler - Event handler
+ * @param target - Event target (default: window)
+ * @param options - Event listener options
  */
-function useEventListener(eventName, handler, target = null, options = {}) {
+function useEventListener(
+  eventName: string,
+  handler: (event: Event) => void,
+  target: EventTarget | null = null,
+  options: EventListenerOptions = {}
+): void {
   const savedHandler = useLatest(handler);
 
   useEffect(() => {
-    const eventTarget =
-      target || (typeof window !== 'undefined' ? window : null);
+    const targetElement = target || window;
 
-    if (!eventTarget || !eventTarget.addEventListener) {
+    if (!targetElement?.addEventListener) {
       return;
     }
 
-    const eventListener = (event) => savedHandler.current?.(event);
+    const listener = (event: Event) => {
+      savedHandler.current?.(event);
+    };
 
-    eventTarget.addEventListener(eventName, eventListener, options);
+    targetElement.addEventListener(eventName, listener, options);
 
     return () => {
-      eventTarget.removeEventListener(eventName, eventListener, options);
+      targetElement.removeEventListener(eventName, listener, options);
     };
   }, [eventName, target, options.capture, options.passive, options.once]);
 }
 
 /**
- * Hook for window resize listener with debouncing
- * @param {Function} callback - Callback to run on resize
- * @param {number} delay - Debounce delay in ms (default: 200)
- */
-function useWindowResize(callback, delay = 200) {
-  const savedCallback = useLatest(callback);
-  const timeoutRef = useRef(null);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    const handleResize = () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-
-      timeoutRef.current = setTimeout(() => {
-        savedCallback.current?.();
-      }, delay);
-    };
-
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, [delay]);
-}
-
-/**
- * Hook for click outside detection
- * @param {Object} ref - Ref to element
- * @param {Function} callback - Callback when clicked outside
- */
-function useClickOutside(ref, callback) {
-  const savedCallback = useLatest(callback);
-
-  useEffect(() => {
-    if (typeof document === 'undefined') {
-      return;
-    }
-
-    const handleClick = (event) => {
-      if (ref.current && !ref.current.contains(event.target)) {
-        savedCallback.current?.(event);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClick);
-    document.addEventListener('touchstart', handleClick);
-
-    return () => {
-      document.removeEventListener('mousedown', handleClick);
-      document.removeEventListener('touchstart', handleClick);
-    };
-  }, [ref]);
-}
-
-/**
- * CATEGORY 3: DEBOUNCE/THROTTLE
- */
-
-/**
- * Hook for debounced value
- * @param {*} value - Value to debounce
- * @param {number} delay - Debounce delay in ms
- * @returns {*} Debounced value
- */
-function useDebounce(value, delay) {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [value, delay]);
-
-  return debouncedValue;
-}
-
-/**
- * Hook for debounced callback
- * @param {Function} callback - Callback to debounce
- * @param {number} delay - Debounce delay in ms
- * @returns {Function} Debounced callback
- */
-function useDebouncedCallback(callback, delay) {
-  const savedCallback = useLatest(callback);
-  const timeoutRef = useRef(null);
-
-  const debouncedCallback = useCallback(
-    (...args) => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-
-      timeoutRef.current = setTimeout(() => {
-        savedCallback.current?.(...args);
-      }, delay);
-    },
-    [delay],
-  );
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  return debouncedCallback;
-}
-
-/**
- * Hook for throttled callback
- * @param {Function} callback - Callback to throttle
- * @param {number} limit - Throttle limit in ms
- * @returns {Function} Throttled callback
- */
-function useThrottledCallback(callback, limit) {
-  const savedCallback = useLatest(callback);
-  const inThrottleRef = useRef(false);
-
-  const throttledCallback = useCallback(
-    (...args) => {
-      if (!inThrottleRef.current) {
-        savedCallback.current?.(...args);
-        inThrottleRef.current = true;
-
-        setTimeout(() => {
-          inThrottleRef.current = false;
-        }, limit);
-      }
-    },
-    [limit],
-  );
-
-  return throttledCallback;
-}
-
-/**
- * CATEGORY 4: ASYNC OPERATION HELPERS
- */
-
-/**
- * Hook for async operation with loading/error states
- * @param {Function} asyncFn - Async function to execute
- * @param {Array} deps - Dependencies array
- * @returns {Object} { data, loading, error, refetch }
- */
-function useAsync(asyncFn, deps = []) {
-  const [state, setState] = useSafeState({
-    data: null,
-    loading: true,
-    error: null,
-  });
-
-  const execute = useCallback(async () => {
-    setState({ data: null, loading: true, error: null });
-
-    try {
-      const data = await asyncFn();
-      setState({ data, loading: false, error: null });
-    } catch (error) {
-      setState({ data: null, loading: false, error });
-    }
-  }, deps);
-
-  useEffect(() => {
-    execute();
-  }, deps);
-
-  return {
-    ...state,
-    refetch: execute,
-  };
-}
-
-/**
- * Hook for cancellable async operation
- * @returns {Object} { makeCancellable, cancelAll }
- */
-function useCancellablePromises() {
-  const pendingPromises = useRef(new Set());
-
-  useEffect(() => {
-    return () => {
-      // Cancel all pending promises on unmount
-      pendingPromises.current.forEach((cancel) => cancel());
-      pendingPromises.current.clear();
-    };
-  }, []);
-
-  const makeCancellable = useCallback((promise) => {
-    let cancelled = false;
-
-    const wrappedPromise = new Promise((resolve, reject) => {
-      promise
-        .then((value) => {
-          if (!cancelled) {
-            resolve(value);
-          }
-        })
-        .catch((error) => {
-          if (!cancelled) {
-            reject(error);
-          }
-        });
-    });
-
-    const cancel = () => {
-      cancelled = true;
-      pendingPromises.current.delete(cancel);
-    };
-
-    pendingPromises.current.add(cancel);
-
-    return {
-      promise: wrappedPromise,
-      cancel,
-    };
-  }, []);
-
-  const cancelAll = useCallback(() => {
-    pendingPromises.current.forEach((cancel) => cancel());
-    pendingPromises.current.clear();
-  }, []);
-
-  return {
-    makeCancellable,
-    cancelAll,
-  };
-}
-
-/**
- * CATEGORY 5: PERFORMANCE OPTIMIZATION
- */
-
-/**
- * Hook for component mount/unmount tracking
- * Useful for debugging and preventing memory leaks
- * @param {string} componentName - Component name for logging
- */
-function useMountTracking(componentName) {
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      logger.debug('Component mounted', { componentName });
-    }
-
-    return () => {
-      if (process.env.NODE_ENV === 'development') {
-        logger.debug('Component unmounted', { componentName });
-      }
-    };
-  }, [componentName]);
-}
-
-/**
- * Hook to force component re-render
- * Use sparingly - usually indicates a design issue
- * @returns {Function} Function to force update
- */
-function useForceUpdate() {
-  const [, setValue] = useState(0);
-  return useCallback(() => setValue((value) => value + 1), []);
-}
-
-/**
  * Hook for interval with automatic cleanup
- * @param {Function} callback - Callback to run at interval
- * @param {number} delay - Interval delay in ms (null to pause)
+ * @param callback - Interval callback
+ * @param delay - Delay in ms (null to pause)
  */
-function useInterval(callback, delay) {
+function useInterval(callback: () => void, delay: number | null): void {
   const savedCallback = useLatest(callback);
 
   useEffect(() => {
-    if (delay === null) {
-      return;
-    }
+    if (delay === null) return;
 
     const id = setInterval(() => {
       savedCallback.current?.();
@@ -417,16 +150,14 @@ function useInterval(callback, delay) {
 
 /**
  * Hook for timeout with automatic cleanup
- * @param {Function} callback - Callback to run after timeout
- * @param {number} delay - Timeout delay in ms (null to cancel)
+ * @param callback - Timeout callback
+ * @param delay - Delay in ms (null to cancel)
  */
-function useTimeout(callback, delay) {
+function useTimeout(callback: () => void, delay: number | null): void {
   const savedCallback = useLatest(callback);
 
   useEffect(() => {
-    if (delay === null) {
-      return;
-    }
+    if (delay === null) return;
 
     const id = setTimeout(() => {
       savedCallback.current?.();
@@ -437,148 +168,411 @@ function useTimeout(callback, delay) {
 }
 
 /**
- * CATEGORY 6: DATA VALIDATION HOOKS
+ * CATEGORY 3: ASYNC OPERATION SAFETY
  */
 
-/**
- * Hook for validated prop with fallback
- * @param {*} prop - Prop value
- * @param {Function} validator - Validation function
- * @param {*} fallback - Fallback value if validation fails
- * @returns {*} Validated value or fallback
- */
-function useValidatedProp(prop, validator, fallback) {
-  return useMemo(() => {
-    if (typeof validator !== 'function') {
-      return prop !== undefined ? prop : fallback;
-    }
-
-    try {
-      return validator(prop) ? prop : fallback;
-    } catch {
-      return fallback;
-    }
-  }, [prop, validator, fallback]);
+interface AsyncState<T> {
+  data: T | null;
+  loading: boolean;
+  error: Error | null;
 }
 
 /**
- * Hook for non-empty array prop
- * @param {Array} arr - Array prop
- * @param {Array} fallback - Fallback array
- * @returns {Array} Valid non-empty array
+ * Hook for async operations with cancellation
+ * @param asyncFn - Async function
+ * @param deps - Dependencies
+ * @returns Object with data, loading, error
  */
-function useNonEmptyArray(arr, fallback = []) {
-  return useMemo(() => {
-    if (Array.isArray(arr) && arr.length > 0) {
-      return arr;
-    }
-    return fallback;
-  }, [arr, fallback]);
-}
-
-/**
- * Hook for non-empty string prop
- * @param {string} str - String prop
- * @param {string} fallback - Fallback string
- * @returns {string} Valid non-empty string
- */
-function useNonEmptyString(str, fallback = '') {
-  return useMemo(() => {
-    if (typeof str === 'string' && str.trim().length > 0) {
-      return str;
-    }
-    return fallback;
-  }, [str, fallback]);
-}
-
-/**
- * CATEGORY 7: MISC UTILITIES
- */
-
-/**
- * Hook to detect if component is mounted
- * @returns {Object} Ref with current mount status
- */
-function useIsMounted() {
-  const isMountedRef = useRef(false);
+function useAsync<T>(
+  asyncFn: () => Promise<T>,
+  deps: unknown[] = []
+): AsyncState<T> {
+  const [state, setState] = useSafeState<AsyncState<T>>({
+    data: null,
+    loading: true,
+    error: null,
+  });
 
   useEffect(() => {
-    isMountedRef.current = true;
+    let cancelled = false;
+
+    setState({ data: null, loading: true, error: null });
+
+    asyncFn()
+      .then((data) => {
+        if (!cancelled) {
+          setState({ data, loading: false, error: null });
+        }
+      })
+      .catch((error: Error) => {
+        if (!cancelled) {
+          setState({ data: null, loading: false, error });
+        }
+      });
 
     return () => {
-      isMountedRef.current = false;
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+
+  return state;
+}
+
+/**
+ * Hook for debounced value
+ * @param value - Value to debounce
+ * @param delay - Debounce delay
+ * @returns Debounced value
+ */
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+}
+
+/**
+ * Hook for throttled callback
+ * @param callback - Callback to throttle
+ * @param delay - Throttle delay
+ * @returns Throttled callback
+ */
+function useThrottledCallback<T extends (...args: unknown[]) => unknown>(
+  callback: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  const lastRun = useRef(Date.now());
+  const savedCallback = useLatest(callback);
+
+  return useCallback(
+    (...args: Parameters<T>) => {
+      const now = Date.now();
+      if (now - lastRun.current >= delay) {
+        lastRun.current = now;
+        savedCallback.current?.(...args);
+      }
+    },
+    [delay]
+  );
+}
+
+/**
+ * CATEGORY 4: COMPONENT LIFECYCLE
+ */
+
+/**
+ * Hook for detecting first render
+ * @returns Boolean indicating if it's first render
+ */
+function useIsFirstRender(): boolean {
+  const isFirst = useRef(true);
+
+  if (isFirst.current) {
+    isFirst.current = false;
+    return true;
+  }
+
+  return isFirst.current;
+}
+
+/**
+ * Hook for effect only on updates (not initial mount)
+ * @param effect - Effect function
+ * @param deps - Dependencies
+ */
+function useUpdateEffect(effect: () => void | (() => void), deps: unknown[]): void {
+  const isFirst = useRef(true);
+
+  useEffect(() => {
+    if (isFirst.current) {
+      isFirst.current = false;
+      return;
+    }
+
+    return effect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
+/**
+ * Hook for tracking mounted state
+ * @returns Ref containing mounted state
+ */
+function useIsMounted(): MutableRefObject<boolean> {
+  const isMounted = useRef(true);
+
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
     };
   }, []);
 
-  return isMountedRef;
+  return isMounted;
 }
 
 /**
- * Hook for window focus detection
- * @returns {boolean} True if window is focused
+ * Hook for cleanup on unmount
+ * @param cleanup - Cleanup function
  */
-function useWindowFocus() {
-  const [focused, setFocused] = useState(
-    typeof document !== 'undefined' ? document.hasFocus() : true,
-  );
+function useOnUnmount(cleanup: () => void): void {
+  const cleanupRef = useLatest(cleanup);
 
-  useEventListener(
-    'focus',
-    () => setFocused(true),
-    typeof window !== 'undefined' ? window : null,
-  );
-  useEventListener(
-    'blur',
-    () => setFocused(false),
-    typeof window !== 'undefined' ? window : null,
-  );
-
-  return focused;
+  useEffect(() => {
+    return () => {
+      cleanupRef.current?.();
+    };
+  }, []);
 }
 
 /**
- * Hook for online/offline detection
- * @returns {boolean} True if online
+ * CATEGORY 5: MEMOIZATION HELPERS
  */
-function useOnlineStatus() {
-  const [online, setOnline] = useState(
-    typeof navigator !== 'undefined' ? navigator.onLine : true,
-  );
 
-  useEventListener(
-    'online',
-    () => setOnline(true),
-    typeof window !== 'undefined' ? window : null,
-  );
-  useEventListener(
-    'offline',
-    () => setOnline(false),
-    typeof window !== 'undefined' ? window : null,
-  );
+/**
+ * Hook for deep comparison memoization
+ * @param value - Value to memoize
+ * @returns Memoized value (same reference if deeply equal)
+ */
+function useDeepMemo<T>(value: T): T {
+  const ref = useRef<T>(value);
 
-  return online;
+  if (JSON.stringify(ref.current) !== JSON.stringify(value)) {
+    ref.current = value;
+  }
+
+  return ref.current;
 }
-module.exports = {
+
+/**
+ * Hook for stable object reference
+ * @param obj - Object to stabilize
+ * @returns Stable object reference
+ */
+function useStableObject<T extends Record<string, unknown>>(obj: T): T {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => obj, Object.values(obj));
+}
+
+/**
+ * CATEGORY 6: ERROR BOUNDARY HELPERS
+ */
+
+interface ErrorBoundaryState {
+  error: Error | null;
+  errorInfo: unknown;
+  resetError: () => void;
+}
+
+/**
+ * Hook for error boundary fallback
+ * @returns Object with error state and reset function
+ */
+function useErrorBoundary(): ErrorBoundaryState {
+  const [error, setError] = useState<Error | null>(null);
+  const [errorInfo, setErrorInfo] = useState<unknown>(null);
+
+  const resetError = useCallback(() => {
+    setError(null);
+    setErrorInfo(null);
+  }, []);
+
+  useEffect(() => {
+    const handleError = (event: ErrorEvent) => {
+      setError(new Error(event.message));
+      setErrorInfo(event);
+    };
+
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      setError(new Error(event.reason?.message || 'Unhandled promise rejection'));
+      setErrorInfo(event);
+    };
+
+    window.addEventListener('error', handleError);
+    window.addEventListener('unhandledrejection', handleRejection);
+
+    return () => {
+      window.removeEventListener('error', handleError);
+      window.removeEventListener('unhandledrejection', handleRejection);
+    };
+  }, []);
+
+  return { error, errorInfo, resetError };
+}
+
+/**
+ * CATEGORY 7: PERFORMANCE HELPERS
+ */
+
+interface RenderCountResult {
+  count: number;
+  resetCount: () => void;
+}
+
+/**
+ * Hook for render counting (development only)
+ * @param componentName - Component name for logging
+ * @returns Render count and reset function
+ */
+function useRenderCount(componentName = 'Component'): RenderCountResult {
+  const countRef = useRef(0);
+  countRef.current++;
+
+  if (process.env.NODE_ENV === 'development') {
+    logger.debug(`[RenderCount] ${componentName}: ${countRef.current}`);
+  }
+
+  const resetCount = useCallback(() => {
+    countRef.current = 0;
+  }, []);
+
+  return { count: countRef.current, resetCount };
+}
+
+/**
+ * Hook for detecting why component re-rendered
+ * @param props - Component props
+ * @param componentName - Component name for logging
+ */
+function useWhyDidYouUpdate(
+  props: Record<string, unknown>,
+  componentName = 'Component'
+): void {
+  const prevProps = useRef<Record<string, unknown>>({});
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      const allKeys = Object.keys({ ...prevProps.current, ...props });
+      const changedProps: Record<string, { from: unknown; to: unknown }> = {};
+
+      allKeys.forEach((key) => {
+        if (prevProps.current[key] !== props[key]) {
+          changedProps[key] = {
+            from: prevProps.current[key],
+            to: props[key],
+          };
+        }
+      });
+
+      if (Object.keys(changedProps).length > 0) {
+        logger.debug(`[WhyDidYouUpdate] ${componentName}`, changedProps);
+      }
+    }
+
+    prevProps.current = props;
+  });
+}
+
+/**
+ * CATEGORY 8: FORM HELPERS
+ */
+
+interface FormState<T> {
+  values: T;
+  errors: Record<keyof T, string | undefined>;
+  touched: Record<keyof T, boolean>;
+}
+
+interface FormHookResult<T> {
+  values: T;
+  errors: Record<keyof T, string | undefined>;
+  touched: Record<keyof T, boolean>;
+  handleChange: (name: keyof T, value: T[keyof T]) => void;
+  handleBlur: (name: keyof T) => void;
+  setFieldValue: (name: keyof T, value: T[keyof T]) => void;
+  setFieldError: (name: keyof T, error: string | undefined) => void;
+  resetForm: () => void;
+}
+
+/**
+ * Hook for form state management
+ * @param initialValues - Initial form values
+ * @returns Form state and handlers
+ */
+function useFormState<T extends Record<string, unknown>>(
+  initialValues: T
+): FormHookResult<T> {
+  const [state, setState] = useState<FormState<T>>({
+    values: initialValues,
+    errors: {} as Record<keyof T, string | undefined>,
+    touched: {} as Record<keyof T, boolean>,
+  });
+
+  const handleChange = useCallback((name: keyof T, value: T[keyof T]) => {
+    setState((prev) => ({
+      ...prev,
+      values: { ...prev.values, [name]: value },
+    }));
+  }, []);
+
+  const handleBlur = useCallback((name: keyof T) => {
+    setState((prev) => ({
+      ...prev,
+      touched: { ...prev.touched, [name]: true },
+    }));
+  }, []);
+
+  const setFieldValue = useCallback((name: keyof T, value: T[keyof T]) => {
+    setState((prev) => ({
+      ...prev,
+      values: { ...prev.values, [name]: value },
+    }));
+  }, []);
+
+  const setFieldError = useCallback((name: keyof T, error: string | undefined) => {
+    setState((prev) => ({
+      ...prev,
+      errors: { ...prev.errors, [name]: error },
+    }));
+  }, []);
+
+  const resetForm = useCallback(() => {
+    setState({
+      values: initialValues,
+      errors: {} as Record<keyof T, string | undefined>,
+      touched: {} as Record<keyof T, boolean>,
+    });
+  }, [initialValues]);
+
+  return {
+    ...state,
+    handleChange,
+    handleBlur,
+    setFieldValue,
+    setFieldError,
+    resetForm,
+  };
+}
+
+export {
   useLatest,
   useStableCallback,
   usePrevious,
   useSafeState,
   useEventListener,
-  useWindowResize,
-  useClickOutside,
-  useDebounce,
-  useDebouncedCallback,
-  useThrottledCallback,
-  useAsync,
-  useCancellablePromises,
-  useMountTracking,
-  useForceUpdate,
   useInterval,
   useTimeout,
-  useValidatedProp,
-  useNonEmptyArray,
-  useNonEmptyString,
+  useAsync,
+  useDebouncedValue,
+  useThrottledCallback,
+  useIsFirstRender,
+  useUpdateEffect,
   useIsMounted,
-  useWindowFocus,
-  useOnlineStatus,
+  useOnUnmount,
+  useDeepMemo,
+  useStableObject,
+  useErrorBoundary,
+  useRenderCount,
+  useWhyDidYouUpdate,
+  useFormState,
 };

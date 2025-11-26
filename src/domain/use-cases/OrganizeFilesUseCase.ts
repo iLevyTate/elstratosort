@@ -3,20 +3,74 @@
  * Business logic for organizing files into folders
  */
 
-import { OrganizationBatch } from '../models/Organization';
-import {
-  StratoSortError,
-  ErrorCodes,
-} from '../../shared/errors/StratoSortError';
-import { getErrorMessage } from '../../shared/errors';
+import { OrganizationBatch, OrganizationOperation } from '../models/Organization';
+import { File } from '../models/File';
+import type { IFileRepository } from '../repositories/IFileRepository';
+import type { ISmartFolderRepository } from '../repositories/ISmartFolderRepository';
+import type { SmartFolder } from '../../shared/types/smartFolder';
+import { StratoSortError, ErrorCodes, getErrorMessage } from '../../shared/errors';
+
+/**
+ * Organization service interface for file move operations
+ */
+interface IOrganizationService {
+  moveFile(
+    sourcePath: string,
+    destPath: string,
+    options: { createDirectories?: boolean; overwrite?: boolean }
+  ): Promise<void>;
+}
+
+/**
+ * Transaction journal interface for tracking operations
+ */
+interface ITransactionJournal {
+  begin(data: { type: string; source: string; destination: string }): Promise<string>;
+  commit(transactionId: string): Promise<void>;
+  rollback(transactionId: string): Promise<void>;
+}
+
+/**
+ * Organization options
+ */
+interface OrganizeOptions {
+  defaultLocation: string;
+  confidenceThreshold?: number;
+  failFast?: boolean;
+  overwrite?: boolean;
+}
+
+/**
+ * Dependencies for the use case
+ */
+interface OrganizeFilesUseCaseDeps {
+  fileRepository: IFileRepository;
+  organizationService: IOrganizationService;
+  smartFolderRepository: ISmartFolderRepository;
+  transactionJournal: ITransactionJournal;
+}
+
+/**
+ * Batch execution result
+ */
+interface BatchExecutionResult {
+  success: boolean;
+  operation: OrganizationOperation;
+  error?: string;
+}
 
 export class OrganizeFilesUseCase {
+  private fileRepository: IFileRepository;
+  private organizationService: IOrganizationService;
+  private smartFolderRepository: ISmartFolderRepository;
+  private transactionJournal: ITransactionJournal;
+
   constructor({
     fileRepository,
     organizationService,
     smartFolderRepository,
     transactionJournal,
-  }) {
+  }: OrganizeFilesUseCaseDeps) {
     this.fileRepository = fileRepository;
     this.organizationService = organizationService;
     this.smartFolderRepository = smartFolderRepository;
@@ -25,11 +79,11 @@ export class OrganizeFilesUseCase {
 
   /**
    * Execute the use case
-   * @param {File[]} files - Array of File domain models
-   * @param {Object} options - Organization options
-   * @returns {Promise<OrganizationBatch>} - The batch operation result
+   * @param files - Array of File domain models
+   * @param options - Organization options
+   * @returns The batch operation result
    */
-  async execute(files, options = {}) {
+  async execute(files: File[], options: OrganizeOptions): Promise<OrganizationBatch> {
     try {
       // Validate input
       this.validateInput(files, options);
@@ -39,8 +93,8 @@ export class OrganizeFilesUseCase {
 
       if (organizableFiles.length === 0) {
         throw new StratoSortError(
-          ErrorCodes.VALIDATION_ERROR,
           'No files can be organized',
+          ErrorCodes.VALIDATION_ERROR,
           { reason: 'All files failed validation' },
         );
       }
@@ -51,7 +105,7 @@ export class OrganizeFilesUseCase {
       // Create organization batch
       const batch = OrganizationBatch.fromFiles(organizableFiles, {
         defaultLocation: options.defaultLocation,
-        smartFolderMatcher: (category) =>
+        smartFolderMatcher: (category: string) =>
           this.matchSmartFolder(category, smartFolders),
       });
 
@@ -74,8 +128,8 @@ export class OrganizeFilesUseCase {
       }
 
       throw new StratoSortError(
-        ErrorCodes.ORGANIZATION_ERROR,
         'Failed to organize files',
+        ErrorCodes.ORGANIZATION_ERROR,
         { originalError: getErrorMessage(error) },
       );
     }
@@ -84,18 +138,18 @@ export class OrganizeFilesUseCase {
   /**
    * Validate input
    */
-  validateInput(files, options) {
+  private validateInput(files: File[], options: OrganizeOptions): void {
     if (!Array.isArray(files) || files.length === 0) {
       throw new StratoSortError(
-        ErrorCodes.VALIDATION_ERROR,
         'Files array is required and must not be empty',
+        ErrorCodes.VALIDATION_ERROR,
       );
     }
 
     if (!options.defaultLocation) {
       throw new StratoSortError(
-        ErrorCodes.VALIDATION_ERROR,
         'Default location is required',
+        ErrorCodes.VALIDATION_ERROR,
       );
     }
   }
@@ -103,10 +157,10 @@ export class OrganizeFilesUseCase {
   /**
    * Filter files that can be organized
    */
-  filterOrganizableFiles(files, options) {
+  private filterOrganizableFiles(files: File[], options: OrganizeOptions): File[] {
     const { confidenceThreshold = 0.7 } = options;
 
-    return files.filter((file) => {
+    return files.filter((file: File) => {
       // Check if file can be organized
       const validation = file.canBeOrganized();
       if (!validation.valid) {
@@ -114,7 +168,7 @@ export class OrganizeFilesUseCase {
       }
 
       // Check confidence threshold
-      if (file.analysis.confidence < confidenceThreshold) {
+      if (file.analysis && file.analysis.confidence < confidenceThreshold) {
         return false;
       }
 
@@ -125,7 +179,7 @@ export class OrganizeFilesUseCase {
   /**
    * Match smart folder for category
    */
-  matchSmartFolder(category, smartFolders) {
+  private matchSmartFolder(category: string, smartFolders: SmartFolder[]): SmartFolder | null {
     if (!category) return null;
 
     const normalizedCategory = category.toLowerCase().trim();
@@ -148,7 +202,7 @@ export class OrganizeFilesUseCase {
 
       // Check folder keywords/tags
       if (folder.keywords && folder.keywords.length > 0) {
-        const normalizedKeywords = folder.keywords.map((k) =>
+        const normalizedKeywords = folder.keywords.map((k: string) =>
           k.toLowerCase().trim(),
         );
         if (normalizedKeywords.includes(normalizedCategory)) {
@@ -163,8 +217,11 @@ export class OrganizeFilesUseCase {
   /**
    * Execute batch operations
    */
-  async executeBatch(batch, options) {
-    const results = [];
+  private async executeBatch(
+    batch: OrganizationBatch,
+    options: OrganizeOptions
+  ): Promise<BatchExecutionResult[]> {
+    const results: BatchExecutionResult[] = [];
 
     for (let i = 0; i < batch.operations.length; i++) {
       const operation = batch.operations[i];
@@ -199,7 +256,10 @@ export class OrganizeFilesUseCase {
   /**
    * Execute single operation
    */
-  async executeOperation(operation, options) {
+  private async executeOperation(
+    operation: OrganizationOperation,
+    options: OrganizeOptions
+  ): Promise<void> {
     const { sourceFile, destinationPath } = operation;
 
     // Create transaction
@@ -245,14 +305,14 @@ export class OrganizeFilesUseCase {
   /**
    * Update file states after batch completion
    */
-  async updateFileStates(batch) {
-    const updates = batch.operations.map((operation) => {
+  private async updateFileStates(batch: OrganizationBatch): Promise<void> {
+    const updates = batch.operations.map((operation: OrganizationOperation) => {
       const file = operation.sourceFile;
 
       if (operation.status === 'completed') {
         file.markAsOrganized();
       } else if (operation.status === 'failed') {
-        file.setError(operation.error);
+        file.setError(operation.error || 'Unknown error');
       }
       return this.fileRepository.update(file);
     });
@@ -263,12 +323,12 @@ export class OrganizeFilesUseCase {
   /**
    * Get files that need review (low confidence)
    */
-  getNeedsReview(files, options = {}) {
+  getNeedsReview(files: File[], options: { confidenceThreshold?: number } = {}): File[] {
     const { confidenceThreshold = 0.7 } = options;
 
-    return files.filter((file) => {
+    return files.filter((file: File) => {
       if (!file.isReadyForOrganization()) return false;
-      return file.analysis.needsReview(confidenceThreshold);
+      return file.analysis?.needsReview(confidenceThreshold) ?? false;
     });
   }
 }

@@ -104,6 +104,7 @@ function registerServices(options = {}) {
   );
 
   // Undo/Redo Service
+  // Note: lazy: false because autoOrganize depends on it and needs it ready
   container.register(
     'undoRedo',
     async (_deps) => {
@@ -113,7 +114,7 @@ function registerServices(options = {}) {
     },
     {
       dependencies: [],
-      lazy: true,
+      lazy: false, // Must be false - autoOrganize depends on this service
     },
   );
 
@@ -212,6 +213,7 @@ function registerServices(options = {}) {
   );
 
   // Analysis History Service
+  // Note: lazy: false for consistent availability in ServiceIntegration
   container.register(
     'analysisHistory',
     async (_deps) => {
@@ -223,7 +225,7 @@ function registerServices(options = {}) {
     },
     {
       dependencies: [],
-      lazy: true,
+      lazy: false, // Must be ready for ServiceIntegration
     },
   );
 

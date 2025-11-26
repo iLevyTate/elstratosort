@@ -18,28 +18,34 @@ interface ValidationError extends Error {
   validationWarnings?: any[];
 }
 
-let singletonInstance = null;
+let singletonInstance: SettingsService | null = null;
+
+interface Settings extends Record<string, unknown> {
+  theme?: string;
+  notifications?: boolean;
+  [key: string]: unknown;
+}
 
 class SettingsService {
-  settingsPath: any;
-  backupDir: any;
-  maxBackups: any;
-  defaults: any;
-  _cache: any;
-  _cacheTimestamp: any;
-  _cacheTtlMs: any;
-  _fileWatcher: any;
-  _debounceTimer: any;
-  _debounceDelay: any;
-  _isInternalChange: any;
-  _saveMutex: any;
-  _saveQueue: any;
-  _mutexAcquiredAt: any;
-  _mutexTimeoutMs: any;
-  _watcherRestartCount: any;
-  _maxWatcherRestarts: any;
-  _watcherRestartWindow: any;
-  _watcherRestartWindowStart: any;
+  settingsPath: string;
+  backupDir: string;
+  maxBackups: number;
+  defaults: Settings;
+  _cache: Settings | null;
+  _cacheTimestamp: number;
+  _cacheTtlMs: number;
+  _fileWatcher: ReturnType<typeof fsSync.watch> | null;
+  _debounceTimer: NodeJS.Timeout | null;
+  _debounceDelay: number;
+  _isInternalChange: boolean;
+  _saveMutex: Promise<void>;
+  _saveQueue: Array<() => Promise<void>>;
+  _mutexAcquiredAt: number | null;
+  _mutexTimeoutMs: number;
+  _watcherRestartCount: number;
+  _maxWatcherRestarts: number;
+  _watcherRestartWindow: number;
+  _watcherRestartWindowStart: number;
 
   constructor() {
     this.settingsPath = path.join(app.getPath('userData'), 'settings.json');
@@ -84,13 +90,14 @@ class SettingsService {
       this._cache = merged;
       this._cacheTimestamp = now;
       return merged;
-    } catch (err) {
+    } catch (err: unknown) {
       const merged = { ...this.defaults };
       this._cache = merged;
       this._cacheTimestamp = Date.now();
-      if (err && err.code !== 'ENOENT') {
+      const errObj = err as NodeJS.ErrnoException | null;
+      if (errObj && errObj.code !== 'ENOENT') {
         logger.warn(
-          `[SettingsService] Failed to read settings, using defaults: ${err.message}`,
+          `[SettingsService] Failed to read settings, using defaults: ${errObj.message}`,
         );
       }
       return merged;
@@ -98,7 +105,7 @@ class SettingsService {
   }
 
   // Fixed: Proper cache invalidation, settings merging, and validation
-  async save(settings) {
+  async save(settings: Settings): Promise<Settings> {
     // Fixed: Use mutex to prevent race conditions from concurrent saves
     return this._withMutex(async () => {
       // Validate settings before saving
@@ -129,8 +136,8 @@ class SettingsService {
       // Ensure backup directory exists first
       try {
         await fs.mkdir(this.backupDir, { recursive: true });
-      } catch (error) {
-        const errorMsg = `Failed to create backup directory: ${error.message}`;
+      } catch (error: unknown) {
+        const errorMsg = `Failed to create backup directory: ${error instanceof Error ? error.message : String(error)}`;
         logger.error(`[SettingsService] ${errorMsg}`);
         throw new Error(errorMsg);
       }
@@ -151,13 +158,13 @@ class SettingsService {
             `[SettingsService] Backup attempt ${attempt + 1} failed with result:`,
             backupResult,
           );
-        } catch (error) {
+        } catch (error: unknown) {
           // CRITICAL FIX: Log each attempt failure with detailed error information
           logger.error(
             `[SettingsService] Backup attempt ${attempt + 1} failed with exception:`,
             {
-              error: error.message,
-              stack: error.stack,
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
               attempt: attempt + 1,
               maxRetries: maxBackupRetries,
             },
@@ -165,7 +172,7 @@ class SettingsService {
 
           const isLastAttempt = attempt === maxBackupRetries - 1;
           if (isLastAttempt) {
-            const errorMsg = `Failed to create backup after ${maxBackupRetries} attempts: ${error.message}`;
+            const errorMsg = `Failed to create backup after ${maxBackupRetries} attempts: ${error instanceof Error ? error.message : String(error)}`;
             logger.error(`[SettingsService] ${errorMsg}`);
             throw new Error(errorMsg);
           }
@@ -211,24 +218,25 @@ class SettingsService {
 
             // Success - exit retry loop
             break;
-          } catch (saveError) {
+          } catch (saveError: unknown) {
             // Bug #42: Check for file lock errors (EBUSY, EPERM, EACCES)
+            const errObj = saveError as NodeJS.ErrnoException;
             const isFileLockError =
-              saveError.code === 'EBUSY' ||
-              saveError.code === 'EPERM' ||
-              saveError.code === 'EACCES';
+              errObj.code === 'EBUSY' ||
+              errObj.code === 'EPERM' ||
+              errObj.code === 'EACCES';
 
             if (isFileLockError && attempt < maxSaveRetries - 1) {
               // Calculate exponential backoff delay
               const delay = baseSaveDelay * Math.pow(2, attempt);
               logger.warn(
-                `[SettingsService] File lock error on save attempt ${attempt + 1}/${maxSaveRetries}: ${saveError.code}. Retrying in ${delay}ms...`,
+                `[SettingsService] File lock error on save attempt ${attempt + 1}/${maxSaveRetries}: ${errObj.code}. Retrying in ${delay}ms...`,
               );
               await new Promise((resolve) => setTimeout(resolve, delay));
             } else if (attempt === maxSaveRetries - 1) {
               // Last attempt failed
               throw new Error(
-                `Failed to save settings after ${maxSaveRetries} attempts due to file lock: ${saveError.message}`,
+                `Failed to save settings after ${maxSaveRetries} attempts due to file lock: ${errObj.message}`,
               );
             } else {
               // Non-lock error, fail immediately
@@ -256,14 +264,14 @@ class SettingsService {
    * Execute a function with mutex lock to prevent concurrent operations
    * @private
    */
-  async _withMutex(fn) {
+  async _withMutex<T>(fn: () => Promise<T>): Promise<T> {
     // Fixed: Robust mutex implementation using promise chaining
     // CRITICAL: Mutex must ALWAYS resolve (never reject) to maintain the chain
     const previousMutex = this._saveMutex;
 
     // Create a new promise that will resolve when fn completes
-    let resolveMutex;
-    this._saveMutex = new Promise((resolve) => {
+    let resolveMutex: (() => void) | undefined;
+    this._saveMutex = new Promise<void>((resolve) => {
       resolveMutex = resolve;
     });
 
@@ -275,7 +283,7 @@ class SettingsService {
         // This prevents error propagation from breaking the mutex chain
       });
 
-      const timeoutPromise = new Promise((_, reject) => {
+      const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
           reject(
             new Error(
@@ -296,7 +304,7 @@ class SettingsService {
       try {
         // Add timeout to the actual operation as well
         const operationPromise = fn();
-        const operationTimeout = new Promise((_, reject) => {
+        const operationTimeout = new Promise<never>((_, reject) => {
           setTimeout(() => {
             reject(
               new Error(
@@ -313,9 +321,9 @@ class SettingsService {
         // CRITICAL: Always resolve mutex, even on error or timeout
         // This ensures the next operation can proceed even if this one fails
         this._mutexAcquiredAt = null;
-        resolveMutex();
+        resolveMutex?.();
       }
-    } catch (error) {
+    } catch (error: unknown) {
       // CRITICAL FIX: Always release mutex even on deadlock/timeout errors
       this._mutexAcquiredAt = null;
       if (!resolveMutex) {
@@ -328,12 +336,13 @@ class SettingsService {
       }
 
       // Log deadlock/timeout errors with extra context
+      const errMsg = error instanceof Error ? error.message : String(error);
       if (
-        error.message?.includes('deadlock') ||
-        error.message?.includes('timeout')
+        errMsg?.includes('deadlock') ||
+        errMsg?.includes('timeout')
       ) {
         logger.error('[SettingsService] Mutex deadlock or timeout detected', {
-          error: error.message,
+          error: errMsg,
           mutexAcquiredAt: this._mutexAcquiredAt,
           timeElapsed: this._mutexAcquiredAt
             ? Date.now() - this._mutexAcquiredAt
@@ -413,13 +422,13 @@ class SettingsService {
         path: backupPath,
         timestamp: backupData.timestamp,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       logger.error('[SettingsService] Failed to create backup', {
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
       });
       return {
         success: false,
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
       };
     }
   }
@@ -457,10 +466,10 @@ class SettingsService {
               size: stats.size,
               _parsedTime: new Date(timestamp).getTime(), // Fixed: Parse once for efficient sorting
             });
-          } catch (error) {
+          } catch (error: unknown) {
             // Skip invalid backup files
             logger.warn(`[SettingsService] Invalid backup file: ${file}`, {
-              error: error.message,
+              error: error instanceof Error ? error.message : String(error),
             });
           }
         }
@@ -469,14 +478,14 @@ class SettingsService {
       // Fixed: Optimized sort using pre-parsed timestamps
       backups.sort((a, b) => b._parsedTime - a._parsedTime);
 
-      backups.forEach((backup) => {
-        delete backup._parsedTime;
+      backups.forEach((backup: { _parsedTime?: number }) => {
+        backup._parsedTime = undefined;
       });
 
       return backups;
-    } catch (error) {
+    } catch (error: unknown) {
       logger.error('[SettingsService] Failed to list backups', {
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
       });
       return [];
     }
@@ -485,7 +494,7 @@ class SettingsService {
   /**
    * Restore settings from a backup
    */
-  async restoreFromBackup(backupPath) {
+  async restoreFromBackup(backupPath: string): Promise<{ success: boolean; message?: string; error?: string }> {
     // Fixed: Use mutex to prevent race conditions during restore
     return this._withMutex(async () => {
       try {

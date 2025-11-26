@@ -4,32 +4,80 @@
  */
 
 import { Analysis } from '../models/Analysis';
-import {
-  StratoSortError,
-  ErrorCodes,
-} from '../../shared/errors/StratoSortError';
-import { getErrorMessage } from '../../shared/errors';
+import { File } from '../models/File';
+import type { IFileRepository } from '../repositories/IFileRepository';
+import { StratoSortError, ErrorCodes, getErrorMessage } from '../../shared/errors';
+
+/**
+ * Analysis service interface for file analysis operations
+ */
+interface IAnalysisService {
+  analyzeImage(path: string, options?: AnalysisOptions): Promise<RawAnalysisResponse>;
+  analyzeDocument(path: string, options?: AnalysisOptions): Promise<RawAnalysisResponse>;
+}
+
+/**
+ * Options for file analysis
+ */
+interface AnalysisOptions {
+  forceReanalyze?: boolean;
+  model?: string;
+  namingConvention?: NamingConvention;
+}
+
+/**
+ * Naming convention settings
+ */
+interface NamingConvention {
+  caseConvention?: 'lowercase' | 'uppercase' | 'sentence' | 'title';
+  separator?: string;
+}
+
+/**
+ * Raw analysis response from LLM
+ */
+interface RawAnalysisResponse {
+  category?: string;
+  suggestedName?: string;
+  suggested_name?: string;
+  confidence?: number;
+  summary?: string;
+  description?: string;
+  keywords?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Dependencies for the use case
+ */
+interface AnalyzeFileUseCaseDeps {
+  analysisService: IAnalysisService;
+  fileRepository: IFileRepository;
+}
 
 export class AnalyzeFileUseCase {
-  constructor({ analysisService, fileRepository }) {
+  private analysisService: IAnalysisService;
+  private fileRepository: IFileRepository;
+
+  constructor({ analysisService, fileRepository }: AnalyzeFileUseCaseDeps) {
     this.analysisService = analysisService;
     this.fileRepository = fileRepository;
   }
 
   /**
    * Execute the use case
-   * @param {File} file - The file domain model to analyze
-   * @param {Object} options - Analysis options
-   * @returns {Promise<Analysis>} - The analysis result
+   * @param file - The file domain model to analyze
+   * @param options - Analysis options
+   * @returns The analysis result
    */
-  async execute(file, options = {}) {
+  async execute(file: File, options: AnalysisOptions = {}): Promise<Analysis> {
     try {
       // Validate input
       this.validateInput(file);
 
       // Check if file is already analyzed
       if (file.isAnalyzed() && !options.forceReanalyze) {
-        return file.analysis;
+        return file.analysis!;
       }
 
       // Update file state
@@ -37,7 +85,7 @@ export class AnalyzeFileUseCase {
       await this.fileRepository.update(file);
 
       // Perform analysis based on file type
-      let rawAnalysis;
+      let rawAnalysis: RawAnalysisResponse;
       if (file.metadata.isImage()) {
         rawAnalysis = await this.analysisService.analyzeImage(
           file.path,
@@ -59,8 +107,8 @@ export class AnalyzeFileUseCase {
       // Validate analysis result
       if (!analysis.isValid()) {
         throw new StratoSortError(
-          ErrorCodes.ANALYSIS_VALIDATION_ERROR,
           'Analysis result is invalid',
+          ErrorCodes.ANALYSIS_VALIDATION_ERROR,
           { errors: analysis.getValidationErrors() },
         );
       }
@@ -91,8 +139,8 @@ export class AnalyzeFileUseCase {
       }
 
       throw new StratoSortError(
-        ErrorCodes.ANALYSIS_ERROR,
         'Failed to analyze file',
+        ErrorCodes.ANALYSIS_ERROR,
         { originalError: errorMsg, filePath: file.path },
       );
     }
@@ -101,25 +149,25 @@ export class AnalyzeFileUseCase {
   /**
    * Validate input
    */
-  validateInput(file) {
+  private validateInput(file: File): void {
     if (!file) {
       throw new StratoSortError(
-        ErrorCodes.VALIDATION_ERROR,
         'File is required',
+        ErrorCodes.VALIDATION_ERROR,
       );
     }
 
     if (!file.metadata || !file.metadata.path) {
       throw new StratoSortError(
-        ErrorCodes.VALIDATION_ERROR,
         'File path is required',
+        ErrorCodes.VALIDATION_ERROR,
       );
     }
 
     if (file.hasError()) {
       throw new StratoSortError(
-        ErrorCodes.VALIDATION_ERROR,
         'Cannot analyze file with existing error',
+        ErrorCodes.VALIDATION_ERROR,
         { error: file.error },
       );
     }
@@ -128,7 +176,7 @@ export class AnalyzeFileUseCase {
   /**
    * Apply naming convention
    */
-  applyNamingConvention(name, convention) {
+  private applyNamingConvention(name: string, convention: NamingConvention): string {
     if (!name) return '';
 
     let result = name;
@@ -148,7 +196,7 @@ export class AnalyzeFileUseCase {
         result = result
           .split(' ')
           .map(
-            (word) =>
+            (word: string) =>
               word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
           )
           .join(' ');

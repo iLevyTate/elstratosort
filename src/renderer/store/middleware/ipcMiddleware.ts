@@ -26,7 +26,16 @@ const IPC_SYNC_ACTIONS = {
 // Main process events mapping (implemented in setupMainProcessListeners below)
 // These events are received from the main process and dispatched to Redux actions
 
+interface Store {
+  dispatch: (action: { type: string; payload?: unknown }) => void;
+  getState: () => unknown;
+}
+
 class IPCManager {
+  store: Store | null;
+  eventUnsubscribers: Array<() => void>;
+  isInitialized: boolean;
+
   constructor() {
     this.store = null;
     this.eventUnsubscribers = [];
@@ -36,7 +45,7 @@ class IPCManager {
   /**
    * Initialize IPC listeners
    */
-  initialize(store) {
+  initialize(store: Store): void {
     if (this.isInitialized) {
       console.warn('[IPCMiddleware] Already initialized');
       return;
@@ -49,7 +58,7 @@ class IPCManager {
   /**
    * Setup listeners for main process events
    */
-  setupMainProcessListeners() {
+  setupMainProcessListeners(): void {
     if (!window.electronAPI?.events) {
       logger.error('[IPCMiddleware] electronAPI.events not available');
       return;
@@ -164,8 +173,8 @@ class IPCManager {
   /**
    * Sync state changes to main process
    */
-  async syncToMain(actionType, state) {
-    const syncTarget = IPC_SYNC_ACTIONS[actionType];
+  async syncToMain(actionType: string, state: { settings?: Record<string, unknown> }): Promise<void> {
+    const syncTarget = IPC_SYNC_ACTIONS[actionType as keyof typeof IPC_SYNC_ACTIONS];
     if (!syncTarget) return;
 
     try {
@@ -173,7 +182,7 @@ class IPCManager {
         case 'settings':
           // Save settings to main process
           if (window.electronAPI?.settings?.save) {
-            const settingsState = state.settings;
+            const settingsState = state.settings || {};
             // Extract only the settings data (exclude loading states)
             const settingsData = {
               autoOrganize: settingsState.autoOrganize,
@@ -205,7 +214,7 @@ class IPCManager {
         default:
           break;
       }
-    } catch (error) {
+    } catch (error: unknown) {
       logger.error(`[IPCMiddleware] Failed to sync ${syncTarget}`, { error });
     }
   }
@@ -213,7 +222,7 @@ class IPCManager {
   /**
    * Cleanup listeners
    */
-  cleanup() {
+  cleanup(): void {
     for (const unsubscribe of this.eventUnsubscribers) {
       if (typeof unsubscribe === 'function') {
         unsubscribe();
@@ -228,21 +237,31 @@ class IPCManager {
 // Create singleton instance
 const ipcManager = new IPCManager();
 
+interface Action {
+  type: string;
+  payload?: unknown;
+}
+
+type MiddlewareAPI = {
+  dispatch: (action: Action) => void;
+  getState: () => { settings?: Record<string, unknown> };
+};
+
 /**
  * Redux middleware that syncs state with main process
  */
-export const ipcMiddleware = (store) => {
+export const ipcMiddleware = (store: MiddlewareAPI) => {
   // Initialize on first use
   if (!ipcManager.isInitialized) {
     ipcManager.initialize(store);
   }
 
-  return (next) => (action) => {
+  return (next: (action: Action) => unknown) => (action: Action): unknown => {
     // Execute action
     const result = next(action);
 
     // Sync to main if needed
-    if (action.type && IPC_SYNC_ACTIONS[action.type]) {
+    if (action.type && IPC_SYNC_ACTIONS[action.type as keyof typeof IPC_SYNC_ACTIONS]) {
       const state = store.getState();
       ipcManager.syncToMain(action.type, state);
     }
@@ -254,14 +273,14 @@ export const ipcMiddleware = (store) => {
 /**
  * Initialize IPC listeners manually if needed
  */
-export const initializeIPC = (store) => {
+export const initializeIPC = (store: Store): void => {
   ipcManager.initialize(store);
 };
 
 /**
  * Cleanup IPC listeners
  */
-export const cleanupIPC = () => {
+export const cleanupIPC = (): void => {
   ipcManager.cleanup();
 };
 

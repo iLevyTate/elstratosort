@@ -38,13 +38,25 @@ const ANALYSIS_CACHE_MAX_ENTRIES = 200;
 const ANALYSIS_CACHE_TTL_MS = 3600000; // 1 hour TTL
 const analysisCache = new Map(); // key -> { value, timestamp }
 
-function getCacheKey(textContent, model, smartFolders) {
+interface SmartFolderInfo {
+  name?: string;
+  description?: string;
+  path?: string;
+  keywords?: string[];
+}
+
+function getCacheKey(
+  textContent: string | null | undefined,
+  model: string | null | undefined,
+  smartFolders: SmartFolderInfo[] | null | undefined
+): string {
   // FIXED Bug #44: Limit input size to prevent excessive hash computation
   const MAX_TEXT_LENGTH = 50000; // 50KB max for hash key
+  const textLen = textContent?.length ?? 0;
   const truncatedText =
-    textContent?.length > MAX_TEXT_LENGTH
-      ? textContent.slice(0, MAX_TEXT_LENGTH)
-      : textContent;
+    textLen > MAX_TEXT_LENGTH
+      ? textContent!.slice(0, MAX_TEXT_LENGTH)
+      : (textContent ?? '');
 
   const hasher = crypto.createHash('sha1');
   // MEDIUM PRIORITY FIX (MED-12): Include original length to prevent hash collision
@@ -67,7 +79,7 @@ function getCacheKey(textContent, model, smartFolders) {
   return hasher.digest('hex');
 }
 
-function getCachedValue(key) {
+function getCachedValue(key: string): unknown | null {
   const entry = analysisCache.get(key);
   if (!entry) return null;
 
@@ -83,7 +95,7 @@ function getCachedValue(key) {
   return entry.value;
 }
 
-function setCache(key, value) {
+function setCache(key: string, value: unknown): void {
   // Evict oldest entry if at capacity (LRU eviction)
   if (analysisCache.size >= ANALYSIS_CACHE_MAX_ENTRIES) {
     const oldestKey = analysisCache.keys().next().value;
@@ -96,7 +108,7 @@ function setCache(key, value) {
   });
 }
 
-function normalizeTextForModel(input, maxLen) {
+function normalizeTextForModel(input: unknown, maxLen?: number): string {
   if (!input) return '';
   let text = String(input);
   // CRITICAL FIX: Truncate BEFORE regex operations to prevent buffer overflow
@@ -114,10 +126,10 @@ function normalizeTextForModel(input, maxLen) {
   return text;
 }
 async function analyzeTextWithOllama(
-  textContent,
-  originalFileName,
-  smartFolders = [],
-) {
+  textContent: string,
+  originalFileName: string,
+  smartFolders: SmartFolderInfo[] = [],
+): Promise<Record<string, unknown>> {
   try {
     const cfg = await loadOllamaConfig();
     const modelToUse =
@@ -136,7 +148,7 @@ async function analyzeTextWithOllama(
     const cacheKey = getCacheKey(truncated, modelToUse, smartFolders);
     const cachedResult = getCachedValue(cacheKey);
     if (cachedResult) {
-      return cachedResult;
+      return cachedResult as Record<string, unknown>;
     }
 
     // FIXED Bug #29: Use array join instead of string concatenation
@@ -144,7 +156,8 @@ async function analyzeTextWithOllama(
     if (smartFolders && smartFolders.length > 0) {
       const validFolders = smartFolders
         .filter(
-          (f) => f && typeof f.name === 'string' && f.name.trim().length > 0,
+          (f): f is SmartFolderInfo & { name: string } =>
+            f != null && typeof f.name === 'string' && f.name.trim().length > 0,
         )
         .slice(0, 10)
         .map((f) => ({
@@ -248,8 +261,8 @@ ${truncated}`;
         let parsedJson;
         try {
           parsedJson = JSON.parse(response.response);
-        } catch (parseError) {
-          logger.warn('[documentLlm] JSON parse error:', parseError.message);
+        } catch (parseError: unknown) {
+          logger.warn('[documentLlm] JSON parse error:', parseError instanceof Error ? parseError.message : String(parseError));
           return {
             error: 'Failed to parse document analysis JSON from Ollama.',
             keywords: [],
@@ -281,7 +294,7 @@ ${truncated}`;
         // Validate keywords array
         const finalKeywords = Array.isArray(parsedJson.keywords)
           ? parsedJson.keywords.filter(
-              (kw) => typeof kw === 'string' && kw.length > 0,
+              (kw: unknown) => typeof kw === 'string' && (kw as string).length > 0,
             )
           : [];
 
@@ -366,13 +379,13 @@ ${truncated}`;
           entities: parsedJson.entities && typeof parsedJson.entities === 'object'
             ? {
                 people: Array.isArray(parsedJson.entities.people)
-                  ? parsedJson.entities.people.filter(p => typeof p === 'string').slice(0, 10)
+                  ? parsedJson.entities.people.filter((p: unknown) => typeof p === 'string').slice(0, 10)
                   : [],
                 orgs: Array.isArray(parsedJson.entities.orgs)
-                  ? parsedJson.entities.orgs.filter(o => typeof o === 'string').slice(0, 10)
+                  ? parsedJson.entities.orgs.filter((o: unknown) => typeof o === 'string').slice(0, 10)
                   : [],
                 amounts: Array.isArray(parsedJson.entities.amounts)
-                  ? parsedJson.entities.amounts.filter(a => typeof a === 'string').slice(0, 10)
+                  ? parsedJson.entities.amounts.filter((a: unknown) => typeof a === 'string').slice(0, 10)
                   : [],
               }
             : { people: [], orgs: [], amounts: [] },
@@ -381,10 +394,10 @@ ${truncated}`;
 
         setCache(cacheKey, result);
         return result;
-      } catch (e) {
+      } catch (e: unknown) {
         logger.error(
           '[documentLlm] Unexpected error processing response:',
-          e.message,
+          e instanceof Error ? e.message : String(e),
         );
         return {
           error: 'Failed to parse document analysis from Ollama.',
@@ -398,9 +411,9 @@ ${truncated}`;
       keywords: [],
       confidence: 60,
     };
-  } catch (error) {
+  } catch (error: unknown) {
     return {
-      error: `Ollama API error for document: ${error.message}`,
+      error: `Ollama API error for document: ${error instanceof Error ? error.message : String(error)}`,
       keywords: [],
       confidence: 60,
     };

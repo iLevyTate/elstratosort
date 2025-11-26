@@ -26,18 +26,39 @@ const ModelVerifierModule = require('../services/ModelVerifier');
 const ModelVerifier = ModelVerifierModule.default || ModelVerifierModule;
 const { logger } = require('../../shared/logger');
 logger.setContext('OllamaImageAnalysis');
-let chromaDbSingleton = null;
-let folderMatcherSingleton = null;
+
+interface SmartFolderInfo {
+  name: string;
+  description?: string;
+  path?: string;
+}
+
+interface AnalysisResult {
+  category?: string;
+  suggestedName?: string;
+  confidence: number;
+  keywords: string[];
+  summary?: string;
+  metadata?: Record<string, unknown>;
+  error?: string;
+  smartFolder?: SmartFolderInfo;
+  date?: string;
+}
+
+let chromaDbSingleton: unknown = null;
+let folderMatcherSingleton: unknown = null;
 
 // In-memory cache for image analysis keyed by path|size|mtimeMs
-const imageAnalysisCache = new Map();
+const imageAnalysisCache = new Map<string, AnalysisResult>();
 const MAX_IMAGE_CACHE = 300;
-function setImageCache(signature, value) {
+function setImageCache(signature: string | null | undefined, value: AnalysisResult): void {
   if (!signature) return;
   imageAnalysisCache.set(signature, value);
   if (imageAnalysisCache.size > MAX_IMAGE_CACHE) {
     const first = imageAnalysisCache.keys().next().value;
-    imageAnalysisCache.delete(first);
+    if (first !== undefined) {
+      imageAnalysisCache.delete(first);
+    }
   }
 }
 
@@ -58,10 +79,10 @@ const AppConfig = {
 // Use shared client from ollamaUtils
 
 async function analyzeImageWithOllama(
-  imageBase64,
-  originalFileName,
-  smartFolders = [],
-) {
+  imageBase64: string,
+  originalFileName: string,
+  smartFolders: SmartFolderInfo[] = [],
+): Promise<AnalysisResult> {
   try {
     const { logger } = require('../../shared/logger');
     logger.info(`Analyzing image content with Ollama`, {
@@ -73,10 +94,10 @@ async function analyzeImageWithOllama(
     if (smartFolders && smartFolders.length > 0) {
       const validFolders = smartFolders
         .filter(
-          (f) => f && typeof f.name === 'string' && f.name.trim().length > 0,
+          (f: SmartFolderInfo) => f && typeof f.name === 'string' && f.name.trim().length > 0,
         )
         .slice(0, 10)
-        .map((f) => ({
+        .map((f: SmartFolderInfo) => ({
           name: f.name.trim().slice(0, 50),
           description: (f.description || '').trim().slice(0, 140),
         }));
@@ -97,7 +118,7 @@ async function analyzeImageWithOllama(
       smartFolders && smartFolders.length > 0
         ? smartFolders
             .slice(0, 10)
-            .map((f) => f.name)
+            .map((f: SmartFolderInfo) => f.name)
             .join(', ')
         : 'General';
 
@@ -234,9 +255,9 @@ Required fields:
               : '',
           promptVersion: 'v2.0',
         };
-      } catch (e) {
+      } catch (e: unknown) {
         logger.error('Error parsing Ollama JSON response for image', {
-          error: e.message,
+          error: e instanceof Error ? e.message : String(e),
         });
         return {
           error: 'Failed to parse image analysis from Ollama.',
@@ -251,14 +272,15 @@ Required fields:
       keywords: [],
       confidence: 60,
     };
-  } catch (error) {
+  } catch (error: unknown) {
     const { logger } = require('../../shared/logger');
+    const errMsg = error instanceof Error ? error.message : String(error);
     logger.error('Error calling Ollama API for image', {
-      error: error.message,
+      error: errMsg,
     });
 
     // Specific handling for zero-length image error
-    if (error.message.includes('zero length image')) {
+    if (errMsg.includes('zero length image')) {
       return {
         error: 'Image is empty or corrupted - cannot analyze zero-length image',
         keywords: [],
@@ -266,7 +288,7 @@ Required fields:
       };
     }
     // Guidance for vision model input failures
-    if (error.message.includes('unable to make llava embedding')) {
+    if (errMsg.includes('unable to make llava embedding')) {
       return {
         error:
           'Unsupported image format or dimensions for vision model. Convert to PNG/JPG and keep under ~2048px on the longest side.',
@@ -276,14 +298,14 @@ Required fields:
     }
 
     return {
-      error: `Ollama API error for image: ${error.message}`,
+      error: `Ollama API error for image: ${errMsg}`,
       keywords: [],
       confidence: 60,
     };
   }
 }
 
-async function analyzeImageFile(filePath, smartFolders = []) {
+async function analyzeImageFile(filePath: string, smartFolders: SmartFolderInfo[] = []): Promise<AnalysisResult> {
   const { logger } = require('../../shared/logger');
   logger.info(`Analyzing image file`, { path: filePath });
   const fileExtension = path.extname(filePath).toLowerCase();

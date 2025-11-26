@@ -1,7 +1,20 @@
-import path from 'path';import { promises as fs } from 'fs';import { app } from 'electron';import { getOllama as getOllamaClient } from '../ollamaUtils';
+import path from 'path';
+import { promises as fs } from 'fs';
+import { app } from 'electron';
+import { getOllama as getOllamaClient } from '../ollamaUtils';
+import { enhanceSmartFolderWithLLM } from '../services/SmartFoldersLLMService';
+
 import {
-  enhanceSmartFolderWithLLM,} from '../services/SmartFoldersLLMService';import { validateIpc, withRequestId, withErrorHandling, compose } from './validation';
-import {  SmartFolderAddSchema,  SmartFolderEditSchema,  SmartFolderDeleteSchema} from './schemas';
+  validateIpc,
+  withRequestId,
+  withErrorHandling,
+  compose,
+} from './validation';
+import {
+  SmartFolderAddSchema,
+  SmartFolderEditSchema,
+  SmartFolderDeleteSchema,
+} from './schemas';
 
 /**
  * CRITICAL SECURITY FIX: Sanitize and validate folder paths to prevent path traversal attacks
@@ -9,7 +22,7 @@ import {  SmartFolderAddSchema,  SmartFolderEditSchema,  SmartFolderDeleteSch
  * @returns {string} - Sanitized, validated path
  * @throws {Error} - If path is invalid or violates security constraints
  */
-function sanitizeFolderPath(inputPath) {
+function sanitizeFolderPath(inputPath: string): string {
   if (!inputPath || typeof inputPath !== 'string') {
     throw new Error('Invalid path: must be non-empty string');
   }
@@ -75,7 +88,37 @@ function sanitizeFolderPath(inputPath) {
   }
 
   return normalized;
-}function registerSmartFoldersIpc({
+}
+
+interface SmartFolder {
+  id: string;
+  name: string;
+  path: string;
+  category?: string;
+  description?: string;
+  keywords?: string[];
+  isDefault?: boolean;
+}
+
+interface SmartFolderIpcDependencies {
+  ipcMain: Electron.IpcMain;
+  IPC_CHANNELS: { SMART_FOLDERS: Record<string, string> };
+  logger: {
+    setContext: (ctx: string) => void;
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+    debug: (...args: unknown[]) => void;
+  };
+  getCustomFolders: () => SmartFolder[];
+  setCustomFolders: (folders: SmartFolder[]) => void;
+  saveCustomFolders: () => Promise<void>;
+  buildOllamaOptions: () => unknown;
+  getOllamaModel: () => string;
+  scanDirectory: (path: string) => Promise<{ files: string[] }>;
+}
+
+function registerSmartFoldersIpc({
   ipcMain,
   IPC_CHANNELS,
   logger,
@@ -85,14 +128,14 @@ function sanitizeFolderPath(inputPath) {
   buildOllamaOptions,
   getOllamaModel,
   scanDirectory,
-}) {
+}: SmartFolderIpcDependencies): void {
   logger.setContext('IPC:SmartFolders');
 
   ipcMain.handle(
     IPC_CHANNELS.SMART_FOLDERS.GET,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
         const customFolders = getCustomFolders();
@@ -107,18 +150,18 @@ function sanitizeFolderPath(inputPath) {
             '[SMART-FOLDERS] getCustomFolders() returned non-array:',
             typeof customFolders,
           );
-          return [];
+          return { success: true, folders: [] };
         }
 
         if (customFolders.length === 0) {
           logger.info(
             '[SMART-FOLDERS] No custom folders found, returning empty array',
           );
-          return [];
+          return { success: true, folders: [] };
         }
 
         const foldersWithStatus = await Promise.all(
-          customFolders.map(async (folder) => {
+          customFolders.map(async (folder: SmartFolder) => {
             // Skip path check if path is null or empty (default folders)
             if (!folder || !folder.path || folder.path.trim() === '') {
               return { ...folder, physicallyExists: false };
@@ -126,11 +169,11 @@ function sanitizeFolderPath(inputPath) {
             try {
               const stats = await fs.stat(folder.path);
               return { ...folder, physicallyExists: stats.isDirectory() };
-            } catch (error) {
+            } catch (error: unknown) {
               logger.debug(
                 '[SMART-FOLDERS] Path check failed for:',
                 folder.path,
-                error.message,
+                error instanceof Error ? error.message : String(error),
               );
               return { ...folder, physicallyExists: false };
             }
@@ -142,7 +185,7 @@ function sanitizeFolderPath(inputPath) {
           foldersWithStatus.length,
           'folders with status',
         );
-        return foldersWithStatus;
+        return { success: true, folders: foldersWithStatus };
       } catch (error) {
         logger.error('[SMART-FOLDERS] Error in GET handler:', error);
         throw error;
@@ -154,24 +197,29 @@ function sanitizeFolderPath(inputPath) {
     IPC_CHANNELS.SMART_FOLDERS.GET_CUSTOM,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       const customFolders = getCustomFolders();
       logger.info(
         '[SMART-FOLDERS] Getting Custom Folders for UI:',
         customFolders.length,
       );
-      return customFolders;
+      return { success: true, folders: customFolders };
     }),
   );
+
+  interface MatchPayload {
+    text?: string;
+    smartFolders?: Array<{ name: string; description?: string }>;
+  }
 
   // Smart folder matching using embeddings/LLM with fallbacks
   ipcMain.handle(
     IPC_CHANNELS.SMART_FOLDERS.MATCH,
     compose(
       withErrorHandling,
-      withRequestId
-    )(async (event, payload) => {
+      withRequestId,
+    )(async (_event: Electron.IpcMainInvokeEvent, payload: MatchPayload) => {
       try {
         const { text, smartFolders = [] } = payload || {};
         if (
@@ -187,13 +235,19 @@ function sanitizeFolderPath(inputPath) {
 
         try {
           const ollama = getOllamaClient();
-          const perfOptions = await buildOllamaOptions('embeddings');
+          const perfOptions = (await buildOllamaOptions()) as Record<
+            string,
+            unknown
+          >;
           const queryEmbedding = await ollama.embeddings({
             model: 'mxbai-embed-large',
             prompt: text,
             options: { ...perfOptions },
           });
-          const scored = [];
+          const scored: Array<{
+            folder: (typeof smartFolders)[0];
+            score: number;
+          }> = [];
           for (const folder of smartFolders) {
             const folderText = [folder.name, folder.description]
               .filter(Boolean)
@@ -217,11 +271,14 @@ function sanitizeFolderPath(inputPath) {
             score: best.score,
             method: 'embeddings',
           };
-        } catch (e) {
+        } catch (_e) {
           try {
             const ollama = getOllamaClient();
-            const genPerf = await buildOllamaOptions('text');
-            const prompt = `You are ranking folders for organizing a file. Given this description:\n"""${text}"""\nFolders:\n${smartFolders.map((f, i) => `${i + 1}. ${f.name} - ${f.description || ''}`).join('\n')}\nReturn JSON: { "index": <1-based best folder index>, "reason": "..." }`;
+            const genPerf = (await buildOllamaOptions()) as Record<
+              string,
+              unknown
+            >;
+            const prompt = `You are ranking folders for organizing a file. Given this description:\n"""${text}"""\nFolders:\n${smartFolders.map((f: { name: string; description?: string }, i: number) => `${i + 1}. ${f.name} - ${f.description || ''}`).join('\n')}\nReturn JSON: { "index": <1-based best folder index>, "reason": "..." }`;
             const resp = await ollama.generate({
               model: getOllamaModel() || 'llama3.2:latest',
               prompt,
@@ -239,21 +296,24 @@ function sanitizeFolderPath(inputPath) {
               reason: parsed.reason,
               method: 'llm',
             };
-          } catch (llmErr) {
+          } catch (_llmErr) {
             const scored = smartFolders
-              .map((f) => {
+              .map((f: { name: string; description?: string }) => {
                 const textLower = text.toLowerCase();
                 const hay = [f.name, f.description]
                   .filter(Boolean)
                   .join(' ')
                   .toLowerCase();
                 let score = 0;
-                textLower.split(/\W+/).forEach((w) => {
+                textLower.split(/\W+/).forEach((w: string) => {
                   if (w && hay.includes(w)) score += 1;
                 });
                 return { folder: f, score };
               })
-              .sort((a, b) => b.score - a.score);
+              .sort(
+                (a: { score: number }, b: { score: number }) =>
+                  b.score - a.score,
+              );
             return {
               success: true,
               folder: scored[0]?.folder || smartFolders[0],
@@ -261,9 +321,12 @@ function sanitizeFolderPath(inputPath) {
             };
           }
         }
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[SMART_FOLDERS.MATCH] Failed:', error);
-        return { success: false, error: error.message };
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     }),
   );
@@ -272,8 +335,8 @@ function sanitizeFolderPath(inputPath) {
     IPC_CHANNELS.SMART_FOLDERS.SAVE,
     compose(
       withErrorHandling,
-      withRequestId
-    )(async (event, folders) => {
+      withRequestId,
+    )(async (_event: Electron.IpcMainInvokeEvent, folders: SmartFolder[]) => {
       try {
         if (!Array.isArray(folders))
           return {
@@ -294,8 +357,9 @@ function sanitizeFolderPath(inputPath) {
                   errorCode: 'INVALID_PATH',
                 };
               }
-            } catch (error) {
-              if (error.code === 'ENOENT') {
+            } catch (error: unknown) {
+              const errObj = error as NodeJS.ErrnoException;
+              if (errObj.code === 'ENOENT') {
                 // Directory doesn't exist, create it
                 try {
                   await fs.mkdir(folder.path, { recursive: true });
@@ -303,10 +367,10 @@ function sanitizeFolderPath(inputPath) {
                     '[SMART-FOLDERS] Created directory:',
                     folder.path,
                   );
-                } catch (createError) {
+                } catch (createError: unknown) {
                   return {
                     success: false,
-                    error: `Failed to create directory "${folder.path}": ${createError.message}`,
+                    error: `Failed to create directory "${folder.path}": ${createError instanceof Error ? createError.message : String(createError)}`,
                     errorCode: 'DIRECTORY_CREATION_FAILED',
                   };
                 }
@@ -320,18 +384,18 @@ function sanitizeFolderPath(inputPath) {
         const originalFolders = [...getCustomFolders()];
         try {
           setCustomFolders(folders);
-          await saveCustomFolders(folders);
+          await saveCustomFolders();
           logger.info('[SMART-FOLDERS] Saved Smart Folders:', folders.length);
           return { success: true, folders: getCustomFolders() };
         } catch (saveError) {
           setCustomFolders(originalFolders);
           throw saveError;
         }
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[ERROR] Failed to save smart folders:', error);
         return {
           success: false,
-          error: error.message,
+          error: error instanceof Error ? error.message : String(error),
           errorCode: 'SAVE_FAILED',
         };
       }
@@ -342,8 +406,8 @@ function sanitizeFolderPath(inputPath) {
     IPC_CHANNELS.SMART_FOLDERS.UPDATE_CUSTOM,
     compose(
       withErrorHandling,
-      withRequestId
-    )(async (event, folders) => {
+      withRequestId,
+    )(async (_event: Electron.IpcMainInvokeEvent, folders: SmartFolder[]) => {
       try {
         if (!Array.isArray(folders))
           return {
@@ -364,8 +428,9 @@ function sanitizeFolderPath(inputPath) {
                   errorCode: 'INVALID_PATH',
                 };
               }
-            } catch (error) {
-              if (error.code === 'ENOENT') {
+            } catch (error: unknown) {
+              const errObj = error as NodeJS.ErrnoException;
+              if (errObj.code === 'ENOENT') {
                 // Directory doesn't exist, create it
                 try {
                   await fs.mkdir(folder.path, { recursive: true });
@@ -373,10 +438,10 @@ function sanitizeFolderPath(inputPath) {
                     '[SMART-FOLDERS] Created directory:',
                     folder.path,
                   );
-                } catch (createError) {
+                } catch (createError: unknown) {
                   return {
                     success: false,
-                    error: `Failed to create directory "${folder.path}": ${createError.message}`,
+                    error: `Failed to create directory "${folder.path}": ${createError instanceof Error ? createError.message : String(createError)}`,
                     errorCode: 'DIRECTORY_CREATION_FAILED',
                   };
                 }
@@ -390,7 +455,7 @@ function sanitizeFolderPath(inputPath) {
         const originalFolders = [...getCustomFolders()];
         try {
           setCustomFolders(folders);
-          await saveCustomFolders(folders);
+          await saveCustomFolders();
           logger.info(
             '[SMART-FOLDERS] Updated Custom Folders:',
             folders.length,
@@ -400,16 +465,21 @@ function sanitizeFolderPath(inputPath) {
           setCustomFolders(originalFolders);
           throw saveError;
         }
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[ERROR] Failed to update custom folders:', error);
         return {
           success: false,
-          error: error.message,
+          error: error instanceof Error ? error.message : String(error),
           errorCode: 'UPDATE_FAILED',
         };
       }
     }),
   );
+
+  interface SmartFolderEditData {
+    id: string;
+    updates: Partial<SmartFolder>;
+  }
 
   // Edit Smart Folder Handler - with full validation stack
   ipcMain.handle(
@@ -417,136 +487,152 @@ function sanitizeFolderPath(inputPath) {
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(SmartFolderEditSchema)
-    )(async (event, data) => {
-      const folderId = data.id;
-      const updatedFolder = data.updates;
-      try {
-        if (!folderId || typeof folderId !== 'string')
-          return {
-            success: false,
-            error: 'Valid folder ID is required',
-            errorCode: 'INVALID_FOLDER_ID',
-          };
-        if (!updatedFolder || typeof updatedFolder !== 'object')
-          return {
-            success: false,
-            error: 'Valid folder data is required',
-            errorCode: 'INVALID_FOLDER_DATA',
-          };
-        const customFolders = getCustomFolders();
-        const folderIndex = customFolders.findIndex((f) => f.id === folderId);
-        if (folderIndex === -1)
-          return {
-            success: false,
-            error: 'Folder not found',
-            errorCode: 'FOLDER_NOT_FOUND',
-          };
-        if (updatedFolder.name) {
-          // Fix for issue where " > Subfolder" might be appended
-          if (updatedFolder.name.includes(' > ')) {
-            updatedFolder.name = updatedFolder.name.split(' > ')[0].trim();
-          }
-
-          const illegalChars = /([<>:"|?*])/g;
-          if (illegalChars.test(updatedFolder.name)) {
+      validateIpc(SmartFolderEditSchema),
+    )(
+      async (
+        _event: Electron.IpcMainInvokeEvent,
+        data: SmartFolderEditData,
+      ) => {
+        const folderId = data.id;
+        const updatedFolder = data.updates;
+        try {
+          if (!folderId || typeof folderId !== 'string')
             return {
               success: false,
-              error:
-                'Folder name contains invalid characters. Please avoid: < > : " | ? *',
-              errorCode: 'INVALID_FOLDER_NAME_CHARS',
+              error: 'Valid folder ID is required',
+              errorCode: 'INVALID_FOLDER_ID',
             };
-          }
-          const existingFolder = customFolders.find(
-            (f) =>
-              f.id !== folderId &&
-              f.name.toLowerCase() === updatedFolder.name.trim().toLowerCase(),
+          if (!updatedFolder || typeof updatedFolder !== 'object')
+            return {
+              success: false,
+              error: 'Valid folder data is required',
+              errorCode: 'INVALID_FOLDER_DATA',
+            };
+          const customFolders = getCustomFolders();
+          const folderIndex = customFolders.findIndex(
+            (f: SmartFolder) => f.id === folderId,
           );
-          if (existingFolder)
+          if (folderIndex === -1)
             return {
               success: false,
-              error: `A smart folder with name "${updatedFolder.name}" already exists`,
-              errorCode: 'FOLDER_NAME_EXISTS',
+              error: 'Folder not found',
+              errorCode: 'FOLDER_NOT_FOUND',
             };
-        }
-        if (updatedFolder.path) {
-          try {
-            // CRITICAL SECURITY FIX: Sanitize path before any operations
-            const normalizedPath = sanitizeFolderPath(updatedFolder.path);
-            const parentDir = path.dirname(normalizedPath);
-            const parentStats = await fs.stat(parentDir);
-            if (!parentStats.isDirectory()) {
+          if (updatedFolder.name) {
+            // Fix for issue where " > Subfolder" might be appended
+            if (updatedFolder.name.includes(' > ')) {
+              updatedFolder.name = updatedFolder.name.split(' > ')[0].trim();
+            }
+
+            const illegalChars = /([<>:"|?*])/g;
+            if (illegalChars.test(updatedFolder.name)) {
               return {
                 success: false,
-                error: `Parent directory "${parentDir}" is not a directory`,
-                errorCode: 'PARENT_NOT_DIRECTORY',
+                error:
+                  'Folder name contains invalid characters. Please avoid: < > : " | ? *',
+                errorCode: 'INVALID_FOLDER_NAME_CHARS',
               };
             }
-            updatedFolder.path = normalizedPath;
-          } catch (pathError) {
-            return {
-              success: false,
-              error: `Invalid path: ${pathError.message}`,
-              errorCode: 'INVALID_PATH',
-            };
-          }
-        }
-        const originalFolder = { ...customFolders[folderIndex] };
-        if (updatedFolder.path && updatedFolder.path !== originalFolder.path) {
-          try {
-            const oldPath = originalFolder.path;
-            const newPath = updatedFolder.path;
-            const oldStats = await fs.stat(oldPath);
-            if (!oldStats.isDirectory())
+            const existingFolder = customFolders.find(
+              (f: SmartFolder) =>
+                f.id !== folderId &&
+                f.name.toLowerCase() ===
+                  updatedFolder.name!.trim().toLowerCase(),
+            );
+            if (existingFolder)
               return {
                 success: false,
-                error: 'Original path is not a directory',
-                errorCode: 'ORIGINAL_NOT_DIRECTORY',
+                error: `A smart folder with name "${updatedFolder.name}" already exists`,
+                errorCode: 'FOLDER_NAME_EXISTS',
               };
-            await fs.rename(oldPath, newPath);
-            logger.info(
-              `[SMART-FOLDERS] Renamed directory "${oldPath}" -> "${newPath}"`,
-            );
-          } catch (renameErr) {
-            logger.error(
-              '[SMART-FOLDERS] Directory rename failed:',
-              renameErr.message,
-            );
-            return {
-              success: false,
-              error: 'Failed to rename directory',
-              errorCode: 'RENAME_FAILED',
-              details: renameErr.message,
-            };
           }
-        }
-        try {
-          customFolders[folderIndex] = {
-            ...customFolders[folderIndex],
-            ...updatedFolder,
-            updatedAt: new Date().toISOString(),
-          };
-          setCustomFolders(customFolders);
-          await saveCustomFolders(customFolders);
-          logger.info('[SMART-FOLDERS] Edited Smart Folder:', folderId);
+          if (updatedFolder.path) {
+            try {
+              // CRITICAL SECURITY FIX: Sanitize path before any operations
+              const normalizedPath = sanitizeFolderPath(updatedFolder.path);
+              const parentDir = path.dirname(normalizedPath);
+              const parentStats = await fs.stat(parentDir);
+              if (!parentStats.isDirectory()) {
+                return {
+                  success: false,
+                  error: `Parent directory "${parentDir}" is not a directory`,
+                  errorCode: 'PARENT_NOT_DIRECTORY',
+                };
+              }
+              updatedFolder.path = normalizedPath;
+            } catch (pathError: unknown) {
+              return {
+                success: false,
+                error: `Invalid path: ${pathError instanceof Error ? pathError.message : String(pathError)}`,
+                errorCode: 'INVALID_PATH',
+              };
+            }
+          }
+          const originalFolder = { ...customFolders[folderIndex] };
+          if (
+            updatedFolder.path &&
+            updatedFolder.path !== originalFolder.path
+          ) {
+            try {
+              const oldPath = originalFolder.path;
+              const newPath = updatedFolder.path;
+              const oldStats = await fs.stat(oldPath);
+              if (!oldStats.isDirectory())
+                return {
+                  success: false,
+                  error: 'Original path is not a directory',
+                  errorCode: 'ORIGINAL_NOT_DIRECTORY',
+                };
+              await fs.rename(oldPath, newPath);
+              logger.info(
+                `[SMART-FOLDERS] Renamed directory "${oldPath}" -> "${newPath}"`,
+              );
+            } catch (renameErr: unknown) {
+              logger.error(
+                '[SMART-FOLDERS] Directory rename failed:',
+                renameErr instanceof Error
+                  ? renameErr.message
+                  : String(renameErr),
+              );
+              return {
+                success: false,
+                error: 'Failed to rename directory',
+                errorCode: 'RENAME_FAILED',
+                details:
+                  renameErr instanceof Error
+                    ? renameErr.message
+                    : String(renameErr),
+              };
+            }
+          }
+          try {
+            customFolders[folderIndex] = {
+              ...customFolders[folderIndex],
+              ...updatedFolder,
+              updatedAt: new Date().toISOString(),
+            };
+            setCustomFolders(customFolders);
+            await saveCustomFolders();
+            logger.info('[SMART-FOLDERS] Edited Smart Folder:', folderId);
+            return {
+              success: true,
+              folder: customFolders[folderIndex],
+              message: 'Smart folder updated successfully',
+            };
+          } catch (saveError) {
+            customFolders[folderIndex] = originalFolder;
+            throw saveError;
+          }
+        } catch (error: unknown) {
+          logger.error('[ERROR] Failed to edit smart folder:', error);
           return {
-            success: true,
-            folder: customFolders[folderIndex],
-            message: 'Smart folder updated successfully',
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+            errorCode: 'EDIT_FAILED',
           };
-        } catch (saveError) {
-          customFolders[folderIndex] = originalFolder;
-          throw saveError;
         }
-      } catch (error) {
-        logger.error('[ERROR] Failed to edit smart folder:', error);
-        return {
-          success: false,
-          error: error.message,
-          errorCode: 'EDIT_FAILED',
-        };
-      }
-    }),
+      },
+    ),
   );
 
   // Delete Smart Folder Handler - with full validation stack
@@ -555,8 +641,8 @@ function sanitizeFolderPath(inputPath) {
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(SmartFolderDeleteSchema)
-    )(async (event, data) => {
+      validateIpc(SmartFolderDeleteSchema),
+    )(async (_event: Electron.IpcMainInvokeEvent, data: { id: string }) => {
       const folderId = data.id;
       try {
         if (!folderId || typeof folderId !== 'string')
@@ -566,7 +652,9 @@ function sanitizeFolderPath(inputPath) {
             errorCode: 'INVALID_FOLDER_ID',
           };
         const customFolders = getCustomFolders();
-        const folderIndex = customFolders.findIndex((f) => f.id === folderId);
+        const folderIndex = customFolders.findIndex(
+          (f: SmartFolder) => f.id === folderId,
+        );
         if (folderIndex === -1)
           return {
             success: false,
@@ -576,12 +664,14 @@ function sanitizeFolderPath(inputPath) {
         const originalFolders = [...customFolders];
         const deletedFolder = customFolders[folderIndex];
         try {
-          const updated = customFolders.filter((f) => f.id !== folderId);
+          const updated = customFolders.filter(
+            (f: SmartFolder) => f.id !== folderId,
+          );
           setCustomFolders(updated);
-          await saveCustomFolders(updated);
+          await saveCustomFolders();
           logger.info('[SMART-FOLDERS] Deleted Smart Folder:', folderId);
           let directoryRemoved = false;
-          let removalError = null;
+          let removalError: string | null = null;
           try {
             if (deletedFolder.path) {
               const stats = await fs.stat(deletedFolder.path);
@@ -593,13 +683,14 @@ function sanitizeFolderPath(inputPath) {
                 }
               }
             }
-          } catch (dirErr) {
-            if (dirErr.code !== 'ENOENT') {
+          } catch (dirErr: unknown) {
+            const errObj = dirErr as NodeJS.ErrnoException;
+            if (errObj.code !== 'ENOENT') {
               logger.warn(
                 '[SMART-FOLDERS] Directory removal failed:',
-                dirErr.message,
+                errObj.message,
               );
-              removalError = dirErr.message;
+              removalError = errObj.message;
             }
           }
           return {
@@ -616,16 +707,24 @@ function sanitizeFolderPath(inputPath) {
           setCustomFolders(originalFolders);
           throw saveError;
         }
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[ERROR] Failed to delete smart folder:', error);
         return {
           success: false,
-          error: error.message,
+          error: error instanceof Error ? error.message : String(error),
           errorCode: 'DELETE_FAILED',
         };
       }
     }),
   );
+
+  interface SmartFolderInput {
+    name: string;
+    path: string;
+    category?: string;
+    description?: string;
+    keywords?: string[];
+  }
 
   // Create/add new smart folder with LLM enhancement
   // Add Smart Folder Handler - with full validation stack
@@ -634,8 +733,8 @@ function sanitizeFolderPath(inputPath) {
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(SmartFolderAddSchema)
-    )(async (event, folder) => {
+      validateIpc(SmartFolderAddSchema),
+    )(async (_event: Electron.IpcMainInvokeEvent, folder: SmartFolderInput) => {
       try {
         if (!folder || typeof folder !== 'object')
           return {
@@ -683,19 +782,22 @@ function sanitizeFolderPath(inputPath) {
         const customFolders = getCustomFolders();
 
         // CRITICAL SECURITY FIX: Sanitize path before any operations
-        let normalizedPath;
+        let normalizedPath: string;
         try {
           normalizedPath = sanitizeFolderPath(folder.path);
-        } catch (securityError) {
+        } catch (securityError: unknown) {
           return {
             success: false,
-            error: securityError.message,
+            error:
+              securityError instanceof Error
+                ? securityError.message
+                : String(securityError),
             errorCode: 'SECURITY_PATH_VIOLATION',
           };
         }
 
         const existingFolder = customFolders.find(
-          (f) =>
+          (f: SmartFolder) =>
             f.name.toLowerCase() === sanitizedName.toLowerCase() ||
             f.path === normalizedPath,
         );
@@ -747,12 +849,13 @@ function sanitizeFolderPath(inputPath) {
             folder,
             customFolders,
             getOllamaModel,
-          );          if (llmAnalysis && !llmEnhancedData.error)
+          );
+          if (llmAnalysis && !llmEnhancedData.error)
             llmEnhancedData = llmAnalysis;
-        } catch (e) {
+        } catch (e: unknown) {
           logger.warn(
             '[SMART-FOLDERS] LLM enhancement failed, continuing with basic data:',
-            e.message,
+            e instanceof Error ? e.message : String(e),
           );
         }
 
@@ -760,11 +863,17 @@ function sanitizeFolderPath(inputPath) {
           id: Date.now().toString(),
           name: sanitizedName,
           path: normalizedPath,
-          description:            llmEnhancedData.enhancedDescription ||
+          description:
+            llmEnhancedData.enhancedDescription ||
             folder.description?.trim() ||
-            `Smart folder for ${sanitizedName}`,          keywords: llmEnhancedData.suggestedKeywords || [],          category: llmEnhancedData.suggestedCategory || 'general',
+            `Smart folder for ${sanitizedName}`,
+          keywords: llmEnhancedData.suggestedKeywords || [],
+          category: llmEnhancedData.suggestedCategory || 'general',
           isDefault: folder.isDefault || false,
-          createdAt: new Date().toISOString(),          semanticTags: llmEnhancedData.semanticTags || [],          relatedFolders: llmEnhancedData.relatedFolders || [],          confidenceScore: llmEnhancedData.confidence || 0.8,
+          createdAt: new Date().toISOString(),
+          semanticTags: llmEnhancedData.semanticTags || [],
+          relatedFolders: llmEnhancedData.relatedFolders || [],
+          confidenceScore: llmEnhancedData.confidence || 0.8,
           usageCount: 0,
           lastUsed: null,
         };
@@ -782,20 +891,24 @@ function sanitizeFolderPath(inputPath) {
               errorCode: 'PATH_NOT_DIRECTORY',
             };
           }
-        } catch (statError) {
-          if (statError.code === 'ENOENT') {
+        } catch (statError: unknown) {
+          const errObj = statError as NodeJS.ErrnoException;
+          if (errObj.code === 'ENOENT') {
             try {
               await fs.mkdir(normalizedPath, { recursive: true });
               const stats = await fs.stat(normalizedPath);
               if (!stats.isDirectory())
                 throw new Error('Created path is not a directory');
               directoryCreated = true;
-            } catch (dirError) {
+            } catch (dirError: unknown) {
               return {
                 success: false,
                 error: 'Failed to create directory',
                 errorCode: 'DIRECTORY_CREATION_FAILED',
-                details: dirError.message,
+                details:
+                  dirError instanceof Error
+                    ? dirError.message
+                    : String(dirError),
               };
             }
           } else {
@@ -803,7 +916,7 @@ function sanitizeFolderPath(inputPath) {
               success: false,
               error: 'Failed to access directory path',
               errorCode: 'PATH_ACCESS_FAILED',
-              details: statError.message,
+              details: errObj.message,
             };
           }
         }
@@ -812,7 +925,7 @@ function sanitizeFolderPath(inputPath) {
         try {
           customFolders.push(newFolder);
           setCustomFolders(customFolders);
-          await saveCustomFolders(customFolders);
+          await saveCustomFolders();
           return {
             success: true,
             folder: newFolder,
@@ -821,9 +934,10 @@ function sanitizeFolderPath(inputPath) {
               ? 'Smart folder created successfully'
               : 'Smart folder added (directory already existed)',
             directoryCreated,
-            directoryExisted,            llmEnhanced: !!llmEnhancedData.enhancedDescription,
+            directoryExisted,
+            llmEnhanced: !!llmEnhancedData.enhancedDescription,
           };
-        } catch (saveError) {
+        } catch (saveError: unknown) {
           setCustomFolders(originalFolders);
           if (directoryCreated && !directoryExisted) {
             try {
@@ -836,37 +950,51 @@ function sanitizeFolderPath(inputPath) {
             success: false,
             error: 'Failed to save configuration, changes rolled back',
             errorCode: 'CONFIG_SAVE_FAILED',
-            details: saveError.message,
+            details:
+              saveError instanceof Error
+                ? saveError.message
+                : String(saveError),
           };
         }
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[ERROR] Failed to add smart folder:', error);
         return {
           success: false,
           error: 'Failed to add smart folder',
           errorCode: 'ADD_FOLDER_FAILED',
-          details: error.message,
+          details: error instanceof Error ? error.message : String(error),
         };
       }
     }),
   );
+
+  interface ScanNode {
+    type: string;
+    name: string;
+    path: string;
+    size?: number;
+    children?: ScanNode[];
+  }
 
   // Scan folder structure
   ipcMain.handle(
     IPC_CHANNELS.SMART_FOLDERS.SCAN_STRUCTURE,
     compose(
       withErrorHandling,
-      withRequestId
-    )(async (event, rootPath) => {
+      withRequestId,
+    )(async (_event: Electron.IpcMainInvokeEvent, rootPath: string) => {
       try {
         // CRITICAL SECURITY FIX: Sanitize path to prevent directory traversal
-        let sanitizedPath;
+        let sanitizedPath: string;
         try {
           sanitizedPath = sanitizeFolderPath(rootPath);
-        } catch (securityError) {
+        } catch (securityError: unknown) {
           return {
             success: false,
-            error: securityError.message,
+            error:
+              securityError instanceof Error
+                ? securityError.message
+                : String(securityError),
             errorCode: 'SECURITY_PATH_VIOLATION',
           };
         }
@@ -875,8 +1003,20 @@ function sanitizeFolderPath(inputPath) {
         // Reuse existing scanner (shallow aggregation is done in renderer today)
         const items = await scanDirectory(sanitizedPath);
         // Flatten file-like items with basic filtering similar to prior inline implementation
-        const flatten = (nodes) => {
-          const out = [];
+        const flatten = (
+          nodes: ScanNode[],
+        ): Array<{
+          name: string;
+          path: string;
+          type: string;
+          size?: number;
+        }> => {
+          const out: Array<{
+            name: string;
+            path: string;
+            type: string;
+            size?: number;
+          }> = [];
           for (const n of nodes) {
             if (n.type === 'file')
               out.push({
@@ -889,19 +1029,23 @@ function sanitizeFolderPath(inputPath) {
           }
           return out;
         };
-        const files = flatten(items);
+        const files = flatten(items as unknown as ScanNode[]);
         logger.info('[FOLDER-SCAN] Found', files.length, 'supported files');
         return { success: true, files };
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[FOLDER-SCAN] Error scanning folder structure:', error);
-        return { success: false, error: error.message };
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     }),
   );
-}export default registerSmartFoldersIpc;
+}
+export default registerSmartFoldersIpc;
 
 // Local utility
-function cosineSimilarity(a, b) {
+function cosineSimilarity(a: number[], b: number[]): number {
   if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return 0;
   let dot = 0,
     na = 0,

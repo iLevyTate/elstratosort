@@ -1,7 +1,35 @@
-import { validateIpc, withRequestId, withErrorHandling, compose } from './validation';import OrganizationSuggestionService from '../services/OrganizationSuggestionService';import { z } from 'zod';import { logger } from '../../shared/logger';
+import {
+  validateIpc,
+  withRequestId,
+  withErrorHandling,
+  compose,
+  createError,
+  ERROR_CODES,
+} from './validation';
+import { z } from 'zod';
+import { logger } from '../../shared/logger';
+import { container } from '../core/ServiceContainer';
+
 logger.setContext('IPC:Suggestions');
 
-// Validation schemas for suggestions handlersconst FileSchema = z.object({
+/**
+ * Helper to get suggestion service from container, ensuring it's ready
+ */
+async function getSuggestionService(): Promise<any> {
+  try {
+    const service = await container.get('organizationSuggestion');
+    return service;
+  } catch (error) {
+    logger.warn(
+      '[SUGGESTIONS] Failed to get suggestion service from container:',
+      (error as Error).message,
+    );
+    return null;
+  }
+}
+
+// Validation schemas for suggestions handlers
+const FileSchema = z.object({
   path: z.string().min(1),
   name: z.string().min(1),
   size: z.number().nonnegative().optional(),
@@ -20,10 +48,13 @@ const GetBatchSuggestionsSchema = z.object({
 
 const RecordFeedbackSchema = z.object({
   file: FileSchema,
-  suggestion: z.object({
-    folder: z.string().optional(),
-    confidence: z.number().min(0).max(1).optional(),
-  }).nullable().optional(),
+  suggestion: z
+    .object({
+      folder: z.string().optional(),
+      confidence: z.number().min(0).max(1).optional(),
+    })
+    .nullable()
+    .optional(),
   accepted: z.boolean(),
 });
 
@@ -38,30 +69,14 @@ const AnalyzeFolderStructureSchema = z.object({
 
 const SuggestNewFolderSchema = z.object({
   file: FileSchema,
-});function registerSuggestionsIpc({
-  ipcMain,
-  IPC_CHANNELS,
-  chromaDbService,
-  folderMatchingService,
-  settingsService,
-  getCustomFolders,
-}) {
-  // Initialize the suggestion service (may have null services if ChromaDB unavailable)
-  let suggestionService = null;
-  try {
-    suggestionService = new OrganizationSuggestionService({
-      chromaDbService,
-      folderMatchingService,
-      settingsService,
-    });
-    logger.info('[SUGGESTIONS] OrganizationSuggestionService initialized');
-  } catch (error) {
-    logger.warn(
-      '[SUGGESTIONS] Failed to initialize suggestion service:',
-      error.message,
-    );
-    // Continue anyway - handlers will check for null service
-  }
+});
+function registerSuggestionsIpc({ ipcMain, IPC_CHANNELS, getCustomFolders }) {
+  // Note: We no longer create our own service instance.
+  // Instead, we get it from the container on demand for each request.
+  // This ensures we use the properly initialized singleton from serviceRegistry.
+  logger.info(
+    '[SUGGESTIONS] Registering suggestion IPC handlers (using container service)',
+  );
 
   // Get File Suggestions Handler - with middleware and validation
   ipcMain.handle(
@@ -69,11 +84,12 @@ const SuggestNewFolderSchema = z.object({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(GetFileSuggestionsSchema)
+      validateIpc(GetFileSuggestionsSchema),
     )(async (_event, data) => {
       const { file } = data;
       try {
-        // CRITICAL FIX: Check if suggestion service is available
+        // Get service from container (ensures proper initialization)
+        const suggestionService = await getSuggestionService();
         if (!suggestionService) {
           logger.warn('[SUGGESTIONS] Suggestion service not available');
           return {
@@ -102,7 +118,10 @@ const SuggestNewFolderSchema = z.object({
           confidence: suggestions.confidence,
         });
 
-        return suggestions;
+        return {
+          success: true,
+          ...suggestions,
+        };
       } catch (error) {
         logger.error('[SUGGESTIONS] Failed to get file suggestions:', error);
         return {
@@ -119,12 +138,13 @@ const SuggestNewFolderSchema = z.object({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(GetBatchSuggestionsSchema)
+      validateIpc(GetBatchSuggestionsSchema),
     )(async (event, data) => {
       const { files } = data;
       void event;
       try {
-        // CRITICAL FIX: Check if suggestion service is available
+        // Get service from container
+        const suggestionService = await getSuggestionService();
         if (!suggestionService) {
           logger.warn(
             '[SUGGESTIONS] Suggestion service not available for batch suggestions',
@@ -143,7 +163,10 @@ const SuggestNewFolderSchema = z.object({
         });
 
         const smartFolders = getCustomFolders();
-        const batchSuggestions = await suggestionService.getBatchSuggestions(files, smartFolders);
+        const batchSuggestions = await suggestionService.getBatchSuggestions(
+          files,
+          smartFolders,
+        );
 
         logger.info('[SUGGESTIONS] Generated batch suggestions:', {
           fileCount: files.length,
@@ -151,7 +174,10 @@ const SuggestNewFolderSchema = z.object({
           recommendations: batchSuggestions.recommendations?.length || 0,
         });
 
-        return batchSuggestions;
+        return {
+          success: true,
+          ...batchSuggestions,
+        };
       } catch (error) {
         logger.error('[SUGGESTIONS] Failed to get batch suggestions:', error);
         return {
@@ -169,12 +195,13 @@ const SuggestNewFolderSchema = z.object({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(RecordFeedbackSchema)
+      validateIpc(RecordFeedbackSchema),
     )(async (event, data) => {
       const { file, suggestion, accepted } = data;
       void event;
       try {
-        // CRITICAL FIX: Check if suggestion service is available
+        // Get service from container
+        const suggestionService = await getSuggestionService();
         if (!suggestionService) {
           logger.warn(
             '[SUGGESTIONS] Cannot record feedback - service not available',
@@ -211,13 +238,14 @@ const SuggestNewFolderSchema = z.object({
     IPC_CHANNELS.SUGGESTIONS.GET_STRATEGIES,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async (event) => {
       void event;
       try {
         logger.info('[SUGGESTIONS] Getting organization strategies');
 
-        // HIGH PRIORITY FIX (HIGH-13): Check if suggestion service is available
+        // Get service from container
+        const suggestionService = await getSuggestionService();
         if (!suggestionService) {
           logger.warn(
             '[SUGGESTIONS] Cannot get strategies - service not available',
@@ -231,7 +259,7 @@ const SuggestNewFolderSchema = z.object({
 
         return {
           success: true,
-          strategies: Object.entries(suggestionService.strategies).map(
+          strategies: Object.entries(suggestionService.strategies || {}).map(
             ([id, strategy]) => ({
               id,
               ...(strategy as object),
@@ -255,7 +283,7 @@ const SuggestNewFolderSchema = z.object({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(ApplyStrategySchema)
+      validateIpc(ApplyStrategySchema),
     )(async (event, data) => {
       const { files, strategyId } = data;
       void event;
@@ -265,7 +293,8 @@ const SuggestNewFolderSchema = z.object({
           fileCount: files.length,
         });
 
-        // HIGH PRIORITY FIX (HIGH-13): Check if suggestion service is available
+        // Get service from container
+        const suggestionService = await getSuggestionService();
         if (!suggestionService) {
           logger.warn(
             '[SUGGESTIONS] Cannot apply strategy - service not available',
@@ -277,7 +306,7 @@ const SuggestNewFolderSchema = z.object({
           };
         }
 
-        const strategy = suggestionService.strategies[strategyId];
+        const strategy = suggestionService.strategies?.[strategyId];
         if (!strategy) {
           throw new Error(`Unknown strategy: ${strategyId}`);
         }
@@ -317,15 +346,18 @@ const SuggestNewFolderSchema = z.object({
     IPC_CHANNELS.SUGGESTIONS.GET_USER_PATTERNS,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async (event) => {
       void event;
       try {
         logger.info('[SUGGESTIONS] Getting user patterns');
 
-        // CRITICAL FIX: Check if suggestion service is available
+        // Get service from container
+        const suggestionService = await getSuggestionService();
         if (!suggestionService) {
-          logger.warn('[SUGGESTIONS] Cannot get patterns - service not available');
+          logger.warn(
+            '[SUGGESTIONS] Cannot get patterns - service not available',
+          );
           return {
             success: false,
             error: 'Suggestion service is not available',
@@ -334,7 +366,7 @@ const SuggestNewFolderSchema = z.object({
         }
 
         const patterns = Array.from(
-          suggestionService.userPatterns.entries(),
+          (suggestionService.userPatterns || new Map()).entries(),
         ).map(([pattern, data]) => ({
           pattern,
           ...data,
@@ -360,23 +392,30 @@ const SuggestNewFolderSchema = z.object({
     IPC_CHANNELS.SUGGESTIONS.CLEAR_PATTERNS,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async (event) => {
       void event;
       try {
         logger.info('[SUGGESTIONS] Clearing user patterns');
 
-        // CRITICAL FIX: Check if suggestion service is available
+        // Get service from container
+        const suggestionService = await getSuggestionService();
         if (!suggestionService) {
-          logger.warn('[SUGGESTIONS] Cannot clear patterns - service not available');
+          logger.warn(
+            '[SUGGESTIONS] Cannot clear patterns - service not available',
+          );
           return {
             success: false,
             error: 'Suggestion service is not available',
           };
         }
 
-        suggestionService.userPatterns.clear();
-        suggestionService.feedbackHistory = [];
+        if (suggestionService.userPatterns) {
+          suggestionService.userPatterns.clear();
+        }
+        if (suggestionService.feedbackHistory) {
+          suggestionService.feedbackHistory = [];
+        }
 
         return {
           success: true,
@@ -397,16 +436,19 @@ const SuggestNewFolderSchema = z.object({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(AnalyzeFolderStructureSchema)
+      validateIpc(AnalyzeFolderStructureSchema),
     )(async (event, data) => {
       const { files = [] } = data;
       void event;
       try {
         logger.info('[SUGGESTIONS] Analyzing folder structure');
 
-        // CRITICAL FIX: Check if suggestion service is available
+        // Get service from container
+        const suggestionService = await getSuggestionService();
         if (!suggestionService) {
-          logger.warn('[SUGGESTIONS] Cannot analyze folder structure - service not available');
+          logger.warn(
+            '[SUGGESTIONS] Cannot analyze folder structure - service not available',
+          );
           return {
             success: false,
             error: 'Suggestion service is not available',
@@ -422,14 +464,14 @@ const SuggestNewFolderSchema = z.object({
         );
 
         logger.info('[SUGGESTIONS] Folder analysis complete:', {
-          improvementCount: improvements.length,
-          smartFolderCount: smartFolders.length,
+          improvementCount: improvements?.length || 0,
+          smartFolderCount: smartFolders?.length || 0,
         });
 
         return {
           success: true,
-          improvements,
-          smartFolders,
+          improvements: improvements || [],
+          smartFolders: smartFolders || [],
         };
       } catch (error) {
         logger.error(
@@ -451,16 +493,19 @@ const SuggestNewFolderSchema = z.object({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(SuggestNewFolderSchema)
+      validateIpc(SuggestNewFolderSchema),
     )(async (event, data) => {
       const { file } = data;
       void event;
       try {
         logger.info('[SUGGESTIONS] Suggesting new folder for:', file.name);
 
-        // CRITICAL FIX: Check if suggestion service is available
+        // Get service from container
+        const suggestionService = await getSuggestionService();
         if (!suggestionService) {
-          logger.warn('[SUGGESTIONS] Cannot suggest new folder - service not available');
+          logger.warn(
+            '[SUGGESTIONS] Cannot suggest new folder - service not available',
+          );
           return {
             success: false,
             error: 'Suggestion service is not available',
@@ -489,6 +534,5 @@ const SuggestNewFolderSchema = z.object({
   );
 
   logger.info('[IPC] Suggestions handlers registered');
-
-  return suggestionService;
-}export { registerSuggestionsIpc };
+}
+export { registerSuggestionsIpc };

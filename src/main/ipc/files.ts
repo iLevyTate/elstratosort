@@ -22,12 +22,12 @@ import { getInstance as getChromaDB } from '../services/ChromaDBService';
 logger.setContext('IPC:Files');
 
 // Global saga instance (initialized on first use)
-let saga = null;
+let saga: FileOrganizationSaga | null = null;
 
 /**
  * Initialize the file organization saga
  */
-function initializeSaga() {
+function initializeSaga(): FileOrganizationSaga {
   if (saga) return saga;
 
   const journalPath = path.join(app.getPath('userData'), 'transaction-journal.db');
@@ -49,17 +49,41 @@ const MAX_BATCH_SIZE = 1000; // Maximum operations per batch
  * Shared batch organize handler logic
  * Uses FileOrganizationSaga for transactional operations with rollback
  */
+interface BatchOperation {
+  operations?: Array<{ source: string; destination: string; type?: string }>;
+}
+
+interface BatchOrganizeParams {
+  operation: BatchOperation;
+  logger: typeof import('../../shared/logger').logger;
+  getServiceIntegration: () => unknown;
+  getMainWindow?: () => Electron.BrowserWindow | null;
+}
+
+interface BatchOrganizeResult {
+  success: boolean;
+  error?: string;
+  errorCode?: string;
+  maxAllowed?: number;
+  provided?: number;
+  results?: unknown[];
+  successCount?: number;
+  failureCount?: number;
+  failCount?: number;
+  rollbackCount?: number;
+  transactionId?: string;
+  rolledBack?: boolean;
+  rollbackResults?: Array<{ success: boolean }>;
+  failedStep?: unknown;
+  summary?: string;
+}
+
 async function handleBatchOrganize({
   operation,
   logger,
   getServiceIntegration,
-            getMainWindow,
-}: {
-  operation: any;
-  logger: any;
-  getServiceIntegration: any;
-  getMainWindow?: any;
-}) {
+  getMainWindow,
+}: BatchOrganizeParams): Promise<BatchOrganizeResult> {
   // Initialize saga (lazy initialization)
   const fileSaga = initializeSaga();
 
@@ -104,8 +128,8 @@ async function handleBatchOrganize({
 
       if (chromaDbService && sagaResult.results.length > 0) {
         const pathUpdates = sagaResult.results
-          .filter((r) => r.success && r.operation.source && r.operation.destination)
-          .map((r) => ({
+          .filter((r: { success: boolean; operation: { source?: string; destination?: string } }) => r.success && r.operation.source && r.operation.destination)
+          .map((r: { operation: { source: string; destination: string } }) => ({
             oldId: `file:${r.operation.source}`,
             newId: `file:${r.operation.destination}`,
             newMeta: {
@@ -128,16 +152,16 @@ async function handleBatchOrganize({
           });
         }
       }
-    } catch (dbError) {
+    } catch (dbError: unknown) {
       logger.warn('[FILE-OPS] Error updating database paths (non-fatal)', {
-        error: dbError.message,
+        error: dbError instanceof Error ? dbError.message : String(dbError),
         transactionId: sagaResult.transactionId,
       });
     }
 
     // Record undo operation
     try {
-      const undoOps = sagaResult.results.map((r) => ({
+      const undoOps = sagaResult.results.map((r: { operation: { source: string; destination: string } }) => ({
         type: 'move',
         originalPath: r.operation.source,
         newPath: r.operation.destination,
@@ -174,10 +198,42 @@ async function handleBatchOrganize({
       summary:
         `Batch operation failed and was rolled back. ` +
         `Reason: ${sagaResult.error}. ` +
-        `Rolled back ${sagaResult.rollbackResults.filter((r) => r.success).length}/${sagaResult.rollbackResults.length} operations.`,
+        `Rolled back ${sagaResult.rollbackResults.filter((r: { success: boolean }) => r.success).length}/${sagaResult.rollbackResults.length} operations.`,
     };
   }
-}export function registerFilesIpc({
+}
+interface IpcChannels {
+  SELECT: string;
+  SELECT_FOLDER: string;
+  SELECT_DIRECTORY: string;
+  PERFORM_OPERATION: string;
+  REVEAL: string;
+  REVEAL_FILE: string;
+  OPEN: string;
+  OPEN_FILE: string;
+  OPEN_FOLDER: string;
+  DELETE: string;
+  DELETE_FILE: string;
+  DELETE_FOLDER: string;
+  COPY_FILE: string;
+  GET_SUPPORTED_EXTENSIONS: string;
+  GET_DOCUMENTS_PATH: string;
+  GET_FILE_STATS: string;
+  CREATE_FOLDER_DIRECT: string;
+  GET_FILES_IN_DIRECTORY: string;
+}
+
+interface FilesIpcDependencies {
+  ipcMain: Electron.IpcMain;
+  IPC_CHANNELS: { FILES: IpcChannels };
+  logger: typeof import('../../shared/logger').logger;
+  dialog: Electron.Dialog;
+  shell: Electron.Shell;
+  getMainWindow: () => Electron.BrowserWindow | null;
+  getServiceIntegration: () => { undoRedo?: { recordAction?: (type: string, data: unknown) => Promise<void> } } | null;
+}
+
+export function registerFilesIpc({
   ipcMain,
   IPC_CHANNELS,
   logger,
@@ -185,7 +241,7 @@ async function handleBatchOrganize({
   shell,
   getMainWindow,
   getServiceIntegration,
-}) {
+}: FilesIpcDependencies): void {
   // Define operation schema for performOperation handler
   const OperationSchema = z.object({
     type: z.enum(['move', 'copy', 'delete', 'batch_organize']),
@@ -232,7 +288,8 @@ async function handleBatchOrganize({
           if (!mainWindow.isFocused()) mainWindow.focus();
           await new Promise((resolve) => {
             const t = setTimeout(resolve, TIMEOUTS.DELAY_BATCH);
-            try {              t.unref();
+            try {
+              t.unref();
             } catch {
               // Non-fatal if timer is already cleared
             }
@@ -243,8 +300,8 @@ async function handleBatchOrganize({
           title: 'Select Files to Organize',
           buttonLabel: 'Select Files',
           filters: (() => {
-            const stripDot = (exts) =>
-              exts.map((e) => (e.startsWith('.') ? e.slice(1) : e));
+            const stripDot = (exts: readonly string[]) =>
+              exts.map((e: string) => (e.startsWith('.') ? e.slice(1) : e));
             const docs = stripDot([
               ...SUPPORTED_DOCUMENT_EXTENSIONS,
               '.txt',
@@ -271,7 +328,7 @@ async function handleBatchOrganize({
         logger.info(
           `[FILE-SELECTION] Selected ${result.filePaths.length} items`,
         );
-        const allFiles = [];
+        const allFiles: string[] = [];
         const supportedExts = Array.from(
           new Set([
             ...SUPPORTED_DOCUMENT_EXTENSIONS,
@@ -282,11 +339,11 @@ async function handleBatchOrganize({
             '.rtf',
           ]),
         );
-        const scanFolder = async (folderPath, depth = 0, maxDepth = 3) => {
+        const scanFolder = async (folderPath: string, depth = 0, maxDepth = 3): Promise<string[]> => {
           if (depth > maxDepth) return [];
           try {
             const items = await fs.readdir(folderPath, { withFileTypes: true });
-            const foundFiles = [];
+            const foundFiles: string[] = [];
             for (const item of items) {
               const itemPath = path.join(folderPath, item.name);
               if (item.isFile()) {
@@ -297,7 +354,7 @@ async function handleBatchOrganize({
                 !item.name.startsWith('.') &&
                 !item.name.startsWith('node_modules')
               ) {
-                const subFiles = await scanFolder(
+                const subFiles: string[] = await scanFolder(
                   itemPath,
                   depth + 1,
                   maxDepth,
@@ -306,10 +363,10 @@ async function handleBatchOrganize({
               }
             }
             return foundFiles;
-          } catch (error) {
+          } catch (error: unknown) {
             logger.warn(
               `[FILE-SELECTION] Error scanning folder ${folderPath}:`,
-              error.message,
+              error instanceof Error ? error.message : String(error),
             );
             return [];
           }
@@ -333,10 +390,10 @@ async function handleBatchOrganize({
                 `[FILE-SELECTION] Found ${folderFiles.length} files in folder: ${path.basename(selectedPath)}`,
               );
             }
-          } catch (error) {
+          } catch (error: unknown) {
             logger.warn(
               `[FILE-SELECTION] Error processing ${selectedPath}:`,
-              error.message,
+              error instanceof Error ? error.message : String(error),
             );
           }
         }
@@ -353,9 +410,9 @@ async function handleBatchOrganize({
             duplicatesRemoved: allFiles.length - uniqueFiles.length,
           },
         };
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[MAIN-FILE-SELECT] Failed to select files:', error);
-        return { success: false, error: error.message, files: [] };
+        return { success: false, error: error instanceof Error ? error.message : String(error), files: [] };
       }
     }),
   );
@@ -375,9 +432,9 @@ async function handleBatchOrganize({
         if (result.canceled || !result.filePaths.length)
           return { success: false, folder: null };
         return { success: true, folder: result.filePaths[0] };
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[IPC] Directory selection failed:', error);
-        return { success: false, folder: null, error: error.message };
+        return { success: false, folder: null, error: error instanceof Error ? error.message : String(error) };
       }
     }),
   );
@@ -402,7 +459,7 @@ async function handleBatchOrganize({
     withErrorHandling,
     withRequestId,
     validateIpc(FileOpenSchema)
-  )(async (event, data) => {
+  )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
     const filePath = data.path;
     try {
       const stats = await fs.stat(filePath);
@@ -413,7 +470,7 @@ async function handleBatchOrganize({
         modified: stats.mtime,
         created: stats.birthtime,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       logger.error('Failed to get file stats:', error);
       return null;
     }
@@ -426,7 +483,7 @@ async function handleBatchOrganize({
     withErrorHandling,
     withRequestId,
     validateIpc(FileOpenSchema)
-  )(async (event, data) => {
+  )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
     const fullPath = data.path;
     try {
       const normalizedPath = path.resolve(fullPath);
@@ -445,20 +502,21 @@ async function handleBatchOrganize({
       await fs.mkdir(normalizedPath, { recursive: true });
       logger.info('[FILE-OPS] Created folder:', normalizedPath);
       return { success: true, path: normalizedPath, existed: false };
-    } catch (error) {
+    } catch (error: unknown) {
       logger.error('[FILE-OPS] Error creating folder:', error);
+      const errObj = error as NodeJS.ErrnoException;
       let userMessage = 'Failed to create folder';
-      if (error.code === 'EACCES' || error.code === 'EPERM')
+      if (errObj.code === 'EACCES' || errObj.code === 'EPERM')
         userMessage = 'Permission denied - check folder permissions';
-      else if (error.code === 'ENOTDIR')
+      else if (errObj.code === 'ENOTDIR')
         userMessage = 'Invalid path - parent is not a directory';
-      else if (error.code === 'EEXIST')
+      else if (errObj.code === 'EEXIST')
         userMessage = 'Folder already exists';
       return {
         success: false,
         error: userMessage,
-        details: error.message,
-        code: error.code,
+        details: errObj.message,
+        code: errObj.code,
       };
     }
   });
@@ -473,7 +531,7 @@ async function handleBatchOrganize({
     compose(
       withErrorHandling,
       withRequestId
-    )(async (event, dirPath) => {
+    )(async (_event: Electron.IpcMainInvokeEvent, dirPath: string) => {
       try {
         const items = await fs.readdir(dirPath, { withFileTypes: true });
         const result = items.map((item) => ({
@@ -489,19 +547,26 @@ async function handleBatchOrganize({
           'items',
         );
         return result;
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[FILE-OPS] Error reading directory:', error);
-        return { error: error.message };
+        return { error: error instanceof Error ? error.message : String(error) };
       }
     }),
   );
+
+  interface OperationData {
+    type: 'move' | 'copy' | 'delete' | 'batch_organize';
+    source?: string;
+    destination?: string;
+    operations?: Array<{ source: string; destination: string; type?: string }>;
+  }
 
   // Perform File Operation Handler - with full validation stack
   const performOperationHandler = compose(
     withErrorHandling,
     withRequestId,
     validateIpc(OperationSchema)
-  )(async (event, operation) => {
+  )(async (_event: Electron.IpcMainInvokeEvent, operation: OperationData) => {
     try {
       // PERFORMANCE FIX: Removed expensive JSON.stringify logging
       // Only log essential info to reduce overhead
@@ -554,10 +619,10 @@ async function handleBatchOrganize({
                   );
                 });
             }
-          } catch (dbError) {
+          } catch (dbError: unknown) {
             logger.warn(
               '[FILE-OPS] Failed to initiate database path update',
-              { error: dbError.message },
+              { error: dbError instanceof Error ? dbError.message : String(dbError) },
             );
           }
 
@@ -589,10 +654,10 @@ async function handleBatchOrganize({
                   );
                 });
             }
-          } catch (dbError) {
+          } catch (dbError: unknown) {
             logger.warn(
               '[FILE-OPS] Failed to initiate database entry delete',
-              { error: dbError.message },
+              { error: dbError instanceof Error ? dbError.message : String(dbError) },
             );
           }
 
@@ -618,9 +683,9 @@ async function handleBatchOrganize({
             error: `Unknown operation type: ${operation.type}`,
           };
       }
-    } catch (error) {
+    } catch (error: unknown) {
       logger.error('[FILE-OPS] Error performing operation:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
 
@@ -633,7 +698,7 @@ async function handleBatchOrganize({
       withErrorHandling,
       withRequestId,
       validateIpc(FileDeleteSchema)
-    )(async (event, data) => {
+    )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
       const filePath = data.path;
       try {
         if (!filePath || typeof filePath !== 'string') {
@@ -645,12 +710,12 @@ async function handleBatchOrganize({
         }
         try {
           await fs.access(filePath);
-        } catch (accessError) {
+        } catch (accessError: unknown) {
           return {
             success: false,
             error: 'File not found or inaccessible',
             errorCode: 'FILE_NOT_FOUND',
-            details: accessError.message,
+            details: accessError instanceof Error ? accessError.message : String(accessError),
           };
         }
         const stats = await fs.stat(filePath);
@@ -669,9 +734,9 @@ async function handleBatchOrganize({
                 );
               });
           }
-        } catch (dbError) {
+        } catch (dbError: unknown) {
           logger.warn('[FILE-OPS] Failed to initiate database entry delete', {
-            error: dbError.message,
+            error: dbError instanceof Error ? dbError.message : String(dbError),
           });
         }
 
@@ -689,17 +754,18 @@ async function handleBatchOrganize({
             deletedAt: new Date().toISOString(),
           },
         };
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[FILE-OPS] Error deleting file:', error);
+        const errObj = error as NodeJS.ErrnoException;
         let errorCode = 'DELETE_FAILED';
         let userMessage = 'Failed to delete file';
-        if (error.code === 'ENOENT') {
+        if (errObj.code === 'ENOENT') {
           errorCode = 'FILE_NOT_FOUND';
           userMessage = 'File not found';
-        } else if (error.code === 'EACCES' || error.code === 'EPERM') {
+        } else if (errObj.code === 'EACCES' || errObj.code === 'EPERM') {
           errorCode = 'PERMISSION_DENIED';
           userMessage = 'Permission denied - file may be in use';
-        } else if (error.code === 'EBUSY') {
+        } else if (errObj.code === 'EBUSY') {
           errorCode = 'FILE_IN_USE';
           userMessage = 'File is currently in use';
         }
@@ -707,8 +773,8 @@ async function handleBatchOrganize({
           success: false,
           error: userMessage,
           errorCode,
-          details: error.message,
-          systemError: error.code,
+          details: errObj.message,
+          systemError: errObj.code,
         };
       }
     }),
@@ -721,15 +787,15 @@ async function handleBatchOrganize({
       withErrorHandling,
       withRequestId,
       validateIpc(FileOpenSchema)
-    )(async (event, data) => {
+    )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
       const filePath = data.path;
       try {
         await shell.openPath(filePath);
         logger.info('[FILE-OPS] Opened file:', filePath);
         return { success: true };
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[FILE-OPS] Error opening file:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
       }
     }),
   );
@@ -741,15 +807,15 @@ async function handleBatchOrganize({
       withErrorHandling,
       withRequestId,
       validateIpc(FileOpenSchema)
-    )(async (event, data) => {
+    )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
       const filePath = data.path;
       try {
         await shell.showItemInFolder(filePath);
         logger.info('[FILE-OPS] Revealed file in folder:', filePath);
         return { success: true };
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[FILE-OPS] Error revealing file:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
       }
     }),
   );
@@ -761,7 +827,7 @@ async function handleBatchOrganize({
       withErrorHandling,
       withRequestId,
       validateIpc(FileMoveSchema)
-    )(async (event, data) => {
+    )(async (_event: Electron.IpcMainInvokeEvent, data: { source: string; destination: string }) => {
       const sourcePath = data.source;
       const destinationPath = data.destination;
       try {
@@ -776,12 +842,12 @@ async function handleBatchOrganize({
         const normalizedDestination = path.resolve(destinationPath);
         try {
           await fs.access(normalizedSource);
-        } catch (accessError) {
+        } catch (accessError: unknown) {
           return {
             success: false,
             error: 'Source file not found',
             errorCode: 'SOURCE_NOT_FOUND',
-            details: accessError.message,
+            details: accessError instanceof Error ? accessError.message : String(accessError),
           };
         }
         const destDir = path.dirname(normalizedDestination);
@@ -804,17 +870,18 @@ async function handleBatchOrganize({
             copiedAt: new Date().toISOString(),
           },
         };
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[FILE-OPS] Error copying file:', error);
+        const errObj = error as NodeJS.ErrnoException;
         let errorCode = 'COPY_FAILED';
         let userMessage = 'Failed to copy file';
-        if (error.code === 'ENOSPC') {
+        if (errObj.code === 'ENOSPC') {
           errorCode = 'INSUFFICIENT_SPACE';
           userMessage = 'Insufficient disk space';
-        } else if (error.code === 'EACCES' || error.code === 'EPERM') {
+        } else if (errObj.code === 'EACCES' || errObj.code === 'EPERM') {
           errorCode = 'PERMISSION_DENIED';
           userMessage = 'Permission denied';
-        } else if (error.code === 'EEXIST') {
+        } else if (errObj.code === 'EEXIST') {
           errorCode = 'FILE_EXISTS';
           userMessage = 'Destination file already exists';
         }
@@ -822,7 +889,7 @@ async function handleBatchOrganize({
           success: false,
           error: userMessage,
           errorCode,
-          details: error.message,
+          details: errObj.message,
         };
       }
     }),
@@ -835,7 +902,7 @@ async function handleBatchOrganize({
       withErrorHandling,
       withRequestId,
       validateIpc(FileOpenSchema)
-    )(async (event, data) => {
+    )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
       const folderPath = data.path;
       try {
         if (!folderPath || typeof folderPath !== 'string') {
@@ -855,12 +922,12 @@ async function handleBatchOrganize({
               errorCode: 'NOT_A_DIRECTORY',
             };
           }
-        } catch (accessError) {
+        } catch (accessError: unknown) {
           return {
             success: false,
             error: 'Folder not found or inaccessible',
             errorCode: 'FOLDER_NOT_FOUND',
-            details: accessError.message,
+            details: accessError instanceof Error ? accessError.message : String(accessError),
           };
         }
         await shell.openPath(normalizedPath);
@@ -870,13 +937,13 @@ async function handleBatchOrganize({
           message: 'Folder opened successfully',
           openedPath: normalizedPath,
         };
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[FILE-OPS] Error opening folder:', error);
         return {
           success: false,
           error: 'Failed to open folder',
           errorCode: 'OPEN_FAILED',
-          details: error.message,
+          details: error instanceof Error ? error.message : String(error),
         };
       }
     }),
@@ -889,7 +956,7 @@ async function handleBatchOrganize({
       withErrorHandling,
       withRequestId,
       validateIpc(FileDeleteSchema)
-    )(async (event, data) => {
+    )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
       const fullPath = data.path;
       try {
         const normalizedPath = path.resolve(fullPath);
@@ -902,8 +969,9 @@ async function handleBatchOrganize({
               code: 'NOT_DIRECTORY',
             };
           }
-        } catch (statError) {
-          if (statError.code === 'ENOENT') {
+        } catch (statError: unknown) {
+          const errObj = statError as NodeJS.ErrnoException;
+          if (errObj.code === 'ENOENT') {
             return {
               success: true,
               message: 'Folder already deleted or does not exist',
@@ -928,22 +996,24 @@ async function handleBatchOrganize({
           path: normalizedPath,
           message: 'Folder deleted successfully',
         };
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[FILE-OPS] Error deleting folder:', error);
+        const errObj = error as NodeJS.ErrnoException;
         let userMessage = 'Failed to delete folder';
-        if (error.code === 'EACCES' || error.code === 'EPERM')
+        if (errObj.code === 'EACCES' || errObj.code === 'EPERM')
           userMessage = 'Permission denied - check folder permissions';
-        else if (error.code === 'ENOTEMPTY')
+        else if (errObj.code === 'ENOTEMPTY')
           userMessage = 'Directory not empty - contains files or subfolders';
-        else if (error.code === 'EBUSY')
+        else if (errObj.code === 'EBUSY')
           userMessage = 'Directory is in use by another process';
         return {
           success: false,
           error: userMessage,
-          details: error.message,
-          code: error.code,
+          details: errObj.message,
+          code: errObj.code,
         };
       }
     }),
   );
-}export default registerFilesIpc;
+}
+export default registerFilesIpc;
