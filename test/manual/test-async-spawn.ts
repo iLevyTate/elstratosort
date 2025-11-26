@@ -34,7 +34,7 @@ async function runTests() {
     if (result.error) {
       console.log('  ✗ Error:', result.error.message);
     }
-  } catch (error) {
+  } catch (_error) {
     console.log('  ✗ Failed:', error.message);
   }
 
@@ -55,7 +55,7 @@ async function runTests() {
     } else {
       console.log("  ✗ Should have timed out but didn't");
     }
-  } catch (error) {
+  } catch (_error) {
     console.log('  ✗ Error:', error.message);
   }
 
@@ -74,7 +74,7 @@ async function runTests() {
     } else {
       console.log("  ✗ Should have errored but didn't");
     }
-  } catch (error) {
+  } catch (_error) {
     console.log('  ✗ Unexpected error:', error.message);
   }
 
@@ -91,7 +91,7 @@ async function runTests() {
     } else {
       console.log('  ⚠ Python not found (may not be installed)');
     }
-  } catch (error) {
+  } catch (_error) {
     console.log('  ✗ Error:', error.message);
   }
 
@@ -115,7 +115,7 @@ async function runTests() {
     } else {
       console.log('  ✗ Incorrectly found non-existent module');
     }
-  } catch (error) {
+  } catch (_error) {
     console.log('  ✗ Error:', error.message);
   }
 
@@ -128,7 +128,7 @@ async function runTests() {
     } else {
       console.log('  ⚠ Chroma executable not found (may not be installed)');
     }
-  } catch (error) {
+  } catch (_error) {
     console.log('  ✗ Error:', error.message);
   }
 

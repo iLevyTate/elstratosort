@@ -5,7 +5,7 @@ jest.mock('ollama', () => ({
   Ollama: jest.fn(),
 }));
 const { Ollama } = require('ollama');
-const registerOllamaIpc = require('../src/main/ipc/ollama');
+const { registerOllamaIpc } = require('../src/main/ipc/ollama');
 
 describe('registerOllamaIpc', () => {
   beforeEach(() => {
@@ -28,7 +28,13 @@ describe('registerOllamaIpc', () => {
     registerOllamaIpc({
       ipcMain,
       IPC_CHANNELS,
-      logger: { error: jest.fn() },
+      logger: {
+        error: jest.fn(),
+        info: jest.fn(),
+        warn: jest.fn(),
+        debug: jest.fn(),
+        setContext: jest.fn(),
+      },
       systemAnalytics,
       getOllama: () => mockOllama,
       getOllamaModel: () => 'text-model',
@@ -40,15 +46,21 @@ describe('registerOllamaIpc', () => {
     const handler = ipcMain._handlers.get(IPC_CHANNELS.OLLAMA.GET_MODELS);
     const result = await handler();
     expect(mockOllama.list).toHaveBeenCalled();
-    expect(result.models).toEqual(['gemma3:4b', 'clip', 'mxbai-embed-large']);
-    expect(result.categories.vision).toContain('clip');
-    expect(result.categories.embedding).toContain('mxbai-embed-large');
-    expect(result.selected).toEqual({
+    // Response is wrapped in { success: true, data: ... } envelope
+    expect(result.success).toBe(true);
+    expect(result.data.models).toEqual([
+      'gemma3:4b',
+      'clip',
+      'mxbai-embed-large',
+    ]);
+    expect(result.data.categories.vision).toContain('clip');
+    expect(result.data.categories.embedding).toContain('mxbai-embed-large');
+    expect(result.data.selected).toEqual({
       textModel: 'text-model',
       visionModel: 'vision-model',
       embeddingModel: 'embed-model',
     });
-    expect(result.host).toBe('http://host');
+    expect(result.data.host).toBe('http://host');
   });
 
   test('TEST_CONNECTION reports healthy on success', async () => {
@@ -62,7 +74,13 @@ describe('registerOllamaIpc', () => {
     registerOllamaIpc({
       ipcMain,
       IPC_CHANNELS,
-      logger: { error: jest.fn() },
+      logger: {
+        error: jest.fn(),
+        info: jest.fn(),
+        warn: jest.fn(),
+        debug: jest.fn(),
+        setContext: jest.fn(),
+      },
       systemAnalytics,
       getOllamaModel: () => 'text',
     });
@@ -86,7 +104,13 @@ describe('registerOllamaIpc', () => {
     registerOllamaIpc({
       ipcMain,
       IPC_CHANNELS,
-      logger: { error: jest.fn() },
+      logger: {
+        error: jest.fn(),
+        info: jest.fn(),
+        warn: jest.fn(),
+        debug: jest.fn(),
+        setContext: jest.fn(),
+      },
       systemAnalytics,
       getOllama: () => mockOllama,
       getOllamaModel: () => 'text-model',
@@ -95,7 +119,9 @@ describe('registerOllamaIpc', () => {
     });
     const handler = ipcMain._handlers.get(IPC_CHANNELS.OLLAMA.GET_MODELS);
     const result = await handler();
-    expect(result.error).toBe('fail');
+    // Response is wrapped in { success: true, data: { ..., error: 'fail' } } envelope
+    expect(result.success).toBe(true);
+    expect(result.data.error).toBe('fail');
     expect(systemAnalytics.ollamaHealth.status).toBe('unhealthy');
   });
 });

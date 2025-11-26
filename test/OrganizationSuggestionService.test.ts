@@ -3,7 +3,8 @@
  * TIER 1 - CRITICAL: Core business logic for file organization
  * Testing the AI-powered document organization service
  */
-const OrganizationSuggestionService = require('../src/main/services/OrganizationSuggestionService');
+const OrganizationSuggestionService =
+  require('../src/main/services/OrganizationSuggestionService').default;
 
 // Mock Ollama for LLM operations
 jest.mock('ollama', () => ({
@@ -399,12 +400,14 @@ describe('OrganizationSuggestionService', () => {
         const pattern = 'pdf:documents:invoices';
         // Verify size first to ensure something was added
         expect(service.userPatterns.size).toBeGreaterThan(0);
-        
+
         // Check for key existence (case insensitive fallback check if needed)
         // Check if pattern exists (with case-insensitive fallback)
         const hasKey = service.userPatterns.has(pattern);
         const keys = Array.from(service.userPatterns.keys());
-        const matchingKey = hasKey ? pattern : keys.find(k => k.toLowerCase() === pattern.toLowerCase());
+        const matchingKey = hasKey
+          ? pattern
+          : keys.find((k) => k.toLowerCase() === pattern.toLowerCase());
         expect(matchingKey).toBeDefined();
 
         const patternData = service.userPatterns.get(pattern);
@@ -497,10 +500,10 @@ describe('OrganizationSuggestionService', () => {
         // Should identify date-based strategy as applicable
         const dateStrategy = result.strategies.find
           ? result.strategies.find((s) => s.id === 'date-based')
-          : Array.isArray(result.strategies) 
+          : Array.isArray(result.strategies)
             ? result.strategies.find((s) => s.id === 'date-based')
             : null;
-            
+
         expect(dateStrategy).toBeDefined();
         expect(dateStrategy.applicability).toBeGreaterThan(0.2);
 

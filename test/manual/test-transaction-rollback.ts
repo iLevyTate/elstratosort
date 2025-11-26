@@ -38,7 +38,7 @@ async function cleanup(testDir) {
   try {
     await fs.rm(testDir, { recursive: true, force: true });
     console.log(`✓ Cleaned up test directory: ${testDir}`);
-  } catch (error) {
+  } catch (_error) {
     console.error(`✗ Failed to cleanup: ${error.message}`);
   }
 }
@@ -70,9 +70,13 @@ async function testSuccessfulTransaction(env) {
           .then(() => true)
           .catch(() => false);
         if (exists) {
-          console.log(`  ✓ File exists at destination: ${path.basename(op.destination)}`);
+          console.log(
+            `  ✓ File exists at destination: ${path.basename(op.destination)}`,
+          );
         } else {
-          console.log(`  ✗ File NOT found at destination: ${path.basename(op.destination)}`);
+          console.log(
+            `  ✗ File NOT found at destination: ${path.basename(op.destination)}`,
+          );
           return false;
         }
       }
@@ -83,7 +87,7 @@ async function testSuccessfulTransaction(env) {
       console.log(`  Error: ${result.error || 'Unknown'}`);
       return false;
     }
-  } catch (error) {
+  } catch (_error) {
     console.log(`✗ Test failed with exception: ${error.message}`);
     return false;
   }
@@ -146,7 +150,7 @@ async function testFailedTransactionRollback(env) {
       console.log('✗ Expected transaction to fail and rollback');
       return false;
     }
-  } catch (error) {
+  } catch (_error) {
     console.log(`✗ Test failed with exception: ${error.message}`);
     return false;
   }
@@ -212,7 +216,7 @@ async function testTransactionalFileOperationsAPI(env) {
       console.log(`  Directory exists: ${dirExists}`);
       return false;
     }
-  } catch (error) {
+  } catch (_error) {
     console.log(`✗ Test failed with exception: ${error.message}`);
     console.log(`  Stack: ${error.stack}`);
     return false;
@@ -265,7 +269,7 @@ async function testManualRollback(env) {
       console.log(`  Destination exists: ${destExists}`);
       return false;
     }
-  } catch (error) {
+  } catch (_error) {
     console.log(`✗ Test failed with exception: ${error.message}`);
     return false;
   } finally {
@@ -302,15 +306,19 @@ async function runAllTests() {
     console.log(`\nTests Passed: ${passed}/${total}`);
 
     if (passed === total) {
-      console.log('\n✓✓✓ All tests passed! Transaction system is working correctly. ✓✓✓\n');
+      console.log(
+        '\n✓✓✓ All tests passed! Transaction system is working correctly. ✓✓✓\n',
+      );
     } else {
-      console.log(`\n✗✗✗ ${total - passed} test(s) failed. Please review the errors above. ✗✗✗\n`);
+      console.log(
+        `\n✗✗✗ ${total - passed} test(s) failed. Please review the errors above. ✗✗✗\n`,
+      );
     }
 
     await cleanup(env.testDir);
 
     process.exit(passed === total ? 0 : 1);
-  } catch (error) {
+  } catch (_error) {
     console.error(`\n✗ Fatal error during testing: ${error.message}`);
     console.error(error.stack);
 

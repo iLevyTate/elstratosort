@@ -31,8 +31,39 @@ function normalizeError(error: any): StratoSortError {
   return new StratoSortError(
     error.message || 'An unknown error occurred',
     'UNKNOWN_ERROR',
-    { originalError: error.name, stack: error.stack }
+    { originalError: error.name, stack: error.stack },
   );
+}
+
+/**
+ * Safely get error message from an unknown error type
+ * Handles Error instances, string errors, and objects with message property
+ * @param {unknown} error - Unknown error value
+ * @returns {string} Error message string
+ */
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
+
+/**
+ * Safely get error stack from an unknown error type
+ * @param {unknown} error - Unknown error value
+ * @returns {string | undefined} Error stack if available
+ */
+function getErrorStack(error: unknown): string | undefined {
+  if (error instanceof Error) {
+    return error.stack;
+  }
+  return undefined;
 }
 
 export {
@@ -51,4 +82,6 @@ export {
   // Helper functions
   isStratoSortError,
   normalizeError,
+  getErrorMessage,
+  getErrorStack,
 };

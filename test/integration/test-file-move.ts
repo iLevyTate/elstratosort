@@ -68,7 +68,7 @@ async function testBasicFileMove() {
     console.log('🧹 Cleaned up test files');
 
     return true;
-  } catch (error) {
+  } catch (_error) {
     console.error('❌ Test failed:', error);
     try {
       await fs.rm(testDir, { recursive: true, force: true });
@@ -111,7 +111,7 @@ async function testDocumentsDirectory() {
     }
 
     return docsExists;
-  } catch (error) {
+  } catch (_error) {
     console.error('❌ Documents directory test failed:', error);
     return false;
   }

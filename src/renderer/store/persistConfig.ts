@@ -64,7 +64,7 @@ const filesTransform = createTransform(
  */
 export const persistConfig: PersistConfig<RootState> = {
   key: 'stratosort',
-  version: 1,
+  version: 2, // Bump version for migration
   storage,
   // Only persist these slices
   whitelist: ['settings', 'ui', 'files'],
@@ -72,10 +72,43 @@ export const persistConfig: PersistConfig<RootState> = {
   transforms: [uiTransform, settingsTransform, filesTransform],
   // Throttle writes to every 500ms
   throttle: 500,
-  // Migration function for future schema changes
-  migrate: (state) => {
-    // Add migration logic here when schema changes
-    // Return a Promise for async migrations
+  // Migration function for schema changes
+  migrate: (state, currentVersion) => {
+    // Handle migration from older versions
+    if (state && typeof state === 'object') {
+      const migratedState = { ...state } as Record<string, unknown>;
+
+      // Ensure ui slice has proper phaseData structure
+      if (migratedState.ui && typeof migratedState.ui === 'object') {
+        const ui = { ...migratedState.ui } as Record<string, unknown>;
+
+        // Initialize phaseData if missing
+        if (!ui.phaseData || typeof ui.phaseData !== 'object') {
+          ui.phaseData = {};
+        }
+
+        const phaseData = { ...ui.phaseData } as Record<string, unknown>;
+
+        // Ensure all phase keys exist
+        const requiredPhases = ['setup', 'discover', 'organize', 'complete'];
+        for (const phase of requiredPhases) {
+          if (!phaseData[phase] || typeof phaseData[phase] !== 'object') {
+            phaseData[phase] = {};
+          }
+        }
+
+        // Ensure notifications array exists
+        if (!Array.isArray(ui.notifications)) {
+          ui.notifications = [];
+        }
+
+        ui.phaseData = phaseData;
+        migratedState.ui = ui;
+      }
+
+      return Promise.resolve(migratedState as RootState);
+    }
+
     return Promise.resolve(state as RootState);
   },
 };

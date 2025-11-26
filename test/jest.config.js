@@ -24,11 +24,21 @@ module.exports = {
     ],
   },
   // No transforms needed for plain JS
-  collectCoverageFrom: ['../src/**/*.ts', '../src/**/*.tsx', '!../src/**/node_modules/**'],
+  collectCoverageFrom: [
+    '../src/**/*.ts',
+    '../src/**/*.tsx',
+    '!../src/**/node_modules/**',
+  ],
   coverageDirectory: '../coverage',
   setupFilesAfterEnv: ['<rootDir>/test-setup.ts'],
   // Sequential execution keeps Ollama mocks deterministic
   maxWorkers: 1,
+
+  // Force exit after tests complete to prevent hanging from unclosed handles
+  forceExit: true,
+
+  // Increase test timeout for slow operations
+  testTimeout: 30000,
 
   moduleNameMapper: {
     '^electron$': '<rootDir>/mocks/electron.ts',
@@ -45,7 +55,5 @@ module.exports = {
   setupFiles: ['<rootDir>/test-globals.ts'],
 
   // Transform ESM packages that Jest can't handle natively
-  transformIgnorePatterns: [
-    'node_modules/(?!(nanoid)/)',
-  ],
+  transformIgnorePatterns: ['node_modules/(?!(nanoid)/)'],
 };

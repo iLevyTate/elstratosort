@@ -113,7 +113,7 @@ async function main() {
   );
 
   let serverStarted = false;
-  let errorMessages = [];
+  const errorMessages = [];
 
   chromaProcess.stdout?.on('data', (data) => {
     const output = data.toString();

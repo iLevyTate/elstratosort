@@ -58,12 +58,44 @@ interface DbOperation {
 
 class FileOrganizationSaga {
   private journal: TransactionJournal;
+  private static readonly MAX_COLLISION_RETRIES = 100;
 
   /**
    * @param journalPath - Path to transaction journal database
    */
   constructor(journalPath: string) {
     this.journal = new TransactionJournal(journalPath);
+  }
+
+  /**
+   * Generate a unique filename when destination already exists
+   * Appends _1, _2, etc. to the base name until finding an available name
+   * @private
+   */
+  private async _generateUniqueFilename(originalPath: string): Promise<string> {
+    const dir = path.dirname(originalPath);
+    const ext = path.extname(originalPath);
+    const baseName = path.basename(originalPath, ext);
+
+    for (
+      let counter = 1;
+      counter <= FileOrganizationSaga.MAX_COLLISION_RETRIES;
+      counter++
+    ) {
+      const candidate = path.join(dir, `${baseName}_${counter}${ext}`);
+      try {
+        await fs.access(candidate);
+        // File exists, try next number
+      } catch {
+        // File doesn't exist, use this name
+        return candidate;
+      }
+    }
+
+    // Fallback: use UUID-style suffix
+    const uuid =
+      Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+    return path.join(dir, `${baseName}_${uuid}${ext}`);
   }
 
   /**
@@ -94,15 +126,21 @@ class FileOrganizationSaga {
           file: path.basename(op.source),
         });
 
-        // Execute the operation
-        await this._executeOperation(op);
+        // Execute the operation - returns final destination (may differ if collision occurred)
+        const finalDestination = await this._executeOperation(op);
 
-        // Record in journal
-        this.journal.recordOperation(txId, stepNumber, op);
+        // Create operation record with final destination for proper rollback
+        const recordedOp: FileOperation = {
+          ...op,
+          destination: finalDestination,
+        };
+
+        // Record in journal with actual destination used
+        this.journal.recordOperation(txId, stepNumber, recordedOp);
 
         results.push({
           success: true,
-          operation: op,
+          operation: recordedOp,
           step: stepNumber,
         });
       }
@@ -124,7 +162,8 @@ class FileOrganizationSaga {
       };
     } catch (error) {
       // Critical error occurred - rollback
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
 
       logger.error('[Saga] Transaction failed, initiating rollback', {
@@ -151,13 +190,15 @@ class FileOrganizationSaga {
   }
 
   /**
-   * Execute a single file operation
+   * Execute a single file operation with collision handling
    *
    * @param op - Operation {type, source, destination}
+   * @returns The final destination path (may differ from original if collision occurred)
    * @private
    */
-  private async _executeOperation(op: FileOperation): Promise<void> {
-    const { type, source, destination } = op;
+  private async _executeOperation(op: FileOperation): Promise<string> {
+    const { type, source } = op;
+    let destination = op.destination;
 
     try {
       switch (type) {
@@ -165,23 +206,19 @@ class FileOrganizationSaga {
           // Ensure destination directory exists
           await fs.mkdir(path.dirname(destination), { recursive: true });
 
-          // Atomic rename (same filesystem) or copy+delete (cross-filesystem)
-          try {
-            await fs.rename(source, destination);
-          } catch (renameError: any) {
-            if (renameError.code === 'EXDEV') {
-              // Cross-device move: copy then delete
-              await fs.copyFile(source, destination);
-              await fs.unlink(source);
-            } else {
-              throw renameError;
-            }
-          }
+          // Handle file collision with unique filename generation
+          destination = await this._moveWithCollisionHandling(
+            source,
+            destination,
+          );
           break;
 
         case 'copy':
           await fs.mkdir(path.dirname(destination), { recursive: true });
-          await fs.copyFile(source, destination);
+          destination = await this._copyWithCollisionHandling(
+            source,
+            destination,
+          );
           break;
 
         case 'delete':
@@ -191,10 +228,100 @@ class FileOrganizationSaga {
         default:
           throw new Error(`Unknown operation type: ${type}`);
       }
+
+      return destination;
     } catch (error) {
       // Wrap in FileOperationError for better error handling
       throw new FileOperationError(type, source, error);
     }
+  }
+
+  /**
+   * Move file with collision handling - retries with unique name if destination exists
+   * @private
+   */
+  private async _moveWithCollisionHandling(
+    source: string,
+    destination: string,
+  ): Promise<string> {
+    let finalDest = destination;
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    while (attempts < maxAttempts) {
+      try {
+        // Atomic rename (same filesystem) or copy+delete (cross-filesystem)
+        try {
+          await fs.rename(source, finalDest);
+          return finalDest;
+        } catch (renameError: any) {
+          if (renameError.code === 'EXDEV') {
+            // Cross-device move: copy then delete
+            await fs.copyFile(source, finalDest);
+            await fs.unlink(source);
+            return finalDest;
+          } else if (renameError.code === 'EEXIST') {
+            // Destination exists - generate unique name
+            attempts++;
+            finalDest = await this._generateUniqueFilename(destination);
+            logger.debug('[Saga] File collision detected, using unique name', {
+              originalDest: path.basename(destination),
+              newDest: path.basename(finalDest),
+            });
+            continue;
+          } else {
+            throw renameError;
+          }
+        }
+      } catch (error: any) {
+        if (error.code === 'EEXIST') {
+          // Destination exists - generate unique name
+          attempts++;
+          finalDest = await this._generateUniqueFilename(destination);
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw new Error(
+      `Failed to move file after ${maxAttempts} collision attempts`,
+    );
+  }
+
+  /**
+   * Copy file with collision handling
+   * @private
+   */
+  private async _copyWithCollisionHandling(
+    source: string,
+    destination: string,
+  ): Promise<string> {
+    let finalDest = destination;
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    while (attempts < maxAttempts) {
+      try {
+        await fs.copyFile(source, finalDest, fs.constants.COPYFILE_EXCL);
+        return finalDest;
+      } catch (error: any) {
+        if (error.code === 'EEXIST') {
+          attempts++;
+          finalDest = await this._generateUniqueFilename(destination);
+          logger.debug('[Saga] Copy collision detected, using unique name', {
+            originalDest: path.basename(destination),
+            newDest: path.basename(finalDest),
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw new Error(
+      `Failed to copy file after ${maxAttempts} collision attempts`,
+    );
   }
 
   /**
@@ -205,7 +332,10 @@ class FileOrganizationSaga {
    * @returns Rollback results
    * @private
    */
-  private async _rollback(txId: string, errorMessage: string): Promise<RollbackResult[]> {
+  private async _rollback(
+    txId: string,
+    errorMessage: string,
+  ): Promise<RollbackResult[]> {
     logger.warn('[Saga] Executing rollback', {
       transactionId: txId,
       reason: errorMessage,
@@ -263,8 +393,12 @@ class FileOrganizationSaga {
         // Mark operation as rolled back in journal
         this.journal.markOperationRolledBack(op.id);
       } catch (rollbackError) {
-        const rollbackErrorMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-        const rollbackErrorStack = rollbackError instanceof Error ? rollbackError.stack : undefined;
+        const rollbackErrorMessage =
+          rollbackError instanceof Error
+            ? rollbackError.message
+            : String(rollbackError);
+        const rollbackErrorStack =
+          rollbackError instanceof Error ? rollbackError.stack : undefined;
 
         logger.error('[Saga] Rollback failed for operation', {
           transactionId: txId,
@@ -324,7 +458,7 @@ class FileOrganizationSaga {
       try {
         const rollbackResults = await this._rollback(
           tx.id,
-          'Recovery: Application crashed during transaction'
+          'Recovery: Application crashed during transaction',
         );
 
         recoveryResults.push({
@@ -333,7 +467,8 @@ class FileOrganizationSaga {
           rollbackResults,
         });
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
 
         logger.error('[Saga] Recovery failed for transaction', {
           transactionId: tx.id,

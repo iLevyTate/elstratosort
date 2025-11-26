@@ -1,4 +1,5 @@
 # StratoSort Systemic Issues Report
+
 ## Deep Root Cause Pattern Analysis
 
 **Date:** 2025-11-23
@@ -32,16 +33,18 @@ Multi-step operations (file organization, batch analysis, database updates) have
 **Pattern Found:** 15 locations where multi-step operations can fail midway
 
 **Example 1: Batch File Organization**
+
 ```javascript
 // src/main/ipc/files.js (BEFORE FIX)
 for (const operation of operations) {
-    await fs.rename(operation.source, operation.destination);
-    // If this fails halfway, some files moved, others didn't
-    // No way to roll back!
+  await fs.rename(operation.source, operation.destination);
+  // If this fails halfway, some files moved, others didn't
+  // No way to roll back!
 }
 ```
 
 **Example 2: ChromaDB + File System Divergence**
+
 ```javascript
 // Files moved on disk
 await fs.rename(oldPath, newPath);
@@ -51,6 +54,7 @@ await fs.rename(oldPath, newPath);
 ```
 
 **Example 3: Analysis State Corruption**
+
 ```javascript
 await processingState.mark Start(file);
 await analyze(file); // Throws error
@@ -59,22 +63,24 @@ await analyze(file); // Throws error
 
 ### Impact
 
-| Impact Area | Severity | Description |
-|------------|----------|-------------|
-| Data Integrity | 🔴 Critical | Files scattered, database desynced |
-| User Trust | 🔴 Critical | Operations appear to succeed but partially fail |
-| Support Cost | 🟠 High | Manual recovery required |
-| Development Time | 🟠 High | Complex debugging of partial states |
+| Impact Area      | Severity    | Description                                     |
+| ---------------- | ----------- | ----------------------------------------------- |
+| Data Integrity   | 🔴 Critical | Files scattered, database desynced              |
+| User Trust       | 🔴 Critical | Operations appear to succeed but partially fail |
+| Support Cost     | 🟠 High     | Manual recovery required                        |
+| Development Time | 🟠 High     | Complex debugging of partial states             |
 
 ### Root Cause Analysis
 
 **Why It Happens:**
+
 1. **No Transaction Coordinator:** Each service manages own state independently
 2. **Optimistic Operations:** Assume success, handle failure retroactively
 3. **Missing Rollback Logic:** No undo mechanism for completed steps
 4. **Distributed State:** Changes span file system, database, memory - no single source of truth
 
 **Why It Persists:**
+
 - Implementing transactions requires architectural changes
 - Quick fixes patch symptoms instead of addressing root cause
 - No clear ownership of cross-service consistency
@@ -102,45 +108,46 @@ src/main/services/ChromaDBService.js (3 locations)
 ### Systemic Solution
 
 **Implement Saga Pattern:**
+
 ```javascript
 class FileOrganizationSaga {
-    constructor() {
-        this.steps = [];
-        this.compensations = [];
+  constructor() {
+    this.steps = [];
+    this.compensations = [];
+  }
+
+  async execute(operations) {
+    const journal = [];
+
+    try {
+      // Step 1: Move files
+      for (const op of operations) {
+        await fs.rename(op.source, op.destination);
+        journal.push({
+          type: 'file_move',
+          compensation: () => fs.rename(op.destination, op.source),
+        });
+      }
+
+      // Step 2: Update database
+      await chromaDb.updatePaths(operations);
+      journal.push({
+        type: 'db_update',
+        compensation: () => chromaDb.revertPaths(operations),
+      });
+
+      // Step 3: Update cache
+      await cache.invalidate(operations);
+
+      return { success: true };
+    } catch (error) {
+      // Rollback in reverse order
+      for (const entry of [...journal].reverse()) {
+        await entry.compensation();
+      }
+      return { success: false, rolled_back: true };
     }
-
-    async execute(operations) {
-        const journal = [];
-
-        try {
-            // Step 1: Move files
-            for (const op of operations) {
-                await fs.rename(op.source, op.destination);
-                journal.push({
-                    type: 'file_move',
-                    compensation: () => fs.rename(op.destination, op.source)
-                });
-            }
-
-            // Step 2: Update database
-            await chromaDb.updatePaths(operations);
-            journal.push({
-                type: 'db_update',
-                compensation: () => chromaDb.revertPaths(operations)
-            });
-
-            // Step 3: Update cache
-            await cache.invalidate(operations);
-
-            return { success: true };
-        } catch (error) {
-            // Rollback in reverse order
-            for (const entry of [...journal].reverse()) {
-                await entry.compensation();
-            }
-            return { success: false, rolled_back: true };
-        }
-    }
+  }
 }
 ```
 
@@ -157,6 +164,7 @@ Services are initialized ad-hoc without dependency graph, health checks, or read
 **Pattern Found:** 9 race conditions from premature service access
 
 **Example 1: ChromaDB Initialization Race**
+
 ```javascript
 // src/main/analysis/ollamaDocumentAnalysis.js
 const chromaDb = getChromaDBService();
@@ -167,18 +175,20 @@ await chromaDb.searchSimilarFiles(query);
 ```
 
 **Example 2: Circular Dependencies**
+
 ```javascript
 // ServiceIntegration.js
 class ServiceIntegration {
-    constructor() {
-        this.chromaDb = new ChromaDBService(this); // Needs ServiceIntegration
-        this.autoOrganize = new AutoOrganizeService(this); // Also needs it
-        // Which initializes first?
-    }
+  constructor() {
+    this.chromaDb = new ChromaDBService(this); // Needs ServiceIntegration
+    this.autoOrganize = new AutoOrganizeService(this); // Also needs it
+    // Which initializes first?
+  }
 }
 ```
 
 **Example 3: Worker Pool Race**
+
 ```javascript
 // BatchAnalysisService.js
 async getWorker() {
@@ -193,22 +203,24 @@ async getWorker() {
 
 ### Impact
 
-| Impact Area | Severity | Description |
-|------------|----------|-------------|
-| Application Stability | 🔴 Critical | Crashes from null pointer access |
-| Startup Reliability | 🟠 High | Intermittent initialization failures |
-| Testing Difficulty | 🟠 High | Race conditions hard to reproduce |
-| Feature Availability | 🟡 Medium | Services unavailable until ready |
+| Impact Area           | Severity    | Description                          |
+| --------------------- | ----------- | ------------------------------------ |
+| Application Stability | 🔴 Critical | Crashes from null pointer access     |
+| Startup Reliability   | 🟠 High     | Intermittent initialization failures |
+| Testing Difficulty    | 🟠 High     | Race conditions hard to reproduce    |
+| Feature Availability  | 🟡 Medium   | Services unavailable until ready     |
 
 ### Root Cause Analysis
 
 **Why It Happens:**
+
 1. **No Dependency Injection:** Services create own dependencies
 2. **No Initialization Order:** Services start whenever first accessed
 3. **No Health Checks:** Cannot detect when service is ready
 4. **Async Without Await:** Initialization promises not coordinated
 
 **Why It Persists:**
+
 - Refactoring to DI container is large undertaking
 - Works "most of the time" (race window is small)
 - No clear service ownership
@@ -236,77 +248,84 @@ src/main/core/AppLifecycle.js
 ### Systemic Solution
 
 **Implement Service Container with Lifecycle:**
+
 ```javascript
 class ServiceContainer {
-    constructor() {
-        this.services = new Map();
-        this.initPromises = new Map();
-        this.state = new Map(); // 'pending', 'initializing', 'ready', 'failed'
+  constructor() {
+    this.services = new Map();
+    this.initPromises = new Map();
+    this.state = new Map(); // 'pending', 'initializing', 'ready', 'failed'
+  }
+
+  register(name, factory, deps = []) {
+    this.services.set(name, { factory, deps, instance: null });
+  }
+
+  async get(name) {
+    // Return existing instance if ready
+    if (this.state.get(name) === 'ready') {
+      return this.services.get(name).instance;
     }
 
-    register(name, factory, deps = []) {
-        this.services.set(name, { factory, deps, instance: null });
+    // Wait for in-progress initialization
+    if (this.initPromises.has(name)) {
+      return await this.initPromises.get(name);
     }
 
-    async get(name) {
-        // Return existing instance if ready
-        if (this.state.get(name) === 'ready') {
-            return this.services.get(name).instance;
-        }
+    // Start initialization
+    this.state.set(name, 'initializing');
+    const initPromise = this._initialize(name);
+    this.initPromises.set(name, initPromise);
 
-        // Wait for in-progress initialization
-        if (this.initPromises.has(name)) {
-            return await this.initPromises.get(name);
-        }
+    try {
+      const instance = await initPromise;
+      this.state.set(name, 'ready');
+      return instance;
+    } catch (error) {
+      this.state.set(name, 'failed');
+      throw error;
+    }
+  }
 
-        // Start initialization
-        this.state.set(name, 'initializing');
-        const initPromise = this._initialize(name);
-        this.initPromises.set(name, initPromise);
+  async _initialize(name) {
+    const { factory, deps } = this.services.get(name);
 
-        try {
-            const instance = await initPromise;
-            this.state.set(name, 'ready');
-            return instance;
-        } catch (error) {
-            this.state.set(name, 'failed');
-            throw error;
-        }
+    // Initialize dependencies first
+    const resolvedDeps = await Promise.all(deps.map((dep) => this.get(dep)));
+
+    // Create instance
+    const instance = await factory(...resolvedDeps);
+
+    // Health check
+    if (instance.healthCheck) {
+      await instance.healthCheck();
     }
 
-    async _initialize(name) {
-        const { factory, deps } = this.services.get(name);
-
-        // Initialize dependencies first
-        const resolvedDeps = await Promise.all(
-            deps.map(dep => this.get(dep))
-        );
-
-        // Create instance
-        const instance = await factory(...resolvedDeps);
-
-        // Health check
-        if (instance.healthCheck) {
-            await instance.healthCheck();
-        }
-
-        this.services.get(name).instance = instance;
-        return instance;
-    }
+    this.services.get(name).instance = instance;
+    return instance;
+  }
 }
 
 // Usage:
 const container = new ServiceContainer();
 
-container.register('chromaDb', async () => {
+container.register(
+  'chromaDb',
+  async () => {
     const service = new ChromaDBService();
     await service.initialize();
     return service;
-}, []);
+  },
+  [],
+);
 
-container.register('autoOrganize', async (chromaDb) => {
+container.register(
+  'autoOrganize',
+  async (chromaDb) => {
     return new AutoOrganizeService(chromaDb);
-}, ['chromaDb']);
+  },
+  ['chromaDb'],
+);
 
 // Always get initialized service
 const chromaDb = await container.get('chromaDb');
@@ -325,6 +344,7 @@ Application state is duplicated in React hooks, PhaseContext, localStorage, and 
 **Pattern Found:** 8 state synchronization bugs
 
 **State Location Map:**
+
 ```
 File Selection State:
 ├─ useFileSelection hook (selectedFiles)
@@ -346,6 +366,7 @@ Settings:
 ```
 
 **Example 1: Lost State Updates**
+
 ```javascript
 // Component A
 setSelectedFiles([...selectedFiles, newFile]);
@@ -359,15 +380,16 @@ actions.setPhaseData('selectedFiles', differentValue);
 ```
 
 **Example 2: Circular Updates**
+
 ```javascript
 // useEffect in useFileSelection
 useEffect(() => {
-    actions.setPhaseData('selectedFiles', selectedFiles);
+  actions.setPhaseData('selectedFiles', selectedFiles);
 }, [selectedFiles]);
 
 // useEffect in DiscoverPhase
 useEffect(() => {
-    setSelectedFiles(phaseData.selectedFiles);
+  setSelectedFiles(phaseData.selectedFiles);
 }, [phaseData.selectedFiles]);
 
 // Infinite loop!
@@ -375,22 +397,24 @@ useEffect(() => {
 
 ### Impact
 
-| Impact Area | Severity | Description |
-|------------|----------|-------------|
-| Data Loss | 🟠 High | State updates overwrite each other |
-| UI Inconsistency | 🟠 High | Display doesn't match actual state |
-| Debugging Difficulty | 🟠 High | Hard to find which state is "truth" |
-| Performance | 🟡 Medium | Unnecessary re-renders |
+| Impact Area          | Severity  | Description                         |
+| -------------------- | --------- | ----------------------------------- |
+| Data Loss            | 🟠 High   | State updates overwrite each other  |
+| UI Inconsistency     | 🟠 High   | Display doesn't match actual state  |
+| Debugging Difficulty | 🟠 High   | Hard to find which state is "truth" |
+| Performance          | 🟡 Medium | Unnecessary re-renders              |
 
 ### Root Cause Analysis
 
 **Why It Happens:**
+
 1. **No Single Source of Truth:** State lives in multiple places
 2. **Manual Synchronization:** Developers must remember to update all copies
 3. **No Event System:** Changes don't automatically propagate
 4. **Local Optimization:** Each component optimizes for own needs
 
 **Why It Persists:**
+
 - React hooks encourage local state
 - PhaseContext added later for persistence
 - IPC needed for main process communication
@@ -417,43 +441,44 @@ src/main/services/
 ### Systemic Solution
 
 **Implement Flux/Redux Pattern:**
+
 ```javascript
 // Single Store
 const store = createStore({
-    files: {
-        selected: [],
-        analyzed: [],
-        organized: []
-    },
-    ui: {
-        currentPhase: 'SETUP',
-        settings: {}
-    }
+  files: {
+    selected: [],
+    analyzed: [],
+    organized: [],
+  },
+  ui: {
+    currentPhase: 'SETUP',
+    settings: {},
+  },
 });
 
 // Actions
 store.dispatch({
-    type: 'files/add',
-    payload: newFiles
+  type: 'files/add',
+  payload: newFiles,
 });
 
 // Middleware for persistence
-const persistMiddleware = store => next => action => {
-    const result = next(action);
+const persistMiddleware = (store) => (next) => (action) => {
+  const result = next(action);
 
-    // Auto-save to localStorage
-    localStorage.setItem('app-state', JSON.stringify(store.getState()));
+  // Auto-save to localStorage
+  localStorage.setItem('app-state', JSON.stringify(store.getState()));
 
-    // Sync to main process
-    window.electronAPI.state.sync(store.getState());
+  // Sync to main process
+  window.electronAPI.state.sync(store.getState());
 
-    return result;
+  return result;
 };
 
 // Components subscribe
 function FileList() {
-    const files = useSelector(state => state.files.selected);
-    // Automatically updates when state changes anywhere
+  const files = useSelector((state) => state.files.selected);
+  // Automatically updates when state changes anywhere
 }
 ```
 
@@ -470,16 +495,18 @@ Error paths are not designed upfront - success path is coded first, then errors 
 **Pattern Found:** 72 empty catch blocks, 42 generic error messages
 
 **Anti-Pattern 1: Silent Failures**
+
 ```javascript
 // Found in 72 locations
 try {
-    await criticalOperation();
+  await criticalOperation();
 } catch {
-    // Error silently swallowed!
+  // Error silently swallowed!
 }
 ```
 
 **Anti-Pattern 2: Error Context Loss**
+
 ```javascript
 // Original error:
 Error: ENOENT: no such file or directory, open '/path/to/file.pdf'
@@ -491,34 +518,37 @@ Error: ENOENT: no such file or directory, open '/path/to/file.pdf'
 ```
 
 **Anti-Pattern 3: No Recovery Path**
+
 ```javascript
 try {
-    await analyzeFile(file);
+  await analyzeFile(file);
 } catch (error) {
-    // What should user do now?
-    // No guidance provided!
-    throw new Error('Analysis failed');
+  // What should user do now?
+  // No guidance provided!
+  throw new Error('Analysis failed');
 }
 ```
 
 ### Impact
 
-| Impact Area | Severity | Description |
-|------------|----------|-------------|
-| Debuggability | 🟠 High | Cannot diagnose production issues |
-| User Experience | 🟠 High | Unhelpful error messages |
-| Support Burden | 🟠 High | Users can't self-recover |
-| Production Monitoring | 🟡 Medium | Errors not visible in logs |
+| Impact Area           | Severity  | Description                       |
+| --------------------- | --------- | --------------------------------- |
+| Debuggability         | 🟠 High   | Cannot diagnose production issues |
+| User Experience       | 🟠 High   | Unhelpful error messages          |
+| Support Burden        | 🟠 High   | Users can't self-recover          |
+| Production Monitoring | 🟡 Medium | Errors not visible in logs        |
 
 ### Root Cause Analysis
 
 **Why It Happens:**
+
 1. **Success-First Development:** Error paths are afterthought
 2. **No Error Strategy:** No standard for error handling
 3. **Try-Catch Overuse:** Catches errors but doesn't know what to do
 4. **Fear of Exceptions:** Developers afraid to let errors bubble
 
 **Why It Persists:**
+
 - No code review enforcement of error standards
 - No typed error system
 - Linters don't catch empty catches
@@ -527,6 +557,7 @@ try {
 ### Affected Modules
 
 **All modules affected, worst offenders:**
+
 ```
 src/main/analysis/ollamaDocumentAnalysis.js
 ├─ 18 empty catch blocks
@@ -547,6 +578,7 @@ src/renderer/hooks/*.js
 ### Systemic Solution
 
 **Implement Typed Error System:**
+
 ```javascript
 // Define error types
 class StratoSortError extends Error {
@@ -634,48 +666,54 @@ Business logic is mixed with infrastructure concerns across all layers. React ho
 **Pattern Found:** Tight coupling in 35+ files
 
 **Example 1: Business Logic in UI**
+
 ```javascript
 // src/renderer/hooks/useFileAnalysis.js
 export function useFileAnalysis() {
-    const analyzeFiles = async (files) => {
-        // UI hook is doing file system operations!
-        for (const file of files) {
-            const stats = await window.electronAPI.files.getStats(file);
-            const content = await window.electronAPI.files.read(file);
+  const analyzeFiles = async (files) => {
+    // UI hook is doing file system operations!
+    for (const file of files) {
+      const stats = await window.electronAPI.files.getStats(file);
+      const content = await window.electronAPI.files.read(file);
 
-            // Calling AI service directly
-            const analysis = await window.electronAPI.analysis.analyze(content);
+      // Calling AI service directly
+      const analysis = await window.electronAPI.analysis.analyze(content);
 
-            // Updating database
-            await window.electronAPI.chromadb.upsert(file, analysis);
-        }
-    };
+      // Updating database
+      await window.electronAPI.chromadb.upsert(file, analysis);
+    }
+  };
 }
 ```
 
 **Example 2: Infrastructure in Domain**
+
 ```javascript
 // src/main/services/OrganizationSuggestionService.js
 class OrganizationSuggestionService {
-    async getSuggestions(file) {
-        // Service making HTTP calls
-        const llmResult = await axios.post('http://localhost:11434/api/generate', {
-            model: this.model,
-            prompt: this.buildPrompt(file)
-        });
+  async getSuggestions(file) {
+    // Service making HTTP calls
+    const llmResult = await axios.post('http://localhost:11434/api/generate', {
+      model: this.model,
+      prompt: this.buildPrompt(file),
+    });
 
-        // Service doing file I/O
-        const history = await fs.readFile(this.historyPath, 'utf8');
+    // Service doing file I/O
+    const history = await fs.readFile(this.historyPath, 'utf8');
 
-        // Service updating UI
-        mainWindow.webContents.send('suggestion-progress', { current: 1, total: 3 });
+    // Service updating UI
+    mainWindow.webContents.send('suggestion-progress', {
+      current: 1,
+      total: 3,
+    });
 
-        // All three layers mixed in one method!
-    }
+    // All three layers mixed in one method!
+  }
 }
 ```
 
 **Example 3: No Domain Models**
+
 ```javascript
 // Plain objects passed everywhere
 const file = {
@@ -691,22 +729,24 @@ const file = {
 
 ### Impact
 
-| Impact Area | Severity | Description |
-|------------|----------|-------------|
-| Testability | 🟠 High | Cannot test components in isolation |
-| Reusability | 🟠 High | Logic tied to specific contexts |
-| Maintainability | 🟡 Medium | Changes ripple across layers |
-| Understanding | 🟡 Medium | Hard to understand responsibilities |
+| Impact Area     | Severity  | Description                         |
+| --------------- | --------- | ----------------------------------- |
+| Testability     | 🟠 High   | Cannot test components in isolation |
+| Reusability     | 🟠 High   | Logic tied to specific contexts     |
+| Maintainability | 🟡 Medium | Changes ripple across layers        |
+| Understanding   | 🟡 Medium | Hard to understand responsibilities |
 
 ### Root Cause Analysis
 
 **Why It Happens:**
+
 1. **No Architectural Guidance:** No enforced layer separation
 2. **Convenience Over Structure:** Quick to call directly vs through layers
 3. **Missing Abstractions:** No domain model, no repositories
 4. **React Hooks Encourage Local Logic:** Hooks can do anything
 
 **Why It Persists:**
+
 - Refactoring to clean architecture is expensive
 - No architecture review in PRs
 - New features copy existing patterns
@@ -734,6 +774,7 @@ Infrastructure Layer (services):
 ### Systemic Solution
 
 **Implement Clean Architecture:**
+
 ```
 ┌─────────────────────────────────────┐
 │   Presentation (React Components)   │
@@ -763,74 +804,75 @@ Infrastructure Layer (services):
 ```
 
 **Example Implementation:**
+
 ```javascript
 // Domain Layer
 class File {
-    constructor(path, content, metadata) {
-        this.path = path;
-        this.content = content;
-        this.metadata = metadata;
-        this._analysis = null;
-    }
+  constructor(path, content, metadata) {
+    this.path = path;
+    this.content = content;
+    this.metadata = metadata;
+    this._analysis = null;
+  }
 
-    analyze(analysisService) {
-        if (this._analysis) return this._analysis;
-        this._analysis = analysisService.analyze(this.content);
-        return this._analysis;
-    }
+  analyze(analysisService) {
+    if (this._analysis) return this._analysis;
+    this._analysis = analysisService.analyze(this.content);
+    return this._analysis;
+  }
 
-    get suggestedPath() {
-        if (!this._analysis) throw new Error('File not analyzed');
-        return this._analysis.suggestedPath;
-    }
+  get suggestedPath() {
+    if (!this._analysis) throw new Error('File not analyzed');
+    return this._analysis.suggestedPath;
+  }
 }
 
 // Application Layer
 class AnalyzeFileUseCase {
-    constructor(fileRepository, analysisService, progressReporter) {
-        this.fileRepository = fileRepository;
-        this.analysisService = analysisService;
-        this.progressReporter = progressReporter;
-    }
+  constructor(fileRepository, analysisService, progressReporter) {
+    this.fileRepository = fileRepository;
+    this.analysisService = analysisService;
+    this.progressReporter = progressReporter;
+  }
 
-    async execute(filePath) {
-        // Load file (infrastructure)
-        const file = await this.fileRepository.load(filePath);
+  async execute(filePath) {
+    // Load file (infrastructure)
+    const file = await this.fileRepository.load(filePath);
 
-        // Analyze (domain)
-        this.progressReporter.start(file.path);
-        const analysis = await file.analyze(this.analysisService);
-        this.progressReporter.complete(file.path);
+    // Analyze (domain)
+    this.progressReporter.start(file.path);
+    const analysis = await file.analyze(this.analysisService);
+    this.progressReporter.complete(file.path);
 
-        // Save (infrastructure)
-        await this.fileRepository.saveAnalysis(file);
+    // Save (infrastructure)
+    await this.fileRepository.saveAnalysis(file);
 
-        return analysis;
-    }
+    return analysis;
+  }
 }
 
 // Presentation Layer
 function FileAnalysisView() {
-    const analyzeFile = async (path) => {
-        // Call use case
-        const analysis = await analyzeFileUseCase.execute(path);
+  const analyzeFile = async (path) => {
+    // Call use case
+    const analysis = await analyzeFileUseCase.execute(path);
 
-        // Update UI only
-        setAnalysis(analysis);
-    };
+    // Update UI only
+    setAnalysis(analysis);
+  };
 }
 
 // Infrastructure Layer
 class FileSystemRepository {
-    async load(path) {
-        const content = await fs.readFile(path, 'utf8');
-        const stats = await fs.stat(path);
-        return new File(path, content, stats);
-    }
+  async load(path) {
+    const content = await fs.readFile(path, 'utf8');
+    const stats = await fs.stat(path);
+    return new File(path, content, stats);
+  }
 
-    async saveAnalysis(file) {
-        await chromaDb.upsert(file.path, file._analysis);
-    }
+  async saveAnalysis(file) {
+    await chromaDb.upsert(file.path, file._analysis);
+  }
 }
 ```
 
@@ -870,6 +912,7 @@ class FileSystemRepository {
 ### Technical Debt Indicators
 
 **Code Churn Analysis:**
+
 ```
 Top 10 Most Modified Files (commits):
 1. ollamaDocumentAnalysis.js - 47 commits
@@ -880,6 +923,7 @@ Top 10 Most Modified Files (commits):
 ```
 
 **Comment Indicators:**
+
 ```
 "BUG FIX #X" comments: 47
 "TODO" comments: 12
@@ -889,6 +933,7 @@ Top 10 Most Modified Files (commits):
 ```
 
 **Test Coverage:**
+
 ```
 Estimated Coverage: 25-30%
 
@@ -973,6 +1018,7 @@ StratoSort suffers from **architectural debt** that manifests as recurring bug p
 - **Enable confident refactoring**
 
 The recommended approach is to:
+
 1. Stop the bleeding (immediate fixes)
 2. Implement safety nets (short-term)
 3. Refactor architecture (long-term)

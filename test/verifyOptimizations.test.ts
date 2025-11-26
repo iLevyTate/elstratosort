@@ -179,7 +179,8 @@ class MockOrganizationSuggestionService {
 }
 
 // Import services - use the mocks
-const BatchAnalysisService = require('../src/main/services/BatchAnalysisService');
+const BatchAnalysisService =
+  require('../src/main/services/BatchAnalysisService').default;
 const ChromaDBService = MockChromaDBService;
 const OrganizationSuggestionService = MockOrganizationSuggestionService;
 
@@ -551,39 +552,41 @@ describe('Performance Optimizations Verification', () => {
 
       // Mock analyzeFiles directly to avoid needing real files
       // This tests the batch processing optimization patterns without filesystem access
-      batchService.analyzeFiles = jest.fn(async (filePaths, smartFolders, options = {}) => {
-        const concurrency = options.concurrency || 3;
-        const startTime = Date.now();
+      batchService.analyzeFiles = jest.fn(
+        async (filePaths, smartFolders, options = {}) => {
+          const concurrency = options.concurrency || 3;
+          const startTime = Date.now();
 
-        // Simulate parallel processing with concurrency control
-        const results = [];
-        for (let i = 0; i < filePaths.length; i += concurrency) {
-          const batch = filePaths.slice(i, i + concurrency);
-          const batchResults = await Promise.all(
-            batch.map(async (path) => {
-              await new Promise((r) => setTimeout(r, 50)); // Simulate analysis time
-              const ext = path.split('.').pop();
-              return {
-                path,
-                success: true,
-                type: ext === 'jpg' || ext === 'png' ? 'image' : 'document',
-              };
-            })
-          );
-          results.push(...batchResults);
-        }
+          // Simulate parallel processing with concurrency control
+          const results = [];
+          for (let i = 0; i < filePaths.length; i += concurrency) {
+            const batch = filePaths.slice(i, i + concurrency);
+            const batchResults = await Promise.all(
+              batch.map(async (path) => {
+                await new Promise((r) => setTimeout(r, 50)); // Simulate analysis time
+                const ext = path.split('.').pop();
+                return {
+                  path,
+                  success: true,
+                  type: ext === 'jpg' || ext === 'png' ? 'image' : 'document',
+                };
+              }),
+            );
+            results.push(...batchResults);
+          }
 
-        return {
-          success: true,
-          total: filePaths.length,
-          results,
-          stats: {
-            duration: Date.now() - startTime,
-            successful: results.length,
-            failed: 0,
-          },
-        };
-      });
+          return {
+            success: true,
+            total: filePaths.length,
+            results,
+            stats: {
+              duration: Date.now() - startTime,
+              successful: results.length,
+              failed: 0,
+            },
+          };
+        },
+      );
     });
 
     test('should analyze files with proper concurrency', async () => {

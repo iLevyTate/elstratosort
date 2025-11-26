@@ -1,8 +1,11 @@
-const fs = require('fs').promises;const path = require('path');
+const fs = require('fs').promises;
+const path = require('path');
 const {
   SUPPORTED_TEXT_EXTENSIONS,
   SUPPORTED_DOCUMENT_EXTENSIONS,
-  SUPPORTED_ARCHIVE_EXTENSIONS,} = require('../../shared/constants');const { logger } = require('../../shared/logger');
+  SUPPORTED_ARCHIVE_EXTENSIONS,
+} = require('../../shared/constants');
+const { logger } = require('../../shared/logger');
 
 // Enforce required dependency for AI-first operation
 const {
@@ -21,11 +24,24 @@ const {
   extractTextFromKml,
   extractTextFromKmz,
   extractPlainTextFromRtf,
-  extractPlainTextFromHtml,} = require('./documentExtractors');const { analyzeTextWithOllama } = require('./documentLlm');const { normalizeAnalysisResult } = require('./utils');
-const {  getIntelligentCategory,  getIntelligentKeywords,  safeSuggestedName,} = require('./fallbackUtils');const { getInstance: getChromaDB } = require('../services/ChromaDBService');const FolderMatchingService = require('../services/FolderMatchingService');const embeddingQueue = require('./EmbeddingQueue');import crypto from 'node:crypto';const { globalDeduplicator } = require('../utils/llmOptimization');
+  extractPlainTextFromHtml,
+} = require('./documentExtractors');
+const { analyzeTextWithOllama } = require('./documentLlm');
+const { normalizeAnalysisResult } = require('./utils');
+const {
+  getIntelligentCategory,
+  getIntelligentKeywords,
+  safeSuggestedName,
+} = require('./fallbackUtils');
+const { getInstance: getChromaDB } = require('../services/ChromaDBService');
+const FolderMatchingService = require('../services/FolderMatchingService');
+const embeddingQueue = require('./EmbeddingQueue');
+import crypto from 'node:crypto';
+const { globalDeduplicator } = require('../utils/llmOptimization');
 const {
   SUPPORTED_AUDIO_EXTENSIONS,
-  SUPPORTED_VIDEO_EXTENSIONS,} = require('../../shared/constants');
+  SUPPORTED_VIDEO_EXTENSIONS,
+} = require('../../shared/constants');
 
 // Cache configuration constants
 const CACHE_CONFIG = {
@@ -47,8 +63,8 @@ function structuredTruncate(text, limit = 2000) {
   // Extract document structure without LLM
   const title = extractTitle(text);
   const headings = extractHeadings(text);
-  const firstBlock = text.slice(0, 800);  // Opening content
-  const lastBlock = text.slice(-400);     // Closing content
+  const firstBlock = text.slice(0, 800); // Opening content
+  const lastBlock = text.slice(-400); // Closing content
 
   // Combine with priority
   let result = '';
@@ -68,7 +84,7 @@ function structuredTruncate(text, limit = 2000) {
 function extractTitle(text) {
   if (!text) return '';
   const lines = text.split('\n').slice(0, 5);
-  return lines.find(l => l.trim().length > 5 && l.trim().length < 200) || '';
+  return lines.find((l) => l.trim().length > 5 && l.trim().length < 200) || '';
 }
 
 /**
@@ -77,9 +93,9 @@ function extractTitle(text) {
 function extractHeadings(text) {
   if (!text) return [];
   const patterns = [
-    /^#+\s+(.+)$/gm,           // Markdown: # Heading
-    /^([A-Z][A-Z\s]{3,})$/gm,  // ALL CAPS HEADING
-    /^\d+\.\s+(.+)$/gm,        // 1. Numbered section
+    /^#+\s+(.+)$/gm, // Markdown: # Heading
+    /^([A-Z][A-Z\s]{3,})$/gm, // ALL CAPS HEADING
+    /^\d+\.\s+(.+)$/gm, // 1. Numbered section
   ];
   const headings = [];
   for (const p of patterns) {
@@ -103,7 +119,10 @@ function setFileCache(signature, value) {
   }
 }
 
-// Import error handling systemconst { FileProcessingError } = require('../errors/AnalysisError');const ModelVerifier = require('../services/ModelVerifier');
+// Import error handling system
+const { FileProcessingError } = require('../errors/AnalysisError');
+const ModelVerifierModule = require('../services/ModelVerifier');
+const ModelVerifier = ModelVerifierModule.default || ModelVerifierModule;
 
 const modelVerifier = new ModelVerifier();
 // Lazy loaded services
@@ -348,9 +367,11 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
         };
 
         // Check if it's a FileProcessingError with additional context
-        if (officeError?.suggestion) {          errorDetails.suggestion = officeError.suggestion;
+        if (officeError?.suggestion) {
+          errorDetails.suggestion = officeError.suggestion;
         }
-        if (officeError?.originalError) {          errorDetails.originalError = officeError.originalError;
+        if (officeError?.originalError) {
+          errorDetails.originalError = officeError.originalError;
         }
 
         logger.error(`Error extracting office content`, errorDetails);
@@ -484,9 +505,9 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       try {
         // Initialize services lazily
         if (!chromaDbService) {
-           chromaDbService = getChromaDB();
+          chromaDbService = getChromaDB();
         }
-        
+
         // CRITICAL FIX: Ensure ChromaDB is initialized before folder matching
         if (!chromaDbService) {
           logger.warn(
@@ -497,7 +518,7 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
           await chromaDbService.initialize();
 
           if (!folderMatcher) {
-             folderMatcher = new FolderMatchingService(chromaDbService);
+            folderMatcher = new FolderMatchingService(chromaDbService);
           }
 
           // Fixed: Initialize FolderMatchingService on first use
@@ -728,7 +749,8 @@ async function tryExtractArchiveMetadata(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   const info = { keywords: [], summary: '' };
   if (ext === '.zip') {
-    try {      const AdmZip = require('adm-zip');
+    try {
+      const AdmZip = require('adm-zip');
       const zip = new AdmZip(filePath);
       const entries = zip.getEntries().slice(0, 50);
       const names = entries.map((e) => e.entryName);
@@ -760,7 +782,8 @@ function deriveKeywordsFromFilenames(names) {
         if (w && w.length > 2 && w.length < 20) tokens.add(w);
       });
   });
-  const topExts = Object.entries(exts)    .sort((a: any, b: any) => b[1] - a[1])
+  const topExts = Object.entries(exts)
+    .sort((a: any, b: any) => b[1] - a[1])
     .slice(0, 3)
     .map(([k]) => k);
   return [...topExts, ...Array.from(tokens)].slice(0, 15);
@@ -773,7 +796,5 @@ function deriveKeywordsFromFilenames(names) {
  */
 async function flushAllEmbeddings() {
   await embeddingQueue.flush();
-}export {
-  analyzeDocumentFile,
-  flushAllEmbeddings,
-};
+}
+export { analyzeDocumentFile, flushAllEmbeddings };

@@ -15,7 +15,7 @@ describe('AnalysisHistoryService', () => {
   afterEach(async () => {
     try {
       await fs.rm(tmpDir, { recursive: true, force: true });
-    } catch (error) {
+    } catch (_error) {
       if (error) {
         // Ignore cleanup errors
       }
@@ -23,7 +23,8 @@ describe('AnalysisHistoryService', () => {
   });
 
   test('initializes on missing or corrupted file and records entries', async () => {
-    const AnalysisHistoryService = require('../src/main/services/AnalysisHistoryService');
+    const AnalysisHistoryService =
+      require('../src/main/services/AnalysisHistoryService').default;
     const svc = new AnalysisHistoryService();
     await svc.initialize();
     const fileInfo = {
@@ -51,7 +52,8 @@ describe('AnalysisHistoryService', () => {
   });
 
   test('search finds entries by text', async () => {
-    const AnalysisHistoryService = require('../src/main/services/AnalysisHistoryService');
+    const AnalysisHistoryService =
+      require('../src/main/services/AnalysisHistoryService').default;
     const svc = new AnalysisHistoryService();
     await svc.initialize();
     await svc.recordAnalysis(

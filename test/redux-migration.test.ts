@@ -39,6 +39,7 @@ describe('Redux Migration - Store Initialization', () => {
     expect(state.ui.currentPhase).toBe(PHASES.DISCOVER);
     expect(state.ui.phaseHistory).toEqual([]);
     expect(state.ui.phaseData).toEqual({
+      setup: {},
       discover: {},
       organize: {},
       complete: {},
@@ -61,7 +62,11 @@ describe('Redux Migration - Store Initialization', () => {
     expect(state.analysis.analysisResults).toEqual([]);
     expect(state.analysis.isAnalyzing).toBe(false);
     expect(state.analysis.currentAnalysisFile).toBe('');
-    expect(state.analysis.analysisProgress).toEqual({ current: 0, total: 0, lastActivity: null });
+    expect(state.analysis.analysisProgress).toEqual({
+      current: 0,
+      total: 0,
+      lastActivity: null,
+    });
   });
 
   test('organizeSlice has correct initial state', () => {
@@ -102,10 +107,12 @@ describe('Redux Migration - Phase Transitions', () => {
   });
 
   test('advancePhase with data merges phase data', () => {
-    store.dispatch(uiSlice.advancePhase({
-      targetPhase: PHASES.SETUP,
-      data: { smartFolders: [{ name: 'Test' }] }
-    }));
+    store.dispatch(
+      uiSlice.advancePhase({
+        targetPhase: PHASES.SETUP,
+        data: { smartFolders: [{ name: 'Test' }] },
+      }),
+    );
 
     const state = store.getState();
     expect(state.ui.phaseData[PHASES.SETUP]).toBeDefined();
@@ -113,26 +120,32 @@ describe('Redux Migration - Phase Transitions', () => {
   });
 
   test('setPhaseData updates phase-specific data', () => {
-    store.dispatch(uiSlice.setPhaseData({
-      phase: PHASES.DISCOVER,
-      key: 'namingConvention',
-      value: { convention: 'subject-date' }
-    }));
+    store.dispatch(
+      uiSlice.setPhaseData({
+        phase: PHASES.DISCOVER,
+        key: 'namingConvention',
+        value: { convention: 'subject-date' },
+      }),
+    );
 
     const state = store.getState();
     expect(state.ui.phaseData[PHASES.DISCOVER]).toBeDefined();
     expect(state.ui.phaseData[PHASES.DISCOVER].namingConvention).toBeDefined();
-    expect(state.ui.phaseData[PHASES.DISCOVER].namingConvention.convention).toBe('subject-date');
+    expect(
+      state.ui.phaseData[PHASES.DISCOVER].namingConvention.convention,
+    ).toBe('subject-date');
   });
 
   test('resetWorkflow resets to initial state', () => {
     // Add some data
     store.dispatch(uiSlice.advancePhase({ targetPhase: PHASES.SETUP }));
-    store.dispatch(uiSlice.setPhaseData({
-      phase: PHASES.SETUP,
-      key: 'test',
-      value: 'data'
-    }));
+    store.dispatch(
+      uiSlice.setPhaseData({
+        phase: PHASES.SETUP,
+        key: 'test',
+        value: 'data',
+      }),
+    );
 
     // Reset
     store.dispatch(uiSlice.resetWorkflow());
@@ -141,6 +154,7 @@ describe('Redux Migration - Phase Transitions', () => {
     expect(state.ui.currentPhase).toBe(PHASES.DISCOVER);
     expect(state.ui.phaseHistory).toEqual([]);
     expect(state.ui.phaseData).toEqual({
+      setup: {},
       discover: {},
       organize: {},
       complete: {},
@@ -165,7 +179,7 @@ describe('Redux Migration - File Selection', () => {
   test('setSelectedFiles updates selected files', () => {
     const files = [
       { path: '/path/to/file1.txt', name: 'file1.txt' },
-      { path: '/path/to/file2.txt', name: 'file2.txt' }
+      { path: '/path/to/file2.txt', name: 'file2.txt' },
     ];
 
     store.dispatch(filesSlice.setSelectedFiles(files));
@@ -176,11 +190,13 @@ describe('Redux Migration - File Selection', () => {
   });
 
   test('updateFileState updates file state', () => {
-    store.dispatch(filesSlice.updateFileState({
-      filePath: '/path/to/file.txt',
-      state: 'analyzing',
-      metadata: { startTime: Date.now() }
-    }));
+    store.dispatch(
+      filesSlice.updateFileState({
+        filePath: '/path/to/file.txt',
+        state: 'analyzing',
+        metadata: { startTime: Date.now() },
+      }),
+    );
 
     const state = store.getState();
     expect(state.files.fileStates['/path/to/file.txt']).toBeDefined();
@@ -212,7 +228,7 @@ describe('Redux Migration - Analysis', () => {
   test('setAnalysisResults updates results', () => {
     const results = [
       { path: '/file1.txt', analysis: { category: 'document' } },
-      { path: '/file2.txt', analysis: { category: 'image' } }
+      { path: '/file2.txt', analysis: { category: 'image' } },
     ];
 
     store.dispatch(analysisSlice.setAnalysisResults(results));
@@ -229,11 +245,13 @@ describe('Redux Migration - Analysis', () => {
   });
 
   test('setAnalysisProgress updates progress', () => {
-    store.dispatch(analysisSlice.setAnalysisProgress({
-      current: 5,
-      total: 10,
-      lastActivity: Date.now()
-    }));
+    store.dispatch(
+      analysisSlice.setAnalysisProgress({
+        current: 5,
+        total: 10,
+        lastActivity: Date.now(),
+      }),
+    );
 
     const state = store.getState();
     expect(state.analysis.analysisProgress.current).toBe(5);
@@ -265,11 +283,13 @@ describe('Redux Migration - Notifications', () => {
   });
 
   test('addNotification adds notification', () => {
-    store.dispatch(uiSlice.addNotification({
-      message: 'Test notification',
-      type: 'success',
-      duration: 3000
-    }));
+    store.dispatch(
+      uiSlice.addNotification({
+        message: 'Test notification',
+        type: 'success',
+        duration: 3000,
+      }),
+    );
 
     const state = store.getState();
     expect(state.ui.notifications).toHaveLength(1);
@@ -278,10 +298,12 @@ describe('Redux Migration - Notifications', () => {
   });
 
   test('removeNotification removes notification by id', () => {
-    store.dispatch(uiSlice.addNotification({
-      message: 'Test',
-      type: 'info'
-    }));
+    store.dispatch(
+      uiSlice.addNotification({
+        message: 'Test',
+        type: 'info',
+      }),
+    );
 
     const state1 = store.getState();
     const notificationId = state1.ui.notifications[0].id;
@@ -313,13 +335,18 @@ describe('Redux Migration - Selectors', () => {
   });
 
   test('selectPhaseData returns phase-specific data', () => {
-    store.dispatch(uiSlice.setPhaseData({
-      phase: PHASES.DISCOVER,
-      key: 'test',
-      value: 'value'
-    }));
+    store.dispatch(
+      uiSlice.setPhaseData({
+        phase: PHASES.DISCOVER,
+        key: 'test',
+        value: 'value',
+      }),
+    );
 
-    const phaseData = uiSlice.selectPhaseData(store.getState(), PHASES.DISCOVER);
+    const phaseData = uiSlice.selectPhaseData(
+      store.getState(),
+      PHASES.DISCOVER,
+    );
     expect(phaseData.test).toBe('value');
   });
 
@@ -335,7 +362,9 @@ describe('Redux Migration - Selectors', () => {
     const results = [{ path: '/test.txt', analysis: {} }];
     store.dispatch(analysisSlice.setAnalysisResults(results));
 
-    const analysisResults = analysisSlice.selectAnalysisResults(store.getState());
+    const analysisResults = analysisSlice.selectAnalysisResults(
+      store.getState(),
+    );
     expect(analysisResults).toHaveLength(1);
   });
 
@@ -400,9 +429,7 @@ describe('Redux Migration - Organize', () => {
   });
 
   test('setOrganizedFiles updates organized files', () => {
-    const files = [
-      { originalPath: '/old/file.txt', path: '/new/file.txt' }
-    ];
+    const files = [{ originalPath: '/old/file.txt', path: '/new/file.txt' }];
 
     store.dispatch(organizeSlice.setOrganizedFiles(files));
 

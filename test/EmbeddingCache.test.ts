@@ -1,4 +1,4 @@
-const EmbeddingCache = require('../src/main/services/EmbeddingCache');
+const EmbeddingCache = require('../src/main/services/EmbeddingCache').default;
 
 // Mock logger to avoid console output during tests
 jest.mock('../src/shared/logger', () => ({
@@ -522,7 +522,8 @@ describe('FolderMatchingService Integration with EmbeddingCache', () => {
       getStats: jest.fn().mockResolvedValue({}),
     };
 
-    FolderMatchingService = require('../src/main/services/FolderMatchingService');
+    FolderMatchingService =
+      require('../src/main/services/FolderMatchingService').default;
     service = new FolderMatchingService(mockChromaDB);
   });
 

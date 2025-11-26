@@ -3,9 +3,19 @@
  * Tests the new Zod-based IPC validation infrastructure
  */
 
-const { validateIpc, withRequestId, withErrorHandling, compose, generateRequestId } = require('../src/main/ipc/validation');
-const { SingleFileAnalysisSchema, AnalysisRequestSchema, FileOpenSchema } = require('../src/main/ipc/schemas');
-const { ValidationError } = require('../src/shared/errors');
+const {
+  validateIpc,
+  withRequestId,
+  withErrorHandling,
+  compose,
+  generateRequestId,
+} = require('../src/main/ipc/validation');
+const {
+  SingleFileAnalysisSchema,
+  AnalysisRequestSchema,
+  FileOpenSchema,
+} = require('../src/main/ipc/schemas');
+const { StratoSortError } = require('../src/shared/errors');
 
 describe('IPC Validation System', () => {
   describe('generateRequestId', () => {
@@ -123,7 +133,9 @@ describe('IPC Validation System', () => {
         return { success: true, data };
       });
 
-      const validatedHandler = validateIpc(SingleFileAnalysisSchema)(mockHandler);
+      const validatedHandler = validateIpc(SingleFileAnalysisSchema)(
+        mockHandler,
+      );
       const mockEvent = {};
       const inputData = { filePath: '/path/to/file.txt' };
 
@@ -134,14 +146,18 @@ describe('IPC Validation System', () => {
       expect(result.data.filePath).toBe('/path/to/file.txt');
     });
 
-    it('should throw ValidationError for invalid data', async () => {
+    it('should throw StratoSortError for invalid data', async () => {
       const mockHandler = jest.fn();
 
-      const validatedHandler = validateIpc(SingleFileAnalysisSchema)(mockHandler);
+      const validatedHandler = validateIpc(SingleFileAnalysisSchema)(
+        mockHandler,
+      );
       const mockEvent = {};
       const invalidData = { filePath: '' };
 
-      await expect(validatedHandler(mockEvent, invalidData)).rejects.toThrow(ValidationError);
+      await expect(validatedHandler(mockEvent, invalidData)).rejects.toThrow(
+        StratoSortError,
+      );
       expect(mockHandler).not.toHaveBeenCalled();
     });
   });
@@ -183,19 +199,23 @@ describe('IPC Validation System', () => {
     it('should apply middleware in correct order', async () => {
       const executionOrder = [];
 
-      const middleware1 = (handler) => async (...args) => {
-        executionOrder.push('middleware1-before');
-        const result = await handler(...args);
-        executionOrder.push('middleware1-after');
-        return result;
-      };
+      const middleware1 =
+        (handler) =>
+        async (...args) => {
+          executionOrder.push('middleware1-before');
+          const result = await handler(...args);
+          executionOrder.push('middleware1-after');
+          return result;
+        };
 
-      const middleware2 = (handler) => async (...args) => {
-        executionOrder.push('middleware2-before');
-        const result = await handler(...args);
-        executionOrder.push('middleware2-after');
-        return result;
-      };
+      const middleware2 =
+        (handler) =>
+        async (...args) => {
+          executionOrder.push('middleware2-before');
+          const result = await handler(...args);
+          executionOrder.push('middleware2-after');
+          return result;
+        };
 
       const mockHandler = jest.fn(async () => {
         executionOrder.push('handler');
@@ -225,7 +245,7 @@ describe('IPC Validation System', () => {
       const fullStackHandler = compose(
         withErrorHandling,
         withRequestId,
-        validateIpc(SingleFileAnalysisSchema)
+        validateIpc(SingleFileAnalysisSchema),
       )(mockHandler);
 
       const mockEvent = {};
@@ -246,7 +266,7 @@ describe('IPC Validation System', () => {
       const fullStackHandler = compose(
         withErrorHandling,
         withRequestId,
-        validateIpc(SingleFileAnalysisSchema)
+        validateIpc(SingleFileAnalysisSchema),
       )(mockHandler);
 
       const mockEvent = {};

@@ -4,7 +4,7 @@
  * Testing the centralized Ollama operations wrapper
  */
 
-const OllamaService = require('../src/main/services/OllamaService');
+const OllamaService = require('../src/main/services/OllamaService').default;
 
 // Mock logger
 jest.mock('../src/shared/logger', () => ({

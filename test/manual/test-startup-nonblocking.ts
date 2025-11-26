@@ -21,7 +21,7 @@ async function measureStartupResponsiveness() {
   const manager = new StartupManager();
 
   // Track responsiveness during startup
-  let responseChecks = [];
+  const responseChecks = [];
   let isBlocked = false;
 
   // Set up a timer to check if the event loop is responsive
@@ -96,7 +96,7 @@ async function measureStartupResponsiveness() {
       console.log('\n⚠ WARNING: Some operations may still be blocking.');
       console.log('The UI might experience freezing during startup.');
     }
-  } catch (error) {
+  } catch (_error) {
     clearInterval(checkInterval);
     console.error('Test failed:', error);
     process.exit(1);

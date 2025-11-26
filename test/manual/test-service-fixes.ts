@@ -54,7 +54,7 @@ async function testOllamaDetection() {
       log(`⚠ Ollama returned status ${response.status}`, 'yellow');
       return false;
     }
-  } catch (error) {
+  } catch (_error) {
     if (error.code === 'ECONNREFUSED') {
       log('✗ Ollama is not running', 'red');
       log('  You can start it with: ollama serve', 'yellow');
@@ -163,7 +163,7 @@ async function testChromaDBHealth() {
       } else {
         log(`  ✗ Endpoint ${endpoint} returned ${response.status}`, 'red');
       }
-    } catch (error) {
+    } catch (_error) {
       if (error.code === 'ECONNREFUSED') {
         log(`  ✗ ChromaDB not running at ${CHROMADB_URL}`, 'red');
         break;
@@ -245,7 +245,7 @@ async function testStartupManager() {
     }
 
     return true;
-  } catch (error) {
+  } catch (_error) {
     log(`✗ StartupManager test failed: ${error.message}`, 'red');
     return false;
   }

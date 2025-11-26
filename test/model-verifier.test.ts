@@ -7,7 +7,7 @@ jest.mock('ollama', () => ({
   Ollama: jest.fn(),
 }));
 const { Ollama } = require('ollama');
-const ModelVerifier = require('../src/main/services/ModelVerifier');
+const ModelVerifier = require('../src/main/services/ModelVerifier').default;
 const { DEFAULT_AI_MODELS } = require('../src/shared/constants');
 
 describe('ModelVerifier', () => {

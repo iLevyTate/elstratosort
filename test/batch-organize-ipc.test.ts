@@ -23,15 +23,15 @@ jest.mock('../src/main/services/transaction', () => ({
             success: true,
             operation: op,
           });
-        } catch (error) {
+        } catch (opError: any) {
           results.push({
             success: false,
             operation: op,
-            error: error.message,
+            error: opError.message,
           });
         }
       }
-      const successCount = results.filter(r => r.success).length;
+      const successCount = results.filter((r) => r.success).length;
       return {
         success: successCount > 0,
         results,
@@ -54,7 +54,13 @@ describe('Files IPC - batch organize', () => {
   function register() {
     const { IPC_CHANNELS, ACTION_TYPES } = require('../src/shared/constants');
     const registerAllIpc = require('../src/main/ipc').registerAllIpc;
-    const logger = { info: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const logger = {
+      info: jest.fn(),
+      error: jest.fn(),
+      warn: jest.fn(),
+      debug: jest.fn(),
+      setContext: jest.fn(),
+    };
     const getMainWindow = () => ({
       isDestroyed: () => false,
       webContents: { send: jest.fn() },
@@ -147,7 +153,7 @@ describe('Files IPC - batch organize', () => {
     try {
       await fs.unlink(destA);
       await fs.unlink(destB);
-    } catch (e) {
+    } catch (_e) {
       // Ignore cleanup errors
     }
   });

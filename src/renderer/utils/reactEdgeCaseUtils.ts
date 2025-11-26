@@ -1,7 +1,9 @@
 /**
  * React Edge Case Utilities
  * Provides hooks and utilities for handling common React edge cases
- */const { useEffect, useRef, useCallback, useState, useMemo } = require('react');const { logger } = require('../../shared/logger');
+ */
+const { useEffect, useRef, useCallback, useState, useMemo } = require('react');
+const { logger } = require('../../shared/logger');
 
 logger.setContext('ReactEdgeCaseUtils');
 
@@ -52,8 +54,8 @@ function usePrevious(value) {
     ref.current = value;
   });
 
-  // eslint-disable-next-line react-hooks/refs -- This is the standard usePrevious pattern from React docs
   // Intentionally returns ref.current during render to get the previous value
+  // This is the standard usePrevious pattern from React docs
   return ref.current;
 }
 
@@ -109,7 +111,8 @@ function useEventListener(eventName, handler, target = null, options = {}) {
 
     return () => {
       eventTarget.removeEventListener(eventName, eventListener, options);
-    };  }, [eventName, target, options.capture, options.passive, options.once]);
+    };
+  }, [eventName, target, options.capture, options.passive, options.once]);
 }
 
 /**
@@ -368,11 +371,13 @@ function useCancellablePromises() {
  * @param {string} componentName - Component name for logging
  */
 function useMountTracking(componentName) {
-  useEffect(() => {    if (process.env.NODE_ENV === 'development') {
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
       logger.debug('Component mounted', { componentName });
     }
 
-    return () => {      if (process.env.NODE_ENV === 'development') {
+    return () => {
+      if (process.env.NODE_ENV === 'development') {
         logger.debug('Component unmounted', { componentName });
       }
     };
@@ -552,7 +557,8 @@ function useOnlineStatus() {
   );
 
   return online;
-}module.exports = {
+}
+module.exports = {
   useLatest,
   useStableCallback,
   usePrevious,

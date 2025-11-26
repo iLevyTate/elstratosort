@@ -5,10 +5,11 @@ import { createSlice } from '@reduxjs/toolkit';
 
 const initialState = {
   // Current phase
-  currentPhase: 'discover', // 'discover', 'organize', 'complete'
+  currentPhase: 'discover', // 'setup', 'discover', 'organize', 'complete'
 
   // Phase-specific data (generic storage for any phase-specific state)
   phaseData: {
+    setup: {},
     discover: {},
     organize: {},
     complete: {},
@@ -93,6 +94,16 @@ const uiSlice = createSlice({
       // If no phase specified, use current phase
       const targetPhase = phase || state.currentPhase;
 
+      // Ensure phaseData object exists (safety for rehydration)
+      if (!state.phaseData) {
+        state.phaseData = {
+          setup: {},
+          discover: {},
+          organize: {},
+          complete: {},
+        };
+      }
+
       if (!state.phaseData[targetPhase]) {
         state.phaseData[targetPhase] = {};
       }
@@ -108,6 +119,7 @@ const uiSlice = createSlice({
     resetWorkflow: (state) => {
       state.currentPhase = 'discover';
       state.phaseData = {
+        setup: {},
         discover: {},
         organize: {},
         complete: {},
@@ -119,6 +131,16 @@ const uiSlice = createSlice({
 
     // Notifications
     addNotification: (state, action) => {
+      // Ensure notifications array exists (safety for rehydration)
+      if (!Array.isArray(state.notifications)) {
+        state.notifications = [];
+      }
+
+      // Ensure nextNotificationId is a number
+      if (typeof state.nextNotificationId !== 'number') {
+        state.nextNotificationId = 1;
+      }
+
       const notification = {
         id: state.nextNotificationId++,
         message: action.payload.message || action.payload,
@@ -220,7 +242,8 @@ export const selectCurrentPhase = (state) => state.ui.currentPhase;
 export const selectPhaseHistory = (state) => state.ui.phaseHistory;
 export const selectPhaseData = (state, phase) =>
   state.ui.phaseData[phase || state.ui.currentPhase] || {};
-export const selectCurrentPhaseData = (state) => state.ui.phaseData[state.ui.currentPhase] || {};
+export const selectCurrentPhaseData = (state) =>
+  state.ui.phaseData[state.ui.currentPhase] || {};
 export const selectNotifications = (state) => state.ui.notifications;
 export const selectActiveModal = (state) => state.ui.activeModal;
 export const selectModalProps = (state) => state.ui.modalProps;
@@ -229,7 +252,8 @@ export const selectGlobalLoading = (state) => ({
   message: state.ui.loadingMessage,
 });
 export const selectIsLoading = (state) => state.ui.globalLoading;
-export const selectShowSettings = (state) => state.ui.activeModal === 'settings';
+export const selectShowSettings = (state) =>
+  state.ui.activeModal === 'settings';
 export const selectSidebarCollapsed = (state) => state.ui.sidebarCollapsed;
 export const selectActiveTooltip = (state) => state.ui.activeTooltip;
 

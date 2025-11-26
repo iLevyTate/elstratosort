@@ -37,7 +37,8 @@ describe('UndoRedoService', () => {
   });
 
   test('records actions and persists across instances', async () => {
-    const UndoRedoService = require('../src/main/services/UndoRedoService');
+    const UndoRedoService =
+      require('../src/main/services/UndoRedoService').default;
     const service = new UndoRedoService();
 
     // Create file paths in temp directory
@@ -82,14 +83,16 @@ describe('UndoRedoService', () => {
     // New instance should load persisted actions
     const electronReloaded = require('./mocks/electron');
     electronReloaded.app.getPath.mockReturnValue(tmpDir);
-    const UndoRedoServiceReloaded = require('../src/main/services/UndoRedoService');
+    const UndoRedoServiceReloaded =
+      require('../src/main/services/UndoRedoService').default;
     const serviceReloaded = new UndoRedoServiceReloaded();
     await serviceReloaded.initialize();
     expect(serviceReloaded.canUndo()).toBe(true);
   });
 
   test('batch operation undo reverses moves', async () => {
-    const UndoRedoService = require('../src/main/services/UndoRedoService');
+    const UndoRedoService =
+      require('../src/main/services/UndoRedoService').default;
     const service = new UndoRedoService();
 
     // Set up two files moved to new paths

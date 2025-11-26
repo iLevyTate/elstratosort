@@ -15,7 +15,7 @@ jest.mock('electron', () => ({
 }));
 
 const { app } = require('electron');
-const SettingsService = require('../src/main/services/SettingsService');
+const SettingsService = require('../src/main/services/SettingsService').default;
 
 describe('SettingsService atomic save', () => {
   test('interrupted write leaves original file intact', async () => {

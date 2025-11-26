@@ -10,7 +10,7 @@ function getStratosortBasePath() {
     if (documentsPath) {
       return path.join(documentsPath, 'Stratosort');
     }
-  } catch (error) {
+  } catch (_error) {
     console.warn('[PATH] Documents path not available:', error.message);
   }
 
@@ -18,7 +18,7 @@ function getStratosortBasePath() {
     // Simulate app.getPath('userData') - use a user data equivalent
     const userDataPath = path.join(os.homedir(), '.config', 'Stratosort');
     return path.join(userDataPath, 'Stratosort');
-  } catch (error) {
+  } catch (_error) {
     console.warn('[PATH] User data path not available:', error.message);
   }
 
@@ -42,7 +42,7 @@ async function testEnhancedPaths() {
     try {
       await fs.mkdir(stratosortBasePath, { recursive: true });
       console.log('✅ Enhanced Stratosort base folder created/exists');
-    } catch (error) {
+    } catch (_error) {
       console.log(`❌ Error creating base folder: ${error.message}`);
       return;
     }
@@ -63,7 +63,7 @@ async function testEnhancedPaths() {
         const fullPath = path.join(stratosortBasePath, folderName);
         await fs.mkdir(fullPath, { recursive: true });
         console.log(`✅ Created: ${fullPath}`);
-      } catch (error) {
+      } catch (_error) {
         console.log(`❌ Failed to create ${folderName}: ${error.message}`);
       }
     }
@@ -82,7 +82,7 @@ async function testEnhancedPaths() {
       try {
         await fs.mkdir(testPath, { recursive: true });
         console.log(`✅ Cross-platform test: ${testName} → ${testPath}`);
-      } catch (error) {
+      } catch (_error) {
         console.log(
           `❌ Failed cross-platform test: ${testName} - ${error.message}`,
         );
@@ -108,7 +108,7 @@ async function testEnhancedPaths() {
           `⚠️  Expected at least ${expectedCount} folders, found ${folders.length}`,
         );
       }
-    } catch (error) {
+    } catch (_error) {
       console.log(`❌ Error reading folder structure: ${error.message}`);
     }
 
@@ -122,13 +122,13 @@ async function testEnhancedPaths() {
       console.log(
         `📊 Permissions: Read ${stats.mode & 0o444 ? '✅' : '❌'} Write ${stats.mode & 0o222 ? '✅' : '❌'}`,
       );
-    } catch (error) {
+    } catch (_error) {
       console.log(`❌ Path accessibility test failed: ${error.message}`);
     }
 
     console.log('\n🎉 Enhanced path testing completed!');
     console.log(`🚀 Stratosort will use: ${stratosortBasePath}`);
-  } catch (error) {
+  } catch (_error) {
     console.error('💥 Enhanced path test failed:', error);
   }
 }

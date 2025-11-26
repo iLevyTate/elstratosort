@@ -9,7 +9,13 @@ describe('Embeddings/Semantic IPC', () => {
 
   test('REBUILD_FOLDERS calls embedding upsert for custom folders', async () => {
     jest.resetModules();
-    const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
+    const logger = {
+      error: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      debug: jest.fn(),
+      setContext: jest.fn(),
+    };
     // IMPROVED BEHAVIOR: Now uses batch operations for better performance
     // Track batch upserts instead of individual upsertFolderEmbedding calls
     const batchUpserts = [];
@@ -73,7 +79,13 @@ describe('Embeddings/Semantic IPC', () => {
 
   test('REBUILD_FILES rebuilds vectors from analysis history', async () => {
     jest.resetModules();
-    const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
+    const logger = {
+      error: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      debug: jest.fn(),
+      setContext: jest.fn(),
+    };
     // IMPROVED BEHAVIOR: Now uses batch operations for better performance
     const inserted = [];
     jest.doMock('../src/main/services/FolderMatchingService', () =>
@@ -149,7 +161,13 @@ describe('Embeddings/Semantic IPC', () => {
 
   test('CLEAR_STORE calls resetAll successfully', async () => {
     jest.resetModules();
-    const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
+    const logger = {
+      error: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      debug: jest.fn(),
+      setContext: jest.fn(),
+    };
     // Mock ChromaDBService to ensure resetAll is called
     const resetAllCalls = [];
     jest.doMock('../src/main/services/ChromaDBService', () => ({

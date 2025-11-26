@@ -26,18 +26,27 @@ jest.mock('../src/main/services/chroma/ChromaCollectionManager', () => {
 
     // Create collections using the data stores
     const fileCol = {
-      upsert: jest.fn().mockImplementation(async ({ ids, embeddings, metadatas, documents }) => {
-        for (let i = 0; i < ids.length; i++) {
-          mockFileCollectionData.set(ids[i], {
-            id: ids[i],
-            embedding: embeddings[i],
-            metadata: metadatas[i],
-            document: documents[i],
-          });
-        }
-      }),
+      upsert: jest
+        .fn()
+        .mockImplementation(
+          async ({ ids, embeddings, metadatas, documents }) => {
+            for (let i = 0; i < ids.length; i++) {
+              mockFileCollectionData.set(ids[i], {
+                id: ids[i],
+                embedding: embeddings[i],
+                metadata: metadatas[i],
+                document: documents[i],
+              });
+            }
+          },
+        ),
       get: jest.fn().mockImplementation(async (params) => {
-        const result = { ids: [], embeddings: [], metadatas: [], documents: [] };
+        const result = {
+          ids: [],
+          embeddings: [],
+          metadatas: [],
+          documents: [],
+        };
         if (params && params.ids && params.ids.length > 0) {
           for (const id of params.ids) {
             const item = mockFileCollectionData.get(id);
@@ -56,22 +65,33 @@ jest.mock('../src/main/services/chroma/ChromaCollectionManager', () => {
           mockFileCollectionData.delete(id);
         }
       }),
-      count: jest.fn().mockImplementation(async () => mockFileCollectionData.size),
+      count: jest
+        .fn()
+        .mockImplementation(async () => mockFileCollectionData.size),
     };
 
     const folderCol = {
-      upsert: jest.fn().mockImplementation(async ({ ids, embeddings, metadatas, documents }) => {
-        for (let i = 0; i < ids.length; i++) {
-          mockFolderCollectionData.set(ids[i], {
-            id: ids[i],
-            embedding: embeddings[i],
-            metadata: metadatas[i],
-            document: documents[i],
-          });
-        }
-      }),
+      upsert: jest
+        .fn()
+        .mockImplementation(
+          async ({ ids, embeddings, metadatas, documents }) => {
+            for (let i = 0; i < ids.length; i++) {
+              mockFolderCollectionData.set(ids[i], {
+                id: ids[i],
+                embedding: embeddings[i],
+                metadata: metadatas[i],
+                document: documents[i],
+              });
+            }
+          },
+        ),
       get: jest.fn().mockImplementation(async (params) => {
-        const result = { ids: [], embeddings: [], metadatas: [], documents: [] };
+        const result = {
+          ids: [],
+          embeddings: [],
+          metadatas: [],
+          documents: [],
+        };
         if (params && params.ids && params.ids.length > 0) {
           for (const id of params.ids) {
             const item = mockFolderCollectionData.get(id);
@@ -85,7 +105,9 @@ jest.mock('../src/main/services/chroma/ChromaCollectionManager', () => {
         }
         return result;
       }),
-      count: jest.fn().mockImplementation(async () => mockFolderCollectionData.size),
+      count: jest
+        .fn()
+        .mockImplementation(async () => mockFolderCollectionData.size),
     };
 
     return {
@@ -116,12 +138,16 @@ jest.mock('../src/main/services/chroma/ChromaCollectionManager', () => {
       deleteFile: jest.fn().mockImplementation(async (id) => {
         await fileCol.delete({ ids: [id] });
       }),
-      batchUpsertFolders: jest.fn().mockImplementation(async (ids, embeddings, metadatas, documents) => {
-        await folderCol.upsert({ ids, embeddings, metadatas, documents });
-      }),
-      batchUpsertFiles: jest.fn().mockImplementation(async (ids, embeddings, metadatas, documents) => {
-        await fileCol.upsert({ ids, embeddings, metadatas, documents });
-      }),
+      batchUpsertFolders: jest
+        .fn()
+        .mockImplementation(async (ids, embeddings, metadatas, documents) => {
+          await folderCol.upsert({ ids, embeddings, metadatas, documents });
+        }),
+      batchUpsertFiles: jest
+        .fn()
+        .mockImplementation(async (ids, embeddings, metadatas, documents) => {
+          await fileCol.upsert({ ids, embeddings, metadatas, documents });
+        }),
     };
   });
 });
@@ -182,7 +208,7 @@ describe('ChromaDBService Batch Operations', () => {
     }
     try {
       await fs.rm(tmpDir, { recursive: true, force: true });
-    } catch (e) {
+    } catch (_e) {
       // Ignore cleanup errors
     }
   });

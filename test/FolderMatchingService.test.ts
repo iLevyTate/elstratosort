@@ -3,7 +3,8 @@
  * TIER 1 - CRITICAL: Core semantic matching service
  * Testing the embeddings-based folder matching system
  */
-const FolderMatchingService = require('../src/main/services/FolderMatchingService');
+const FolderMatchingService =
+  require('../src/main/services/FolderMatchingService').default;
 
 // Mock ollama utils
 jest.mock('../src/main/ollamaUtils', () => ({

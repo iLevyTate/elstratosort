@@ -10,6 +10,7 @@
 ## 📊 Current Architecture Overview
 
 ### Stack Analysis
+
 ```
 Backend (Main Process):
   - 84 JavaScript files (1.1MB)
@@ -32,6 +33,7 @@ Frontend (Renderer):
 ## 🎯 Recommended Packages & Patterns
 
 ### Priority Rankings
+
 - **Priority 1 (High Impact, Low Effort):** Implement ASAP
 - **Priority 2 (High Impact, Medium Effort):** Plan for next sprint
 - **Priority 3 (Medium Impact, Medium Effort):** Consider for roadmap
@@ -51,6 +53,7 @@ npm install electron-log
 ```
 
 **Benefits:**
+
 - ✅ Automatic file rotation
 - ✅ Log levels (error, warn, info, debug)
 - ✅ Separate main/renderer logs
@@ -58,6 +61,7 @@ npm install electron-log
 - ✅ Easy debugging
 
 **Implementation:**
+
 ```javascript
 // src/main/logger.js
 const log = require('electron-log');
@@ -86,6 +90,7 @@ module.exports = log;
 ```
 
 **Benefits:**
+
 - ✅ Type-safe IPC communication
 - ✅ Validate file analysis results
 - ✅ Catch errors early
@@ -93,6 +98,7 @@ module.exports = log;
 - ✅ TypeScript-ready
 
 **Implementation:**
+
 ```javascript
 // src/shared/schemas/ipc.js
 const { z } = require('zod');
@@ -106,10 +112,12 @@ const FileSchema = z.object({
 
 const AnalysisRequestSchema = z.object({
   files: z.array(FileSchema).min(1).max(100),
-  options: z.object({
-    namingConvention: z.string(),
-    dateFormat: z.string(),
-  }).optional(),
+  options: z
+    .object({
+      namingConvention: z.string(),
+      dateFormat: z.string(),
+    })
+    .optional(),
 });
 
 // In IPC handler
@@ -134,6 +142,7 @@ npm install @tanstack/react-query
 ```
 
 **Benefits:**
+
 - ✅ Automatic caching
 - ✅ Background refetching
 - ✅ Optimistic updates
@@ -141,6 +150,7 @@ npm install @tanstack/react-query
 - ✅ Better loading/error states
 
 **Implementation:**
+
 ```javascript
 // src/renderer/api/queries.js
 import { useQuery, useMutation } from '@tanstack/react-query';
@@ -188,14 +198,17 @@ function SetupPhase() {
 **You're already using it through Redux Toolkit** - just use it more!
 
 **Additional Usage:**
+
 ```javascript
 import { produce } from 'immer';
 
 // For complex local state updates
-setEditingFiles(produce(draft => {
-  draft[fileIndex].category = newCategory;
-  draft[fileIndex].lastEdited = Date.now();
-}));
+setEditingFiles(
+  produce((draft) => {
+    draft[fileIndex].category = newCategory;
+    draft[fileIndex].lastEdited = Date.now();
+  }),
+);
 ```
 
 **Effort:** 0 hours (already have it)
@@ -215,6 +228,7 @@ npm install inversify reflect-metadata
 ```
 
 **Benefits:**
+
 - ✅ Loose coupling
 - ✅ Easy testing (mock dependencies)
 - ✅ Clear dependencies
@@ -222,6 +236,7 @@ npm install inversify reflect-metadata
 - ✅ Better architecture
 
 **Implementation:**
+
 ```javascript
 // src/main/di/container.js
 const { Container } = require('inversify');
@@ -239,7 +254,7 @@ container.bind(TYPES.ChromaDBService).to(ChromaDBService).inSingletonScope();
 class AutoOrganizeService {
   constructor(
     @inject(TYPES.OllamaService) ollamaService,
-    @inject(TYPES.ChromaDBService) chromaService
+    @inject(TYPES.ChromaDBService) chromaService,
   ) {
     this.ollama = ollamaService;
     this.chroma = chromaService;
@@ -262,6 +277,7 @@ npm install bullmq
 ```
 
 **Benefits:**
+
 - ✅ Background job processing
 - ✅ Retry failed jobs
 - ✅ Progress tracking
@@ -269,22 +285,31 @@ npm install bullmq
 - ✅ Job scheduling
 
 **Implementation:**
+
 ```javascript
 // src/main/queues/analysisQueue.js
 const { Queue, Worker } = require('bullmq');
 
 const analysisQueue = new Queue('file-analysis', {
-  connection: { /* redis or in-memory */ }
+  connection: {
+    /* redis or in-memory */
+  },
 });
 
 // Add job
-await analysisQueue.add('analyze-files', {
-  files: ['/path/to/file.txt'],
-  options: { /* ... */ }
-}, {
-  attempts: 3,
-  backoff: { type: 'exponential', delay: 2000 }
-});
+await analysisQueue.add(
+  'analyze-files',
+  {
+    files: ['/path/to/file.txt'],
+    options: {
+      /* ... */
+    },
+  },
+  {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 2000 },
+  },
+);
 
 // Worker
 const worker = new Worker('file-analysis', async (job) => {
@@ -301,7 +326,7 @@ const worker = new Worker('file-analysis', async (job) => {
 worker.on('progress', (job, progress) => {
   mainWindow.webContents.send('analysis:progress', {
     jobId: job.id,
-    progress
+    progress,
   });
 });
 ```
@@ -319,6 +344,7 @@ worker.on('progress', (job, progress) => {
 **Solution:** Built-in data fetching (alternative to React Query)
 
 **Benefits:**
+
 - ✅ Built into Redux Toolkit
 - ✅ Automatic caching
 - ✅ Optimistic updates
@@ -326,6 +352,7 @@ worker.on('progress', (job, progress) => {
 - ✅ Code generation
 
 **Implementation:**
+
 ```javascript
 // src/renderer/store/api.js
 import { createApi } from '@reduxjs/toolkit/query/react';
@@ -379,6 +406,7 @@ npm install fastify
 ```
 
 **Benefits:**
+
 - ✅ API abstraction layer
 - ✅ Request validation
 - ✅ Rate limiting
@@ -406,19 +434,19 @@ npm install zustand
 ```
 
 **When to Use:**
+
 - UI-only state (modals, tooltips, form state)
 - Component-level state that doesn't need persistence
 - Temporary state (drag-and-drop, hover effects)
 
 **Implementation (Jotai):**
+
 ```javascript
 // src/renderer/atoms/modal.js
 import { atom } from 'jotai';
 
 export const modalAtom = atom(null);
-export const isModalOpenAtom = atom(
-  (get) => get(modalAtom) !== null
-);
+export const isModalOpenAtom = atom((get) => get(modalAtom) !== null);
 
 // In component
 import { useAtom } from 'jotai';
@@ -446,6 +474,7 @@ npm install eventemitter2
 ```
 
 **Benefits:**
+
 - ✅ Loose coupling
 - ✅ Plugin architecture
 - ✅ Audit logging
@@ -453,6 +482,7 @@ npm install eventemitter2
 - ✅ Namespaces
 
 **Implementation:**
+
 ```javascript
 // src/main/events/appEvents.js
 const EventEmitter2 = require('eventemitter2');
@@ -513,17 +543,23 @@ npm install react-hook-form
 ```
 
 **Benefits:**
+
 - ✅ Less re-renders
 - ✅ Built-in validation
 - ✅ Easy integration with UI libraries
 - ✅ Better performance
 
 **Implementation:**
+
 ```javascript
 import { useForm } from 'react-hook-form';
 
 function AddFolderForm() {
-  const { register, handleSubmit, formState: { errors } } = useForm();
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm();
 
   const onSubmit = (data) => {
     addFolder(data);
@@ -562,6 +598,7 @@ npm install winston
 ```
 
 **Benefits:**
+
 - ✅ Multiple transports (file, console, HTTP, etc.)
 - ✅ Custom formats
 - ✅ Profiling
@@ -574,6 +611,7 @@ npm install winston
 ## 📋 Recommended Implementation Order
 
 ### Phase 1: Quick Wins (Week 1-2)
+
 1. ✅ **electron-log** (2-3 hours) - Better logging
 2. ✅ **Zod validation** (4-6 hours) - IPC safety
 3. ✅ **React Query** (12 hours) - Better data fetching
@@ -582,6 +620,7 @@ npm install winston
 **Impact:** Very High
 
 ### Phase 2: Architecture (Week 3-4)
+
 1. ✅ **Inversify DI** (16-20 hours) - Service architecture
 2. ✅ **BullMQ** (20-24 hours) - Job queue
 
@@ -589,9 +628,10 @@ npm install winston
 **Impact:** Very High
 
 ### Phase 3: Polish (Week 5-6)
-1. ⚠️  **Jotai** (8-12 hours) - UI state (if needed)
-2. ⚠️  **EventEmitter2** (12-16 hours) - Events (if needed)
-3. ⚠️  **React Hook Form** (6-8 hours) - Forms (if needed)
+
+1. ⚠️ **Jotai** (8-12 hours) - UI state (if needed)
+2. ⚠️ **EventEmitter2** (12-16 hours) - Events (if needed)
+3. ⚠️ **React Hook Form** (6-8 hours) - Forms (if needed)
 
 **Total Effort:** ~26-36 hours
 **Impact:** Medium
@@ -601,13 +641,16 @@ npm install winston
 ## 🎯 Top 3 Recommendations (Start Here)
 
 ### #1: React Query (or RTK Query)
+
 **Why:** Biggest immediate impact on code quality
+
 - Reduces Redux boilerplate
 - Better UX (loading states, caching)
 - Industry standard pattern
 - Easy to adopt incrementally
 
 **Start With:**
+
 - Smart folders loading in SetupPhase
 - File analysis status in DiscoverPhase
 - Organized files in CompletePhase
@@ -615,13 +658,16 @@ npm install winston
 ---
 
 ### #2: electron-log + Zod
+
 **Why:** Better debugging and reliability
+
 - electron-log: Production-ready logging
 - Zod: Catch IPC errors early
 - Low effort, high impact
 - Critical for production
 
 **Start With:**
+
 - Add electron-log to all services
 - Add Zod schemas for IPC messages
 - Validate analysis requests/responses
@@ -629,13 +675,16 @@ npm install winston
 ---
 
 ### #3: Inversify (Dependency Injection)
+
 **Why:** Long-term maintainability
+
 - Makes testing possible
 - Cleaner service architecture
 - Easier to extend
 - Industry best practice
 
 **Start With:**
+
 - OllamaService, ChromaDBService
 - AutoOrganizeService
 - Gradually migrate other services
@@ -645,6 +694,7 @@ npm install winston
 ## 📊 Complexity Reduction Impact
 
 ### Current Complexity Metrics
+
 ```
 Backend:
   - 84 files, 1.1MB
@@ -661,6 +711,7 @@ Frontend:
 ```
 
 ### After Recommended Changes
+
 ```
 Backend:
   - Same file count, better organized
@@ -684,6 +735,7 @@ Frontend:
 ## ⚠️ What NOT to Add
 
 ### ❌ Don't Need:
+
 1. **GraphQL** - Overkill for IPC, adds complexity
 2. **Microservices** - Desktop app, not web service
 3. **Docker** - Desktop app, users install directly
@@ -699,16 +751,16 @@ Frontend:
 
 ## 🎯 Summary Table
 
-| Package | Priority | Effort | Impact | Start Date |
-|---------|----------|--------|--------|------------|
-| **electron-log** | 1 | 2-3h | High | Week 1 |
-| **Zod validation** | 1 | 4-6h | High | Week 1 |
-| **React Query** | 1 | 12h | Very High | Week 1-2 |
-| **Inversify** | 2 | 16-20h | Very High | Week 3 |
-| **BullMQ** | 2 | 20-24h | Very High | Week 4 |
-| **Jotai** | 3 | 8-12h | Medium | Week 5 (if needed) |
-| **EventEmitter2** | 3 | 12-16h | Medium | Week 5 (if needed) |
-| **React Hook Form** | 4 | 6-8h | Medium | Week 6 (if needed) |
+| Package             | Priority | Effort | Impact    | Start Date         |
+| ------------------- | -------- | ------ | --------- | ------------------ |
+| **electron-log**    | 1        | 2-3h   | High      | Week 1             |
+| **Zod validation**  | 1        | 4-6h   | High      | Week 1             |
+| **React Query**     | 1        | 12h    | Very High | Week 1-2           |
+| **Inversify**       | 2        | 16-20h | Very High | Week 3             |
+| **BullMQ**          | 2        | 20-24h | Very High | Week 4             |
+| **Jotai**           | 3        | 8-12h  | Medium    | Week 5 (if needed) |
+| **EventEmitter2**   | 3        | 12-16h | Medium    | Week 5 (if needed) |
+| **React Hook Form** | 4        | 6-8h   | Medium    | Week 6 (if needed) |
 
 ---
 

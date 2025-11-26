@@ -18,7 +18,7 @@ async function testFolderCreation() {
     try {
       await fs.mkdir(stratosortBasePath, { recursive: true });
       console.log('✅ Stratosort-Organized folder created/exists');
-    } catch (error) {
+    } catch (_error) {
       console.log(`❌ Error creating base folder: ${error.message}`);
       return;
     }
@@ -36,7 +36,7 @@ async function testFolderCreation() {
         const fullPath = path.join(stratosortBasePath, folderName);
         await fs.mkdir(fullPath, { recursive: true });
         console.log(`✅ Created: ${fullPath}`);
-      } catch (error) {
+      } catch (_error) {
         console.log(`❌ Failed to create ${folderName}: ${error.message}`);
       }
     }
@@ -59,7 +59,7 @@ async function testFolderCreation() {
           `⚠️  Expected ${testFolders.length} folders, found ${folders.length}`,
         );
       }
-    } catch (error) {
+    } catch (_error) {
       console.log(`❌ Error reading folder structure: ${error.message}`);
     }
 
@@ -72,7 +72,7 @@ async function testFolderCreation() {
     );
 
     console.log('\n🎉 Folder creation test completed!');
-  } catch (error) {
+  } catch (_error) {
     console.error('💥 Test failed:', error);
   }
 }

@@ -7,7 +7,10 @@ import { promises as fs } from 'fs';
 // const mammoth = require('mammoth');
 // const officeParser = require('officeparser');
 // const XLSX = require('xlsx-populate');
-// const AdmZip = require('adm-zip');import { FileProcessingError } from '../errors/AnalysisError';import { logger } from '../../shared/logger';
+// const AdmZip = require('adm-zip');
+import { FileProcessingError } from '../errors/AnalysisError';
+import { logger } from '../../shared/logger';
+import { getErrorMessage } from '../../shared/errors';
 logger.setContext('DocumentExtractors');
 
 // Memory management constants
@@ -32,10 +35,11 @@ async function checkFileSize(filePath, fileName) {
       });
     }
     return stats.size;
-  } catch (error) {
-    if (error.code === 'FILE_TOO_LARGE') throw error;
+  } catch (error: unknown) {
+    if (error instanceof FileProcessingError && error.code === 'FILE_TOO_LARGE')
+      throw error;
     throw new FileProcessingError('FILE_READ_ERROR', fileName, {
-      suggestion: error.message,
+      suggestion: getErrorMessage(error),
     });
   }
 }
@@ -53,7 +57,8 @@ function truncateText(text) {
   );
 }
 
-async function extractTextFromPdf(filePath, fileName) {  const pdf = require('pdf-parse');
+async function extractTextFromPdf(filePath, fileName) {
+  const pdf = require('pdf-parse');
   // Fixed: Check file size before loading into memory
   await checkFileSize(filePath, fileName);
 
@@ -78,7 +83,9 @@ async function extractTextFromPdf(filePath, fileName) {  const pdf = require('p
   }
 }
 
-async function ocrPdfIfNeeded(filePath) {  const sharp = require('sharp');  const tesseract = require('node-tesseract-ocr');
+async function ocrPdfIfNeeded(filePath) {
+  const sharp = require('sharp');
+  const tesseract = require('node-tesseract-ocr');
   let pdfBuffer = null;
   let rasterPng = null;
   try {
@@ -116,7 +123,8 @@ async function ocrPdfIfNeeded(filePath) {  const sharp = require('sharp');  co
   }
 }
 
-async function extractTextFromDoc(filePath) {  const mammoth = require('mammoth');
+async function extractTextFromDoc(filePath) {
+  const mammoth = require('mammoth');
   try {
     const result = await mammoth.extractRawText({ path: filePath });
     return result.value || '';
@@ -125,7 +133,8 @@ async function extractTextFromDoc(filePath) {  const mammoth = require('mammoth
   }
 }
 
-async function extractTextFromDocx(filePath) {  const mammoth = require('mammoth');
+async function extractTextFromDocx(filePath) {
+  const mammoth = require('mammoth');
   // Fixed: Check file size before reading
   await checkFileSize(filePath, filePath);
 
@@ -137,7 +146,9 @@ async function extractTextFromDocx(filePath) {  const mammoth = require('mammot
   return truncateText(result.value);
 }
 
-async function extractTextFromXlsx(filePath) {  const XLSX = require('xlsx-populate');  const officeParser = require('officeparser');
+async function extractTextFromXlsx(filePath) {
+  const XLSX = require('xlsx-populate');
+  const officeParser = require('officeparser');
   // Fixed: Check file size before loading workbook
   await checkFileSize(filePath, filePath);
 
@@ -222,9 +233,9 @@ async function extractTextFromXlsx(filePath) {  const XLSX = require('xlsx-popu
                 }
               }
             }
-          } catch (fallbackError) {
+          } catch (fallbackError: unknown) {
             logger.warn('[XLSX] Fallback extraction failed', {
-              error: fallbackError.message,
+              error: getErrorMessage(fallbackError),
               sheetName: sheet?.name() || 'unknown',
             });
           }
@@ -281,10 +292,10 @@ async function extractTextFromXlsx(filePath) {  const XLSX = require('xlsx-popu
         }
 
         if (allText.length > MAX_TEXT_LENGTH) break;
-      } catch (sheetError) {
+      } catch (sheetError: unknown) {
         // Log sheet-level errors but continue processing other sheets
         logger.warn('[XLSX] Error processing sheet', {
-          error: sheetError.message,
+          error: getErrorMessage(sheetError),
           sheetName: sheet?.name() || 'unknown',
         });
         continue;
@@ -306,9 +317,9 @@ async function extractTextFromXlsx(filePath) {  const XLSX = require('xlsx-popu
         if (fallbackText && fallbackText.trim()) {
           return truncateText(fallbackText);
         }
-      } catch (fallbackError) {
+      } catch (fallbackError: unknown) {
         logger.warn('[XLSX] Fallback extraction also failed', {
-          error: fallbackError.message,
+          error: getErrorMessage(fallbackError),
         });
       }
       throw new Error('No text content in XLSX');
@@ -318,13 +329,13 @@ async function extractTextFromXlsx(filePath) {  const XLSX = require('xlsx-popu
     const result = truncateText(allText);
     workbook = null;
     return result;
-  } catch (error) {
+  } catch (error: unknown) {
     // CRITICAL FIX: Provide detailed error information
-    const errorMessage = error.message || 'Unknown XLSX extraction error';
+    const errorMessage = getErrorMessage(error);
     logger.error('[XLSX] Extraction failed', {
       filePath,
       error: errorMessage,
-      errorStack: error.stack,
+      errorStack: error instanceof Error ? error.stack : undefined,
     });
     throw new FileProcessingError('XLSX_EXTRACTION_FAILURE', filePath, {
       originalError: errorMessage,
@@ -337,7 +348,9 @@ async function extractTextFromXlsx(filePath) {  const XLSX = require('xlsx-popu
   }
 }
 
-async function extractTextFromPptx(filePath) {  const officeParser = require('officeparser');  const AdmZip = require('adm-zip');
+async function extractTextFromPptx(filePath) {
+  const officeParser = require('officeparser');
+  const AdmZip = require('adm-zip');
   // Fixed: Check file size before reading
   await checkFileSize(filePath, filePath);
 
@@ -401,11 +414,11 @@ async function extractTextFromPptx(filePath) {  const officeParser = require('o
               if (extractedText.length > MAX_TEXT_LENGTH) {
                 break;
               }
-            } catch (entryError) {
+            } catch (entryError: unknown) {
               // Skip individual entry errors
               logger.debug('[PPTX] Error processing slide entry', {
                 entry: name,
-                error: entryError.message,
+                error: getErrorMessage(entryError),
               });
             }
           }
@@ -414,9 +427,9 @@ async function extractTextFromPptx(filePath) {  const officeParser = require('o
         if (extractedText && extractedText.trim()) {
           return truncateText(extractedText);
         }
-      } catch (zipError) {
+      } catch (zipError: unknown) {
         logger.warn('[PPTX] ZIP-based extraction failed', {
-          error: zipError.message,
+          error: getErrorMessage(zipError),
         });
       }
 
@@ -425,13 +438,13 @@ async function extractTextFromPptx(filePath) {  const officeParser = require('o
 
     // Fixed: Truncate result to prevent memory issues
     return truncateText(text);
-  } catch (error) {
+  } catch (error: unknown) {
     // CRITICAL FIX: Provide detailed error information
-    const errorMessage = error.message || 'Unknown PPTX extraction error';
+    const errorMessage = getErrorMessage(error);
     logger.error('[PPTX] Extraction failed', {
       filePath,
       error: errorMessage,
-      errorStack: error.stack,
+      errorStack: error instanceof Error ? error.stack : undefined,
     });
 
     // Re-throw as FileProcessingError for consistent error handling
@@ -483,7 +496,8 @@ function extractPlainTextFromHtml(html) {
 }
 
 // Generic ODF extractor: reads content.xml from ZIP and strips tags
-async function extractTextFromOdfZip(filePath) {  const AdmZip = require('adm-zip');
+async function extractTextFromOdfZip(filePath) {
+  const AdmZip = require('adm-zip');
   const zip = new AdmZip(filePath);
   const entry = zip.getEntry('content.xml');
   if (!entry) return '';
@@ -491,7 +505,8 @@ async function extractTextFromOdfZip(filePath) {  const AdmZip = require('adm-z
   return extractPlainTextFromHtml(xml);
 }
 
-async function extractTextFromEpub(filePath) {  const AdmZip = require('adm-zip');
+async function extractTextFromEpub(filePath) {
+  const AdmZip = require('adm-zip');
   // Fixed: Check file size before processing
   await checkFileSize(filePath, filePath);
 
@@ -549,7 +564,8 @@ async function extractTextFromEml(filePath) {
   return truncateText([subject, from, to, body].filter(Boolean).join('\n'));
 }
 
-async function extractTextFromMsg(filePath) {  const officeParser = require('officeparser');
+async function extractTextFromMsg(filePath) {
+  const officeParser = require('officeparser');
   // Best-effort using officeparser; if unavailable, return empty string
   try {
     const result = await officeParser.parseOfficeAsync(filePath);
@@ -566,7 +582,8 @@ async function extractTextFromKml(filePath) {
   return extractPlainTextFromHtml(xml);
 }
 
-async function extractTextFromKmz(filePath) {  const AdmZip = require('adm-zip');
+async function extractTextFromKmz(filePath) {
+  const AdmZip = require('adm-zip');
   const zip = new AdmZip(filePath);
   const kmlEntry =
     zip.getEntry('doc.kml') ||
@@ -576,7 +593,8 @@ async function extractTextFromKmz(filePath) {  const AdmZip = require('adm-zip'
   return extractPlainTextFromHtml(xml);
 }
 
-async function extractTextFromXls(filePath) {  const officeParser = require('officeparser');
+async function extractTextFromXls(filePath) {
+  const officeParser = require('officeparser');
   try {
     const result = await officeParser.parseOfficeAsync(filePath);
     const text =
@@ -588,7 +606,8 @@ async function extractTextFromXls(filePath) {  const officeParser = require('of
   return '';
 }
 
-async function extractTextFromPpt(filePath) {  const officeParser = require('officeparser');
+async function extractTextFromPpt(filePath) {
+  const officeParser = require('officeparser');
   try {
     const result = await officeParser.parseOfficeAsync(filePath);
     const text =
@@ -597,7 +616,8 @@ async function extractTextFromPpt(filePath) {  const officeParser = require('of
   } catch {
     return '';
   }
-}export {
+}
+export {
   extractTextFromPdf,
   ocrPdfIfNeeded,
   extractTextFromDoc,

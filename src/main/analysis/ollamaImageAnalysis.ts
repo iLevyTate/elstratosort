@@ -1,14 +1,30 @@
-const fs = require('fs').promises;const path = require('path');const sharp = require('sharp');
+const fs = require('fs').promises;
+const path = require('path');
+const sharp = require('sharp');
 const {
   getOllamaVisionModel,
   loadOllamaConfig,
-  getOllamaClient,} = require('../ollamaUtils');const { buildOllamaOptions } = require('../services/PerformanceService');const { globalDeduplicator } = require('../utils/llmOptimization');const { generateWithRetry } = require('../utils/ollamaApiRetry');
+  getOllamaClient,
+} = require('../ollamaUtils');
+const { buildOllamaOptions } = require('../services/PerformanceService');
+const { globalDeduplicator } = require('../utils/llmOptimization');
+const { generateWithRetry } = require('../utils/ollamaApiRetry');
 const {
   AI_DEFAULTS,
-  SUPPORTED_IMAGE_EXTENSIONS,} = require('../../shared/constants');const { normalizeAnalysisResult } = require('./utils');
+  SUPPORTED_IMAGE_EXTENSIONS,
+} = require('../../shared/constants');
+const { normalizeAnalysisResult } = require('./utils');
 const {
   getIntelligentCategory: getIntelligentImageCategory,
-  getIntelligentKeywords: getIntelligentImageKeywords,  safeSuggestedName,} = require('./fallbackUtils');const { getInstance: getChromaDB } = require('../services/ChromaDBService');const FolderMatchingService = require('../services/FolderMatchingService');const embeddingQueue = require('./EmbeddingQueue');const { logger } = require('../../shared/logger');
+  getIntelligentKeywords: getIntelligentImageKeywords,
+  safeSuggestedName,
+} = require('./fallbackUtils');
+const { getInstance: getChromaDB } = require('../services/ChromaDBService');
+const FolderMatchingService = require('../services/FolderMatchingService');
+const embeddingQueue = require('./EmbeddingQueue');
+const ModelVerifierModule = require('../services/ModelVerifier');
+const ModelVerifier = ModelVerifierModule.default || ModelVerifierModule;
+const { logger } = require('../../shared/logger');
 logger.setContext('OllamaImageAnalysis');
 let chromaDbSingleton = null;
 let folderMatcherSingleton = null;
@@ -46,8 +62,10 @@ async function analyzeImageWithOllama(
   originalFileName,
   smartFolders = [],
 ) {
-  try {    const { logger } = require('../../shared/logger');
-    logger.info(`Analyzing image content with Ollama`, {      model: AppConfig.ai.imageAnalysis.defaultModel,
+  try {
+    const { logger } = require('../../shared/logger');
+    logger.info(`Analyzing image content with Ollama`, {
+      model: AppConfig.ai.imageAnalysis.defaultModel,
     });
 
     // Build folder categories string for the prompt (include descriptions)
@@ -75,9 +93,13 @@ async function analyzeImageWithOllama(
     }
 
     // Build compact folder list for efficiency
-    const folderListCompact = smartFolders && smartFolders.length > 0
-      ? smartFolders.slice(0, 10).map(f => f.name).join(', ')
-      : 'General';
+    const folderListCompact =
+      smartFolders && smartFolders.length > 0
+        ? smartFolders
+            .slice(0, 10)
+            .map((f) => f.name)
+            .join(', ')
+        : 'General';
 
     // Optimized prompt v2.0 - ~35% fewer tokens
     const prompt = `Analyze image for file organization. Output valid JSON only.
@@ -99,7 +121,8 @@ Required fields:
     const cfg = await loadOllamaConfig();
     const modelToUse =
       getOllamaVisionModel() ||
-      cfg.selectedVisionModel ||      AppConfig.ai.imageAnalysis.defaultModel;
+      cfg.selectedVisionModel ||
+      AppConfig.ai.imageAnalysis.defaultModel;
 
     // Use deduplicator to prevent duplicate LLM calls for identical images
     const deduplicationKey = globalDeduplicator.generateKey({
@@ -126,7 +149,9 @@ Required fields:
               model: modelToUse,
               prompt,
               images: [imageBase64],
-              options: {                temperature: AppConfig.ai.imageAnalysis.temperature,                num_predict: AppConfig.ai.imageAnalysis.maxTokens,
+              options: {
+                temperature: AppConfig.ai.imageAnalysis.temperature,
+                num_predict: AppConfig.ai.imageAnalysis.maxTokens,
                 ...perfOptions,
               },
               format: 'json',
@@ -203,9 +228,10 @@ Required fields:
           colors: finalColors,
           has_text: Boolean(parsedJson.has_text),
           // Enhanced fields (v2.0)
-          text_content: typeof parsedJson.text_content === 'string'
-            ? parsedJson.text_content.slice(0, 200)
-            : '',
+          text_content:
+            typeof parsedJson.text_content === 'string'
+              ? parsedJson.text_content.slice(0, 200)
+              : '',
           promptVersion: 'v2.0',
         };
       } catch (e) {
@@ -225,7 +251,8 @@ Required fields:
       keywords: [],
       confidence: 60,
     };
-  } catch (error) {    const { logger } = require('../../shared/logger');
+  } catch (error) {
+    const { logger } = require('../../shared/logger');
     logger.error('Error calling Ollama API for image', {
       error: error.message,
     });
@@ -256,7 +283,8 @@ Required fields:
   }
 }
 
-async function analyzeImageFile(filePath, smartFolders = []) {  const { logger } = require('../../shared/logger');
+async function analyzeImageFile(filePath, smartFolders = []) {
+  const { logger } = require('../../shared/logger');
   logger.info(`Analyzing image file`, { path: filePath });
   const fileExtension = path.extname(filePath).toLowerCase();
   const fileName = path.basename(filePath);
@@ -275,7 +303,8 @@ async function analyzeImageFile(filePath, smartFolders = []) {  const { logger 
     };
   }
 
-  // Fixed: Proactive graceful degradation - check Ollama availability before processing  const ModelVerifier = require('../services/ModelVerifier');
+  // Fixed: Proactive graceful degradation - check Ollama availability before processing
+  // Use ModelVerifier from top-level import (already handles .default export)
   const modelVerifier = new ModelVerifier();
 
   try {
@@ -410,7 +439,8 @@ async function analyzeImageFile(filePath, smartFolders = []) {  const { logger 
       try {
         meta = await sharp(imageBuffer).metadata();
         if (meta && meta.exif) {
-          // Parse EXIF date (DateTimeOriginal or CreateDate)          const exif = require('exif-reader')(meta.exif);
+          // Parse EXIF date (DateTimeOriginal or CreateDate)
+          const exif = require('exif-reader')(meta.exif);
           if (exif && (exif.exif || exif.image)) {
             const dateStr =
               exif.exif?.DateTimeOriginal || exif.image?.ModifyDate;
@@ -438,9 +468,15 @@ async function analyzeImageFile(filePath, smartFolders = []) {  const { logger 
       if (needsFormatConversion || shouldResize) {
         transformer = sharp(imageBuffer);
         if (shouldResize) {
-          const resizeOptions: any = { fit: 'inside', withoutEnlargement: true };
-          if (meta && meta.width && meta.height) {            if (meta.width >= meta.height) resizeOptions.width = maxDimension;            else resizeOptions.height = maxDimension;
-          } else {            resizeOptions.width = maxDimension;
+          const resizeOptions: any = {
+            fit: 'inside',
+            withoutEnlargement: true,
+          };
+          if (meta && meta.width && meta.height) {
+            if (meta.width >= meta.height) resizeOptions.width = maxDimension;
+            else resizeOptions.height = maxDimension;
+          } else {
+            resizeOptions.width = maxDimension;
           }
           transformer = transformer.resize(resizeOptions);
         }
@@ -620,7 +656,8 @@ async function analyzeImageFile(filePath, smartFolders = []) {  const { logger 
             // Validate summary is non-empty before upserting
             if (summary && summary.trim().length > 0) {
               // CRITICAL FIX: Ensure ChromaDB is initialized
-              const chromaDbService =                require('../services/ChromaDBService').getInstance();
+              const chromaDbService =
+                require('../services/ChromaDBService').getInstance();
               if (chromaDbService) {
                 await chromaDbService.initialize();
               }
@@ -791,7 +828,8 @@ async function analyzeImageFile(filePath, smartFolders = []) {  const { logger 
 }
 
 // OCR capability using Ollama for text extraction from images
-async function extractTextFromImage(filePath) {  const { logger } = require('../../shared/logger');
+async function extractTextFromImage(filePath) {
+  const { logger } = require('../../shared/logger');
   try {
     const imageBuffer = await fs.readFile(filePath);
     const imageBase64 = imageBuffer.toString('base64');
@@ -801,7 +839,8 @@ async function extractTextFromImage(filePath) {  const { logger } = require('..
     const cfg2 = await loadOllamaConfig();
     const modelToUse2 =
       getOllamaVisionModel() ||
-      cfg2.selectedVisionModel ||      AppConfig.ai.imageAnalysis.defaultModel;
+      cfg2.selectedVisionModel ||
+      AppConfig.ai.imageAnalysis.defaultModel;
     const client2 = await getOllamaClient();
     const response = await generateWithRetry(
       client2,
@@ -837,10 +876,8 @@ async function extractTextFromImage(filePath) {  const { logger } = require('..
 
 /**
  * Force flush the embedding queue (useful for cleanup or end of batch)
- */async function flushAllEmbeddings() {
+ */
+async function flushAllEmbeddings() {
   await embeddingQueue.flush();
-}export {
-  analyzeImageFile,
-  extractTextFromImage,
-  flushAllEmbeddings,
-};
+}
+export { analyzeImageFile, extractTextFromImage, flushAllEmbeddings };

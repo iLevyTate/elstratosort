@@ -1,7 +1,8 @@
 /**
  * Tests for FolderMatchingService Batch Operations
  */
-const FolderMatchingService = require('../src/main/services/FolderMatchingService');
+const FolderMatchingService =
+  require('../src/main/services/FolderMatchingService').default;
 
 // Mock ollama utils
 jest.mock('../src/main/ollamaUtils', () => ({

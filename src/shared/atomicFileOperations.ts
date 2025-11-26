@@ -10,6 +10,7 @@ import path from 'path';
 import crypto from 'crypto';
 import os from 'os';
 import { logger } from './logger';
+import { getErrorMessage } from './errors';
 
 logger.setContext('AtomicFileOperations');
 
@@ -42,9 +43,9 @@ class AtomicFileOperations {
     try {
       await fs.mkdir(this.backupDirectory, { recursive: true });
       return this.backupDirectory;
-    } catch (error) {
+    } catch (error: unknown) {
       throw new Error(
-        `Failed to initialize backup directory: ${error.message}`,
+        `Failed to initialize backup directory: ${getErrorMessage(error)}`,
       );
     }
   }
@@ -71,8 +72,8 @@ class AtomicFileOperations {
     try {
       await fs.copyFile(filePath, backupPath);
       return backupPath;
-    } catch (error) {
-      throw new Error(`Backup creation failed: ${error.message}`);
+    } catch (error: unknown) {
+      throw new Error(`Backup creation failed: ${getErrorMessage(error)}`);
     }
   }
 
@@ -386,26 +387,27 @@ class AtomicFileOperations {
       cleanupTimer.unref();
 
       return { success: true, results };
-    } catch (error) {
+    } catch (error: unknown) {
       // Transaction failed, will be rolled back
+      const errorMsg = getErrorMessage(error);
 
       // Attempt to rollback
       try {
         await this.rollbackTransaction(transactionId);
         return {
           success: false,
-          error: error.message,
+          error: errorMsg,
           failedOperation: failedOperation?.id,
           rollbackSuccessful: true,
         };
-      } catch (rollbackError) {
+      } catch (rollbackError: unknown) {
         // Rollback failed - this is a critical error but we can't do much about it
         return {
           success: false,
-          error: error.message,
+          error: errorMsg,
           failedOperation: failedOperation?.id,
           rollbackSuccessful: false,
-          rollbackError: rollbackError.message,
+          rollbackError: getErrorMessage(rollbackError),
         };
       }
     }
@@ -439,8 +441,8 @@ class AtomicFileOperations {
           await fs.copyFile(backup, source);
           // File restored from backup
         }
-      } catch (error) {
-        rollbackErrors.push({ source, error: error.message });
+      } catch (error: unknown) {
+        rollbackErrors.push({ source, error: getErrorMessage(error) });
       }
     }
 
@@ -467,7 +469,7 @@ class AtomicFileOperations {
         if (await this.fileExists(backup)) {
           await fs.unlink(backup);
         }
-      } catch (error) {
+      } catch {
         // Ignore cleanup errors
       }
     }
@@ -517,7 +519,7 @@ class AtomicFileOperations {
     for (const id of staleTransactions) {
       try {
         await this.cleanupBackups(id);
-      } catch (error) {
+      } catch {
         // Ignore cleanup errors for stale transactions
       }
     }

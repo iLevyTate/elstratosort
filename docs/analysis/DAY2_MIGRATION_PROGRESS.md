@@ -1,4 +1,5 @@
 # Day 2: Redux Migration Progress
+
 ## Hook Migration - First 2 of 6 Complete
 
 **Date:** 2025-11-23
@@ -10,17 +11,20 @@
 ## ✅ Completed Migrations
 
 ### 1. useDiscoverSettings.js ✅
+
 **Status:** Complete
 **Time:** 30 minutes
 **Complexity:** Simple
 
 **Changes:**
+
 - Removed PhaseContext dependency
 - Now uses `selectPhaseData(state, 'discover')` from uiSlice
 - Settings persist to `ui.phaseData.discover.namingConvention`
 - All setter functions dispatch to Redux
 
 **Before/After:**
+
 ```javascript
 // BEFORE
 const { phaseData, actions } = usePhase();
@@ -42,11 +46,13 @@ const setNamingConvention = (convention) => {
 ---
 
 ### 2. useFileSelection.js ✅
+
 **Status:** Complete
 **Time:** 45 minutes
 **Complexity:** Medium
 
 **Changes:**
+
 - Removed PhaseContext and NotificationContext dependencies
 - Now uses filesSlice selectors: `selectSelectedFiles`, `selectFileStates`, `selectIsScanning`
 - Uses uiSlice for notifications: `dispatch(addNotification({...}))`
@@ -54,14 +60,17 @@ const setNamingConvention = (convention) => {
 - Removed local useState (now all in Redux)
 
 **Key Improvements:**
+
 - No more manual persistence logic (Redux middleware handles it)
 - State updates are atomic (no race conditions)
 - Better performance (Redux selectors are memoized)
 
 **Files Touched:**
+
 - `src/renderer/hooks/useFileSelection.js` (migrated)
 
 **Testing:** Need to verify:
+
 - File selection dialog works
 - Folder selection works
 - Drag & drop works
@@ -73,7 +82,9 @@ const setNamingConvention = (convention) => {
 ## 🔄 In Progress
 
 ### 3. Remaining Hooks (4 files)
+
 **Next up:**
+
 1. **useFileAnalysis.js** (Next - 1 hour estimated)
    - Uses PhaseContext for analysisResults
    - Should use analysisSlice instead
@@ -95,6 +106,7 @@ const setNamingConvention = (convention) => {
 ## 📊 Progress Statistics
 
 ### Migration Status
+
 - ✅ useDiscoverSettings.js (100%)
 - ✅ useFileSelection.js (100%)
 - ✅ useFileAnalysis.js (100%)
@@ -105,11 +117,13 @@ const setNamingConvention = (convention) => {
 **Overall Hook Migration: 100% Complete (6/6)** ✅
 
 ### Lines of Code
+
 - **Removed:** ~40 lines (PhaseContext usage, useState, useEffect)
 - **Added:** ~60 lines (Redux hooks, dispatch wrappers)
 - **Net Change:** +20 lines (but much cleaner architecture)
 
 ### Redux Actions Used
+
 - `setPhaseData` (uiSlice) - 4 calls
 - `selectPhaseData` (uiSlice) - 2 selectors
 - `selectSelectedFiles` (filesSlice) - 1 selector
@@ -126,15 +140,18 @@ const setNamingConvention = (convention) => {
 ## 🎯 Next Steps
 
 ### Immediate (Next 30 minutes)
+
 1. Migrate **useFileAnalysis.js** to analysisSlice
 2. Quick smoke test of migrated hooks
 
 ### Short-term (Next 2-3 hours)
+
 1. Migrate remaining 3 hooks
 2. Begin Phase component migration
 3. Test each component after migration
 
 ### Medium-term (Tomorrow)
+
 1. Migrate all UI components
 2. Delete PhaseContext.jsx
 3. Update AppProviders.jsx
@@ -145,11 +162,13 @@ const setNamingConvention = (convention) => {
 ## 🐛 Issues Encountered
 
 ### Issue 1: Notification API Change
+
 **Problem:** Old API was `addNotification(message, type, duration, id)`, new API is `addNotification({message, type, duration})`
 **Solution:** Updated all notification calls to use object parameter
 **Impact:** 5 locations updated in useFileSelection
 
 ### Issue 2: No Issues!
+
 The migration has been smooth so far. Redux infrastructure was well-prepared.
 
 ---
@@ -157,21 +176,25 @@ The migration has been smooth so far. Redux infrastructure was well-prepared.
 ## ✨ Benefits Observed
 
 ### 1. Simpler Code
+
 - No more `useEffect` for persistence (Redux middleware handles it)
 - No more manual state synchronization
 - Cleaner hook signatures
 
 ### 2. Better Performance
+
 - Redux selectors are memoized (no unnecessary re-renders)
 - State updates are batched
 - Smaller component re-render surface
 
 ### 3. Better DevTools
+
 - Redux DevTools show all state changes
 - Time-travel debugging now works
 - Action history visible
 
 ### 4. Type Safety (Future)
+
 - Can add TypeScript types to Redux actions/state
 - Better autocomplete in IDE
 - Fewer runtime errors
@@ -185,6 +208,7 @@ The migration has been smooth so far. Redux infrastructure was well-prepared.
 **New Estimate:** 4-5 hours total (on track!)
 
 **Breakdown:**
+
 - ✅ useDiscoverSettings: 30 min (actual)
 - ✅ useFileSelection: 45 min (actual)
 - ⏳ useFileAnalysis: 60 min (est)
@@ -199,15 +223,18 @@ The migration has been smooth so far. Redux infrastructure was well-prepared.
 ## 🎓 Lessons Learned
 
 ### What Went Well:
+
 1. Redux slices were perfectly prepared (Day 1 prep paid off)
 2. Clear migration pattern made it fast
 3. No breaking changes to component API
 
 ### What Could Be Better:
+
 1. Need better testing strategy (manual testing is slow)
 2. Should write unit tests for hooks as we migrate
 
 ### Best Practices Established:
+
 1. Always use `useCallback` for dispatch wrappers
 2. Extract common selectors into hook-specific variables
 3. Keep hook API identical (don't break components)
@@ -221,6 +248,7 @@ The migration has been smooth so far. Redux infrastructure was well-prepared.
 ### Final Summary
 
 **Hooks Migrated (6/6 = 100%):**
+
 1. ✅ useDiscoverSettings.js - Naming convention settings
 2. ✅ useFileSelection.js - File selection & drag-drop
 3. ✅ useFileAnalysis.js - Batch analysis operations
@@ -231,6 +259,7 @@ The migration has been smooth so far. Redux infrastructure was well-prepared.
 ### What Changed
 
 **Before (PhaseContext):**
+
 ```javascript
 const { actions, phaseData } = usePhase();
 const { addNotification } = useNotification();
@@ -239,6 +268,7 @@ addNotification('message', 'type', duration);
 ```
 
 **After (Redux):**
+
 ```javascript
 const dispatch = useDispatch();
 const state = useSelector(selectState);
@@ -247,6 +277,7 @@ dispatch(addNotification({ message, type, duration }));
 ```
 
 ### Code Metrics
+
 - **Hooks Migrated:** 6 files
 - **PhaseContext Dependencies Removed:** 12 instances
 - **NotificationContext Dependencies Removed:** 6 instances
@@ -255,6 +286,7 @@ dispatch(addNotification({ message, type, duration }));
 - **Net Code Quality:** Improved (cleaner architecture, better type safety potential)
 
 ### Next Steps (Day 3)
+
 - [ ] Migrate Phase components (DiscoverPhase, OrganizePhase, etc.)
 - [ ] Update component imports to use migrated hooks
 - [ ] Test each component after migration

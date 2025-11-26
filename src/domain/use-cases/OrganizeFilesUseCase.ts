@@ -3,7 +3,12 @@
  * Business logic for organizing files into folders
  */
 
-import { OrganizationBatch } from '../models/Organization';import { StratoSortError, ErrorCodes } from '../../shared/errors/StratoSortError';
+import { OrganizationBatch } from '../models/Organization';
+import {
+  StratoSortError,
+  ErrorCodes,
+} from '../../shared/errors/StratoSortError';
+import { getErrorMessage } from '../../shared/errors';
 
 export class OrganizeFilesUseCase {
   constructor({
@@ -11,7 +16,11 @@ export class OrganizeFilesUseCase {
     organizationService,
     smartFolderRepository,
     transactionJournal,
-  }) {    this.fileRepository = fileRepository;    this.organizationService = organizationService;    this.smartFolderRepository = smartFolderRepository;    this.transactionJournal = transactionJournal;
+  }) {
+    this.fileRepository = fileRepository;
+    this.organizationService = organizationService;
+    this.smartFolderRepository = smartFolderRepository;
+    this.transactionJournal = transactionJournal;
   }
 
   /**
@@ -32,15 +41,18 @@ export class OrganizeFilesUseCase {
         throw new StratoSortError(
           ErrorCodes.VALIDATION_ERROR,
           'No files can be organized',
-          { reason: 'All files failed validation' }
+          { reason: 'All files failed validation' },
         );
       }
 
-      // Get smart folders      const smartFolders = await this.smartFolderRepository.getAll();
+      // Get smart folders
+      const smartFolders = await this.smartFolderRepository.getAll();
 
       // Create organization batch
-      const batch = OrganizationBatch.fromFiles(organizableFiles, {        defaultLocation: options.defaultLocation,
-        smartFolderMatcher: (category) => this.matchSmartFolder(category, smartFolders),
+      const batch = OrganizationBatch.fromFiles(organizableFiles, {
+        defaultLocation: options.defaultLocation,
+        smartFolderMatcher: (category) =>
+          this.matchSmartFolder(category, smartFolders),
       });
 
       // Mark batch as started
@@ -64,7 +76,7 @@ export class OrganizeFilesUseCase {
       throw new StratoSortError(
         ErrorCodes.ORGANIZATION_ERROR,
         'Failed to organize files',
-        { originalError: error.message }
+        { originalError: getErrorMessage(error) },
       );
     }
   }
@@ -76,14 +88,14 @@ export class OrganizeFilesUseCase {
     if (!Array.isArray(files) || files.length === 0) {
       throw new StratoSortError(
         ErrorCodes.VALIDATION_ERROR,
-        'Files array is required and must not be empty'
+        'Files array is required and must not be empty',
       );
     }
 
     if (!options.defaultLocation) {
       throw new StratoSortError(
         ErrorCodes.VALIDATION_ERROR,
-        'Default location is required'
+        'Default location is required',
       );
     }
   }
@@ -137,7 +149,7 @@ export class OrganizeFilesUseCase {
       // Check folder keywords/tags
       if (folder.keywords && folder.keywords.length > 0) {
         const normalizedKeywords = folder.keywords.map((k) =>
-          k.toLowerCase().trim()
+          k.toLowerCase().trim(),
         );
         if (normalizedKeywords.includes(normalizedCategory)) {
           return folder;
@@ -170,8 +182,9 @@ export class OrganizeFilesUseCase {
         results.push({ success: true, operation });
       } catch (error) {
         // Mark operation as failed
-        operation.markAsFailed(error.message);
-        results.push({ success: false, operation, error: error.message });
+        const errorMsg = getErrorMessage(error);
+        operation.markAsFailed(errorMsg);
+        results.push({ success: false, operation, error: errorMsg });
 
         // Continue or fail fast based on options
         if (options.failFast) {
@@ -189,7 +202,8 @@ export class OrganizeFilesUseCase {
   async executeOperation(operation, options) {
     const { sourceFile, destinationPath } = operation;
 
-    // Create transaction    const transactionId = await this.transactionJournal.begin({
+    // Create transaction
+    const transactionId = await this.transactionJournal.begin({
       type: 'file_organization',
       source: sourceFile.path,
       destination: destinationPath,
@@ -197,26 +211,32 @@ export class OrganizeFilesUseCase {
 
     try {
       // Update file state
-      sourceFile.updateState('organizing');      await this.fileRepository.update(sourceFile);
+      sourceFile.updateState('organizing');
+      await this.fileRepository.update(sourceFile);
 
-      // Perform file operation      await this.organizationService.moveFile(
+      // Perform file operation
+      await this.organizationService.moveFile(
         sourceFile.path,
         destinationPath,
         {
           createDirectories: true,
           overwrite: options.overwrite || false,
-        }
+        },
       );
 
-      // Commit transaction      await this.transactionJournal.commit(transactionId);
+      // Commit transaction
+      await this.transactionJournal.commit(transactionId);
 
       // Update file state
-      sourceFile.markAsOrganized();      await this.fileRepository.update(sourceFile);
+      sourceFile.markAsOrganized();
+      await this.fileRepository.update(sourceFile);
     } catch (error) {
-      // Rollback transaction      await this.transactionJournal.rollback(transactionId);
+      // Rollback transaction
+      await this.transactionJournal.rollback(transactionId);
 
       // Update file state
-      sourceFile.setError(error.message);      await this.fileRepository.update(sourceFile);
+      sourceFile.setError(getErrorMessage(error));
+      await this.fileRepository.update(sourceFile);
 
       throw error;
     }
@@ -233,7 +253,8 @@ export class OrganizeFilesUseCase {
         file.markAsOrganized();
       } else if (operation.status === 'failed') {
         file.setError(operation.error);
-      }      return this.fileRepository.update(file);
+      }
+      return this.fileRepository.update(file);
     });
 
     await Promise.allSettled(updates);
@@ -242,7 +263,8 @@ export class OrganizeFilesUseCase {
   /**
    * Get files that need review (low confidence)
    */
-  getNeedsReview(files, options = {}) {    const { confidenceThreshold = 0.7 } = options;
+  getNeedsReview(files, options = {}) {
+    const { confidenceThreshold = 0.7 } = options;
 
     return files.filter((file) => {
       if (!file.isReadyForOrganization()) return false;

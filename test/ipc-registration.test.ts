@@ -12,7 +12,13 @@ describe('IPC registration', () => {
     registerAllIpc({
       ipcMain,
       IPC_CHANNELS,
-      logger: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
+      logger: {
+        info: jest.fn(),
+        error: jest.fn(),
+        warn: jest.fn(),
+        setContext: jest.fn(),
+        debug: jest.fn(),
+      },
       dialog,
       shell,
       systemAnalytics: { collectMetrics: jest.fn(async () => ({})) },

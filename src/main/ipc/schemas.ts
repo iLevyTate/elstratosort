@@ -23,7 +23,16 @@ export const FileSchema = z.object({
 export const NamingConventionSchema = z.object({
   convention: z.enum(['subject-date', 'date-subject', 'original', 'custom']),
   dateFormat: z.string().optional(),
-  caseConvention: z.enum(['kebab-case', 'snake_case', 'camelCase', 'PascalCase', 'lowercase', 'UPPERCASE']).optional(),
+  caseConvention: z
+    .enum([
+      'kebab-case',
+      'snake_case',
+      'camelCase',
+      'PascalCase',
+      'lowercase',
+      'UPPERCASE',
+    ])
+    .optional(),
   separator: z.string().optional(),
 });
 
@@ -45,11 +54,16 @@ export const SmartFolderSchema = z.object({
  * Analysis request schema
  */
 export const AnalysisRequestSchema = z.object({
-  files: z.array(z.string().min(1)).min(1, 'At least one file path is required').max(100, 'Maximum 100 files per batch'),
-  options: z.object({
-    namingConvention: NamingConventionSchema.optional(),
-    force: z.boolean().optional(),
-  }).optional(),
+  files: z
+    .array(z.string().min(1))
+    .min(1, 'At least one file path is required')
+    .max(100, 'Maximum 100 files per batch'),
+  options: z
+    .object({
+      namingConvention: NamingConventionSchema.optional(),
+      force: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 /**
@@ -57,10 +71,12 @@ export const AnalysisRequestSchema = z.object({
  */
 export const SingleFileAnalysisSchema = z.object({
   filePath: z.string().min(1, 'File path is required'),
-  options: z.object({
-    extractText: z.boolean().optional(),
-    analyzeContent: z.boolean().optional(),
-  }).optional(),
+  options: z
+    .object({
+      extractText: z.boolean().optional(),
+      analyzeContent: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 // ==================== File Operation Schemas ====================
@@ -127,13 +143,18 @@ export const SmartFolderDeleteSchema = z.object({
  * Auto-organize request
  */
 export const AutoOrganizeSchema = z.object({
-  files: z.array(FileSchema).min(1, 'At least one file is required').max(100, 'Maximum 100 files per batch'),
+  files: z
+    .array(FileSchema)
+    .min(1, 'At least one file is required')
+    .max(100, 'Maximum 100 files per batch'),
   smartFolders: z.array(SmartFolderSchema),
-  options: z.object({
-    defaultLocation: z.string().optional(),
-    confidenceThreshold: z.number().min(0).max(1).optional(),
-    preserveNames: z.boolean().optional(),
-  }).optional(),
+  options: z
+    .object({
+      defaultLocation: z.string().optional(),
+      confidenceThreshold: z.number().min(0).max(1).optional(),
+      preserveNames: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 // ==================== Ollama Schemas ====================
@@ -162,3 +183,24 @@ export const FindSimilarSchema = z.object({
   fileId: z.string().min(1, 'File ID is required'),
   topK: z.number().int().min(1).max(100).default(10),
 });
+
+// ==================== Inferred Types ====================
+// Types inferred from Zod schemas for type-safe usage
+
+export type FileInput = z.infer<typeof FileSchema>;
+export type NamingConvention = z.infer<typeof NamingConventionSchema>;
+export type SmartFolderInput = z.infer<typeof SmartFolderSchema>;
+export type AnalysisRequest = z.infer<typeof AnalysisRequestSchema>;
+export type SingleFileAnalysis = z.infer<typeof SingleFileAnalysisSchema>;
+export type FileOpenRequest = z.infer<typeof FileOpenSchema>;
+export type FileDeleteRequest = z.infer<typeof FileDeleteSchema>;
+export type FileMoveRequest = z.infer<typeof FileMoveSchema>;
+export type SmartFolderAddRequest = z.infer<typeof SmartFolderAddSchema>;
+export type SmartFolderEditRequest = z.infer<typeof SmartFolderEditSchema>;
+export type SmartFolderDeleteRequestInput = z.infer<
+  typeof SmartFolderDeleteSchema
+>;
+export type AutoOrganizeRequest = z.infer<typeof AutoOrganizeSchema>;
+export type OllamaModelCheckRequest = z.infer<typeof OllamaModelCheckSchema>;
+export type OllamaModelPullRequest = z.infer<typeof OllamaModelPullSchema>;
+export type FindSimilarRequest = z.infer<typeof FindSimilarSchema>;

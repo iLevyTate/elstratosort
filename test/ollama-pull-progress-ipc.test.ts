@@ -1,4 +1,4 @@
-const registerOllamaIpc = require('../src/main/ipc/ollama');
+const { registerOllamaIpc } = require('../src/main/ipc/ollama');
 const { IPC_CHANNELS } = require('../src/shared/constants');
 
 describe('OLLAMA pull progress IPC', () => {
@@ -16,11 +16,13 @@ describe('OLLAMA pull progress IPC', () => {
       handle: (channel, handler) => handlers.set(channel, handler),
     };
 
-    const logger = { info: jest.fn(), error: jest.fn(), warn: jest.fn() };
-    const withErrorLogging = (_logger, fn) => fn; // pass-through for test
-    jest.doMock('../src/main/ipc/withErrorLogging', () => ({
-      withErrorLogging,
-    }));
+    const logger = {
+      info: jest.fn(),
+      error: jest.fn(),
+      warn: jest.fn(),
+      setContext: jest.fn(),
+      debug: jest.fn(),
+    };
 
     const getOllama = () => ({
       pull: async ({ stream }) => {

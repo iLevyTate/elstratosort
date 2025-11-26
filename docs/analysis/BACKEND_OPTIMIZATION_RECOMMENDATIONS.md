@@ -9,6 +9,7 @@
 ## 🎯 Executive Summary
 
 **Good News:** Your backend already has several good architectural patterns:
+
 - ✅ Custom ServiceContainer (DI) - You already have dependency injection!
 - ✅ Service-based architecture
 - ✅ Health check system
@@ -16,6 +17,7 @@
 - ✅ Worker pool for heavy tasks
 
 **Areas for Improvement:**
+
 1. IPC validation (no runtime checks)
 2. Error handling standardization
 3. Logging fragmentation
@@ -91,15 +93,22 @@ ipcMain.handle('analysis:start', async (event, files, options) => {
 const { z } = require('zod');
 
 const AnalysisRequestSchema = z.object({
-  files: z.array(z.object({
-    path: z.string().min(1),
-    name: z.string(),
-    size: z.number().positive(),
-  })).min(1).max(100),
-  options: z.object({
-    namingConvention: z.string(),
-    dateFormat: z.string().optional(),
-  }).optional(),
+  files: z
+    .array(
+      z.object({
+        path: z.string().min(1),
+        name: z.string(),
+        size: z.number().positive(),
+      }),
+    )
+    .min(1)
+    .max(100),
+  options: z
+    .object({
+      namingConvention: z.string(),
+      dateFormat: z.string().optional(),
+    })
+    .optional(),
 });
 
 // Wrapper for all IPC handlers
@@ -118,14 +127,16 @@ function createValidatedHandler(schema, handler) {
 }
 
 // Use it
-ipcMain.handle('analysis:start',
+ipcMain.handle(
+  'analysis:start',
   createValidatedHandler(AnalysisRequestSchema, async (event, data) => {
     return analyzeFiles(data.files, data.options);
-  })
+  }),
 );
 ```
 
 **Benefits:**
+
 - ✅ Catch bad data before it reaches services
 - ✅ Better error messages
 - ✅ Type safety (ready for TypeScript)
@@ -170,6 +181,7 @@ log.debug('Raw data', { data });
 ```
 
 **Benefits:**
+
 - ✅ Automatic file rotation
 - ✅ Separate main/renderer logs
 - ✅ Log levels (error, warn, info, debug, verbose)
@@ -206,18 +218,22 @@ const analysisQueue = new Queue('file-analysis', {
     // Use Redis or in-memory (ioredis-mock for Electron)
     host: 'localhost',
     port: 6379,
-  }
+  },
 });
 
 // Add job (non-blocking)
 ipcMain.handle('analysis:start', async (event, files) => {
-  const job = await analysisQueue.add('batch-analysis', {
-    files,
-    windowId: BrowserWindow.getFocusedWindow().id,
-  }, {
-    attempts: 3, // Retry 3 times
-    backoff: { type: 'exponential', delay: 2000 },
-  });
+  const job = await analysisQueue.add(
+    'batch-analysis',
+    {
+      files,
+      windowId: BrowserWindow.getFocusedWindow().id,
+    },
+    {
+      attempts: 3, // Retry 3 times
+      backoff: { type: 'exponential', delay: 2000 },
+    },
+  );
 
   return { jobId: job.id, status: 'queued' };
 });
@@ -230,7 +246,7 @@ const worker = new Worker('file-analysis', async (job) => {
     const result = await analyzeFile(files[i]);
 
     // Report progress (doesn't block)
-    await job.updateProgress((i + 1) / files.length * 100);
+    await job.updateProgress(((i + 1) / files.length) * 100);
 
     // Send progress to renderer
     const window = BrowserWindow.fromId(windowId);
@@ -253,6 +269,7 @@ queueEvents.on('completed', ({ jobId, returnvalue }) => {
 ```
 
 **Benefits:**
+
 - ✅ Non-blocking IPC
 - ✅ Automatic retries
 - ✅ Progress tracking
@@ -330,6 +347,7 @@ await registry.registerAll();
 ```
 
 **Benefits:**
+
 - ✅ No more 40-parameter functions
 - ✅ Clear dependencies
 - ✅ Easy to test
@@ -417,6 +435,7 @@ class AnalyticsService {
 ```
 
 **Benefits:**
+
 - ✅ Loose coupling
 - ✅ Plugin architecture
 - ✅ Easy to add features
@@ -499,7 +518,7 @@ ipcMain.handle('analysis:start', async (event, data) => {
         error: {
           code: 'UNKNOWN_ERROR',
           message: 'An unexpected error occurred',
-        }
+        },
       };
     }
   }
@@ -507,6 +526,7 @@ ipcMain.handle('analysis:start', async (event, data) => {
 ```
 
 **Benefits:**
+
 - ✅ Consistent error handling
 - ✅ Better error messages
 - ✅ Error tracking
@@ -520,6 +540,7 @@ ipcMain.handle('analysis:start', async (event, data) => {
 ## 📋 Implementation Phases
 
 ### Phase 1: Critical Fixes (Week 1)
+
 **Total: 15-20 hours**
 
 1. ✅ **Zod IPC Validation** (8-12 hours) - CRITICAL
@@ -542,6 +563,7 @@ ipcMain.handle('analysis:start', async (event, data) => {
 ---
 
 ### Phase 2: Architecture (Week 2-3)
+
 **Total: 36-44 hours**
 
 4. ✅ **BullMQ Job Queue** (20-24 hours)
@@ -561,6 +583,7 @@ ipcMain.handle('analysis:start', async (event, data) => {
 ---
 
 ### Phase 3: Advanced (Week 4)
+
 **Total: 12-16 hours**
 
 6. ✅ **EventEmitter2** (12-16 hours)
@@ -609,12 +632,9 @@ const FileSchema = z.object({
   name: z.string(),
 });
 
-ipcMain.handle('files:open',
-  validateIpc(FileSchema),
-  async (event, file) => {
-    return openFile(file.path);
-  }
-);
+ipcMain.handle('files:open', validateIpc(FileSchema), async (event, file) => {
+  return openFile(file.path);
+});
 ```
 
 ---
@@ -629,7 +649,7 @@ ipcMain.handle('system:health', async () => {
 
   const health = {
     status: 'healthy',
-    services: states.map(s => ({
+    services: states.map((s) => ({
       name: s.name,
       status: s.state,
       healthy: s.lastHealthCheck?.healthy ?? true,
@@ -639,7 +659,7 @@ ipcMain.handle('system:health', async () => {
   };
 
   // Overall status
-  const unhealthy = health.services.filter(s => !s.healthy);
+  const unhealthy = health.services.filter((s) => !s.healthy);
   if (unhealthy.length > 0) {
     health.status = 'degraded';
   }
@@ -711,6 +731,7 @@ function withRequestId(handler) {
 ## 📊 Expected Impact
 
 ### Before Optimizations
+
 ```
 Backend Issues:
 - No IPC validation (security risk)
@@ -721,6 +742,7 @@ Backend Issues:
 ```
 
 ### After Phase 1 (20 hours)
+
 ```
 ✅ IPC validation (secure)
 ✅ Production logging (debuggable)
@@ -733,6 +755,7 @@ Improvements:
 ```
 
 ### After Phase 2 (64 hours)
+
 ```
 ✅ Job queue (non-blocking)
 ✅ Refactored IPC (maintainable)
@@ -744,6 +767,7 @@ Improvements:
 ```
 
 ### After Phase 3 (76 hours)
+
 ```
 ✅ Event-driven (extensible)
 
@@ -757,16 +781,19 @@ Improvements:
 ## 🎯 My Top 3 Backend Recommendations
 
 ### #1: Zod Validation (CRITICAL - Start Here!)
+
 **Effort:** 8-12 hours
 **Impact:** ⭐⭐⭐⭐⭐
 **Why:** Security and stability
 
 ### #2: electron-log (Quick Win!)
+
 **Effort:** 3-4 hours
 **Impact:** ⭐⭐⭐⭐⭐
 **Why:** Production debugging
 
 ### #3: BullMQ Job Queue (Big Impact!)
+
 **Effort:** 20-24 hours
 **Impact:** ⭐⭐⭐⭐⭐
 **Why:** Better UX and reliability
@@ -776,12 +803,14 @@ Improvements:
 ## 📚 Summary
 
 Your backend is **already well-architected** with:
+
 - Custom DI container
 - Service-based design
 - Worker pool
 - Health checks
 
 The main improvements needed are:
+
 1. **IPC validation** (security)
 2. **Better logging** (debugging)
 3. **Job queue** (UX)
@@ -794,6 +823,7 @@ The main improvements needed are:
 ---
 
 **Next Steps:**
+
 1. Start with Zod validation (8-12 hours)
 2. Add electron-log (3-4 hours)
 3. Plan BullMQ integration (20-24 hours)

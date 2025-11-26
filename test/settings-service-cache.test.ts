@@ -50,7 +50,8 @@ describe('SettingsService cache', () => {
     const fs = require('fs');
     const readSpy = jest.spyOn(fs.promises, 'readFile');
 
-    const SettingsService = require('../src/main/services/SettingsService');
+    const SettingsService =
+      require('../src/main/services/SettingsService').default;
     const svc = new SettingsService();
 
     // Mock createBackup method to avoid file system operations

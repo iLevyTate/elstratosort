@@ -23,61 +23,74 @@ const IPC_SYNC_ACTIONS = {
   'organize/setBatchProgress': 'organize',
 };
 
-// Main process events to listen for
-// TODO: Implement main process event listeners
-// const MAIN_PROCESS_EVENTS = {
-//   'settings-changed-external': 'settings/updateMultipleSettings',
-//   'system-metrics': 'system/updateSystemMetrics',
-//   'operation-progress': 'organize/setBatchProgress',
-//   'operation-error': 'ui/addNotification',
-//   'operation-complete': 'ui/addNotification',
-// };
+// Main process events mapping (implemented in setupMainProcessListeners below)
+// These events are received from the main process and dispatched to Redux actions
 
 class IPCManager {
-  constructor() {    this.store = null;    this.eventUnsubscribers = [];    this.isInitialized = false;
+  constructor() {
+    this.store = null;
+    this.eventUnsubscribers = [];
+    this.isInitialized = false;
   }
 
   /**
    * Initialize IPC listeners
    */
-  initialize(store) {    if (this.isInitialized) {
+  initialize(store) {
+    if (this.isInitialized) {
       console.warn('[IPCMiddleware] Already initialized');
       return;
-    }    this.store = store;
-    this.setupMainProcessListeners();    this.isInitialized = true;
+    }
+    this.store = store;
+    this.setupMainProcessListeners();
+    this.isInitialized = true;
   }
 
   /**
    * Setup listeners for main process events
    */
-  setupMainProcessListeners() {    if (!window.electronAPI?.events) {
+  setupMainProcessListeners() {
+    if (!window.electronAPI?.events) {
       logger.error('[IPCMiddleware] electronAPI.events not available');
       return;
     }
 
-    // Settings changed externally (e.g., from settings file)    const unsubSettings = window.electronAPI.events.onSettingsChanged(
-      (settings) => {        if (this.store && settings) {          this.store.dispatch({
+    // Settings changed externally (e.g., from settings file)
+    const unsubSettings = window.electronAPI.events.onSettingsChanged(
+      (settings) => {
+        if (this.store && settings) {
+          this.store.dispatch({
             type: 'settings/updateMultipleSettings',
             payload: settings,
           });
         }
       },
-    );    this.eventUnsubscribers.push(unsubSettings);
+    );
+    this.eventUnsubscribers.push(unsubSettings);
 
-    // System metrics updates    const unsubMetrics = window.electronAPI.events.onSystemMetrics((metrics) => {      if (this.store && metrics) {        this.store.dispatch({
-          type: 'system/updateSystemMetrics',
-          payload: {
-            cpuUsage: metrics.cpu?.usage || 0,
-            memoryUsage: metrics.memory?.usagePercent || 0,
-            diskUsage: metrics.disk?.usagePercent || 0,
-          },
-        });
-      }
-    });    this.eventUnsubscribers.push(unsubMetrics);
+    // System metrics updates
+    const unsubMetrics = window.electronAPI.events.onSystemMetrics(
+      (metrics) => {
+        if (this.store && metrics) {
+          this.store.dispatch({
+            type: 'system/updateSystemMetrics',
+            payload: {
+              cpuUsage: metrics.cpu?.usage || 0,
+              memoryUsage: metrics.memory?.usagePercent || 0,
+              diskUsage: metrics.disk?.usagePercent || 0,
+            },
+          });
+        }
+      },
+    );
+    this.eventUnsubscribers.push(unsubMetrics);
 
-    // Operation progress    const unsubProgress = window.electronAPI.events.onOperationProgress(
-      (progress) => {        if (this.store && progress) {
-          // Update batch progress in organize slice          this.store.dispatch({
+    // Operation progress
+    const unsubProgress = window.electronAPI.events.onOperationProgress(
+      (progress) => {
+        if (this.store && progress) {
+          // Update batch progress in organize slice
+          this.store.dispatch({
             type: 'organize/setBatchProgress',
             payload: {
               current: progress.current || 0,
@@ -87,9 +100,13 @@ class IPCManager {
           });
         }
       },
-    );    this.eventUnsubscribers.push(unsubProgress);
+    );
+    this.eventUnsubscribers.push(unsubProgress);
 
-    // Operation errors    const unsubError = window.electronAPI.events.onOperationError((error) => {      if (this.store && error) {        this.store.dispatch({
+    // Operation errors
+    const unsubError = window.electronAPI.events.onOperationError((error) => {
+      if (this.store && error) {
+        this.store.dispatch({
           type: 'ui/addNotification',
           payload: {
             message: error.message || 'Operation failed',
@@ -98,10 +115,14 @@ class IPCManager {
           },
         });
       }
-    });    this.eventUnsubscribers.push(unsubError);
+    });
+    this.eventUnsubscribers.push(unsubError);
 
-    // Operation complete    const unsubComplete = window.electronAPI.events.onOperationComplete(
-      (result) => {        if (this.store && result) {          this.store.dispatch({
+    // Operation complete
+    const unsubComplete = window.electronAPI.events.onOperationComplete(
+      (result) => {
+        if (this.store && result) {
+          this.store.dispatch({
             type: 'ui/addNotification',
             payload: {
               message: result.message || 'Operation completed successfully',
@@ -111,9 +132,13 @@ class IPCManager {
           });
         }
       },
-    );    this.eventUnsubscribers.push(unsubComplete);
+    );
+    this.eventUnsubscribers.push(unsubComplete);
 
-    // App errors    const unsubAppError = window.electronAPI.events.onAppError((error) => {      if (this.store && error) {        this.store.dispatch({
+    // App errors
+    const unsubAppError = window.electronAPI.events.onAppError((error) => {
+      if (this.store && error) {
+        this.store.dispatch({
           type: 'system/addSystemError',
           payload: {
             type: 'app_error',
@@ -122,7 +147,8 @@ class IPCManager {
           },
         });
 
-        // Also show notification        this.store.dispatch({
+        // Also show notification
+        this.store.dispatch({
           type: 'ui/addNotification',
           payload: {
             message: error.message || 'An error occurred',
@@ -131,7 +157,8 @@ class IPCManager {
           },
         });
       }
-    });    this.eventUnsubscribers.push(unsubAppError);
+    });
+    this.eventUnsubscribers.push(unsubAppError);
   }
 
   /**
@@ -144,7 +171,8 @@ class IPCManager {
     try {
       switch (syncTarget) {
         case 'settings':
-          // Save settings to main process          if (window.electronAPI?.settings?.save) {
+          // Save settings to main process
+          if (window.electronAPI?.settings?.save) {
             const settingsState = state.settings;
             // Extract only the settings data (exclude loading states)
             const settingsData = {
@@ -159,7 +187,8 @@ class IPCManager {
               theme: settingsState.theme,
               compactMode: settingsState.compactMode,
               showNotifications: settingsState.showNotifications,
-            };            await window.electronAPI.settings.save(settingsData);
+            };
+            await window.electronAPI.settings.save(settingsData);
           }
           break;
 
@@ -184,11 +213,15 @@ class IPCManager {
   /**
    * Cleanup listeners
    */
-  cleanup() {    for (const unsubscribe of this.eventUnsubscribers) {
+  cleanup() {
+    for (const unsubscribe of this.eventUnsubscribers) {
       if (typeof unsubscribe === 'function') {
         unsubscribe();
       }
-    }    this.eventUnsubscribers = [];    this.isInitialized = false;    this.store = null;
+    }
+    this.eventUnsubscribers = [];
+    this.isInitialized = false;
+    this.store = null;
   }
 }
 
@@ -199,7 +232,8 @@ const ipcManager = new IPCManager();
  * Redux middleware that syncs state with main process
  */
 export const ipcMiddleware = (store) => {
-  // Initialize on first use  if (!ipcManager.isInitialized) {
+  // Initialize on first use
+  if (!ipcManager.isInitialized) {
     ipcManager.initialize(store);
   }
 

@@ -10,6 +10,11 @@ const { container } = require('./ServiceContainer');
 const { app } = require('electron');
 const path = require('path');
 
+// Helper to handle both default and named exports from require()
+function getDefaultExport(mod: any) {
+  return mod.default || mod;
+}
+
 /**
  * Register all application services with the container
  * @param {Object} options - Configuration options
@@ -27,7 +32,7 @@ function registerServices(options = {}) {
       dependencies: [],
       lazy: false, // Initialize early
       healthCheckInterval: 60000, // 1 minute
-    }
+    },
   );
 
   // Ollama Service
@@ -35,33 +40,37 @@ function registerServices(options = {}) {
     'ollama',
     async (_deps) => {
       const ollamaService = require('../services/OllamaService');
-      return ollamaService; // Already a singleton
+      return getDefaultExport(ollamaService); // Handle default export
     },
     {
       dependencies: [],
       lazy: false,
       healthCheckInterval: 60000,
-    }
+    },
   );
 
   // Settings Service
   container.register(
     'settings',
     async (_deps) => {
-      const SettingsService = require('../services/SettingsService');
+      const SettingsServiceModule = require('../services/SettingsService');
+      const SettingsService = getDefaultExport(SettingsServiceModule);
       return new SettingsService();
     },
     {
       dependencies: [],
       lazy: false,
-    }
+    },
   );
 
   // Folder Matching Service
   container.register(
     'folderMatching',
     async (deps) => {
-      const FolderMatchingService = require('../services/FolderMatchingService');
+      const FolderMatchingServiceModule = require('../services/FolderMatchingService');
+      const FolderMatchingService = getDefaultExport(
+        FolderMatchingServiceModule,
+      );
       const service = new FolderMatchingService(deps.chromaDb);
       service.initialize();
       return service;
@@ -70,14 +79,17 @@ function registerServices(options = {}) {
       dependencies: ['chromaDb'],
       lazy: false,
       healthCheckInterval: 120000, // 2 minutes
-    }
+    },
   );
 
   // Organization Suggestion Service
   container.register(
     'organizationSuggestion',
     async (deps) => {
-      const OrganizationSuggestionService = require('../services/OrganizationSuggestionService');
+      const OrganizationSuggestionServiceModule = require('../services/OrganizationSuggestionService');
+      const OrganizationSuggestionService = getDefaultExport(
+        OrganizationSuggestionServiceModule,
+      );
       return new OrganizationSuggestionService({
         chromaDbService: deps.chromaDb,
         folderMatchingService: deps.folderMatching,
@@ -88,27 +100,29 @@ function registerServices(options = {}) {
       dependencies: ['chromaDb', 'folderMatching', 'settings'],
       lazy: false,
       healthCheckInterval: 120000,
-    }
+    },
   );
 
   // Undo/Redo Service
   container.register(
     'undoRedo',
     async (_deps) => {
-      const UndoRedoService = require('../services/UndoRedoService');
+      const UndoRedoServiceModule = require('../services/UndoRedoService');
+      const UndoRedoService = getDefaultExport(UndoRedoServiceModule);
       return new UndoRedoService();
     },
     {
       dependencies: [],
       lazy: true,
-    }
+    },
   );
 
   // Auto Organize Service
   container.register(
     'autoOrganize',
     async (deps) => {
-      const AutoOrganizeService = require('../services/AutoOrganizeService');
+      const AutoOrganizeServiceModule = require('../services/AutoOrganizeService');
+      const AutoOrganizeService = getDefaultExport(AutoOrganizeServiceModule);
       return new AutoOrganizeService({
         suggestionService: deps.organizationSuggestion,
         settingsService: deps.settings,
@@ -117,17 +131,23 @@ function registerServices(options = {}) {
       });
     },
     {
-      dependencies: ['organizationSuggestion', 'settings', 'folderMatching', 'undoRedo'],
+      dependencies: [
+        'organizationSuggestion',
+        'settings',
+        'folderMatching',
+        'undoRedo',
+      ],
       lazy: false,
       healthCheckInterval: 120000,
-    }
+    },
   );
 
   // Batch Analysis Service
   container.register(
     'batchAnalysis',
     async (_deps) => {
-      const BatchAnalysisService = require('../services/BatchAnalysisService');
+      const BatchAnalysisServiceModule = require('../services/BatchAnalysisService');
+      const BatchAnalysisService = getDefaultExport(BatchAnalysisServiceModule);
       return new BatchAnalysisService({
         concurrency: (options as any).batchConcurrency,
       });
@@ -136,7 +156,7 @@ function registerServices(options = {}) {
       dependencies: [],
       lazy: true,
       healthCheckInterval: 60000,
-    }
+    },
   );
 
   // File Organization Saga
@@ -144,7 +164,10 @@ function registerServices(options = {}) {
     'fileOrganizationSaga',
     async (_deps) => {
       const { FileOrganizationSaga } = require('../services/transaction');
-      const journalPath = path.join(app.getPath('userData'), 'transaction-journal.db');
+      const journalPath = path.join(
+        app.getPath('userData'),
+        'transaction-journal.db',
+      );
       const saga = new FileOrganizationSaga(journalPath);
 
       // Recover incomplete transactions on startup
@@ -155,20 +178,21 @@ function registerServices(options = {}) {
     {
       dependencies: [],
       lazy: false, // Initialize early for crash recovery
-    }
+    },
   );
 
   // Model Manager
   container.register(
     'modelManager',
     async (deps) => {
-      const ModelManager = require('../services/ModelManager');
+      const ModelManagerModule = require('../services/ModelManager');
+      const ModelManager = getDefaultExport(ModelManagerModule);
       return new ModelManager(deps.ollama);
     },
     {
       dependencies: ['ollama'],
       lazy: true,
-    }
+    },
   );
 
   // Startup Manager
@@ -184,33 +208,37 @@ function registerServices(options = {}) {
     {
       dependencies: ['chromaDb', 'ollama'],
       lazy: false,
-    }
+    },
   );
 
   // Analysis History Service
   container.register(
     'analysisHistory',
     async (_deps) => {
-      const AnalysisHistoryService = require('../services/AnalysisHistoryService');
+      const AnalysisHistoryServiceModule = require('../services/AnalysisHistoryService');
+      const AnalysisHistoryService = getDefaultExport(
+        AnalysisHistoryServiceModule,
+      );
       return new AnalysisHistoryService();
     },
     {
       dependencies: [],
       lazy: true,
-    }
+    },
   );
 
   // Performance Service
   container.register(
     'performance',
     async (_deps) => {
-      const PerformanceService = require('../services/PerformanceService');
+      const PerformanceServiceModule = require('../services/PerformanceService');
+      const PerformanceService = getDefaultExport(PerformanceServiceModule);
       return new PerformanceService();
     },
     {
       dependencies: [],
       lazy: true,
-    }
+    },
   );
 }
 
@@ -236,4 +264,3 @@ export {
   shutdownServices,
   container, // Re-export for convenience
 };
-

@@ -8,6 +8,44 @@
  * Error Response: { success: false, error: { code, message, details? }, requestId?, timestamp }
  */
 
+// ==================== Response Type Definitions ====================
+
+/**
+ * Success response envelope
+ */
+export interface SuccessResponse<T = unknown> {
+  success: true;
+  data: T;
+  requestId?: string;
+  timestamp: string;
+}
+
+/**
+ * Error details in response
+ */
+export interface ErrorDetails {
+  code: string;
+  message: string;
+  details?: unknown;
+}
+
+/**
+ * Error response envelope
+ */
+export interface ErrorResponse {
+  success: false;
+  error: ErrorDetails;
+  requestId?: string;
+  timestamp: string;
+}
+
+/**
+ * Union type for any IPC response
+ */
+export type IPCResponseEnvelope<T = unknown> =
+  | SuccessResponse<T>
+  | ErrorResponse;
+
 /**
  * Standard error codes for IPC responses
  */
@@ -106,7 +144,7 @@ export function createErrorFromException(error, requestId = null) {
     (error as any).code || ERROR_CODES.OPERATION_FAILED,
     error.message || 'An error occurred',
     (error as any).details || null,
-    requestId
+    requestId,
   );
 }
 

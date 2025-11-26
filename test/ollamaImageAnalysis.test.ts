@@ -60,13 +60,13 @@ jest.mock('../src/main/ollamaUtils', () => {
 });
 
 // Mock ModelVerifier
-jest.mock('../src/main/services/ModelVerifier', () => {
-  return jest.fn().mockImplementation(() => ({
+jest.mock('../src/main/services/ModelVerifier', () => ({
+  default: jest.fn().mockImplementation(() => ({
     checkOllamaConnection: jest.fn().mockResolvedValue({
       connected: true,
     }),
-  }));
-});
+  })),
+}));
 
 // Mock ChromaDB to return null (skip semantic matching)
 jest.mock('../src/main/services/ChromaDBService', () => ({
@@ -74,9 +74,9 @@ jest.mock('../src/main/services/ChromaDBService', () => ({
 }));
 
 // Mock FolderMatchingService
-jest.mock('../src/main/services/FolderMatchingService', () => {
-  return jest.fn();
-});
+jest.mock('../src/main/services/FolderMatchingService', () => ({
+  default: jest.fn(),
+}));
 
 // Mock PerformanceService
 jest.mock('../src/main/services/PerformanceService', () => ({
@@ -184,7 +184,8 @@ describe('ollamaImageAnalysis - Rewritten Tests', () => {
     });
 
     test('should fallback when Ollama is unavailable', async () => {
-      const ModelVerifier = require('../src/main/services/ModelVerifier');
+      const ModelVerifier =
+        require('../src/main/services/ModelVerifier').default;
       ModelVerifier.mockImplementation(() => ({
         checkOllamaConnection: jest.fn().mockResolvedValue({
           connected: false,

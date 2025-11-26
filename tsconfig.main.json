@@ -17,11 +17,7 @@
     "sourceMap": true,
     "noEmitOnError": false
   },
-  "include": [
-    "src/main/**/*",
-    "src/preload/**/*",
-    "src/shared/**/*"
-  ],
+  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*"],
   "exclude": [
     "node_modules",
     "dist",

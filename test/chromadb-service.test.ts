@@ -156,7 +156,7 @@ describe('ChromaDBService', () => {
         await chromaDbService.cleanup();
       }
       await fs.rm(tmpDir, { recursive: true, force: true });
-    } catch (error) {
+    } catch (_error) {
       if (error) {
         // Ignore cleanup errors
       }

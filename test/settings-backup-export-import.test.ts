@@ -4,7 +4,7 @@
  */
 const fs = require('fs').promises;
 const path = require('path');
-const SettingsService = require('../src/main/services/SettingsService');
+const SettingsService = require('../src/main/services/SettingsService').default;
 const { DEFAULT_SETTINGS } = require('../src/shared/defaultSettings');
 
 // Mock electron app
@@ -136,7 +136,7 @@ describe('Settings Backup, Export, and Import', () => {
             `settings-2024-01-${String(i + 1).padStart(2, '0')}T10-00-00-000Z.json`,
         );
 
-        let allBackups = [...existingBackups];
+        const allBackups = [...existingBackups];
 
         // Mock writeFile to add new backup to the list
         fs.writeFile.mockImplementation(async (filePath) => {

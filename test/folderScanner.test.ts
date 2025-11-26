@@ -44,7 +44,7 @@ describe('scanDirectory symlink handling', () => {
       expect(items).toHaveLength(1);
       // When symlink is created, it should be excluded
       expect(names).not.toContain('link.txt');
-    } catch (error) {
+    } catch (_error) {
       // Clean up on any error
       try {
         await fs.rm(tmpDir, { recursive: true, force: true });

@@ -265,7 +265,21 @@ beforeAll(() => {
   console.log('🎯 Mock services configured');
 });
 
+afterEach(() => {
+  // Clear all pending timers to prevent worker process leaks
+  jest.clearAllTimers();
+});
+
 afterAll(() => {
+  // Final cleanup - clear any remaining timers and handles
+  jest.useRealTimers();
+  jest.clearAllTimers();
+
+  // Force garbage collection if available
+  if (global.gc) {
+    global.gc();
+  }
+
   console.log('✅ All Stratosort tests completed');
   console.log('🧹 Test environment cleaned up');
 });

@@ -2,7 +2,8 @@
  * Tests for AutoOrganizeService
  * TIER 1 - CRITICAL for automatic file organization
  */
-const AutoOrganizeService = require('../src/main/services/AutoOrganizeService');
+const AutoOrganizeService =
+  require('../src/main/services/AutoOrganizeService').default;
 const path = require('path');
 
 describe('AutoOrganizeService', () => {
@@ -328,11 +329,13 @@ describe('AutoOrganizeService', () => {
           {
             name: 'error.pdf',
             path: '/downloads/error.pdf',
+            extension: '.pdf',
             analysis: { category: 'document' },
           },
           {
             name: 'success.pdf',
             path: '/downloads/success.pdf',
+            extension: '.pdf',
             analysis: { category: 'document' },
           },
         ];
@@ -347,8 +350,14 @@ describe('AutoOrganizeService', () => {
 
         const result = await service.organizeFiles(files, mockSmartFolders);
 
-        expect(result.failed).toHaveLength(1);
-        expect(result.organized).toHaveLength(1);
+        // IMPROVED BEHAVIOR: Files with suggestion errors now use fallback
+        // instead of being added to failed array (resilient processing)
+        expect(result.organized).toHaveLength(2);
+        expect(result.failed).toHaveLength(0);
+        // First file used error fallback
+        expect(result.organized[0].method).toBe('suggestion-error-fallback');
+        // Second file was organized automatically
+        expect(result.organized[1].method).toBe('automatic');
       });
     });
 

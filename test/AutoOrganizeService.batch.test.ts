@@ -1,4 +1,5 @@
-const AutoOrganizeService = require('../src/main/services/AutoOrganizeService');
+const AutoOrganizeService =
+  require('../src/main/services/AutoOrganizeService').default;
 
 // Mock dependencies
 jest.mock('../src/shared/logger', () => ({
@@ -130,8 +131,8 @@ describe('AutoOrganizeService - Batch Processing', () => {
         smartFolders,
         expect.objectContaining({
           includeAlternatives: false,
-          includeStructureAnalysis: false
-        })
+          includeStructureAnalysis: false,
+        }),
       );
 
       // Individual suggestions may be called for unprocessed files
@@ -342,8 +343,8 @@ describe('AutoOrganizeService - Batch Processing', () => {
         smartFolders,
         expect.objectContaining({
           includeAlternatives: false,
-          includeStructureAnalysis: false
-        })
+          includeStructureAnalysis: false,
+        }),
       );
 
       // All files should be organized (may include fallback suggestions)

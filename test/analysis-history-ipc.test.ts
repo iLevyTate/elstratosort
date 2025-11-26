@@ -9,7 +9,13 @@ describe('AnalysisHistory IPC', () => {
   test('GET/SEARCH/GET_STATISTICS/EXPORT are wired', async () => {
     const registerAllIpc = require('../src/main/ipc').registerAllIpc;
     const { IPC_CHANNELS } = require('../src/shared/constants');
-    const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
+    const logger = {
+      error: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      debug: jest.fn(),
+      setContext: jest.fn(),
+    };
     const service = {
       get: jest.fn(async () => []),
       searchAnalysis: jest.fn(async () => []),

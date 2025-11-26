@@ -16,7 +16,7 @@ describe('ProcessingStateService', () => {
   afterEach(async () => {
     try {
       await fs.rm(tmpDir, { recursive: true, force: true });
-    } catch (error) {
+    } catch (_error) {
       if (error) {
         // Ignore cleanup errors
       }
@@ -24,7 +24,8 @@ describe('ProcessingStateService', () => {
   });
 
   test('tracks analysis jobs lifecycle', async () => {
-    const ProcessingStateService = require('../src/main/services/ProcessingStateService');
+    const ProcessingStateService =
+      require('../src/main/services/ProcessingStateService').default;
     const svc = new ProcessingStateService();
     const file = path.join(tmpDir, 'doc.pdf');
 
@@ -36,7 +37,8 @@ describe('ProcessingStateService', () => {
   });
 
   test('creates and completes organize batch with progress updates', async () => {
-    const ProcessingStateService = require('../src/main/services/ProcessingStateService');
+    const ProcessingStateService =
+      require('../src/main/services/ProcessingStateService').default;
     const svc = new ProcessingStateService();
     const batchId = 'batch-test';
     const ops = [
