@@ -1,5 +1,29 @@
 import { withRequestId, withErrorHandling, compose } from './validation';
 
+/**
+ * Helper to ensure ServiceIntegration and UndoRedo service are ready
+ */
+async function ensureUndoRedoService(
+  getServiceIntegration: () => any,
+): Promise<any> {
+  const serviceIntegration = getServiceIntegration();
+
+  if (!serviceIntegration) {
+    throw new Error('ServiceIntegration not available');
+  }
+
+  // If not initialized, wait for initialization
+  if (!serviceIntegration.initialized) {
+    await serviceIntegration.initialize();
+  }
+
+  if (!serviceIntegration.undoRedo) {
+    throw new Error('UndoRedo service not available');
+  }
+
+  return serviceIntegration.undoRedo;
+}
+
 export function registerUndoRedoIpc({
   ipcMain,
   IPC_CHANNELS,
@@ -13,18 +37,29 @@ export function registerUndoRedoIpc({
     IPC_CHANNELS.UNDO_REDO.UNDO,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
-        return (
-          (await getServiceIntegration()?.undoRedo?.undo()) || {
-            success: false,
-            message: 'Undo service unavailable',
-          }
+        const undoRedoService = await ensureUndoRedoService(
+          getServiceIntegration,
         );
+        const result = await undoRedoService.undo();
+
+        // Ensure consistent response format with canUndo/canRedo state
+        return {
+          success: true,
+          ...result,
+          canUndo: (await undoRedoService.canUndo?.()) || false,
+          canRedo: (await undoRedoService.canRedo?.()) || false,
+        };
       } catch (error) {
         logger.error('Failed to execute undo:', error);
-        return { success: false, message: (error as Error).message };
+        return {
+          success: false,
+          error: (error as Error).message,
+          canUndo: false,
+          canRedo: false,
+        };
       }
     }),
   );
@@ -34,18 +69,29 @@ export function registerUndoRedoIpc({
     IPC_CHANNELS.UNDO_REDO.REDO,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
-        return (
-          (await getServiceIntegration()?.undoRedo?.redo()) || {
-            success: false,
-            message: 'Redo service unavailable',
-          }
+        const undoRedoService = await ensureUndoRedoService(
+          getServiceIntegration,
         );
+        const result = await undoRedoService.redo();
+
+        // Ensure consistent response format with canUndo/canRedo state
+        return {
+          success: true,
+          ...result,
+          canUndo: (await undoRedoService.canUndo?.()) || false,
+          canRedo: (await undoRedoService.canRedo?.()) || false,
+        };
       } catch (error) {
         logger.error('Failed to execute redo:', error);
-        return { success: false, message: (error as Error).message };
+        return {
+          success: false,
+          error: (error as Error).message,
+          canUndo: false,
+          canRedo: false,
+        };
       }
     }),
   );
@@ -55,15 +101,26 @@ export function registerUndoRedoIpc({
     IPC_CHANNELS.UNDO_REDO.GET_HISTORY,
     compose(
       withErrorHandling,
-      withRequestId
-    )(async (event, limit = 50) => {
+      withRequestId,
+    )(async (event, data) => {
       try {
-        return (
-          (await getServiceIntegration()?.undoRedo?.getHistory(limit)) || []
+        const limit = typeof data === 'number' ? data : data?.limit || 50;
+        const undoRedoService = await ensureUndoRedoService(
+          getServiceIntegration,
         );
+        const history = (await undoRedoService.getHistory?.(limit)) || [];
+
+        return {
+          success: true,
+          history,
+        };
       } catch (error) {
         logger.error('Failed to get action history:', error);
-        return [];
+        return {
+          success: false,
+          error: (error as Error).message,
+          history: [],
+        };
       }
     }),
   );
@@ -73,17 +130,20 @@ export function registerUndoRedoIpc({
     IPC_CHANNELS.UNDO_REDO.CLEAR_HISTORY,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
-        return (
-          (await getServiceIntegration()?.undoRedo?.clearHistory()) || {
-            success: true,
-          }
+        const undoRedoService = await ensureUndoRedoService(
+          getServiceIntegration,
         );
+        await undoRedoService.clearHistory?.();
+
+        return {
+          success: true,
+        };
       } catch (error) {
         logger.error('Failed to clear action history:', error);
-        return { success: false, message: (error as Error).message };
+        return { success: false, error: (error as Error).message };
       }
     }),
   );
@@ -93,13 +153,21 @@ export function registerUndoRedoIpc({
     IPC_CHANNELS.UNDO_REDO.CAN_UNDO,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
-        return (await getServiceIntegration()?.undoRedo?.canUndo()) || false;
+        const undoRedoService = await ensureUndoRedoService(
+          getServiceIntegration,
+        );
+        const canUndo = (await undoRedoService.canUndo?.()) || false;
+
+        return {
+          success: true,
+          canUndo,
+        };
       } catch (error) {
         logger.error('Failed to check undo status:', error);
-        return false;
+        return { success: true, canUndo: false };
       }
     }),
   );
@@ -109,13 +177,21 @@ export function registerUndoRedoIpc({
     IPC_CHANNELS.UNDO_REDO.CAN_REDO,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
-        return (await getServiceIntegration()?.undoRedo?.canRedo()) || false;
+        const undoRedoService = await ensureUndoRedoService(
+          getServiceIntegration,
+        );
+        const canRedo = (await undoRedoService.canRedo?.()) || false;
+
+        return {
+          success: true,
+          canRedo,
+        };
       } catch (error) {
         logger.error('Failed to check redo status:', error);
-        return false;
+        return { success: true, canRedo: false };
       }
     }),
   );

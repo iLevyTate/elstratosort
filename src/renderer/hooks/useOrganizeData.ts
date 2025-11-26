@@ -1,20 +1,17 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import {
-  selectAnalysisResults,
-} from '../store/slices/analysisSlice';
+import { selectAnalysisResults } from '../store/slices/analysisSlice';
 import {
   selectOrganizedFiles,
   setOrganizedFiles as setOrganizedFilesAction,
 } from '../store/slices/organizeSlice';
-import {
-  selectFileStates,
-} from '../store/slices/filesSlice';
+import { selectFileStates } from '../store/slices/filesSlice';
 import {
   selectPhaseData,
   setPhaseData,
   addNotification,
-} from '../store/slices/uiSlice';import { logger } from '../../shared/logger';
+} from '../store/slices/uiSlice';
+import { logger } from '../../shared/logger';
 
 export const useOrganizeData = () => {
   const dispatch = useDispatch();
@@ -23,7 +20,8 @@ export const useOrganizeData = () => {
   const analysisResults = useSelector(selectAnalysisResults) || [];
   const organizedFilesRedux = useSelector(selectOrganizedFiles) || [];
   const fileStatesRedux = useSelector(selectFileStates) || {};
-  const organizePhaseData = useSelector((state) => selectPhaseData(state, 'organize')) || {};
+  const organizePhaseData =
+    useSelector((state) => selectPhaseData(state, 'organize')) || {};
   const smartFolders = organizePhaseData.smartFolders || [];
 
   // Local state for processing tracking
@@ -33,7 +31,7 @@ export const useOrganizeData = () => {
   // Redux action wrappers
   const setOrganizedFiles = useCallback(
     (files) => dispatch(setOrganizedFilesAction(files)),
-    [dispatch]
+    [dispatch],
   );
 
   // Use Redux state directly
@@ -43,9 +41,13 @@ export const useOrganizeData = () => {
   // Load Default Location
   useEffect(() => {
     (async () => {
-      try {        const docsResponse = await window.electronAPI?.files?.getDocumentsPath?.();
+      try {
+        const docsResponse =
+          await window.electronAPI?.files?.getDocumentsPath?.();
         // Handle both wrapped { success, data } and legacy string format
-        const docsPath = docsResponse?.data ?? (typeof docsResponse === 'string' ? docsResponse : null);
+        const docsPath =
+          docsResponse?.data ??
+          (typeof docsResponse === 'string' ? docsResponse : null);
         if (docsPath && typeof docsPath === 'string') {
           setDefaultLocation(docsPath);
         }
@@ -59,25 +61,36 @@ export const useOrganizeData = () => {
   useEffect(() => {
     const loadSmartFoldersIfMissing = async () => {
       try {
-        if (!Array.isArray(smartFolders) || smartFolders.length === 0) {          const response = await window.electronAPI.smartFolders.get();
-          // Handle both wrapped { success, data } and legacy array format
-          const folders = response?.data ?? (Array.isArray(response) ? response : []);
+        if (!Array.isArray(smartFolders) || smartFolders.length === 0) {
+          const response = await window.electronAPI.smartFolders.get();
+          // Handle multiple response formats:
+          // - New: { success: true, folders: [...] }
+          // - Wrapped: { success: true, data: [...] }
+          // - Legacy: direct array [...]
+          const folders =
+            response?.folders ??
+            response?.data ??
+            (Array.isArray(response) ? response : []);
           if (Array.isArray(folders) && folders.length > 0) {
-            dispatch(setPhaseData({
-              phase: 'organize',
-              key: 'smartFolders',
-              value: folders,
-            }));
-            dispatch(addNotification({
-              message: `Loaded ${folders.length} smart folder${folders.length > 1 ? 's' : ''}`,
-              type: 'info',
-            }));
+            dispatch(
+              setPhaseData({
+                phase: 'organize',
+                key: 'smartFolders',
+                value: folders,
+              }),
+            );
+            dispatch(
+              addNotification({
+                message: `Loaded ${folders.length} smart folder${folders.length > 1 ? 's' : ''}`,
+                type: 'info',
+              }),
+            );
           }
         }
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('Failed to load smart folders in Organize phase', {
-          error: error.message,
-          stack: error.stack,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
         });
       }
     };
@@ -93,7 +106,6 @@ export const useOrganizeData = () => {
       setProcessedFileIds(processedIds);
     }
   }, [organizedFiles]);
-
 
   // Helpers
   const getFileState = useCallback(
@@ -144,7 +156,7 @@ export const useOrganizeData = () => {
         label: 'Failed',
         color: 'text-red-600',
         spinning: false,
-        };
+      };
     },
     [getFileState],
   );
@@ -259,4 +271,3 @@ export const useOrganizeData = () => {
     unmarkFilesAsProcessed,
   };
 };
-

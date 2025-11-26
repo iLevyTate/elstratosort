@@ -3,50 +3,106 @@
  */
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 
+// Helper to extract data from IPC response envelope
+// IPC responses come in format: { success: boolean, data?: any, error?: any, ... }
+// Some handlers return data directly in the envelope (e.g., { success: true, organized: [] })
+// Others wrap in data property (e.g., { success: true, data: { organized: [] } })
+function extractResponseData(result: any) {
+  if (!result) return null;
+
+  // If result has a data property, extract it
+  if (result.data !== undefined) {
+    return result.data;
+  }
+
+  // Otherwise, the data is spread directly in the result
+  // Remove envelope properties and return the rest
+  const { success, error, timestamp, requestId, ...data } = result;
+  return data;
+}
+
 // Async thunks for organization operations
 export const organizeFiles = createAsyncThunk(
-  'organize/organizeFiles',  async ({ files, smartFolders, settings }, { rejectWithValue }) => {
-    try {      const result = await window.electronAPI.organize.auto({
+  'organize/organizeFiles',
+  async (
+    {
+      files,
+      smartFolders,
+      settings,
+    }: { files: any[]; smartFolders: any[]; settings?: any },
+    { rejectWithValue },
+  ) => {
+    try {
+      const result = await window.electronAPI.organize.auto({
         files,
         smartFolders,
-        options: settings
+        options: settings,
       });
-      if (!result.success) {
-        return rejectWithValue(result.error);
+
+      // Handle error response
+      if (result && result.success === false) {
+        return rejectWithValue(result.error || 'Organization failed');
       }
-      return result;
-    } catch (error) {
-      return rejectWithValue(error.message);
+
+      // Extract and return data
+      const data = extractResponseData(result);
+      return {
+        success: true,
+        organized: data?.organized || [],
+        needsReview: data?.needsReview || [],
+        failed: data?.failed || [],
+        operations: data?.operations || [],
+      };
+    } catch (error: any) {
+      return rejectWithValue(error?.message || 'Organization failed');
     }
-  }
+  },
 );
 
 export const undoOrganization = createAsyncThunk(
   'organize/undo',
   async (_, { rejectWithValue }) => {
-    try {      const result = await window.electronAPI.undoRedo.undo();
-      if (!result.success) {
-        return rejectWithValue(result.error);
+    try {
+      const result = await window.electronAPI.undoRedo.undo();
+
+      // Handle error response
+      if (result && result.success === false) {
+        return rejectWithValue(result.error || 'Undo failed');
       }
-      return result;
-    } catch (error) {
-      return rejectWithValue(error.message);
+
+      const data = extractResponseData(result);
+      return {
+        success: true,
+        canUndo: data?.canUndo ?? false,
+        canRedo: data?.canRedo ?? false,
+      };
+    } catch (error: any) {
+      return rejectWithValue(error?.message || 'Undo failed');
     }
-  }
+  },
 );
 
 export const redoOrganization = createAsyncThunk(
   'organize/redo',
   async (_, { rejectWithValue }) => {
-    try {      const result = await window.electronAPI.undoRedo.redo();
-      if (!result.success) {
-        return rejectWithValue(result.error);
+    try {
+      const result = await window.electronAPI.undoRedo.redo();
+
+      // Handle error response
+      if (result && result.success === false) {
+        return rejectWithValue(result.error || 'Redo failed');
       }
-      return result;
-    } catch (error) {
-      return rejectWithValue(error.message);
+
+      const data = extractResponseData(result);
+      return {
+        success: true,
+        canUndo: data?.canUndo ?? false,
+        canRedo: data?.canRedo ?? false,
+      };
+    } catch (error: any) {
+      return rejectWithValue(error?.message || 'Redo failed');
     }
-  }
+  },
 );
 
 const initialState = {
@@ -132,21 +188,25 @@ const organizeSlice = createSlice({
     removeOrganizedFile: (state, action) => {
       const filePath = action.payload;
       state.organizedFiles = state.organizedFiles.filter(
-        (f) => f.originalPath !== filePath
+        (f) => f.originalPath !== filePath,
       );
       state.stats.totalOrganized = Math.max(0, state.stats.totalOrganized - 1);
     },
 
     // Processed file tracking
     markFilesAsProcessed: (state, action) => {
-      const fileIds = Array.isArray(action.payload) ? action.payload : [action.payload];
+      const fileIds = Array.isArray(action.payload)
+        ? action.payload
+        : [action.payload];
       state.processedFileIds.push(...fileIds);
     },
 
     unmarkFilesAsProcessed: (state, action) => {
-      const fileIds = Array.isArray(action.payload) ? action.payload : [action.payload];
+      const fileIds = Array.isArray(action.payload)
+        ? action.payload
+        : [action.payload];
       state.processedFileIds = state.processedFileIds.filter(
-        (id) => !fileIds.includes(id)
+        (id) => !fileIds.includes(id),
       );
     },
 
@@ -198,8 +258,10 @@ const organizeSlice = createSlice({
 
       if (total > 0) {
         const avgConfidence =
-          state.organizedFiles.reduce((sum, f) => sum + (f.confidence || 0), 0) /
-          total;
+          state.organizedFiles.reduce(
+            (sum, f) => sum + (f.confidence || 0),
+            0,
+          ) / total;
         state.stats.averageConfidence = avgConfidence;
       }
 
@@ -249,14 +311,17 @@ export const {
 export const selectOrganizedFiles = (state) => state.organize.organizedFiles;
 export const selectNeedsReview = (state) => state.organize.needsReview;
 export const selectFailedFiles = (state) => state.organize.failed;
-export const selectProcessedFileIds = (state) => state.organize.processedFileIds;
+export const selectProcessedFileIds = (state) =>
+  state.organize.processedFileIds;
 export const selectIsOrganizing = (state) => state.organize.isOrganizing;
 export const selectBatchProgress = (state) => state.organize.batchProgress;
 export const selectPreview = (state) => state.organize.preview;
-export const selectIsPreviewVisible = (state) => state.organize.isPreviewVisible;
+export const selectIsPreviewVisible = (state) =>
+  state.organize.isPreviewVisible;
 export const selectCanUndo = (state) => state.organize.canUndo;
 export const selectCanRedo = (state) => state.organize.canRedo;
 export const selectOrganizeStats = (state) => state.organize.stats;
-export const selectOrganizationError = (state) => state.organize.organizationError;
+export const selectOrganizationError = (state) =>
+  state.organize.organizationError;
 
 export default organizeSlice.reducer;
