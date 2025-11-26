@@ -1,10 +1,12 @@
 /**
  * Path Sanitization Utilities
  * Provides secure path validation and sanitization for database storage
- */import path from 'path';import os from 'os';
+ */
+import path from 'path';
+import os from 'os';
 
 // Path length limits by platform
-const MAX_PATH_LENGTHS = {
+const MAX_PATH_LENGTHS: Record<string, number> = {
   win32: 260, // Windows MAX_PATH
   linux: 4096, // Linux PATH_MAX
   darwin: 1024, // macOS PATH_MAX (typically 1024)
@@ -43,11 +45,11 @@ const MAX_PATH_DEPTH = 100;
  * Sanitize a file path for safe storage in database
  * Prevents directory traversal and normalizes path format
  *
- * @param {string} filePath - The file path to sanitize
- * @returns {string} Sanitized path
- * @throws {Error} If path is invalid or dangerous
+ * @param filePath - The file path to sanitize
+ * @returns Sanitized path
+ * @throws Error If path is invalid or dangerous
  */
-function sanitizePath(filePath) {
+function sanitizePath(filePath: string): string {
   if (!filePath || typeof filePath !== 'string') {
     return '';
   }
@@ -118,10 +120,10 @@ function sanitizePath(filePath) {
 /**
  * Validate that a path is safe for database storage
  *
- * @param {string} filePath - The file path to validate
- * @returns {boolean} True if path is safe
+ * @param filePath - The file path to validate
+ * @returns True if path is safe
  */
-function isPathSafe(filePath) {
+function isPathSafe(filePath: string): boolean {
   try {
     sanitizePath(filePath);
     return true;
@@ -133,16 +135,19 @@ function isPathSafe(filePath) {
 /**
  * Sanitize metadata object, filtering out dangerous or unnecessary fields
  *
- * @param {Object} metadata - Metadata object to sanitize
- * @param {Array<string>} allowedFields - List of allowed field names
- * @returns {Object} Sanitized metadata
+ * @param metadata - Metadata object to sanitize
+ * @param allowedFields - List of allowed field names
+ * @returns Sanitized metadata
  */
-function sanitizeMetadata(metadata, allowedFields = null) {
+function sanitizeMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+  allowedFields: string[] | null = null
+): Record<string, unknown> {
   if (!metadata || typeof metadata !== 'object') {
     return {};
   }
 
-  const sanitized = {};
+  const sanitized: Record<string, unknown> = {};
 
   // Define default allowed fields if not specified
   const defaultAllowed = [
@@ -224,4 +229,5 @@ function sanitizeMetadata(metadata, allowedFields = null) {
   }
 
   return sanitized;
-}export { sanitizePath, isPathSafe, sanitizeMetadata };
+}
+export { sanitizePath, isPathSafe, sanitizeMetadata };

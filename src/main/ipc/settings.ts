@@ -12,7 +12,14 @@ import { z } from "zod";
  * @returns {object} - Sanitized settings object
  * @throws {Error} - If validation fails
  */
-function validateImportedSettings(settings, logger) {
+interface Logger {
+  warn: (message: string, ...args: unknown[]) => void;
+  info: (message: string, ...args: unknown[]) => void;
+  error: (message: string, ...args: unknown[]) => void;
+  setContext: (context: string) => void;
+}
+
+function validateImportedSettings(settings: Record<string, unknown>, logger: Logger): Record<string, unknown> {
   if (!settings || typeof settings !== 'object') {
     throw new Error('Invalid settings: must be an object');
   }
@@ -147,7 +154,7 @@ function validateImportedSettings(settings, logger) {
         }
     }
 
-    sanitized[key] = value;
+    (sanitized as Record<string, unknown>)[key] = value;
   }
 
   if (ignoredCount > 0) {
@@ -155,7 +162,21 @@ function validateImportedSettings(settings, logger) {
   }
 
   return sanitized;
-}function registerSettingsIpc({
+}
+
+interface SettingsIpcDependencies {
+  ipcMain: Electron.IpcMain;
+  IPC_CHANNELS: { SETTINGS: Record<string, string> };
+  logger: Logger;
+  settingsService: { load: () => Promise<Record<string, unknown>>; save: (settings: Record<string, unknown>) => Promise<{ settings?: Record<string, unknown>; validationWarnings?: string[] } | Record<string, unknown>> };
+  setOllamaHost: (host: string) => Promise<void>;
+  setOllamaModel: (model: string) => Promise<void>;
+  setOllamaVisionModel: (model: string) => Promise<void>;
+  setOllamaEmbeddingModel: (model: string) => Promise<void>;
+  onSettingsChanged: (settings: Record<string, unknown>) => Promise<void>;
+}
+
+function registerSettingsIpc({
   ipcMain,
   IPC_CHANNELS,
   logger,
@@ -165,7 +186,7 @@ function validateImportedSettings(settings, logger) {
   setOllamaVisionModel,
   setOllamaEmbeddingModel,
   onSettingsChanged,
-}) {
+}: SettingsIpcDependencies): void {
   logger.setContext('IPC:Settings');
 
   // Get Settings Handler - with full validation stack
@@ -222,32 +243,31 @@ function validateImportedSettings(settings, logger) {
       withErrorHandling,
       withRequestId,
       validateIpc(SettingsSaveSchema)
-    )(async (event, settings) => {
-          void event;
+    )(async (_event: Electron.IpcMainInvokeEvent, settings: Record<string, unknown>) => {
           try {
             // Fixed: Handle validation results from SettingsService
             const saveResult = await settingsService.save(settings);
-            const merged = saveResult.settings || saveResult; // Backward compatibility
+            const merged = (saveResult.settings || saveResult) as Record<string, unknown>; // Backward compatibility
             const validationWarnings = saveResult.validationWarnings || [];
 
-            if (merged.ollamaHost) await setOllamaHost(merged.ollamaHost);
-            if (merged.textModel) await setOllamaModel(merged.textModel);
+            if (merged.ollamaHost) await setOllamaHost(merged.ollamaHost as string);
+            if (merged.textModel) await setOllamaModel(merged.textModel as string);
             if (merged.visionModel)
-              await setOllamaVisionModel(merged.visionModel);
+              await setOllamaVisionModel(merged.visionModel as string);
             if (
               merged.embeddingModel &&
               typeof setOllamaEmbeddingModel === 'function'
             )
-              await setOllamaEmbeddingModel(merged.embeddingModel);
+              await setOllamaEmbeddingModel(merged.embeddingModel as string);
             if (typeof merged.launchOnStartup === 'boolean') {
               try {
                 app.setLoginItemSettings({
                   openAtLogin: merged.launchOnStartup,
                 });
-              } catch (error) {
+              } catch (error: unknown) {
                 logger.warn(
                   '[SETTINGS] Failed to set login item settings:',
-                  error.message,
+                  error instanceof Error ? error.message : String(error),
                 );
               }
             }
@@ -316,8 +336,7 @@ function validateImportedSettings(settings, logger) {
     compose(
       withErrorHandling,
       withRequestId
-    )(async (event, exportPath) => {
-      void event;
+    )(async (_event: Electron.IpcMainInvokeEvent, exportPath: string) => {
       try {
         const settings = await settingsService.load();
 
@@ -361,11 +380,11 @@ function validateImportedSettings(settings, logger) {
           success: true,
           path: filePath,
         };
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error('[SETTINGS] Failed to export settings:', error);
         return {
           success: false,
-          error: error.message,
+          error: error instanceof Error ? error.message : String(error),
         };
       }
     }),
@@ -377,8 +396,7 @@ function validateImportedSettings(settings, logger) {
     compose(
       withErrorHandling,
       withRequestId
-    )(async (event, importPath) => {
-      void event;
+    )(async (_event: Electron.IpcMainInvokeEvent, importPath: string | null) => {
       try {
         // If no path provided, show open dialog
         let filePath = importPath;
@@ -403,12 +421,12 @@ function validateImportedSettings(settings, logger) {
         const fileContent = await fs.readFile(filePath, 'utf8');
 
         // Fixed: Add specific error handling for JSON parsing
-        let importData;
+        let importData: { settings?: Record<string, unknown>; version?: string; exportDate?: string; appVersion?: string };
         try {
           importData = JSON.parse(fileContent);
-        } catch (parseError) {
+        } catch (parseError: unknown) {
           throw new Error(
-            `Invalid JSON in settings file: ${parseError.message}`,
+            `Invalid JSON in settings file: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
           );
         }
 
@@ -427,29 +445,29 @@ function validateImportedSettings(settings, logger) {
         );
 
         // Save sanitized settings
-        const saveResult = await settingsService.save(sanitizedSettings);
-        const merged = saveResult.settings || saveResult;
-        const validationWarnings = saveResult.validationWarnings || [];
+        const saveResult = await settingsService.save(sanitizedSettings as Record<string, unknown>);
+        const merged = ((saveResult as { settings?: Record<string, unknown> }).settings || saveResult) as Record<string, unknown>;
+        const validationWarnings = (saveResult as { validationWarnings?: string[] }).validationWarnings || [];
 
         // Apply settings
-        if (merged.ollamaHost) await setOllamaHost(merged.ollamaHost);
-        if (merged.textModel) await setOllamaModel(merged.textModel);
-        if (merged.visionModel) await setOllamaVisionModel(merged.visionModel);
+        if (merged.ollamaHost) await setOllamaHost(merged.ollamaHost as string);
+        if (merged.textModel) await setOllamaModel(merged.textModel as string);
+        if (merged.visionModel) await setOllamaVisionModel(merged.visionModel as string);
         if (
           merged.embeddingModel &&
           typeof setOllamaEmbeddingModel === 'function'
         )
-          await setOllamaEmbeddingModel(merged.embeddingModel);
+          await setOllamaEmbeddingModel(merged.embeddingModel as string);
 
         if (typeof merged.launchOnStartup === 'boolean') {
           try {
             app.setLoginItemSettings({
               openAtLogin: merged.launchOnStartup,
             });
-          } catch (error) {
+          } catch (error: unknown) {
             logger.warn(
               '[SETTINGS] Failed to set login item settings:',
-              error.message,
+              error instanceof Error ? error.message : String(error),
             );
           }
         }
@@ -603,4 +621,5 @@ function validateImportedSettings(settings, logger) {
       }
     }),
   );
-}export default registerSettingsIpc;
+}
+export default registerSettingsIpc;

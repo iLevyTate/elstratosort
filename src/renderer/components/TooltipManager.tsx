@@ -6,14 +6,14 @@ import { useEffect, useRef } from 'react';
  * - Uses event delegation for performance
  * - No API change: developers can keep using the title attribute
  */
-export default function TooltipManager() {
-  const tooltipRef = useRef(null);
-  const arrowRef = useRef(null);
-  const currentTargetRef = useRef(null);
-  const titleCacheRef = useRef(new WeakMap());
-  const rafRef = useRef(0);
+export default function TooltipManager(): null {
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const arrowRef = useRef<HTMLDivElement | null>(null);
+  const currentTargetRef = useRef<HTMLElement | null>(null);
+  const titleCacheRef = useRef<WeakMap<HTMLElement, string> | null>(new WeakMap());
+  const rafRef = useRef<number>(0);
   // Bug #37: Add debouncing for rapid mouseover events
-  const debounceTimerRef = useRef(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     // Create tooltip container once
@@ -52,18 +52,18 @@ export default function TooltipManager() {
 
     /**
      * Schedule a callback using requestAnimationFrame for smooth updates
-     * @param {Function} cb - Callback function to execute
+     * @param cb - Callback function to execute
      */
-    const schedule = (cb) => {
+    const schedule = (cb: () => void): void => {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = requestAnimationFrame(cb);
     };
 
     /**
      * Show tooltip for the given target element
-     * @param {HTMLElement} target - Element to show tooltip for
+     * @param target - Element to show tooltip for
      */
-    const showTooltip = (target) => {
+    const showTooltip = (target: HTMLElement): void => {
       if (!tooltipRef.current || !titleCacheRef.current) return;
       const title =
         target.getAttribute('data-tooltip') || target.getAttribute('title');
@@ -80,7 +80,9 @@ export default function TooltipManager() {
       }
 
       tooltipRef.current.textContent = title;
-      tooltipRef.current.appendChild(arrowRef.current);
+      if (arrowRef.current) {
+        tooltipRef.current.appendChild(arrowRef.current);
+      }
       tooltipRef.current.classList.add('show');
       tooltipRef.current.style.opacity = '1';
 
@@ -89,29 +91,29 @@ export default function TooltipManager() {
 
     /**
      * Hide tooltip and restore original title attribute
-     * @param {HTMLElement} target - Element to hide tooltip for
+     * @param target - Element to hide tooltip for
      */
-    const hideTooltip = (target) => {
+    const hideTooltip = (target: HTMLElement | null): void => {
       if (!tooltipRef.current) return;
       tooltipRef.current.classList.remove('show');
       tooltipRef.current.style.opacity = '0';
       tooltipRef.current.style.transform = 'translate3d(-10000px, -10000px, 0)';
 
       // Restore native title - add null check before calling .get()
-      if (titleCacheRef.current) {
+      if (target && titleCacheRef.current) {
         const cached = titleCacheRef.current.get(target);
         if (cached && !target.getAttribute('title')) {
           target.setAttribute('title', cached);
         }
+        target.removeAttribute('data-title');
       }
-      target.removeAttribute('data-title');
     };
 
     /**
      * Calculate and apply optimal tooltip position relative to target
-     * @param {HTMLElement} target - Element to position tooltip relative to
+     * @param target - Element to position tooltip relative to
      */
-    const positionTooltip = (target) => {
+    const positionTooltip = (target: HTMLElement): void => {
       schedule(() => {
         if (!tooltipRef.current || !arrowRef.current) return;
         const rect = target.getBoundingClientRect();
@@ -157,10 +159,11 @@ export default function TooltipManager() {
       });
     };
 
-    const delegatedMouseOver = (e) => {
+    const delegatedMouseOver = (e: MouseEvent): void => {
       // Check if refs are still valid before processing events
       if (!tooltipRef.current || !titleCacheRef.current) return;
-      const target = e.target.closest('[title], [data-tooltip]');
+      const eventTarget = e.target as Element | null;
+      const target = eventTarget?.closest('[title], [data-tooltip]');
       if (!target || !(target instanceof HTMLElement)) return;
 
       // Bug #37: Debounce rapid mouseover events (300ms delay)
@@ -174,7 +177,7 @@ export default function TooltipManager() {
       }, 300);
     };
 
-    const delegatedMouseOut = (e) => {
+    const delegatedMouseOut = (e: MouseEvent): void => {
       // Check if refs are still valid before processing events
       if (!tooltipRef.current || !titleCacheRef.current) return;
 
@@ -187,16 +190,17 @@ export default function TooltipManager() {
       const target = currentTargetRef.current;
       if (!target) return;
       // Only hide when leaving the element completely
-      if (!target.contains(e.relatedTarget)) {
+      if (!target.contains(e.relatedTarget as Node | null)) {
         hideTooltip(target);
         currentTargetRef.current = null;
       }
     };
 
-    const delegatedFocus = (e) => {
+    const delegatedFocus = (e: FocusEvent): void => {
       // Check if refs are still valid before processing events
       if (!tooltipRef.current || !titleCacheRef.current) return;
-      const target = e.target.closest('[title], [data-tooltip]');
+      const eventTarget = e.target as Element | null;
+      const target = eventTarget?.closest('[title], [data-tooltip]');
       if (!target || !(target instanceof HTMLElement)) return;
       currentTargetRef.current = target;
       showTooltip(target);

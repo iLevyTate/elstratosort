@@ -3,22 +3,28 @@
  * Provides custom hooks for common performance patterns
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, MutableRefObject } from 'react';
 import {
   debounce,
   throttle,
-  createLRUCache,
-  rafThrottle,} from '../utils/performance';
+  createRateLimiter,
+} from '../utils/performance';
+
+interface DebouncedFunction<T extends (...args: unknown[]) => unknown> {
+  (...args: Parameters<T>): ReturnType<T> | undefined;
+  cancel: () => void;
+  flush: () => ReturnType<T> | undefined;
+}
 
 /**
  * Hook for debounced values
  *
- * @param {*} value - The value to debounce
- * @param {number} delay - Debounce delay in milliseconds
- * @returns {*} The debounced value
+ * @param value - The value to debounce
+ * @param delay - Debounce delay in milliseconds
+ * @returns The debounced value
  */
-export function useDebounce(value, delay) {
-  const [debouncedValue, setDebouncedValue] = useState(value);
+export function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -36,22 +42,27 @@ export function useDebounce(value, delay) {
 /**
  * Hook for debounced callbacks
  *
- * @param {Function} callback - The callback to debounce
- * @param {number} delay - Debounce delay in milliseconds
- * @param {Array} deps - Dependencies array
- * @returns {Function} The debounced callback
+ * @param callback - The callback to debounce
+ * @param delay - Debounce delay in milliseconds
+ * @param deps - Dependencies array
+ * @returns The debounced callback
  */
-export function useDebouncedCallback(callback, delay, deps = []) {
-  const callbackRef = useRef(callback);
+export function useDebouncedCallback<T extends (...args: unknown[]) => unknown>(
+  callback: T,
+  delay: number,
+  deps: unknown[] = []
+): DebouncedFunction<T> {
+  const callbackRef = useRef<T>(callback);
 
   useEffect(() => {
     callbackRef.current = callback;
   }, [callback]);
 
   const debouncedCallback = useMemo(
-    () => debounce((...args) => callbackRef.current(...args), delay),
+    () => debounce((...args: unknown[]) => callbackRef.current(...args), delay),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [delay, ...deps],
-  );
+  ) as DebouncedFunction<T>;
 
   useEffect(() => {
     return () => {
@@ -65,22 +76,27 @@ export function useDebouncedCallback(callback, delay, deps = []) {
 /**
  * Hook for throttled callbacks
  *
- * @param {Function} callback - The callback to throttle
- * @param {number} delay - Throttle delay in milliseconds
- * @param {Array} deps - Dependencies array
- * @returns {Function} The throttled callback
+ * @param callback - The callback to throttle
+ * @param delay - Throttle delay in milliseconds
+ * @param deps - Dependencies array
+ * @returns The throttled callback
  */
-export function useThrottledCallback(callback, delay, deps = []) {
-  const callbackRef = useRef(callback);
+export function useThrottledCallback<T extends (...args: unknown[]) => unknown>(
+  callback: T,
+  delay: number,
+  deps: unknown[] = []
+): DebouncedFunction<T> {
+  const callbackRef = useRef<T>(callback);
 
   useEffect(() => {
     callbackRef.current = callback;
   }, [callback]);
 
   const throttledCallback = useMemo(
-    () => throttle((...args) => callbackRef.current(...args), delay),
+    () => throttle((...args: unknown[]) => callbackRef.current(...args), delay),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [delay, ...deps],
-  );
+  ) as DebouncedFunction<T>;
 
   useEffect(() => {
     return () => {
@@ -94,317 +110,300 @@ export function useThrottledCallback(callback, delay, deps = []) {
 /**
  * Hook for RAF (RequestAnimationFrame) throttled callbacks
  *
- * @param {Function} callback - The callback to throttle
- * @returns {Function} The RAF throttled callback
+ * @param callback - The callback to throttle
+ * @returns The RAF throttled callback
  */
-export function useRAFCallback(callback) {
-  const callbackRef = useRef(callback);
-  const rafCallback = useRef(null);
+export function useRAFCallback<T extends (...args: unknown[]) => unknown>(
+  callback: T
+): (...args: Parameters<T>) => void {
+  const rafRef = useRef<number | null>(null);
+  const callbackRef = useRef<T>(callback);
 
   useEffect(() => {
     callbackRef.current = callback;
   }, [callback]);
 
-  useEffect(() => {
-    rafCallback.current = rafThrottle((...args) =>
-      callbackRef.current(...args),
-    );
+  const rafCallback = useCallback((...args: Parameters<T>) => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+    }
+    rafRef.current = requestAnimationFrame(() => {
+      callbackRef.current(...args);
+    });
+  }, []);
 
+  useEffect(() => {
     return () => {
-      if (rafCallback.current) {
-        rafCallback.current.cancel();
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
       }
     };
   }, []);
 
-  return rafCallback.current;
+  return rafCallback;
 }
 
 /**
- * Hook for memoized async values with caching
+ * Hook for tracking previous value
  *
- * @param {Function} asyncFn - Async function to call
- * @param {Array} deps - Dependencies array
- * @param {Object} options - Options for caching
- * @returns {Object} Object with data, loading, error, and refetch
+ * @param value - Current value
+ * @returns Previous value
  */
-export function useAsyncMemo(asyncFn, deps = [], options = {}) {
-  const {    cacheKey = null,    cacheTime = 5 * 60 * 1000, // 5 minutes default    initialData = undefined,    onSuccess = null,    onError = null,
-  } = options;
-
-  const [state, setState] = useState({
-    data: initialData,
-    loading: !initialData,
-    error: null,
+export function usePrevious<T>(value: T): T | undefined {
+  const ref = useRef<T>();
+  useEffect(() => {
+    ref.current = value;
   });
+  return ref.current;
+}
 
-  const cacheRef = useRef(new Map());
-
-  const fetchData = useCallback(async () => {
-    // PERFORMANCE FIX: Use cacheKey if provided, otherwise create lightweight key
-    // Only stringify deps if they're small (primitives or small arrays)
-    const key =
-      cacheKey ||
-      (deps.length === 0
-        ? 'empty'
-        : deps.length === 1 && typeof deps[0] !== 'object'
-          ? String(deps[0])
-          : JSON.stringify(deps)); // Fallback to JSON.stringify for complex deps
-
-    // Check cache
-    if (cacheRef.current.has(key)) {
-      const cached = cacheRef.current.get(key);
-      if (Date.now() - cached.timestamp < cacheTime) {
-        setState({ data: cached.data, loading: false, error: null });
-        return cached.data;
-      }
-    }
-
-    setState((prev) => ({ ...prev, loading: true, error: null }));
-
-    try {
-      const data = await asyncFn();
-
-      // Update cache
-      cacheRef.current.set(key, {
-        data,
-        timestamp: Date.now(),
-      });
-
-      setState({ data, loading: false, error: null });
-
-      if (onSuccess) {
-        onSuccess(data);
-      }
-
-      return data;
-    } catch (error) {
-      setState({ data: null, loading: false, error });
-
-      if (onError) {
-        onError(error);
-      }
-
-      throw error;
-    }
-  }, [asyncFn, cacheKey, cacheTime, onSuccess, onError, ...deps]);
+/**
+ * Hook for component mount state
+ *
+ * @returns Ref indicating if component is mounted
+ */
+export function useIsMounted(): MutableRefObject<boolean> {
+  const isMounted = useRef(true);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
 
-  return {
-    ...state,
-    refetch: fetchData,
-    clearCache: () => cacheRef.current.clear(),
-  };
+  return isMounted;
 }
 
 /**
- * Hook for LRU cache
+ * Hook for safe async operations
  *
- * @param {number} maxSize - Maximum cache size
- * @returns {Object} LRU cache instance
+ * @returns Safe async operation wrapper
  */
-export function useLRUCache(maxSize = 100) {
-  const cacheRef = useRef(null);
+export function useSafeAsync<T>(): {
+  safeAsync: (asyncFn: () => Promise<T>) => Promise<T | undefined>;
+  isMounted: boolean;
+} {
+  const isMountedRef = useIsMounted();
 
-  if (!cacheRef.current) {
-    cacheRef.current = createLRUCache(maxSize);
+  const safeAsync = useCallback(
+    async (asyncFn: () => Promise<T>): Promise<T | undefined> => {
+      const result = await asyncFn();
+      if (isMountedRef.current) {
+        return result;
+      }
+      return undefined;
+    },
+    []
+  );
+
+  return { safeAsync, isMounted: isMountedRef.current };
+}
+
+interface CacheEntry<T> {
+  value: T;
+  timestamp: number;
+}
+
+/**
+ * Hook for memoized values with TTL
+ *
+ * @param key - Cache key
+ * @param factory - Factory function to create value
+ * @param ttl - Time to live in milliseconds
+ * @returns Cached value
+ */
+export function useMemoizedWithTTL<T>(
+  key: string,
+  factory: () => T,
+  ttl: number
+): T {
+  const cacheRef = useRef<Map<string, CacheEntry<T>>>(new Map());
+
+  return useMemo(() => {
+    const cache = cacheRef.current;
+    const cached = cache.get(key);
+    const now = Date.now();
+
+    if (cached && now - cached.timestamp < ttl) {
+      return cached.value;
+    }
+
+    const value = factory();
+    cache.set(key, { value, timestamp: now });
+    return value;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, ttl]);
+}
+
+/**
+ * Hook for rate-limited callbacks
+ *
+ * @param callback - The callback to rate limit
+ * @param maxCalls - Maximum calls per window
+ * @param windowMs - Time window in milliseconds
+ * @returns Rate-limited callback and status
+ */
+export function useRateLimitedCallback<T extends (...args: unknown[]) => unknown>(
+  callback: T,
+  maxCalls: number,
+  windowMs: number
+): {
+  callback: (...args: Parameters<T>) => ReturnType<T> | undefined;
+  isLimited: boolean;
+  remainingCalls: number;
+} {
+  const callbackRef = useRef<T>(callback);
+  const [isLimited, setIsLimited] = useState(false);
+  const [remainingCalls, setRemainingCalls] = useState(maxCalls);
+
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+
+  const rateLimiter = useMemo(
+    () => createRateLimiter(maxCalls, windowMs),
+    [maxCalls, windowMs]
+  );
+
+  const rateLimitedCallback = useCallback(
+    (...args: Parameters<T>): ReturnType<T> | undefined => {
+      const { isAllowed, remainingCalls: remaining } = rateLimiter();
+      setRemainingCalls(remaining);
+      setIsLimited(!isAllowed);
+
+      if (isAllowed) {
+        return callbackRef.current(...args) as ReturnType<T>;
+      }
+      return undefined;
+    },
+    [rateLimiter]
+  );
+
+  return { callback: rateLimitedCallback, isLimited, remainingCalls };
+}
+
+/**
+ * Hook for lazy initialization
+ *
+ * @param factory - Factory function
+ * @returns Lazy value and initialization status
+ */
+export function useLazy<T>(factory: () => T): { value: T | null; isInitialized: boolean; initialize: () => void } {
+  const [isInitialized, setIsInitialized] = useState(false);
+  const valueRef = useRef<T | null>(null);
+
+  const initialize = useCallback(() => {
+    if (!isInitialized) {
+      valueRef.current = factory();
+      setIsInitialized(true);
+    }
+  }, [factory, isInitialized]);
+
+  return { value: valueRef.current, isInitialized, initialize };
+}
+
+/**
+ * Hook for render counting (development only)
+ *
+ * @param componentName - Name of the component
+ * @returns Render count
+ */
+export function useRenderCount(componentName = 'Component'): number {
+  const countRef = useRef(0);
+  countRef.current++;
+
+  if (process.env.NODE_ENV === 'development') {
+    console.debug(`[RenderCount] ${componentName}: ${countRef.current}`);
   }
 
-  return cacheRef.current;
+  return countRef.current;
 }
 
 /**
- * Hook for intersection observer with performance optimization
+ * Hook for detecting expensive renders
  *
- * @param {Object} options - Intersection observer options
- * @returns {Array} [ref, isIntersecting, entry]
+ * @param threshold - Threshold in milliseconds
+ * @param componentName - Component name for logging
  */
-export function useIntersectionObserver(options = {}) {
-  const [isIntersecting, setIsIntersecting] = useState(false);
-  const [entry, setEntry] = useState(null);
-  const elementRef = useRef(null);
-  const observerRef = useRef(null);
-
-  const callback = useCallback(([entry]) => {
-    setIsIntersecting(entry.isIntersecting);
-    setEntry(entry);
-  }, []);
+export function useRenderPerformance(threshold = 16, componentName = 'Component'): void {
+  const startTime = useRef(performance.now());
 
   useEffect(() => {
-    if (!elementRef.current) return;
-
-    if (observerRef.current) {
-      observerRef.current.disconnect();
+    const renderTime = performance.now() - startTime.current;
+    if (renderTime > threshold && process.env.NODE_ENV === 'development') {
+      console.warn(
+        `[Performance] ${componentName} render took ${renderTime.toFixed(2)}ms (threshold: ${threshold}ms)`
+      );
     }
+  });
 
-    observerRef.current = new IntersectionObserver(callback, options);
-    observerRef.current.observe(elementRef.current);
-
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
-    };  }, [callback, options.threshold, options.root, options.rootMargin]);
-
-  return [elementRef, isIntersecting, entry];
+  startTime.current = performance.now();
 }
 
 /**
- * Hook for lazy loading with intersection observer
+ * Hook for stable callback reference
  *
- * @param {Function} onVisible - Callback when element becomes visible
- * @param {Object} options - Intersection observer options
- * @returns {Object} Object with ref and loading state
+ * @param callback - Callback function
+ * @returns Stable callback
  */
-export function useLazyLoad(onVisible, options = {}) {
-  const [isLoading, setIsLoading] = useState(false);
-  const [hasLoaded, setHasLoaded] = useState(false);
-  const [ref, isIntersecting] = useIntersectionObserver(options);
+export function useStableCallback<T extends (...args: unknown[]) => unknown>(
+  callback: T
+): T {
+  const callbackRef = useRef<T>(callback);
 
   useEffect(() => {
-    if (isIntersecting && !hasLoaded && !isLoading) {
-      setIsLoading(true);
+    callbackRef.current = callback;
+  }, [callback]);
 
-      Promise.resolve(onVisible())
-        .then(() => {
-          setHasLoaded(true);
-          setIsLoading(false);
-        })
-        .catch(() => {
-          setIsLoading(false);
-        });
-    }
-  }, [isIntersecting, hasLoaded, isLoading, onVisible]);
-
-  return {
-    ref,
-    isLoading,
-    hasLoaded,
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useCallback(((...args: unknown[]) => callbackRef.current(...args)) as T, []);
 }
 
 /**
- * Hook for virtualized lists
+ * Hook for interval with cleanup
  *
- * @param {Array} items - Array of items to virtualize
- * @param {Object} options - Virtualization options
- * @returns {Object} Virtualization state and helpers
+ * @param callback - Interval callback
+ * @param delay - Interval delay (null to pause)
  */
-export function useVirtualList(items, options = {}) {
-  const {    itemHeight = 50,    containerHeight = 500,    overscan = 3,    getItemHeight = null,
-  } = options;
+export function useInterval(callback: () => void, delay: number | null): void {
+  const savedCallback = useRef(callback);
 
-  const [scrollTop, setScrollTop] = useState(0);
-  const scrollElementRef = useRef(null);
+  useEffect(() => {
+    savedCallback.current = callback;
+  }, [callback]);
 
-  const handleScroll = useThrottledCallback((e) => {
-    setScrollTop(e.target.scrollTop);
-  }, 16); // ~60fps
+  useEffect(() => {
+    if (delay === null) return;
 
-  const { visibleRange, totalHeight, offsetY } = useMemo(() => {
-    let accumulatedHeight = 0;
-    let startIndex = 0;
-    let endIndex = items.length - 1;
-    let offsetY = 0;
+    const id = setInterval(() => {
+      savedCallback.current();
+    }, delay);
 
-    // Find start index
-    for (let i = 0; i < items.length; i++) {
-      const height = getItemHeight ? getItemHeight(i) : itemHeight;
-
-      if (accumulatedHeight + height > scrollTop) {
-        startIndex = Math.max(0, i - overscan);
-        offsetY = accumulatedHeight;
-        break;
-      }
-
-      accumulatedHeight += height;
-    }
-
-    // Find end index
-    accumulatedHeight = offsetY;
-    for (let i = startIndex; i < items.length; i++) {
-      const height = getItemHeight ? getItemHeight(i) : itemHeight;
-      accumulatedHeight += height;
-
-      if (accumulatedHeight > scrollTop + containerHeight) {
-        endIndex = Math.min(items.length - 1, i + overscan);
-        break;
-      }
-    }
-
-    // Calculate total height
-    const totalHeight = getItemHeight
-      ? items.reduce((sum, _, i) => sum + getItemHeight(i), 0)
-      : items.length * itemHeight;
-
-    return {
-      visibleRange: [startIndex, endIndex],
-      totalHeight,
-      offsetY,
-    };
-  }, [
-    items.length,
-    scrollTop,
-    itemHeight,
-    containerHeight,
-    overscan,
-    getItemHeight,
-  ]);
-
-  const visibleItems = items.slice(visibleRange[0], visibleRange[1] + 1);
-
-  return {
-    scrollElementRef,
-    visibleItems,
-    totalHeight,
-    offsetY,
-    handleScroll,
-    visibleRange,
-  };
+    return () => clearInterval(id);
+  }, [delay]);
 }
 
 /**
- * Hook for optimized event handlers with cleanup
+ * Hook for timeout with cleanup
  *
- * @param {string} eventName - Event name
- * @param {Function} handler - Event handler
- * @param {Element} element - Target element (default: window)
- * @param {Object} options - AddEventListener options
+ * @param callback - Timeout callback
+ * @param delay - Timeout delay (null to cancel)
  */
-export function useEventListener(
-  eventName,
-  handler,
-  element = window,
-  options = {},
-) {  const savedHandler = useRef();
+export function useTimeout(callback: () => void, delay: number | null): void {
+  const savedCallback = useRef(callback);
 
   useEffect(() => {
-    savedHandler.current = handler;
-  }, [handler]);
+    savedCallback.current = callback;
+  }, [callback]);
 
   useEffect(() => {
-    const isSupported = element && element.addEventListener;
-    if (!isSupported) return;    const eventListener = (event) => savedHandler.current(event);
+    if (delay === null) return;
 
-    element.addEventListener(eventName, eventListener, options);
+    const id = setTimeout(() => {
+      savedCallback.current();
+    }, delay);
 
-    return () => {
-      element.removeEventListener(eventName, eventListener, options);
-    };  }, [eventName, element, options.capture, options.once, options.passive]);
+    return () => clearTimeout(id);
+  }, [delay]);
 }
-
-export default {
-  useDebounce,
-  useDebouncedCallback,
-  useThrottledCallback,
-  useRAFCallback,
-  useAsyncMemo,
-  useLRUCache,
-  useIntersectionObserver,
-  useLazyLoad,
-  useVirtualList,
-  useEventListener,
-};

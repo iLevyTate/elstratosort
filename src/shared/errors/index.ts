@@ -2,7 +2,7 @@
  * Error system exports
  * Provides typed errors with context, user messages, and recovery actions
  */
-import StratoSortError from './StratoSortError';
+import StratoSortError, { ErrorCodes, ErrorCode } from './StratoSortError';
 import FileOperationError from './FileOperationError';
 import FileProcessingError from './FileProcessingError';
 import AnalysisError from './AnalysisError';
@@ -70,6 +70,10 @@ function getErrorStack(error: unknown): string | undefined {
 export {
   // Base error
   StratoSortError,
+  ErrorCodes,
+
+  // Type exports
+  type ErrorCode,
 
   // Specific error types
   FileOperationError,

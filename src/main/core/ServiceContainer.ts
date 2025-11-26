@@ -64,12 +64,12 @@ class ServiceContainer extends EventEmitter {
 
   /**
    * Register a service with the container
-   * @param {string} name - Unique service name
-   * @param {Function} factory - Factory function that creates the service
-   * @param {Object} options - Configuration options
-   * @returns {ServiceContainer} - For method chaining
+   * @param name - Unique service name
+   * @param factory - Factory function that creates the service
+   * @param options - Configuration options
+   * @returns - For method chaining
    */
-  register(name, factory, options = {}) {
+  register(name: string, factory: (dependencies: Record<string, unknown>, container: ServiceContainer) => unknown, options: { dependencies?: string[]; singleton?: boolean; lazy?: boolean; healthCheckInterval?: number } = {}): ServiceContainer {
     if (this.services.has(name)) {
       throw new Error(`Service '${name}' is already registered`);
     }
@@ -93,10 +93,10 @@ class ServiceContainer extends EventEmitter {
   /**
    * Get a service instance
    * Automatically initializes the service and its dependencies if needed
-   * @param {string} name - Service name
-   * @returns {Promise<any>} - Service instance
+   * @param name - Service name
+   * @returns - Service instance
    */
-  async get(name) {
+  async get<T = unknown>(name: string): Promise<T> {
     const registration = this.services.get(name);
 
     if (!registration) {
@@ -123,12 +123,15 @@ class ServiceContainer extends EventEmitter {
 
   /**
    * Wait for a service to finish initializing
-   * @param {string} name - Service name
-   * @returns {Promise<any>} - Service instance
+   * @param name - Service name
+   * @returns - Service instance
    * @private
    */
-  async _waitForInitialization(name) {
+  async _waitForInitialization(name: string): Promise<unknown> {
     const registration = this.services.get(name);
+    if (!registration) {
+      throw new Error(`Service '${name}' is not registered`);
+    }
     const maxWait = 30000; // 30 seconds
     const startTime = Date.now();
 
@@ -150,12 +153,15 @@ class ServiceContainer extends EventEmitter {
 
   /**
    * Initialize a service and its dependencies
-   * @param {string} name - Service name
-   * @returns {Promise<any>} - Service instance
+   * @param name - Service name
+   * @returns - Service instance
    * @private
    */
-  async _initializeService(name) {
+  async _initializeService(name: string): Promise<unknown> {
     const registration = this.services.get(name);
+    if (!registration) {
+      throw new Error(`Service '${name}' is not registered`);
+    }
 
     if (registration.state === ServiceState.INITIALIZING) {
       return this._waitForInitialization(name);
@@ -167,7 +173,7 @@ class ServiceContainer extends EventEmitter {
       logger.info(`[ServiceContainer] Initializing service: ${name}`);
 
       // Initialize dependencies first
-      const dependencies = {};
+      const dependencies: Record<string, unknown> = {};
       for (const depName of registration.dependencies) {
         logger.debug(`[ServiceContainer] Resolving dependency: ${depName} for ${name}`);
         dependencies[depName] = await this.get(depName);
@@ -177,9 +183,9 @@ class ServiceContainer extends EventEmitter {
       const instance = await registration.factory(dependencies, this);
 
       // If service has an initialize method, call it
-      if (instance && typeof instance.initialize === 'function') {
+      if (instance && typeof (instance as { initialize?: () => Promise<void> }).initialize === 'function') {
         logger.debug(`[ServiceContainer] Calling initialize() for ${name}`);
-        await instance.initialize();
+        await (instance as { initialize: () => Promise<void> }).initialize();
       }
 
       registration.instance = instance;
@@ -198,13 +204,13 @@ class ServiceContainer extends EventEmitter {
       this.emit('service:ready', { name, instance });
 
       return instance;
-    } catch (error) {
+    } catch (error: unknown) {
       registration.state = ServiceState.FAILED;
-      registration.error = error;
+      registration.error = error instanceof Error ? error : new Error(String(error));
 
       logger.error(`[ServiceContainer] Failed to initialize service: ${name}`, {
-        error: error.message,
-        stack: error.stack,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
       this.emit('service:failed', { name, error });
 
@@ -214,13 +220,15 @@ class ServiceContainer extends EventEmitter {
 
   /**
    * Start periodic health checks for a service
-   * @param {string} name - Service name
+   * @param name - Service name
    * @private
    */
-  _startHealthChecks(name) {
+  _startHealthChecks(name: string): void {
     const registration = this.services.get(name);
+    if (!registration) return;
 
-    if (!registration.instance || typeof registration.instance.healthCheck !== 'function') {
+    const instance = registration.instance as { healthCheck?: () => Promise<boolean> } | null;
+    if (!instance || typeof instance.healthCheck !== 'function') {
       return; // Service doesn't support health checks
     }
 
@@ -245,18 +253,20 @@ class ServiceContainer extends EventEmitter {
 
   /**
    * Run a health check for a service
-   * @param {string} name - Service name
+   * @param name - Service name
    * @private
    */
-  async _runHealthCheck(name) {
+  async _runHealthCheck(name: string): Promise<void> {
     const registration = this.services.get(name);
+    if (!registration) return;
 
-    if (!registration.instance || registration.state !== ServiceState.READY) {
+    const instance = registration.instance as { healthCheck?: () => Promise<boolean> } | null;
+    if (!instance || registration.state !== ServiceState.READY) {
       return;
     }
 
     try {
-      const isHealthy = await registration.instance.healthCheck();
+      const isHealthy = await instance.healthCheck!();
       registration.lastHealthCheck = {
         timestamp: Date.now(),
         healthy: isHealthy,
@@ -266,14 +276,14 @@ class ServiceContainer extends EventEmitter {
         logger.warn(`[ServiceContainer] Health check failed for service: ${name}`);
         this.emit('service:unhealthy', { name, registration });
       }
-    } catch (error) {
+    } catch (error: unknown) {
       logger.error(`[ServiceContainer] Health check error for service: ${name}`, {
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
       });
       registration.lastHealthCheck = {
         timestamp: Date.now(),
         healthy: false,
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
       };
       this.emit('service:unhealthy', { name, registration, error });
     }
@@ -281,10 +291,10 @@ class ServiceContainer extends EventEmitter {
 
   /**
    * Get the state of a service
-   * @param {string} name - Service name
-   * @returns {Object} - Service state information
+   * @param name - Service name
+   * @returns - Service state information
    */
-  getServiceState(name) {
+  getServiceState(name: string): { name: string; state: string; dependencies: string[]; singleton: boolean; lazy: boolean; lastHealthCheck: unknown; error: string | undefined; hasInstance: boolean } | null {
     const registration = this.services.get(name);
 
     if (!registration) {
@@ -305,10 +315,10 @@ class ServiceContainer extends EventEmitter {
 
   /**
    * Get the state of all services
-   * @returns {Array<Object>} - Array of service states
+   * @returns - Array of service states
    */
-  getAllServiceStates() {
-    const states = [];
+  getAllServiceStates(): Array<{ name: string; state: string; dependencies: string[]; singleton: boolean; lazy: boolean; lastHealthCheck: unknown; error: string | undefined; hasInstance: boolean } | null> {
+    const states: Array<{ name: string; state: string; dependencies: string[]; singleton: boolean; lazy: boolean; lastHealthCheck: unknown; error: string | undefined; hasInstance: boolean } | null> = [];
     for (const [name] of this.services) {
       states.push(this.getServiceState(name));
     }
@@ -317,31 +327,31 @@ class ServiceContainer extends EventEmitter {
 
   /**
    * Check if a service is registered
-   * @param {string} name - Service name
-   * @returns {boolean}
+   * @param name - Service name
+   * @returns
    */
-  has(name) {
+  has(name: string): boolean {
     return this.services.has(name);
   }
 
   /**
    * Check if a service is ready
-   * @param {string} name - Service name
-   * @returns {boolean}
+   * @param name - Service name
+   * @returns
    */
-  isReady(name) {
+  isReady(name: string): boolean {
     const registration = this.services.get(name);
     return registration?.state === ServiceState.READY;
   }
 
   /**
    * Initialize all registered services that are not lazy
-   * @returns {Promise<void>}
+   * @returns
    */
-  async initializeAll() {
+  async initializeAll(): Promise<void> {
     logger.info('[ServiceContainer] Initializing all non-lazy services');
 
-    const promises = [];
+    const promises: Promise<unknown>[] = [];
     for (const [name, registration] of this.services) {
       if (!registration.lazy && registration.state === ServiceState.UNINITIALIZED) {
         promises.push(this.get(name));
@@ -357,9 +367,9 @@ class ServiceContainer extends EventEmitter {
 
   /**
    * Gracefully shutdown all services
-   * @returns {Promise<void>}
+   * @returns
    */
-  async shutdown() {
+  async shutdown(): Promise<void> {
     if (this.isShuttingDown) {
       logger.warn('[ServiceContainer] Shutdown already in progress');
       return;
@@ -380,8 +390,10 @@ class ServiceContainer extends EventEmitter {
 
     for (const name of shutdownOrder) {
       const registration = this.services.get(name);
+      if (!registration) continue;
 
-      if (!registration.instance || registration.state !== ServiceState.READY) {
+      const instance = registration.instance as { shutdown?: () => Promise<void>; cleanup?: () => Promise<void>; close?: () => Promise<void> } | null;
+      if (!instance || registration.state !== ServiceState.READY) {
         continue;
       }
 
@@ -391,12 +403,12 @@ class ServiceContainer extends EventEmitter {
         logger.info(`[ServiceContainer] Shutting down service: ${name}`);
 
         // Call cleanup/shutdown methods if they exist
-        if (typeof registration.instance.shutdown === 'function') {
-          await registration.instance.shutdown();
-        } else if (typeof registration.instance.cleanup === 'function') {
-          await registration.instance.cleanup();
-        } else if (typeof registration.instance.close === 'function') {
-          await registration.instance.close();
+        if (typeof instance.shutdown === 'function') {
+          await instance.shutdown();
+        } else if (typeof instance.cleanup === 'function') {
+          await instance.cleanup();
+        } else if (typeof instance.close === 'function') {
+          await instance.close();
         }
 
         registration.state = ServiceState.STOPPED;
@@ -404,10 +416,10 @@ class ServiceContainer extends EventEmitter {
 
         logger.info(`[ServiceContainer] Service stopped: ${name}`);
         this.emit('service:stopped', { name });
-      } catch (error) {
+      } catch (error: unknown) {
         logger.error(`[ServiceContainer] Error shutting down service: ${name}`, {
-          error: error.message,
-          stack: error.stack,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
         });
         this.emit('service:error', { name, error });
       }
@@ -422,7 +434,7 @@ class ServiceContainer extends EventEmitter {
   /**
    * Reset the container (for testing)
    */
-  reset() {
+  reset(): void {
     this.services.clear();
     this.initializationOrder = [];
     this.isShuttingDown = false;

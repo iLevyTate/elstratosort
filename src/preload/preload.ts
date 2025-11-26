@@ -221,7 +221,7 @@ interface RateLimitData {
 
 interface ListenerData {
   channel: string;
-  callback: (...args: unknown[]) => void;
+  callback: (event: Electron.IpcRendererEvent, ...args: unknown[]) => void;
 }
 
 /**

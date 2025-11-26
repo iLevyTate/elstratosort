@@ -6,7 +6,7 @@ import { logger } from '../shared/logger';
 // Optional: set context for clearer log origins
 logger.setContext('ollama-utils');
 
-let userDataPath = null;
+let userDataPath: string | null = null;
 
 // Initialize user data path - allows injection for worker threads
 function initialize(customUserDataPath?: string) {
@@ -39,13 +39,13 @@ const getOllamaConfigPath = () => {
   return path.join(userDataPath, 'ollama-config.json');
 };
 
-let ollamaInstance = null;
+let ollamaInstance: Ollama | null = null;
 let ollamaHost = 'http://127.0.0.1:11434';
-let ollamaInstanceHost = null; // MEDIUM PRIORITY FIX (MED-13): Track host used to create instance
+let ollamaInstanceHost: string | null = null; // MEDIUM PRIORITY FIX (MED-13): Track host used to create instance
 // Selected models persisted in userData config
-let selectedTextModel = null;
-let selectedVisionModel = null;
-let selectedEmbeddingModel = null;
+let selectedTextModel: string | null = null;
+let selectedVisionModel: string | null = null;
+let selectedEmbeddingModel: string | null = null;
 
 // Function to initialize or get the Ollama instance
 function getOllama() {
@@ -72,11 +72,11 @@ function getOllama() {
         : new http.Agent({ keepAlive: true, maxSockets: 10 });
       ollamaInstance = new Ollama({
         host: ollamaHost,
-        fetch: (url, opts = {}) => {
+        fetch: (url: RequestInfo | URL, opts: RequestInit = {}) => {
           return (global.fetch || require('node-fetch'))(url, {
             agent,
             ...opts,
-          });
+          } as RequestInit);
         },
       });
     } catch {
@@ -103,7 +103,7 @@ function getOllamaEmbeddingModel() {
 }
 
 // Function to set/update the Ollama model
-async function setOllamaModel(modelName) {
+async function setOllamaModel(modelName: string): Promise<void> {
   selectedTextModel = modelName;
   try {
     const current = await loadOllamaConfig();
@@ -119,7 +119,7 @@ async function setOllamaModel(modelName) {
   }
 }
 
-async function setOllamaVisionModel(modelName) {
+async function setOllamaVisionModel(modelName: string): Promise<void> {
   selectedVisionModel = modelName;
   try {
     const current = await loadOllamaConfig();
@@ -133,7 +133,7 @@ async function setOllamaVisionModel(modelName) {
   }
 }
 
-async function setOllamaEmbeddingModel(modelName) {
+async function setOllamaEmbeddingModel(modelName: string): Promise<void> {
   selectedEmbeddingModel = modelName;
   try {
     const current = await loadOllamaConfig();
@@ -151,7 +151,7 @@ function getOllamaHost() {
   return ollamaHost;
 }
 
-async function setOllamaHost(host) {
+async function setOllamaHost(host: string): Promise<void> {
   try {
     if (typeof host === 'string' && host.trim()) {
       let normalizedHost = host.trim();
@@ -178,11 +178,11 @@ async function setOllamaHost(host) {
           : new http.Agent({ keepAlive: true, maxSockets: 10 });
         ollamaInstance = new Ollama({
           host: ollamaHost,
-          fetch: (url, opts = {}) => {
+          fetch: (url: RequestInfo | URL, opts: RequestInit = {}) => {
             return (global.fetch || require('node-fetch'))(url, {
               agent,
               ...opts,
-            });
+            } as RequestInit);
           },
         });
       } catch {
@@ -192,7 +192,7 @@ async function setOllamaHost(host) {
       await saveOllamaConfig({ ...current, host: ollamaHost });
       logger.info(`[OLLAMA] Host set to: ${ollamaHost}`);
     }
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error('[OLLAMA] Error setting host', { error });
   }
 }
@@ -221,9 +221,9 @@ async function loadOllamaConfig() {
         });
       }
     }
-  } catch (error) {
+  } catch (error: unknown) {
     // It's okay if the file doesn't exist on first run
-    if (error.code !== 'ENOENT') {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       logger.error('[OLLAMA] Error loading Ollama config', { error });
     }
   }
@@ -298,11 +298,11 @@ async function loadOllamaConfig() {
 }
 
 // Save Ollama configuration
-async function saveOllamaConfig(config) {
+async function saveOllamaConfig(config: Record<string, unknown>): Promise<void> {
   try {
     const filePath = getOllamaConfigPath();
     await fs.writeFile(filePath, JSON.stringify(config, null, 2));
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error('[OLLAMA] Error saving Ollama config', { error });
     throw error; // Re-throw to indicate save failure
   }

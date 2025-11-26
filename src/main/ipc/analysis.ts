@@ -1,5 +1,44 @@
 import path from 'path';
-import { promises as fs } from 'fs';import { performance } from 'perf_hooks';import { validateIpc, withRequestId, withErrorHandling, compose } from './validation';import { SingleFileAnalysisSchema, AnalysisRequestSchema } from './schemas';import { safeGet, safeFilePath, ensureArray } from '../utils/safeAccess';import BatchAnalysisService from '../services/BatchAnalysisService';function registerAnalysisIpc({
+import { promises as fs } from 'fs';
+import { performance } from 'perf_hooks';
+import { validateIpc, withRequestId, withErrorHandling, compose } from './validation';
+import { SingleFileAnalysisSchema, AnalysisRequestSchema } from './schemas';
+import { safeGet, safeFilePath, ensureArray } from '../utils/safeAccess';
+import BatchAnalysisService from '../services/BatchAnalysisService';
+
+interface SmartFolder {
+  name: string;
+  description?: string;
+  id?: string;
+  isDefault?: boolean;
+  path?: string;
+}
+
+interface AnalysisResult {
+  suggestedName?: string;
+  category?: string;
+  keywords?: string[];
+  confidence?: number;
+  purpose?: string;
+  summary?: string;
+  extractedText?: string;
+  model?: string;
+  smartFolder?: unknown;
+}
+
+interface AnalysisIpcDependencies {
+  ipcMain: Electron.IpcMain;
+  IPC_CHANNELS: { ANALYSIS: Record<string, string> };
+  logger: { setContext: (ctx: string) => void; info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
+  tesseract: unknown;
+  systemAnalytics: { recordProcessingTime: (duration: number) => void };
+  analyzeDocumentFile: (path: string, folders: Array<{ name: string; description: string; id: string | null }>) => Promise<AnalysisResult>;
+  analyzeImageFile: (path: string, folders: Array<{ name: string; description: string; id: string | null }>) => Promise<AnalysisResult>;
+  getServiceIntegration: () => { processingState?: { markAnalysisStart: (path: string) => Promise<void>; markAnalysisComplete: (path: string) => Promise<void> }; analysisHistory?: { recordAnalysis: (fileInfo: unknown, normalized: unknown) => Promise<void> } } | null;
+  getCustomFolders: () => SmartFolder[];
+}
+
+function registerAnalysisIpc({
   ipcMain,
   IPC_CHANNELS,
   logger,
@@ -9,7 +48,7 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
   analyzeImageFile,
   getServiceIntegration,
   getCustomFolders,
-}) {
+}: AnalysisIpcDependencies): void {
   logger.setContext('IPC:Analysis');
 
   // Document Analysis Handler - with full validation stack
@@ -17,12 +56,12 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
     withErrorHandling,
     withRequestId,
     validateIpc(SingleFileAnalysisSchema)
-  )(async (event, data) => {
+  )(async (_event: Electron.IpcMainInvokeEvent, data: { filePath: string }) => {
     const filePath = data.filePath;
     const serviceIntegration =
       getServiceIntegration && getServiceIntegration();
     let analysisStarted = false;
-    let cleanPath = null;
+    let cleanPath: string | null = null;
 
     try {
       // Validate file path
@@ -42,11 +81,11 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
           filePath,
         );
         analysisStarted = true;
-      } catch (stateError) {
+      } catch (stateError: unknown) {
         // Non-fatal if processing state fails to update, but log it
         logger.warn(
           '[IPC-ANALYSIS] Failed to mark analysis start:',
-          stateError.message,
+          stateError instanceof Error ? stateError.message : String(stateError),
         );
       }
       // Add null check for getCustomFolders
@@ -70,7 +109,8 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
       );
       const duration = performance.now() - startTime;
       systemAnalytics.recordProcessingTime(duration);
-      try {        const stats = await fs.stat(filePath);
+      try {
+        const stats = await fs.stat(filePath);
         const fileInfo = {
           path: filePath,
           size: stats.size,
@@ -95,50 +135,51 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
           fileInfo,
           normalized,
         );
-      } catch (historyError) {
+      } catch (historyError: unknown) {
         logger.warn(
           '[ANALYSIS-HISTORY] Failed to record document analysis:',
-          historyError.message,
+          historyError instanceof Error ? historyError.message : String(historyError),
         );
       }
 
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
       // ERROR CONTEXT FIX #11: Enhanced error logging with full context
+      const errObj = error instanceof Error ? error : new Error(String(error));
       const errorContext = {
         operation: 'document-analysis',
         filePath: filePath,
         fileName: path.basename(filePath),
         fileExtension: path.extname(filePath),
         timestamp: new Date().toISOString(),
-        error: error.message,
-        errorStack: error.stack,
-        errorCode: error.code,
+        error: errObj.message,
+        errorStack: errObj.stack,
+        errorCode: (error as NodeJS.ErrnoException).code,
       };
 
       logger.error(
         '[IPC-ANALYSIS] Document analysis failed with context:',
         errorContext,
       );
-      systemAnalytics.recordFailure(error);
+      systemAnalytics.recordFailure(errObj);
 
       // RESOURCE FIX #8: Mark error in processing state
       const serviceIntegration =
         getServiceIntegration && getServiceIntegration();
       try {
-        await serviceIntegration?.processingState?.markAnalysisError(
+        await serviceIntegration?.processingState?.markAnalysisError?.(
           filePath,
-          error.message,
+          errObj.message,
         );
-      } catch (stateError) {
+      } catch (stateError: unknown) {
         // Non-fatal if processing state fails to update
         logger.warn('[IPC-ANALYSIS] Failed to mark analysis error:', {
           filePath,
-          error: stateError.message,
+          error: stateError instanceof Error ? stateError.message : String(stateError),
         });
       }
       return {
-        error: error.message,
+        error: errObj.message,
         suggestedName: path.basename(filePath), // Keep extension to prevent unopenable files
         category: 'documents',
         keywords: [],
@@ -166,11 +207,11 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
               filePath,
             );
           }
-        } catch (cleanupError) {
+        } catch (cleanupError: unknown) {
           // Log but don't throw - cleanup is best-effort
           logger.warn(
             '[IPC-ANALYSIS] Failed to cleanup processing state:',
-            cleanupError.message,
+            cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
           );
         }
       }
@@ -187,10 +228,10 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
     withErrorHandling,
     withRequestId,
     validateIpc(SingleFileAnalysisSchema)
-  )(async (event, data) => {
+  )(async (_event: Electron.IpcMainInvokeEvent, data: { filePath: string }) => {
     const filePath = data.filePath;
     let analysisStarted = false;
-    let cleanPath = null;
+    let cleanPath: string | null = null;
 
     try {
       cleanPath = safeFilePath(filePath);
@@ -204,11 +245,11 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
           filePath,
         );
         analysisStarted = true;
-      } catch (stateError) {
+      } catch (stateError: unknown) {
         // Non-fatal if processing state fails to update, but log it
         logger.warn(
           '[IPC-IMAGE-ANALYSIS] Failed to mark analysis start:',
-          stateError.message,
+          stateError instanceof Error ? stateError.message : String(stateError),
         );
       }
       // Add null check for getCustomFolders
@@ -227,7 +268,8 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
         folderCategories.map((f) => f.name).join(', '),
       );
       const result = await analyzeImageFile(filePath, folderCategories);
-      try {        const stats = await fs.stat(filePath);
+      try {
+        const stats = await fs.stat(filePath);
         const fileInfo = {
           path: filePath,
           size: stats.size,
@@ -252,25 +294,26 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
           fileInfo,
           normalized,
         );
-      } catch (historyError) {
+      } catch (historyError: unknown) {
         logger.warn(
           '[ANALYSIS-HISTORY] Failed to record image analysis:',
-          historyError.message,
+          historyError instanceof Error ? historyError.message : String(historyError),
         );
       }
 
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
       // ERROR CONTEXT FIX #11: Enhanced error logging with full context
+      const errObj = error instanceof Error ? error : new Error(String(error));
       const errorContext = {
         operation: 'image-analysis',
         filePath: filePath,
         fileName: path.basename(filePath),
         fileExtension: path.extname(filePath),
         timestamp: new Date().toISOString(),
-        error: error.message,
-        errorStack: error.stack,
-        errorCode: error.code,
+        error: errObj.message,
+        errorStack: errObj.stack,
+        errorCode: (error as NodeJS.ErrnoException).code,
       };
 
       logger.error(
@@ -282,22 +325,22 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
       const serviceIntegration =
         getServiceIntegration && getServiceIntegration();
       try {
-        await serviceIntegration?.processingState?.markAnalysisError(
+        await serviceIntegration?.processingState?.markAnalysisError?.(
           filePath,
-          error.message,
+          errObj.message,
         );
-      } catch (stateError) {
+      } catch (stateError: unknown) {
         // Non-fatal if processing state fails to update
         logger.warn(
           '[IPC-IMAGE-ANALYSIS] Failed to mark analysis error:',
           {
             filePath,
-            error: stateError.message,
+            error: stateError instanceof Error ? stateError.message : String(stateError),
           },
         );
       }
       return {
-        error: error.message,
+        error: errObj.message,
         suggestedName: path.basename(filePath), // Keep extension to prevent unopenable files
         category: 'images',
         keywords: [],
@@ -325,11 +368,11 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
               filePath,
             );
           }
-        } catch (cleanupError) {
+        } catch (cleanupError: unknown) {
           // Log but don't throw - cleanup is best-effort
           logger.warn(
             '[IPC-IMAGE-ANALYSIS] Failed to cleanup processing state:',
-            cleanupError.message,
+            cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
           );
         }
       }
@@ -343,11 +386,11 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
     withErrorHandling,
     withRequestId,
     validateIpc(SingleFileAnalysisSchema)
-  )(async (event, data) => {
+  )(async (_event: Electron.IpcMainInvokeEvent, data: { filePath: string }) => {
     const filePath = data.filePath;
     try {
       const start = performance.now();
-      const text = await tesseract.recognize(filePath, {
+      const text = await (tesseract as { recognize: (path: string, options: { lang: string; oem: number; psm: number }) => Promise<string> }).recognize(filePath, {
         lang: 'eng',
         oem: 1,
         psm: 3,
@@ -355,10 +398,11 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
       const duration = performance.now() - start;
       systemAnalytics.recordProcessingTime(duration);
       return { success: true, text };
-    } catch (error) {
+    } catch (error: unknown) {
+      const errObj = error instanceof Error ? error : new Error(String(error));
       logger.error('OCR failed:', error);
-      systemAnalytics.recordFailure(error);
-      return { success: false, error: error.message };
+      systemAnalytics.recordFailure(errObj);
+      return { success: false, error: errObj.message };
     }
   });
 
@@ -368,14 +412,14 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
   );
 
   // Maintain single instance of BatchAnalysisService to allow cancellation
-  let activeBatchService = null;
+  let activeBatchService: BatchAnalysisService | null = null;
 
   // Batch Analysis Handler - with full validation stack
   const startBatchHandler = compose(
     withErrorHandling,
     withRequestId,
     validateIpc(AnalysisRequestSchema)
-  )(async (event, data) => {
+  )(async (_event: Electron.IpcMainInvokeEvent, data: { files: string[] }) => {
     const filePaths = data.files;
     logger.info('[IPC-ANALYSIS] Starting batch analysis', {
       count: filePaths?.length,
@@ -454,4 +498,5 @@ import { promises as fs } from 'fs';import { performance } from 'perf_hooks';i
 
   ipcMain.handle(IPC_CHANNELS.ANALYSIS.START_BATCH, startBatchHandler);
   ipcMain.handle(IPC_CHANNELS.ANALYSIS.CANCEL_BATCH, cancelBatchHandler);
-}export default registerAnalysisIpc;
+}
+export default registerAnalysisIpc;

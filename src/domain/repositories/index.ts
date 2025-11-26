@@ -3,5 +3,5 @@
  * Central export point for all repository interfaces
  */
 
-export { IFileRepository } from './IFileRepository';
-export { ISmartFolderRepository } from './ISmartFolderRepository';
+export type { IFileRepository } from './IFileRepository';
+export type { ISmartFolderRepository } from './ISmartFolderRepository';

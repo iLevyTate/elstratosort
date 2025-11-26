@@ -15,11 +15,85 @@ import { getErrorMessage } from './errors';
 logger.setContext('AtomicFileOperations');
 
 /**
+ * File operation types
+ */
+type OperationType = 'move' | 'copy' | 'create' | 'delete';
+
+/**
+ * File operation definition
+ */
+interface FileOperation {
+  id?: string;
+  type: OperationType;
+  source?: string;
+  destination?: string;
+  data?: string | Buffer;
+  metadata?: Record<string, unknown>;
+  timestamp?: number;
+}
+
+/**
+ * Backup entry
+ */
+interface BackupEntry {
+  source: string;
+  backup: string;
+}
+
+/**
+ * Transaction status
+ */
+type TransactionStatus = 'active' | 'committed' | 'rolling_back' | 'rolled_back';
+
+/**
+ * Transaction definition
+ */
+interface Transaction {
+  id: string;
+  operations: FileOperation[];
+  backups: BackupEntry[];
+  startTime: number;
+  status: TransactionStatus;
+}
+
+/**
+ * Transaction status info
+ */
+interface TransactionStatusInfo {
+  id: string;
+  status: TransactionStatus;
+  operationCount: number;
+  backupCount: number;
+  duration: number;
+}
+
+/**
+ * Commit result
+ */
+interface CommitResult {
+  success: boolean;
+  results?: Array<{ operation: string | undefined; success: boolean; result?: unknown }>;
+  error?: string;
+  failedOperation?: string;
+  rollbackSuccessful?: boolean;
+  rollbackError?: string;
+}
+
+/**
+ * Organize operation input
+ */
+interface OrganizeOperation {
+  originalPath: string;
+  targetPath: string;
+  analysisData?: Record<string, unknown>;
+}
+
+/**
  * Transaction-based file operation manager
  */
 class AtomicFileOperations {
-  activeTransactions: Map<any, any>;
-  backupDirectory: any;
+  activeTransactions: Map<string, Transaction>;
+  backupDirectory: string | null;
   operationTimeout: number;
 
   constructor() {
@@ -31,7 +105,7 @@ class AtomicFileOperations {
   /**
    * Initialize backup directory for transaction safety
    */
-  async initializeBackupDirectory() {
+  async initializeBackupDirectory(): Promise<string> {
     if (this.backupDirectory) return this.backupDirectory;
     const tempDir = os.tmpdir();
     this.backupDirectory = path.join(
@@ -53,19 +127,19 @@ class AtomicFileOperations {
   /**
    * Generate unique transaction ID
    */
-  generateTransactionId() {
+  generateTransactionId(): string {
     return crypto.randomBytes(16).toString('hex');
   }
 
   /**
    * Create a backup of a file before modification
    */
-  async createBackup(filePath, transactionId) {
+  async createBackup(filePath: string, transactionId: string): Promise<string> {
     await this.initializeBackupDirectory();
 
     const filename = path.basename(filePath);
     const backupPath = path.join(
-      this.backupDirectory,
+      this.backupDirectory!,
       `${transactionId}_${filename}`,
     );
 
@@ -80,9 +154,9 @@ class AtomicFileOperations {
   /**
    * Begin a new atomic transaction
    */
-  async beginTransaction(operations = []) {
+  async beginTransaction(operations: FileOperation[] = []): Promise<string> {
     const transactionId = this.generateTransactionId();
-    const transaction = {
+    const transaction: Transaction = {
       id: transactionId,
       operations: [],
       backups: [],
@@ -101,7 +175,7 @@ class AtomicFileOperations {
   /**
    * Add an operation to the transaction
    */
-  addOperation(transactionId, operation) {
+  addOperation(transactionId: string, operation: FileOperation): void {
     const transaction = this.activeTransactions.get(transactionId);
     if (!transaction) {
       throw new Error(`Transaction ${transactionId} not found`);
@@ -121,7 +195,10 @@ class AtomicFileOperations {
   /**
    * Execute a single file operation with backup
    */
-  async executeOperation(transactionId, operation) {
+  async executeOperation(
+    transactionId: string,
+    operation: FileOperation
+  ): Promise<{ success: boolean; backupPath: string | null }> {
     const transaction = this.activeTransactions.get(transactionId);
     if (!transaction) {
       throw new Error(`Transaction ${transactionId} not found`);
@@ -129,11 +206,11 @@ class AtomicFileOperations {
 
     const { type, source, destination, data } = operation;
 
-    let backupPath = null;
+    let backupPath: string | null = null;
 
     // Create backup for existing files
     if (type === 'move' || type === 'copy') {
-      if (await this.fileExists(source)) {
+      if (source && await this.fileExists(source)) {
         backupPath = await this.createBackup(source, transactionId);
         transaction.backups.push({ source, backup: backupPath });
       }
@@ -142,16 +219,22 @@ class AtomicFileOperations {
     // Execute the operation
     switch (type) {
       case 'move':
-        await this.atomicMove(source, destination);
+        if (source && destination) {
+          await this.atomicMove(source, destination);
+        }
         break;
       case 'copy':
-        await this.atomicCopy(source, destination);
+        if (source && destination) {
+          await this.atomicCopy(source, destination);
+        }
         break;
       case 'create':
-        await this.atomicCreate(destination, data);
+        if (destination && data !== undefined) {
+          await this.atomicCreate(destination, data);
+        }
         break;
       case 'delete':
-        if (await this.fileExists(source)) {
+        if (source && await this.fileExists(source)) {
           backupPath = await this.createBackup(source, transactionId);
           transaction.backups.push({ source, backup: backupPath });
           await fs.unlink(source);
@@ -168,7 +251,7 @@ class AtomicFileOperations {
    * Atomic move operation with directory creation
    * Fixed: Added retry logic to prevent race conditions
    */
-  async atomicMove(source, destination) {
+  async atomicMove(source: string, destination: string): Promise<string> {
     // Ensure destination directory exists
     await fs.mkdir(path.dirname(destination), { recursive: true });
 
@@ -182,20 +265,21 @@ class AtomicFileOperations {
         // Try rename first (atomic operation)
         await fs.rename(source, finalDestination);
         return finalDestination;
-      } catch (error: any) {
-        if (error.code === 'EEXIST') {
+      } catch (error: unknown) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'EEXIST') {
           // Destination exists, generate unique name and retry
           attempts++;
           finalDestination = await this.generateUniqueFilename(destination);
           continue;
-        } else if (error.code === 'EXDEV') {
+        } else if (err.code === 'EXDEV') {
           // Cross-device move: copy then delete with verification
           await fs.copyFile(source, finalDestination);
           // Verify copy succeeded
           const sourceStats = await fs.stat(source);
           const destStats = await fs.stat(finalDestination);
           if (sourceStats.size !== destStats.size) {
-            await fs.unlink(finalDestination).catch((unlinkError) => {
+            await fs.unlink(finalDestination).catch((unlinkError: Error) => {
               logger.warn(
                 'Failed to cleanup file after size mismatch in atomic operation',
                 {
@@ -208,7 +292,7 @@ class AtomicFileOperations {
           }
           await fs.unlink(source);
           return finalDestination;
-        } else if (error.code === 'ENOENT' && attempts === 0) {
+        } else if (err.code === 'ENOENT' && attempts === 0) {
           throw new Error(`Source file not found: ${source}`);
         } else {
           throw error;
@@ -225,7 +309,7 @@ class AtomicFileOperations {
    * Atomic copy operation
    * Fixed: Added retry logic to prevent race conditions
    */
-  async atomicCopy(source, destination) {
+  async atomicCopy(source: string, destination: string): Promise<string> {
     await fs.mkdir(path.dirname(destination), { recursive: true });
 
     // Retry loop to handle race conditions atomically
@@ -238,8 +322,9 @@ class AtomicFileOperations {
         // Try to copy with exclusive flag to detect conflicts early
         await fs.copyFile(source, finalDestination, fs.constants.COPYFILE_EXCL);
         return finalDestination;
-      } catch (error: any) {
-        if (error.code === 'EEXIST') {
+      } catch (error: unknown) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'EEXIST') {
           // Destination exists, generate unique name and retry
           attempts++;
           finalDestination = await this.generateUniqueFilename(destination);
@@ -256,7 +341,7 @@ class AtomicFileOperations {
   }
 
   // Note: Following code continues with the original atomicCopy implementation
-  async atomicCopy_legacy(source, destination) {
+  async atomicCopy_legacy(source: string, destination: string): Promise<string> {
     await fs.mkdir(path.dirname(destination), { recursive: true });
 
     if (await this.fileExists(destination)) {
@@ -271,7 +356,7 @@ class AtomicFileOperations {
   /**
    * Atomic create operation
    */
-  async atomicCreate(filePath, data) {
+  async atomicCreate(filePath: string, data: string | Buffer): Promise<string> {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
 
     const tempFile = `${filePath}.tmp.${Date.now()}`;
@@ -284,7 +369,7 @@ class AtomicFileOperations {
       // Cleanup temp file on failure
       try {
         await fs.unlink(tempFile);
-      } catch (cleanupError) {
+      } catch {
         // Ignore cleanup errors
       }
       throw error;
@@ -294,7 +379,7 @@ class AtomicFileOperations {
   /**
    * Generate unique filename to avoid conflicts
    */
-  async generateUniqueFilename(originalPath) {
+  async generateUniqueFilename(originalPath: string): Promise<string> {
     const dir = path.dirname(originalPath);
     const ext = path.extname(originalPath);
     const name = path.basename(originalPath, ext);
@@ -319,7 +404,7 @@ class AtomicFileOperations {
   /**
    * Check if file exists
    */
-  async fileExists(filePath) {
+  async fileExists(filePath: string): Promise<boolean> {
     try {
       await fs.access(filePath);
       return true;
@@ -331,7 +416,7 @@ class AtomicFileOperations {
   /**
    * Execute all operations in a transaction
    */
-  async commitTransaction(transactionId) {
+  async commitTransaction(transactionId: string): Promise<CommitResult> {
     const transaction = this.activeTransactions.get(transactionId);
     if (!transaction) {
       throw new Error(`Transaction ${transactionId} not found`);
@@ -341,13 +426,14 @@ class AtomicFileOperations {
       throw new Error(`Transaction ${transactionId} is not active`);
     }
 
-    const results = [];
-    let failedOperation = null;
+    const results: Array<{ operation: string | undefined; success: boolean; result?: unknown }> = [];
+    // Use a wrapper object to prevent TypeScript narrowing issues
+    const failedOpRef: { op: FileOperation | null } = { op: null };
 
     try {
       // Set timeout for the entire transaction
-      let timeoutId;
-      const timeoutPromise = new Promise((_, reject) => {
+      let timeoutId: NodeJS.Timeout;
+      const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
           reject(new Error(`Transaction ${transactionId} timed out`));
         }, this.operationTimeout);
@@ -367,14 +453,14 @@ class AtomicFileOperations {
               result,
             });
           } catch (error) {
-            failedOperation = operation;
+            failedOpRef.op = operation;
             throw error;
           }
         }
       })();
 
       await Promise.race([operationPromise, timeoutPromise]);
-      clearTimeout(timeoutId);
+      clearTimeout(timeoutId!);
 
       transaction.status = 'committed';
       // Transaction committed successfully
@@ -397,7 +483,7 @@ class AtomicFileOperations {
         return {
           success: false,
           error: errorMsg,
-          failedOperation: failedOperation?.id,
+          failedOperation: failedOpRef.op?.id,
           rollbackSuccessful: true,
         };
       } catch (rollbackError: unknown) {
@@ -405,7 +491,7 @@ class AtomicFileOperations {
         return {
           success: false,
           error: errorMsg,
-          failedOperation: failedOperation?.id,
+          failedOperation: failedOpRef.op?.id,
           rollbackSuccessful: false,
           rollbackError: getErrorMessage(rollbackError),
         };
@@ -416,7 +502,7 @@ class AtomicFileOperations {
   /**
    * Rollback a transaction using backups
    */
-  async rollbackTransaction(transactionId) {
+  async rollbackTransaction(transactionId: string): Promise<void> {
     const transaction = this.activeTransactions.get(transactionId);
     if (!transaction) {
       throw new Error(`Transaction ${transactionId} not found`);
@@ -425,7 +511,7 @@ class AtomicFileOperations {
     // Rolling back transaction
     transaction.status = 'rolling_back';
 
-    const rollbackErrors = [];
+    const rollbackErrors: Array<{ source: string; error: string }> = [];
 
     // Restore files from backups in reverse order
     for (let i = transaction.backups.length - 1; i >= 0; i--) {
@@ -460,7 +546,7 @@ class AtomicFileOperations {
   /**
    * Clean up backup files for a transaction
    */
-  async cleanupBackups(transactionId) {
+  async cleanupBackups(transactionId: string): Promise<void> {
     const transaction = this.activeTransactions.get(transactionId);
     if (!transaction) return;
 
@@ -481,7 +567,7 @@ class AtomicFileOperations {
   /**
    * Get transaction status
    */
-  getTransactionStatus(transactionId) {
+  getTransactionStatus(transactionId: string): TransactionStatusInfo | null {
     const transaction = this.activeTransactions.get(transactionId);
     if (!transaction) return null;
 
@@ -497,19 +583,24 @@ class AtomicFileOperations {
   /**
    * List all active transactions
    */
-  getActiveTransactions() {
-    return Array.from(this.activeTransactions.keys()).map((id) =>
-      this.getTransactionStatus(id),
-    );
+  getActiveTransactions(): TransactionStatusInfo[] {
+    const statuses: TransactionStatusInfo[] = [];
+    for (const id of this.activeTransactions.keys()) {
+      const status = this.getTransactionStatus(id);
+      if (status) {
+        statuses.push(status);
+      }
+    }
+    return statuses;
   }
 
   /**
    * Force cleanup of stale transactions
    */
-  async cleanupStaleTransactions(maxAge = 3600000) {
+  async cleanupStaleTransactions(maxAge: number = 3600000): Promise<number> {
     // 1 hour
     const now = Date.now();
-    const staleTransactions = [];
+    const staleTransactions: string[] = [];
     for (const [id, transaction] of this.activeTransactions) {
       if (now - transaction.startTime > maxAge) {
         staleTransactions.push(id);
@@ -532,7 +623,9 @@ class AtomicFileOperations {
 const atomicFileOps = new AtomicFileOperations();
 
 // Convenience functions
-async function organizeFilesAtomically(operations) {
+async function organizeFilesAtomically(
+  operations: OrganizeOperation[]
+): Promise<CommitResult> {
   const transactionId = await atomicFileOps.beginTransaction();
 
   // Convert operations to atomic operations
@@ -549,7 +642,10 @@ async function organizeFilesAtomically(operations) {
   return result;
 }
 
-async function backupAndReplace(filePath, newContent) {
+async function backupAndReplace(
+  filePath: string,
+  newContent: string | Buffer
+): Promise<CommitResult> {
   const transactionId = await atomicFileOps.beginTransaction();
 
   atomicFileOps.addOperation(transactionId, {

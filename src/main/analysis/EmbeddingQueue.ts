@@ -16,8 +16,16 @@ try {
 
 logger.setContext('EmbeddingQueue');
 
+interface EmbeddingItem {
+  id: string;
+  vector: number[];
+  model?: string;
+  meta?: Record<string, unknown>;
+  updatedAt?: string;
+}
+
 class EmbeddingQueue {
-  queue: Array<any>;
+  queue: EmbeddingItem[];
   persistencePath: string | null;
   BATCH_SIZE: number;
   FLUSH_DELAY_MS: number;
@@ -120,9 +128,9 @@ class EmbeddingQueue {
 
   /**
    * Add an item to the embedding queue
-   * @param {Object} item - Embedding item { id, vector, model, meta, updatedAt }
+   * @param item - Embedding item { id, vector, model, meta, updatedAt }
    */
-  async enqueue(item) {
+  async enqueue(item: EmbeddingItem): Promise<void> {
     if (!item || !item.id || !item.vector) {
       logger.warn('[EmbeddingQueue] Invalid item ignored', {
         id: item?.id,
@@ -193,11 +201,11 @@ class EmbeddingQueue {
         JSON.stringify(this.queue),
         'utf8',
       );
-    } catch (error) {
+    } catch (error: unknown) {
       // Log but don't throw, as this is a background safety mechanism
       logger.debug(
         '[EmbeddingQueue] Error persisting queue to disk:',
-        error.message,
+        error instanceof Error ? error.message : String(error),
       );
     }
   }
@@ -276,8 +284,8 @@ class EmbeddingQueue {
 
       // Now we can safely update persistence with the *remaining* queue (new items added during flush)
       await this.persistQueue();
-    } catch (error) {
-      logger.error('[EmbeddingQueue] Flush error:', error.message);
+    } catch (error: unknown) {
+      logger.error('[EmbeddingQueue] Flush error:', error instanceof Error ? error.message : String(error));
 
       // Restore items
       this.queue.unshift(...batch);

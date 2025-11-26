@@ -347,7 +347,7 @@ const SUPPORTED_IMAGE_EXTENSIONS = [
 ];
 
 // Audio analysis disabled - removed for performance optimization
-const SUPPORTED_AUDIO_EXTENSIONS = [];
+const SUPPORTED_AUDIO_EXTENSIONS: string[] = [];
 
 const SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv'];
 

@@ -23,7 +23,7 @@ const MAX_XLSX_ROWS = 10000; // Limit spreadsheet rows to prevent memory issues
  * @param {string} fileName - Name of file for error messages
  * @throws {FileProcessingError} If file exceeds size limit
  */
-async function checkFileSize(filePath, fileName) {
+async function checkFileSize(filePath: string, fileName: string): Promise<number> {
   try {
     const stats = await fs.stat(filePath);
     if (stats.size > MAX_FILE_SIZE) {
@@ -48,7 +48,7 @@ async function checkFileSize(filePath, fileName) {
  * @param {string} text - Text to truncate
  * @returns {string} Truncated text
  */
-function truncateText(text) {
+function truncateText(text: string): string {
   if (!text) return '';
   if (text.length <= MAX_TEXT_LENGTH) return text;
   return (
@@ -56,7 +56,7 @@ function truncateText(text) {
   );
 }
 
-async function extractTextFromPdf(filePath, fileName) {
+async function extractTextFromPdf(filePath: string, fileName: string): Promise<string> {
   const pdf = require('pdf-parse');
   // Fixed: Check file size before loading into memory
   await checkFileSize(filePath, fileName);
@@ -82,7 +82,7 @@ async function extractTextFromPdf(filePath, fileName) {
   }
 }
 
-async function ocrPdfIfNeeded(filePath) {
+async function ocrPdfIfNeeded(filePath: string): Promise<string> {
   const sharp = require('sharp');
   const tesseract = require('node-tesseract-ocr');
   let pdfBuffer = null;
@@ -122,7 +122,7 @@ async function ocrPdfIfNeeded(filePath) {
   }
 }
 
-async function extractTextFromDoc(filePath) {
+async function extractTextFromDoc(filePath: string): Promise<string> {
   const mammoth = require('mammoth');
   try {
     const result = await mammoth.extractRawText({ path: filePath });
@@ -132,7 +132,7 @@ async function extractTextFromDoc(filePath) {
   }
 }
 
-async function extractTextFromDocx(filePath) {
+async function extractTextFromDocx(filePath: string): Promise<string> {
   const mammoth = require('mammoth');
   // Fixed: Check file size before reading
   await checkFileSize(filePath, filePath);
@@ -145,7 +145,7 @@ async function extractTextFromDocx(filePath) {
   return truncateText(result.value);
 }
 
-async function extractTextFromXlsx(filePath) {
+async function extractTextFromXlsx(filePath: string): Promise<string> {
   const XLSX = require('xlsx-populate');
   const officeParser = require('officeparser');
   // Fixed: Check file size before loading workbook
@@ -347,7 +347,7 @@ async function extractTextFromXlsx(filePath) {
   }
 }
 
-async function extractTextFromPptx(filePath) {
+async function extractTextFromPptx(filePath: string): Promise<string> {
   const officeParser = require('officeparser');
   const AdmZip = require('adm-zip');
   // Fixed: Check file size before reading
@@ -455,7 +455,7 @@ async function extractTextFromPptx(filePath) {
   }
 }
 
-function extractPlainTextFromRtf(rtf) {
+function extractPlainTextFromRtf(rtf: string): string {
   try {
     const decoded = rtf.replace(/\\'([0-9a-fA-F]{2})/g, (_, hex) => {
       try {
@@ -473,7 +473,7 @@ function extractPlainTextFromRtf(rtf) {
   }
 }
 
-function extractPlainTextFromHtml(html) {
+function extractPlainTextFromHtml(html: string): string {
   try {
     const withoutScripts = html.replace(/<script[\s\S]*?<\/script>/gi, '');
     const withoutStyles = withoutScripts.replace(
@@ -495,7 +495,7 @@ function extractPlainTextFromHtml(html) {
 }
 
 // Generic ODF extractor: reads content.xml from ZIP and strips tags
-async function extractTextFromOdfZip(filePath) {
+async function extractTextFromOdfZip(filePath: string): Promise<string> {
   const AdmZip = require('adm-zip');
   const zip = new AdmZip(filePath);
   const entry = zip.getEntry('content.xml');
@@ -504,7 +504,7 @@ async function extractTextFromOdfZip(filePath) {
   return extractPlainTextFromHtml(xml);
 }
 
-async function extractTextFromEpub(filePath) {
+async function extractTextFromEpub(filePath: string): Promise<string> {
   const AdmZip = require('adm-zip');
   // Fixed: Check file size before processing
   await checkFileSize(filePath, filePath);
@@ -547,7 +547,7 @@ async function extractTextFromEpub(filePath) {
   }
 }
 
-async function extractTextFromEml(filePath) {
+async function extractTextFromEml(filePath: string): Promise<string> {
   // Fixed: Check file size before reading
   await checkFileSize(filePath, filePath);
 
@@ -563,7 +563,7 @@ async function extractTextFromEml(filePath) {
   return truncateText([subject, from, to, body].filter(Boolean).join('\n'));
 }
 
-async function extractTextFromMsg(filePath) {
+async function extractTextFromMsg(filePath: string): Promise<string> {
   const officeParser = require('officeparser');
   // Best-effort using officeparser; if unavailable, return empty string
   try {
@@ -576,23 +576,23 @@ async function extractTextFromMsg(filePath) {
   }
 }
 
-async function extractTextFromKml(filePath) {
+async function extractTextFromKml(filePath: string): Promise<string> {
   const xml = await fs.readFile(filePath, 'utf8');
   return extractPlainTextFromHtml(xml);
 }
 
-async function extractTextFromKmz(filePath) {
+async function extractTextFromKmz(filePath: string): Promise<string> {
   const AdmZip = require('adm-zip');
   const zip = new AdmZip(filePath);
   const kmlEntry =
     zip.getEntry('doc.kml') ||
-    zip.getEntries().find((e) => e.entryName.toLowerCase().endsWith('.kml'));
+    zip.getEntries().find((e: { entryName: string }) => e.entryName.toLowerCase().endsWith('.kml'));
   if (!kmlEntry) return '';
   const xml = kmlEntry.getData().toString('utf8');
   return extractPlainTextFromHtml(xml);
 }
 
-async function extractTextFromXls(filePath) {
+async function extractTextFromXls(filePath: string): Promise<string> {
   const officeParser = require('officeparser');
   try {
     const result = await officeParser.parseOfficeAsync(filePath);
@@ -605,7 +605,7 @@ async function extractTextFromXls(filePath) {
   return '';
 }
 
-async function extractTextFromPpt(filePath) {
+async function extractTextFromPpt(filePath: string): Promise<string> {
   const officeParser = require('officeparser');
   try {
     const result = await officeParser.parseOfficeAsync(filePath);

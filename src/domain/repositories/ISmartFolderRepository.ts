@@ -3,61 +3,53 @@
  * Defines the contract for smart folder persistence operations
  */
 
-/* eslint-disable no-unused-vars */
-export class ISmartFolderRepository {
+import type { SmartFolder } from '../../shared/types/smartFolder';
+
+/**
+ * Smart folder repository interface for folder persistence operations
+ */
+export interface ISmartFolderRepository {
   /**
    * Get all smart folders
-   * @returns {Promise<Array>}
+   * @returns Promise resolving to array of SmartFolders
    */
-  async getAll() {
-    throw new Error('Method not implemented');
-  }
+  getAll(): Promise<SmartFolder[]>;
 
   /**
    * Get smart folder by ID
-   * @param {string} _id - Folder ID
-   * @returns {Promise<Object|null>}
+   * @param id - Folder ID
+   * @returns Promise resolving to SmartFolder or null if not found
    */
-  async getById(_id) {
-    throw new Error('Method not implemented');
-  }
+  getById(id: string): Promise<SmartFolder | null>;
 
   /**
    * Save smart folder
-   * @param {Object} _folder - Smart folder object
-   * @returns {Promise<Object>}
+   * @param folder - Smart folder object to save
+   * @returns Promise resolving to saved SmartFolder
    */
-  async save(_folder) {
-    throw new Error('Method not implemented');
-  }
+  save(folder: SmartFolder): Promise<SmartFolder>;
 
   /**
    * Update smart folder
-   * @param {string} _id - Folder ID
-   * @param {Object} _updates - Updates to apply
-   * @returns {Promise<Object>}
+   * @param id - Folder ID to update
+   * @param updates - Partial updates to apply
+   * @returns Promise resolving to updated SmartFolder
    */
-  async update(_id, _updates) {
-    throw new Error('Method not implemented');
-  }
+  update(id: string, updates: Partial<SmartFolder>): Promise<SmartFolder>;
 
   /**
    * Delete smart folder
-   * @param {string} _id - Folder ID
-   * @returns {Promise<boolean>}
+   * @param id - Folder ID to delete
+   * @returns Promise resolving to true if deleted, false otherwise
    */
-  async delete(_id) {
-    throw new Error('Method not implemented');
-  }
+  delete(id: string): Promise<boolean>;
 
   /**
    * Find folders matching category
-   * @param {string} _category - Category to match
-   * @returns {Promise<Array>}
+   * @param category - Category to match
+   * @returns Promise resolving to array of matching SmartFolders
    */
-  async findByCategory(_category) {
-    throw new Error('Method not implemented');
-  }
+  findByCategory(category: string): Promise<SmartFolder[]>;
 }
 
 export default ISmartFolderRepository;

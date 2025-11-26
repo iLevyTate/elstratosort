@@ -3,84 +3,70 @@
  * Defines the contract for file persistence operations
  */
 
-/* eslint-disable no-unused-vars */
-export class IFileRepository {
+import type { File, ProcessingState } from '../models/File';
+
+/**
+ * File repository interface for file persistence operations
+ */
+export interface IFileRepository {
   /**
    * Get file by path
-   * @param {string} _path - File path
-   * @returns {Promise<File|null>}
+   * @param path - File path
+   * @returns Promise resolving to File or null if not found
    */
-  async getByPath(_path) {
-    throw new Error('Method not implemented');
-  }
+  getByPath(path: string): Promise<File | null>;
 
   /**
    * Get all files
-   * @returns {Promise<File[]>}
+   * @returns Promise resolving to array of Files
    */
-  async getAll() {
-    throw new Error('Method not implemented');
-  }
+  getAll(): Promise<File[]>;
 
   /**
-   * Get files by state
-   * @param {string} _state - Processing state
-   * @returns {Promise<File[]>}
+   * Get files by processing state
+   * @param state - Processing state to filter by
+   * @returns Promise resolving to array of Files with matching state
    */
-  async getByState(_state) {
-    throw new Error('Method not implemented');
-  }
+  getByState(state: ProcessingState): Promise<File[]>;
 
   /**
    * Save or update file
-   * @param {File} _file - File domain model
-   * @returns {Promise<File>}
+   * @param file - File domain model to save
+   * @returns Promise resolving to saved File
    */
-  async save(_file) {
-    throw new Error('Method not implemented');
-  }
+  save(file: File): Promise<File>;
 
   /**
-   * Update file
-   * @param {File} _file - File domain model
-   * @returns {Promise<File>}
+   * Update existing file
+   * @param file - File domain model to update
+   * @returns Promise resolving to updated File
    */
-  async update(_file) {
-    throw new Error('Method not implemented');
-  }
+  update(file: File): Promise<File>;
 
   /**
-   * Delete file
-   * @param {string} _path - File path
-   * @returns {Promise<boolean>}
+   * Delete file by path
+   * @param path - Path of file to delete
+   * @returns Promise resolving to true if deleted, false otherwise
    */
-  async delete(_path) {
-    throw new Error('Method not implemented');
-  }
+  delete(path: string): Promise<boolean>;
 
   /**
    * Get files ready for organization
-   * @returns {Promise<File[]>}
+   * @returns Promise resolving to array of Files ready to organize
    */
-  async getReadyForOrganization() {
-    throw new Error('Method not implemented');
-  }
+  getReadyForOrganization(): Promise<File[]>;
 
   /**
    * Get analyzed files
-   * @returns {Promise<File[]>}
+   * @returns Promise resolving to array of analyzed Files
    */
-  async getAnalyzed() {
-    throw new Error('Method not implemented');
-  }
+  getAnalyzed(): Promise<File[]>;
 
   /**
    * Clear all files
-   * @returns {Promise<void>}
+   * @returns Promise resolving when all files are cleared
    */
-  async clear() {
-    throw new Error('Method not implemented');
-  }
+  clear(): Promise<void>;
 }
 
 export default IFileRepository;

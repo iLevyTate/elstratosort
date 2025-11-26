@@ -520,7 +520,9 @@ function createBoundedCache<K = any, V = any>(maxSize: number = 100): BoundedCac
       // Evict oldest if at capacity
       if (cache.size >= maxSize) {
         const oldestKey = cache.keys().next().value;
-        cache.delete(oldestKey);
+        if (oldestKey !== undefined) {
+          cache.delete(oldestKey);
+        }
       }
 
       cache.set(key, value);

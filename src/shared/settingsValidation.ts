@@ -5,9 +5,87 @@
 import { DEFAULT_SETTINGS } from './defaultSettings';
 
 /**
+ * Validation rule type
+ */
+interface ValidationRule {
+  type: 'string' | 'number' | 'boolean';
+  enum?: string[];
+  required?: boolean;
+  min?: number;
+  max?: number;
+  integer?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: RegExp;
+}
+
+/**
+ * Validation result
+ */
+interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Settings object type
+ */
+interface Settings {
+  theme?: string;
+  notifications?: boolean;
+  defaultSmartFolderLocation?: string;
+  maxConcurrentAnalysis?: number;
+  autoOrganize?: boolean;
+  backgroundMode?: boolean;
+  launchOnStartup?: boolean;
+  autoApproveThreshold?: number;
+  downloadConfidenceThreshold?: number;
+  reviewThreshold?: number;
+  ollamaHost?: string;
+  textModel?: string;
+  visionModel?: string;
+  embeddingModel?: string;
+  maxFileSize?: number;
+  maxImageFileSize?: number;
+  maxDocumentFileSize?: number;
+  maxTextFileSize?: number;
+  analysisTimeout?: number;
+  fileOperationTimeout?: number;
+  maxBatchSize?: number;
+  retryAttempts?: number;
+  workflowRestoreMaxAge?: number;
+  saveDebounceMs?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Configurable limits result
+ */
+interface ConfigurableLimits {
+  fileSizeLimits: {
+    maxFileSize: number;
+    maxImageFileSize: number;
+    maxDocumentFileSize: number;
+    maxTextFileSize: number;
+  };
+  processingLimits: {
+    maxConcurrentAnalysis: number;
+    analysisTimeout: number;
+    fileOperationTimeout: number;
+    maxBatchSize: number;
+    retryAttempts: number;
+  };
+  uiLimits: {
+    workflowRestoreMaxAge: number;
+    saveDebounceMs: number;
+  };
+}
+
+/**
  * Validation rules for settings
  */
-const VALIDATION_RULES = {
+const VALIDATION_RULES: Record<string, ValidationRule> = {
   theme: {
     type: 'string',
     enum: ['light', 'dark', 'system'],
@@ -163,8 +241,8 @@ const VALIDATION_RULES = {
 /**
  * Validate a single setting value
  */
-function validateSetting(key, value, rule) {
-  const errors = [];
+function validateSetting(key: string, value: unknown, rule: ValidationRule): string[] {
+  const errors: string[] = [];
 
   // Type validation
   if (rule.type && typeof value !== rule.type) {
@@ -173,14 +251,14 @@ function validateSetting(key, value, rule) {
   }
 
   // Enum validation
-  if (rule.enum && !rule.enum.includes(value)) {
+  if (rule.enum && typeof value === 'string' && !rule.enum.includes(value)) {
     errors.push(
       `${key} must be one of [${rule.enum.join(', ')}], got "${value}"`,
     );
   }
 
   // Number validations
-  if (rule.type === 'number') {
+  if (rule.type === 'number' && typeof value === 'number') {
     if (rule.min !== undefined && value < rule.min) {
       errors.push(`${key} must be at least ${rule.min}, got ${value}`);
     }
@@ -193,7 +271,7 @@ function validateSetting(key, value, rule) {
   }
 
   // String validations
-  if (rule.type === 'string') {
+  if (rule.type === 'string' && typeof value === 'string') {
     if (rule.minLength !== undefined && value.length < rule.minLength) {
       errors.push(
         `${key} must be at least ${rule.minLength} characters, got ${value.length}`,
@@ -217,17 +295,19 @@ function validateSetting(key, value, rule) {
 /**
  * Validate settings object
  */
-function validateSettings(settings) {
-  const errors = [];
-  const warnings = [];
+function validateSettings(settings: unknown): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
 
   if (!settings || typeof settings !== 'object') {
     errors.push('Settings must be an object');
     return { valid: false, errors, warnings };
   }
 
+  const settingsObj = settings as Settings;
+
   // Validate each setting against its rule
-  for (const [key, value] of Object.entries(settings)) {
+  for (const [key, value] of Object.entries(settingsObj)) {
     const rule = VALIDATION_RULES[key];
 
     if (!rule) {
@@ -248,11 +328,11 @@ function validateSettings(settings) {
 
   // Fixed: Cross-field validations with consistent null checks
   if (
-    settings.autoApproveThreshold !== undefined &&
-    settings.autoApproveThreshold !== null &&
-    settings.reviewThreshold !== undefined &&
-    settings.reviewThreshold !== null &&
-    settings.autoApproveThreshold < settings.reviewThreshold
+    settingsObj.autoApproveThreshold !== undefined &&
+    settingsObj.autoApproveThreshold !== null &&
+    settingsObj.reviewThreshold !== undefined &&
+    settingsObj.reviewThreshold !== null &&
+    settingsObj.autoApproveThreshold < settingsObj.reviewThreshold
   ) {
     errors.push(
       'autoApproveThreshold must be greater than or equal to reviewThreshold',
@@ -260,11 +340,11 @@ function validateSettings(settings) {
   }
 
   if (
-    settings.downloadConfidenceThreshold !== undefined &&
-    settings.downloadConfidenceThreshold !== null &&
-    settings.autoApproveThreshold !== undefined &&
-    settings.autoApproveThreshold !== null &&
-    settings.downloadConfidenceThreshold < settings.autoApproveThreshold
+    settingsObj.downloadConfidenceThreshold !== undefined &&
+    settingsObj.downloadConfidenceThreshold !== null &&
+    settingsObj.autoApproveThreshold !== undefined &&
+    settingsObj.autoApproveThreshold !== null &&
+    settingsObj.downloadConfidenceThreshold < settingsObj.autoApproveThreshold
   ) {
     errors.push(
       'downloadConfidenceThreshold must be greater than or equal to autoApproveThreshold',
@@ -281,14 +361,15 @@ function validateSettings(settings) {
 /**
  * Sanitize settings by removing invalid values
  */
-function sanitizeSettings(settings) {
+function sanitizeSettings(settings: unknown): Settings {
   if (!settings || typeof settings !== 'object') {
     return {};
   }
 
-  const sanitized = {};
+  const settingsObj = settings as Settings;
+  const sanitized: Settings = {};
 
-  for (const [key, value] of Object.entries(settings)) {
+  for (const [key, value] of Object.entries(settingsObj)) {
     const rule = VALIDATION_RULES[key];
 
     // Keep unknown settings (might be for future use)
@@ -320,49 +401,50 @@ function sanitizeSettings(settings) {
 /**
  * Get default value for a setting
  */
-function getDefaultValue(key: string) {
+function getDefaultValue(key: string): unknown {
   // Use DEFAULT_SETTINGS directly to avoid duplication
-  return DEFAULT_SETTINGS[key];
+  return (DEFAULT_SETTINGS as Record<string, unknown>)[key];
 }
 
 /**
  * Get all configurable limits with current values
  * Fixed: Use shared DEFAULT_SETTINGS to avoid duplication
  */
-function getConfigurableLimits(settings: any) {
+function getConfigurableLimits(settings: Settings | null | undefined): ConfigurableLimits {
   // Handle null/undefined settings
   const safeSettings = settings || {};
+  const defaults = DEFAULT_SETTINGS as unknown as Record<string, number>;
 
   return {
     fileSizeLimits: {
-      maxFileSize: safeSettings.maxFileSize ?? DEFAULT_SETTINGS.maxFileSize,
+      maxFileSize: safeSettings.maxFileSize ?? defaults.maxFileSize,
       maxImageFileSize:
-        safeSettings.maxImageFileSize ?? DEFAULT_SETTINGS.maxImageFileSize,
+        safeSettings.maxImageFileSize ?? defaults.maxImageFileSize,
       maxDocumentFileSize:
         safeSettings.maxDocumentFileSize ??
-        DEFAULT_SETTINGS.maxDocumentFileSize,
+        defaults.maxDocumentFileSize,
       maxTextFileSize:
-        safeSettings.maxTextFileSize ?? DEFAULT_SETTINGS.maxTextFileSize,
+        safeSettings.maxTextFileSize ?? defaults.maxTextFileSize,
     },
     processingLimits: {
       maxConcurrentAnalysis:
         safeSettings.maxConcurrentAnalysis ??
-        DEFAULT_SETTINGS.maxConcurrentAnalysis,
+        defaults.maxConcurrentAnalysis,
       analysisTimeout:
-        safeSettings.analysisTimeout ?? DEFAULT_SETTINGS.analysisTimeout,
+        safeSettings.analysisTimeout ?? defaults.analysisTimeout,
       fileOperationTimeout:
         safeSettings.fileOperationTimeout ??
-        DEFAULT_SETTINGS.fileOperationTimeout,
-      maxBatchSize: safeSettings.maxBatchSize ?? DEFAULT_SETTINGS.maxBatchSize,
+        defaults.fileOperationTimeout,
+      maxBatchSize: safeSettings.maxBatchSize ?? defaults.maxBatchSize,
       retryAttempts:
-        safeSettings.retryAttempts ?? DEFAULT_SETTINGS.retryAttempts,
+        safeSettings.retryAttempts ?? defaults.retryAttempts,
     },
     uiLimits: {
       workflowRestoreMaxAge:
         safeSettings.workflowRestoreMaxAge ??
-        DEFAULT_SETTINGS.workflowRestoreMaxAge,
+        defaults.workflowRestoreMaxAge,
       saveDebounceMs:
-        safeSettings.saveDebounceMs ?? DEFAULT_SETTINGS.saveDebounceMs,
+        safeSettings.saveDebounceMs ?? defaults.saveDebounceMs,
     },
   };
 }

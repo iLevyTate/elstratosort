@@ -1,9 +1,48 @@
 /**
  * Files Slice - Manages file discovery and selection state
  */
-import { createSlice } from '@reduxjs/toolkit';
+import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
-const initialState = {
+interface FileInfo {
+  path: string;
+  name: string;
+  extension: string;
+  size: number;
+  modified?: string;
+  analysis?: Record<string, unknown>;
+  error?: string | null;
+  processingState?: string;
+}
+
+interface FiltersState {
+  fileType: 'all' | 'documents' | 'images' | 'other';
+  searchQuery: string;
+  showProcessed: boolean;
+}
+
+interface StatsState {
+  total: number;
+  analyzed: number;
+  organized: number;
+  errors: number;
+}
+
+interface FilesState {
+  allFiles: FileInfo[];
+  selectedFiles: string[];
+  processedFiles: string[];
+  discoveryPath: string | null;
+  isDiscovering: boolean;
+  isScanning: boolean;
+  discoveryError: string | null;
+  filters: FiltersState;
+  fileStates: Record<string, string>;
+  analyzingFiles: string[];
+  analysisErrors: Record<string, string>;
+  stats: StatsState;
+}
+
+const initialState: FilesState = {
   // Discovered files
   allFiles: [],
   selectedFiles: [],
@@ -43,14 +82,14 @@ const filesSlice = createSlice({
   initialState,
   reducers: {
     // File selection
-    selectFile: (state, action) => {
+    selectFile: (state, action: PayloadAction<string>) => {
       const filePath = action.payload;
       if (!state.selectedFiles.includes(filePath)) {
         state.selectedFiles.push(filePath);
       }
     },
 
-    deselectFile: (state, action) => {
+    deselectFile: (state, action: PayloadAction<string>) => {
       const filePath = action.payload;
       state.selectedFiles = state.selectedFiles.filter((f) => f !== filePath);
     },
@@ -65,7 +104,7 @@ const filesSlice = createSlice({
       state.selectedFiles = [];
     },
 
-    toggleFileSelection: (state, action) => {
+    toggleFileSelection: (state, action: PayloadAction<string>) => {
       const filePath = action.payload;
       if (state.selectedFiles.includes(filePath)) {
         state.selectedFiles = state.selectedFiles.filter((f) => f !== filePath);
@@ -75,7 +114,7 @@ const filesSlice = createSlice({
     },
 
     // File processing
-    markFilesAsProcessed: (state, action) => {
+    markFilesAsProcessed: (state, action: PayloadAction<string | string[]>) => {
       const filePaths = Array.isArray(action.payload)
         ? action.payload
         : [action.payload];
@@ -93,7 +132,7 @@ const filesSlice = createSlice({
       );
     },
 
-    unmarkFilesAsProcessed: (state, action) => {
+    unmarkFilesAsProcessed: (state, action: PayloadAction<string | string[]>) => {
       const filePaths = Array.isArray(action.payload)
         ? action.payload
         : [action.payload];
