@@ -4,6 +4,7 @@
  */
 import StratoSortError from './StratoSortError';
 import FileOperationError from './FileOperationError';
+import FileProcessingError from './FileProcessingError';
 import AnalysisError from './AnalysisError';
 import ServiceError from './ServiceError';
 import ValidationError from './ValidationError';
@@ -72,6 +73,7 @@ export {
 
   // Specific error types
   FileOperationError,
+  FileProcessingError,
   AnalysisError,
   ServiceError,
   ValidationError,
