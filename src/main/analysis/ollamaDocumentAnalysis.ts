@@ -53,11 +53,14 @@ const CACHE_CONFIG = {
 /**
  * Structured truncation for long documents (zero LLM overhead)
  * Preserves title, headings, intro, and conclusion for better semantic representation
- * @param {string} text - Full document text
- * @param {number} limit - Maximum character limit (default 2000)
- * @returns {string} - Truncated text with preserved structure
+ * @param text - Full document text
+ * @param limit - Maximum character limit (default 2000)
+ * @returns Truncated text with preserved structure
  */
-function structuredTruncate(text, limit = 2000) {
+function structuredTruncate(
+  text: string | null | undefined,
+  limit = 2000,
+): string {
   if (!text || text.length <= limit) return text || '';
 
   // Extract document structure without LLM
@@ -81,16 +84,19 @@ function structuredTruncate(text, limit = 2000) {
 /**
  * Extract document title from first non-empty line
  */
-function extractTitle(text) {
+function extractTitle(text: string | null | undefined): string {
   if (!text) return '';
   const lines = text.split('\n').slice(0, 5);
-  return lines.find((l) => l.trim().length > 5 && l.trim().length < 200) || '';
+  return (
+    lines.find((l: string) => l.trim().length > 5 && l.trim().length < 200) ||
+    ''
+  );
 }
 
 /**
  * Extract headings using pattern matching (no LLM)
  */
-function extractHeadings(text) {
+function extractHeadings(text: string | null | undefined): string[] {
   if (!text) return [];
   const patterns = [
     /^#+\s+(.+)$/gm, // Markdown: # Heading
@@ -108,37 +114,70 @@ function extractHeadings(text) {
   return headings;
 }
 
+interface AnalysisResult {
+  category?: string;
+  suggestedName?: string;
+  confidence: number;
+  keywords: string[];
+  summary?: string;
+  purpose?: string;
+  error?: string;
+  smartFolder?: unknown;
+  metadata?: Record<string, unknown>;
+  extractedText?: string;
+  model?: string;
+  [key: string]: unknown;
+}
+
 // In-memory cache of per-file analysis results (path|size|mtimeMs -> result)
-const fileAnalysisCache = new Map();
-function setFileCache(signature, value) {
+const fileAnalysisCache = new Map<string, AnalysisResult>();
+function setFileCache(
+  signature: string | null | undefined,
+  value: AnalysisResult,
+): void {
   if (!signature) return;
   fileAnalysisCache.set(signature, value);
   if (fileAnalysisCache.size > CACHE_CONFIG.MAX_FILE_CACHE) {
     const firstKey = fileAnalysisCache.keys().next().value;
-    fileAnalysisCache.delete(firstKey);
+    if (firstKey !== undefined) {
+      fileAnalysisCache.delete(firstKey);
+    }
   }
 }
 
 // Import error handling system
-const { FileProcessingError } = require('../errors/AnalysisError');
+const { FileProcessingError } = require('../../shared/errors/AnalysisError');
 const ModelVerifierModule = require('../services/ModelVerifier');
 const ModelVerifier = ModelVerifierModule.default || ModelVerifierModule;
 
 const modelVerifier = new ModelVerifier();
-// Lazy loaded services
-let chromaDbService = null;
-let folderMatcher = null;
+
+// Lazy loaded services - using any for flexibility with dynamic service types
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let chromaDbService: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let folderMatcher: any = null;
 
 // Set logger context for this module
 logger.setContext('DocumentAnalysis');
 
+interface SmartFolder {
+  name: string;
+  description?: string;
+  path?: string;
+  id?: string;
+}
+
 /**
  * Analyzes a document file using AI or fallback methods
- * @param {string} filePath - Path to the document file
- * @param {Array} smartFolders - Array of smart folder configurations
- * @returns {Promise<Object>} Analysis result with metadata
+ * @param filePath - Path to the document file
+ * @param smartFolders - Array of smart folder configurations
+ * @returns Analysis result with metadata
  */
-async function analyzeDocumentFile(filePath, smartFolders = []) {
+async function analyzeDocumentFile(
+  filePath: string,
+  smartFolders: SmartFolder[] = [],
+): Promise<AnalysisResult> {
   logger.info('Analyzing document file', { path: filePath });
   const fileExtension = path.extname(filePath).toLowerCase();
   const fileName = path.basename(filePath);
@@ -247,10 +286,12 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
           const ocrText = await ocrPdfIfNeeded(filePath);
           extractedText = ocrText || '';
         }
-      } catch (pdfError) {
+      } catch (pdfError: unknown) {
+        const pdfErrMsg =
+          pdfError instanceof Error ? pdfError.message : String(pdfError);
         logger.error(`Error parsing PDF`, {
           fileName,
-          error: pdfError.message,
+          error: pdfErrMsg,
         });
         // Attempt OCR fallback before giving up
         try {
@@ -259,14 +300,14 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
             extractedText = ocrText;
           } else {
             throw new FileProcessingError('PDF_PROCESSING_FAILURE', fileName, {
-              originalError: pdfError.message,
+              originalError: pdfErrMsg,
               suggestion:
                 'PDF may be corrupted, password-protected, or image-based',
             });
           }
-        } catch (ocrErr) {
+        } catch (ocrErr: unknown) {
           throw new FileProcessingError('PDF_PROCESSING_FAILURE', fileName, {
-            originalError: pdfError.message,
+            originalError: pdfErrMsg,
             suggestion:
               'PDF may be corrupted, password-protected, or image-based',
           });
@@ -303,13 +344,15 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
           fileName,
           length: extractedText.length,
         });
-      } catch (textError) {
+      } catch (textError: unknown) {
+        const textErrMsg =
+          textError instanceof Error ? textError.message : String(textError);
         logger.error(`Error reading text file`, {
           fileName,
-          error: textError.message,
+          error: textErrMsg,
         });
         throw new FileProcessingError('DOCUMENT_ANALYSIS_FAILURE', fileName, {
-          originalError: textError.message,
+          originalError: textErrMsg,
           suggestion: 'File may be corrupted or access denied',
         });
       }

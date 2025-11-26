@@ -1,7 +1,12 @@
 import path from 'path';
 import { promises as fs } from 'fs';
 import { performance } from 'perf_hooks';
-import { validateIpc, withRequestId, withErrorHandling, compose } from './validation';
+import {
+  validateIpc,
+  withRequestId,
+  withErrorHandling,
+  compose,
+} from './validation';
 import { SingleFileAnalysisSchema, AnalysisRequestSchema } from './schemas';
 import { safeGet, safeFilePath, ensureArray } from '../utils/safeAccess';
 import BatchAnalysisService from '../services/BatchAnalysisService';
@@ -26,15 +31,23 @@ interface AnalysisResult {
   smartFolder?: unknown;
 }
 
+// Using any for complex service integrations to avoid overly strict typing
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface AnalysisIpcDependencies {
   ipcMain: Electron.IpcMain;
   IPC_CHANNELS: { ANALYSIS: Record<string, string> };
-  logger: { setContext: (ctx: string) => void; info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
-  tesseract: unknown;
-  systemAnalytics: { recordProcessingTime: (duration: number) => void };
-  analyzeDocumentFile: (path: string, folders: Array<{ name: string; description: string; id: string | null }>) => Promise<AnalysisResult>;
-  analyzeImageFile: (path: string, folders: Array<{ name: string; description: string; id: string | null }>) => Promise<AnalysisResult>;
-  getServiceIntegration: () => { processingState?: { markAnalysisStart: (path: string) => Promise<void>; markAnalysisComplete: (path: string) => Promise<void> }; analysisHistory?: { recordAnalysis: (fileInfo: unknown, normalized: unknown) => Promise<void> } } | null;
+  logger: any;
+  tesseract: any;
+  systemAnalytics: any;
+  analyzeDocumentFile: (
+    path: string,
+    folders: Array<{ name: string; description: string; id: string | null }>,
+  ) => Promise<AnalysisResult>;
+  analyzeImageFile: (
+    path: string,
+    folders: Array<{ name: string; description: string; id: string | null }>,
+  ) => Promise<AnalysisResult>;
+  getServiceIntegration: () => any;
   getCustomFolders: () => SmartFolder[];
 }
 
@@ -55,11 +68,10 @@ function registerAnalysisIpc({
   const analyzeDocumentHandler = compose(
     withErrorHandling,
     withRequestId,
-    validateIpc(SingleFileAnalysisSchema)
+    validateIpc(SingleFileAnalysisSchema),
   )(async (_event: Electron.IpcMainInvokeEvent, data: { filePath: string }) => {
     const filePath = data.filePath;
-    const serviceIntegration =
-      getServiceIntegration && getServiceIntegration();
+    const serviceIntegration = getServiceIntegration && getServiceIntegration();
     let analysisStarted = false;
     let cleanPath: string | null = null;
 
@@ -77,9 +89,7 @@ function registerAnalysisIpc({
 
       // RESOURCE FIX #8: Mark analysis start and track with flag for cleanup
       try {
-        await serviceIntegration?.processingState?.markAnalysisStart(
-          filePath,
-        );
+        await serviceIntegration?.processingState?.markAnalysisStart(filePath);
         analysisStarted = true;
       } catch (stateError: unknown) {
         // Non-fatal if processing state fails to update, but log it
@@ -103,10 +113,7 @@ function registerAnalysisIpc({
         `[IPC-ANALYSIS] Using ${folderCategories.length} smart folders for context:`,
         folderCategories.map((f) => f.name).join(', '),
       );
-      const result = await analyzeDocumentFile(
-        filePath,
-        folderCategories,
-      );
+      const result = await analyzeDocumentFile(filePath, folderCategories);
       const duration = performance.now() - startTime;
       systemAnalytics.recordProcessingTime(duration);
       try {
@@ -138,7 +145,9 @@ function registerAnalysisIpc({
       } catch (historyError: unknown) {
         logger.warn(
           '[ANALYSIS-HISTORY] Failed to record document analysis:',
-          historyError instanceof Error ? historyError.message : String(historyError),
+          historyError instanceof Error
+            ? historyError.message
+            : String(historyError),
         );
       }
 
@@ -175,7 +184,10 @@ function registerAnalysisIpc({
         // Non-fatal if processing state fails to update
         logger.warn('[IPC-ANALYSIS] Failed to mark analysis error:', {
           filePath,
-          error: stateError instanceof Error ? stateError.message : String(stateError),
+          error:
+            stateError instanceof Error
+              ? stateError.message
+              : String(stateError),
         });
       }
       return {
@@ -194,14 +206,10 @@ function registerAnalysisIpc({
             getServiceIntegration && getServiceIntegration();
           // Only clean up if the state exists and wasn't already marked as error/complete
           const currentState =
-            await serviceIntegration?.processingState?.getState?.(
-              filePath,
-            );
+            await serviceIntegration?.processingState?.getState?.(filePath);
           if (currentState === 'analyzing') {
             // State is still analyzing, clean it up
-            await serviceIntegration?.processingState?.clearState?.(
-              filePath,
-            );
+            await serviceIntegration?.processingState?.clearState?.(filePath);
             logger.debug(
               '[IPC-ANALYSIS] Cleaned up processing state for:',
               filePath,
@@ -211,7 +219,9 @@ function registerAnalysisIpc({
           // Log but don't throw - cleanup is best-effort
           logger.warn(
             '[IPC-ANALYSIS] Failed to cleanup processing state:',
-            cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
           );
         }
       }
@@ -227,7 +237,7 @@ function registerAnalysisIpc({
   const analyzeImageHandler = compose(
     withErrorHandling,
     withRequestId,
-    validateIpc(SingleFileAnalysisSchema)
+    validateIpc(SingleFileAnalysisSchema),
   )(async (_event: Electron.IpcMainInvokeEvent, data: { filePath: string }) => {
     const filePath = data.filePath;
     let analysisStarted = false;
@@ -241,9 +251,7 @@ function registerAnalysisIpc({
       const serviceIntegration =
         getServiceIntegration && getServiceIntegration();
       try {
-        await serviceIntegration?.processingState?.markAnalysisStart(
-          filePath,
-        );
+        await serviceIntegration?.processingState?.markAnalysisStart(filePath);
         analysisStarted = true;
       } catch (stateError: unknown) {
         // Non-fatal if processing state fails to update, but log it
@@ -297,7 +305,9 @@ function registerAnalysisIpc({
       } catch (historyError: unknown) {
         logger.warn(
           '[ANALYSIS-HISTORY] Failed to record image analysis:',
-          historyError instanceof Error ? historyError.message : String(historyError),
+          historyError instanceof Error
+            ? historyError.message
+            : String(historyError),
         );
       }
 
@@ -331,13 +341,13 @@ function registerAnalysisIpc({
         );
       } catch (stateError: unknown) {
         // Non-fatal if processing state fails to update
-        logger.warn(
-          '[IPC-IMAGE-ANALYSIS] Failed to mark analysis error:',
-          {
-            filePath,
-            error: stateError instanceof Error ? stateError.message : String(stateError),
-          },
-        );
+        logger.warn('[IPC-IMAGE-ANALYSIS] Failed to mark analysis error:', {
+          filePath,
+          error:
+            stateError instanceof Error
+              ? stateError.message
+              : String(stateError),
+        });
       }
       return {
         error: errObj.message,
@@ -355,14 +365,10 @@ function registerAnalysisIpc({
             getServiceIntegration && getServiceIntegration();
           // Only clean up if the state exists and wasn't already marked as error/complete
           const currentState =
-            await serviceIntegration?.processingState?.getState?.(
-              filePath,
-            );
+            await serviceIntegration?.processingState?.getState?.(filePath);
           if (currentState === 'analyzing') {
             // State is still analyzing, clean it up
-            await serviceIntegration?.processingState?.clearState?.(
-              filePath,
-            );
+            await serviceIntegration?.processingState?.clearState?.(filePath);
             logger.debug(
               '[IPC-IMAGE-ANALYSIS] Cleaned up processing state for:',
               filePath,
@@ -372,7 +378,9 @@ function registerAnalysisIpc({
           // Log but don't throw - cleanup is best-effort
           logger.warn(
             '[IPC-IMAGE-ANALYSIS] Failed to cleanup processing state:',
-            cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
           );
         }
       }
@@ -385,12 +393,19 @@ function registerAnalysisIpc({
   const extractImageTextHandler = compose(
     withErrorHandling,
     withRequestId,
-    validateIpc(SingleFileAnalysisSchema)
+    validateIpc(SingleFileAnalysisSchema),
   )(async (_event: Electron.IpcMainInvokeEvent, data: { filePath: string }) => {
     const filePath = data.filePath;
     try {
       const start = performance.now();
-      const text = await (tesseract as { recognize: (path: string, options: { lang: string; oem: number; psm: number }) => Promise<string> }).recognize(filePath, {
+      const text = await (
+        tesseract as {
+          recognize: (
+            path: string,
+            options: { lang: string; oem: number; psm: number },
+          ) => Promise<string>;
+        }
+      ).recognize(filePath, {
         lang: 'eng',
         oem: 1,
         psm: 3,
@@ -418,8 +433,8 @@ function registerAnalysisIpc({
   const startBatchHandler = compose(
     withErrorHandling,
     withRequestId,
-    validateIpc(AnalysisRequestSchema)
-  )(async (_event: Electron.IpcMainInvokeEvent, data: { files: string[] }) => {
+    validateIpc(AnalysisRequestSchema),
+  )(async (event: Electron.IpcMainInvokeEvent, data: { files: string[] }) => {
     const filePaths = data.files;
     logger.info('[IPC-ANALYSIS] Starting batch analysis', {
       count: filePaths?.length,
@@ -430,8 +445,7 @@ function registerAnalysisIpc({
       activeBatchService.cancel();
     }
 
-    const serviceIntegration =
-      getServiceIntegration && getServiceIntegration();
+    const serviceIntegration = getServiceIntegration && getServiceIntegration();
 
     // Get smart folders
     const folders =
@@ -486,14 +500,18 @@ function registerAnalysisIpc({
   // HIGH PRIORITY FIX: Wrap cancelBatchHandler with error handling middleware
   const cancelBatchHandler = compose(
     withErrorHandling,
-    withRequestId
+    withRequestId,
   )(async () => {
     if (activeBatchService) {
       logger.info('[IPC-ANALYSIS] Cancelling batch analysis request');
       activeBatchService.cancel();
       return { success: true, cancelled: true };
     }
-    return { success: true, cancelled: false, message: 'No active batch to cancel' };
+    return {
+      success: true,
+      cancelled: false,
+      message: 'No active batch to cancel',
+    };
   });
 
   ipcMain.handle(IPC_CHANNELS.ANALYSIS.START_BATCH, startBatchHandler);

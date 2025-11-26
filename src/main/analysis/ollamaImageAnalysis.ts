@@ -31,6 +31,8 @@ interface SmartFolderInfo {
   name: string;
   description?: string;
   path?: string;
+  id?: string;
+  [key: string]: unknown;
 }
 
 interface AnalysisResult {
@@ -43,15 +45,23 @@ interface AnalysisResult {
   error?: string;
   smartFolder?: SmartFolderInfo;
   date?: string;
+  purpose?: string;
+  project?: string;
+  [key: string]: unknown;
 }
 
-let chromaDbSingleton: unknown = null;
-let folderMatcherSingleton: unknown = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let chromaDbSingleton: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let folderMatcherSingleton: any = null;
 
 // In-memory cache for image analysis keyed by path|size|mtimeMs
 const imageAnalysisCache = new Map<string, AnalysisResult>();
 const MAX_IMAGE_CACHE = 300;
-function setImageCache(signature: string | null | undefined, value: AnalysisResult): void {
+function setImageCache(
+  signature: string | null | undefined,
+  value: AnalysisResult,
+): void {
   if (!signature) return;
   imageAnalysisCache.set(signature, value);
   if (imageAnalysisCache.size > MAX_IMAGE_CACHE) {
@@ -94,7 +104,8 @@ async function analyzeImageWithOllama(
     if (smartFolders && smartFolders.length > 0) {
       const validFolders = smartFolders
         .filter(
-          (f: SmartFolderInfo) => f && typeof f.name === 'string' && f.name.trim().length > 0,
+          (f: SmartFolderInfo) =>
+            f && typeof f.name === 'string' && f.name.trim().length > 0,
         )
         .slice(0, 10)
         .map((f: SmartFolderInfo) => ({
@@ -305,7 +316,10 @@ Required fields:
   }
 }
 
-async function analyzeImageFile(filePath: string, smartFolders: SmartFolderInfo[] = []): Promise<AnalysisResult> {
+async function analyzeImageFile(
+  filePath: string,
+  smartFolders: SmartFolderInfo[] = [],
+): Promise<AnalysisResult> {
   const { logger } = require('../../shared/logger');
   logger.info(`Analyzing image file`, { path: filePath });
   const fileExtension = path.extname(filePath).toLowerCase();

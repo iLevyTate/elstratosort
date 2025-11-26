@@ -9,12 +9,13 @@ import {
   ACTION_TYPES,
 } from '../../shared/constants';
 import { TIMEOUTS } from '../../shared/performanceConstants';
-import { validateIpc, withRequestId, withErrorHandling, compose } from './validation';
 import {
-  FileOpenSchema,
-  FileDeleteSchema,
-  FileMoveSchema,
-} from './schemas';
+  validateIpc,
+  withRequestId,
+  withErrorHandling,
+  compose,
+} from './validation';
+import { FileOpenSchema, FileDeleteSchema, FileMoveSchema } from './schemas';
 import { logger } from '../../shared/logger';
 import { FileOrganizationSaga } from '../services/transaction';
 import { getInstance as getChromaDB } from '../services/ChromaDBService';
@@ -30,7 +31,10 @@ let saga: FileOrganizationSaga | null = null;
 function initializeSaga(): FileOrganizationSaga {
   if (saga) return saga;
 
-  const journalPath = path.join(app.getPath('userData'), 'transaction-journal.db');
+  const journalPath = path.join(
+    app.getPath('userData'),
+    'transaction-journal.db',
+  );
   saga = new FileOrganizationSaga(journalPath);
 
   // Recover any incomplete transactions from previous crashes
@@ -56,7 +60,8 @@ interface BatchOperation {
 interface BatchOrganizeParams {
   operation: BatchOperation;
   logger: typeof import('../../shared/logger').logger;
-  getServiceIntegration: () => unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getServiceIntegration: () => any;
   getMainWindow?: () => Electron.BrowserWindow | null;
 }
 
@@ -117,18 +122,27 @@ async function handleBatchOrganize({
     };
   }
 
-  logger.info(`[FILE-OPS] Starting batch operation with ${operation.operations.length} files`);
+  logger.info(
+    `[FILE-OPS] Starting batch operation with ${operation.operations.length} files`,
+  );
 
   // Execute with saga (handles rollback automatically)
-  const sagaResult = await fileSaga.execute(operation.operations);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sagaResult = await fileSaga.execute(operation.operations as any);
 
   if (sagaResult.success) {
     // Update ChromaDB paths after successful operation
-    try {const chromaDbService = getChromaDB();
+    try {
+      const chromaDbService = getChromaDB();
 
       if (chromaDbService && sagaResult.results.length > 0) {
         const pathUpdates = sagaResult.results
-          .filter((r: { success: boolean; operation: { source?: string; destination?: string } }) => r.success && r.operation.source && r.operation.destination)
+          .filter(
+            (r: {
+              success: boolean;
+              operation: { source?: string; destination?: string };
+            }) => r.success && r.operation.source && r.operation.destination,
+          )
           .map((r: { operation: { source: string; destination: string } }) => ({
             oldId: `file:${r.operation.source}`,
             newId: `file:${r.operation.destination}`,
@@ -145,10 +159,13 @@ async function handleBatchOrganize({
           });
 
           await chromaDbService.updateFilePaths(pathUpdates).catch((error) => {
-            logger.warn('[FILE-OPS] Failed to update database paths (non-fatal)', {
-              error: error.message,
-              transactionId: sagaResult.transactionId,
-            });
+            logger.warn(
+              '[FILE-OPS] Failed to update database paths (non-fatal)',
+              {
+                error: error.message,
+                transactionId: sagaResult.transactionId,
+              },
+            );
           });
         }
       }
@@ -161,15 +178,17 @@ async function handleBatchOrganize({
 
     // Record undo operation
     try {
-      const undoOps = sagaResult.results.map((r: { operation: { source: string; destination: string } }) => ({
-        type: 'move',
-        originalPath: r.operation.source,
-        newPath: r.operation.destination,
-      }));
+      const undoOps = sagaResult.results.map(
+        (r: { operation: { source: string; destination: string } }) => ({
+          type: 'move',
+          originalPath: r.operation.source,
+          newPath: r.operation.destination,
+        }),
+      );
 
       await getServiceIntegration()?.undoRedo?.recordAction?.(
         ACTION_TYPES.BATCH_OPERATION,
-        { operations: undoOps }
+        { operations: undoOps },
       );
     } catch {
       // Non-fatal if undo recording fails
@@ -230,7 +249,11 @@ interface FilesIpcDependencies {
   dialog: Electron.Dialog;
   shell: Electron.Shell;
   getMainWindow: () => Electron.BrowserWindow | null;
-  getServiceIntegration: () => { undoRedo?: { recordAction?: (type: string, data: unknown) => Promise<void> } } | null;
+  getServiceIntegration: () => {
+    undoRedo?: {
+      recordAction?: (type: string, data: unknown) => Promise<void>;
+    };
+  } | null;
 }
 
 export function registerFilesIpc({
@@ -262,7 +285,7 @@ export function registerFilesIpc({
     IPC_CHANNELS.FILES.SELECT,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       logger.info(
         '[MAIN-FILE-SELECT] ===== FILE SELECTION HANDLER CALLED =====',
@@ -339,7 +362,11 @@ export function registerFilesIpc({
             '.rtf',
           ]),
         );
-        const scanFolder = async (folderPath: string, depth = 0, maxDepth = 3): Promise<string[]> => {
+        const scanFolder = async (
+          folderPath: string,
+          depth = 0,
+          maxDepth = 3,
+        ): Promise<string[]> => {
           if (depth > maxDepth) return [];
           try {
             const items = await fs.readdir(folderPath, { withFileTypes: true });
@@ -412,7 +439,11 @@ export function registerFilesIpc({
         };
       } catch (error: unknown) {
         logger.error('[MAIN-FILE-SELECT] Failed to select files:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error), files: [] };
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+          files: [],
+        };
       }
     }),
   );
@@ -421,7 +452,7 @@ export function registerFilesIpc({
     IPC_CHANNELS.FILES.SELECT_DIRECTORY,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
         const result = await dialog.showOpenDialog(getMainWindow() || null, {
@@ -434,7 +465,11 @@ export function registerFilesIpc({
         return { success: true, folder: result.filePaths[0] };
       } catch (error: unknown) {
         logger.error('[IPC] Directory selection failed:', error);
-        return { success: false, folder: null, error: error instanceof Error ? error.message : String(error) };
+        return {
+          success: false,
+          folder: null,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     }),
   );
@@ -443,7 +478,7 @@ export function registerFilesIpc({
     IPC_CHANNELS.FILES.GET_DOCUMENTS_PATH,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
         return app.getPath('documents');
@@ -458,7 +493,7 @@ export function registerFilesIpc({
   const getFileStatsHandler = compose(
     withErrorHandling,
     withRequestId,
-    validateIpc(FileOpenSchema)
+    validateIpc(FileOpenSchema),
   )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
     const filePath = data.path;
     try {
@@ -482,7 +517,7 @@ export function registerFilesIpc({
   const createFolderDirectHandler = compose(
     withErrorHandling,
     withRequestId,
-    validateIpc(FileOpenSchema)
+    validateIpc(FileOpenSchema),
   )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
     const fullPath = data.path;
     try {
@@ -490,10 +525,7 @@ export function registerFilesIpc({
       try {
         const stats = await fs.stat(normalizedPath);
         if (stats.isDirectory()) {
-          logger.info(
-            '[FILE-OPS] Folder already exists:',
-            normalizedPath,
-          );
+          logger.info('[FILE-OPS] Folder already exists:', normalizedPath);
           return { success: true, path: normalizedPath, existed: true };
         }
       } catch {
@@ -510,8 +542,7 @@ export function registerFilesIpc({
         userMessage = 'Permission denied - check folder permissions';
       else if (errObj.code === 'ENOTDIR')
         userMessage = 'Invalid path - parent is not a directory';
-      else if (errObj.code === 'EEXIST')
-        userMessage = 'Folder already exists';
+      else if (errObj.code === 'EEXIST') userMessage = 'Folder already exists';
       return {
         success: false,
         error: userMessage,
@@ -530,7 +561,7 @@ export function registerFilesIpc({
     IPC_CHANNELS.FILES.GET_FILES_IN_DIRECTORY,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async (_event: Electron.IpcMainInvokeEvent, dirPath: string) => {
       try {
         const items = await fs.readdir(dirPath, { withFileTypes: true });
@@ -541,15 +572,14 @@ export function registerFilesIpc({
           isFile: item.isFile(),
         }));
         logger.info(
-          '[FILE-OPS] Listed directory contents:',
-          dirPath,
-          result.length,
-          'items',
+          `[FILE-OPS] Listed directory contents: ${dirPath} - ${result.length} items`,
         );
         return result;
       } catch (error: unknown) {
         logger.error('[FILE-OPS] Error reading directory:', error);
-        return { error: error instanceof Error ? error.message : String(error) };
+        return {
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     }),
   );
@@ -565,16 +595,14 @@ export function registerFilesIpc({
   const performOperationHandler = compose(
     withErrorHandling,
     withRequestId,
-    validateIpc(OperationSchema)
+    validateIpc(OperationSchema),
   )(async (_event: Electron.IpcMainInvokeEvent, operation: OperationData) => {
     try {
       // PERFORMANCE FIX: Removed expensive JSON.stringify logging
       // Only log essential info to reduce overhead
       logger.info('[FILE-OPS] Performing operation:', {
         type: operation.type,
-        source: operation.source
-          ? path.basename(operation.source)
-          : 'N/A',
+        source: operation.source ? path.basename(operation.source) : 'N/A',
         destination: operation.destination
           ? path.basename(operation.destination)
           : 'N/A',
@@ -596,7 +624,8 @@ export function registerFilesIpc({
           }
 
           // Update database path
-          try {const chromaDbService = getChromaDB();
+          try {
+            const chromaDbService = getChromaDB();
             if (chromaDbService) {
               const oldId = `file:${operation.source}`;
               const newId = `file:${operation.destination}`;
@@ -620,10 +649,10 @@ export function registerFilesIpc({
                 });
             }
           } catch (dbError: unknown) {
-            logger.warn(
-              '[FILE-OPS] Failed to initiate database path update',
-              { error: dbError instanceof Error ? dbError.message : String(dbError) },
-            );
+            logger.warn('[FILE-OPS] Failed to initiate database path update', {
+              error:
+                dbError instanceof Error ? dbError.message : String(dbError),
+            });
           }
 
           return {
@@ -642,7 +671,8 @@ export function registerFilesIpc({
           await fs.unlink(operation.source);
 
           // Delete from database
-          try {const chromaDbService = getChromaDB();
+          try {
+            const chromaDbService = getChromaDB();
             if (chromaDbService) {
               // Non-blocking delete
               chromaDbService
@@ -655,10 +685,10 @@ export function registerFilesIpc({
                 });
             }
           } catch (dbError: unknown) {
-            logger.warn(
-              '[FILE-OPS] Failed to initiate database entry delete',
-              { error: dbError instanceof Error ? dbError.message : String(dbError) },
-            );
+            logger.warn('[FILE-OPS] Failed to initiate database entry delete', {
+              error:
+                dbError instanceof Error ? dbError.message : String(dbError),
+            });
           }
 
           return {
@@ -675,9 +705,7 @@ export function registerFilesIpc({
           });
 
         default:
-          logger.error(
-            `[FILE-OPS] Unknown operation type: ${operation.type}`,
-          );
+          logger.error(`[FILE-OPS] Unknown operation type: ${operation.type}`);
           return {
             success: false,
             error: `Unknown operation type: ${operation.type}`,
@@ -685,7 +713,10 @@ export function registerFilesIpc({
       }
     } catch (error: unknown) {
       logger.error('[FILE-OPS] Error performing operation:', error);
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   });
 
@@ -697,7 +728,7 @@ export function registerFilesIpc({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(FileDeleteSchema)
+      validateIpc(FileDeleteSchema),
     )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
       const filePath = data.path;
       try {
@@ -715,14 +746,18 @@ export function registerFilesIpc({
             success: false,
             error: 'File not found or inaccessible',
             errorCode: 'FILE_NOT_FOUND',
-            details: accessError instanceof Error ? accessError.message : String(accessError),
+            details:
+              accessError instanceof Error
+                ? accessError.message
+                : String(accessError),
           };
         }
         const stats = await fs.stat(filePath);
         await fs.unlink(filePath);
 
         // Delete from database
-        try {const chromaDbService = getChromaDB();
+        try {
+          const chromaDbService = getChromaDB();
           if (chromaDbService) {
             // Non-blocking delete
             chromaDbService
@@ -741,9 +776,7 @@ export function registerFilesIpc({
         }
 
         logger.info(
-          '[FILE-OPS] Deleted file:',
-          filePath,
-          `(${stats.size} bytes)`,
+          `[FILE-OPS] Deleted file: ${filePath} (${stats.size} bytes)`,
         );
         return {
           success: true,
@@ -786,7 +819,7 @@ export function registerFilesIpc({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(FileOpenSchema)
+      validateIpc(FileOpenSchema),
     )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
       const filePath = data.path;
       try {
@@ -795,7 +828,10 @@ export function registerFilesIpc({
         return { success: true };
       } catch (error: unknown) {
         logger.error('[FILE-OPS] Error opening file:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     }),
   );
@@ -806,7 +842,7 @@ export function registerFilesIpc({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(FileOpenSchema)
+      validateIpc(FileOpenSchema),
     )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
       const filePath = data.path;
       try {
@@ -815,7 +851,10 @@ export function registerFilesIpc({
         return { success: true };
       } catch (error: unknown) {
         logger.error('[FILE-OPS] Error revealing file:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     }),
   );
@@ -826,73 +865,78 @@ export function registerFilesIpc({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(FileMoveSchema)
-    )(async (_event: Electron.IpcMainInvokeEvent, data: { source: string; destination: string }) => {
-      const sourcePath = data.source;
-      const destinationPath = data.destination;
-      try {
-        if (!sourcePath || !destinationPath) {
-          return {
-            success: false,
-            error: 'Source and destination paths are required',
-            errorCode: 'INVALID_PATHS',
-          };
-        }
-        const normalizedSource = path.resolve(sourcePath);
-        const normalizedDestination = path.resolve(destinationPath);
+      validateIpc(FileMoveSchema),
+    )(
+      async (
+        _event: Electron.IpcMainInvokeEvent,
+        data: { source: string; destination: string },
+      ) => {
+        const sourcePath = data.source;
+        const destinationPath = data.destination;
         try {
-          await fs.access(normalizedSource);
-        } catch (accessError: unknown) {
+          if (!sourcePath || !destinationPath) {
+            return {
+              success: false,
+              error: 'Source and destination paths are required',
+              errorCode: 'INVALID_PATHS',
+            };
+          }
+          const normalizedSource = path.resolve(sourcePath);
+          const normalizedDestination = path.resolve(destinationPath);
+          try {
+            await fs.access(normalizedSource);
+          } catch (accessError: unknown) {
+            return {
+              success: false,
+              error: 'Source file not found',
+              errorCode: 'SOURCE_NOT_FOUND',
+              details:
+                accessError instanceof Error
+                  ? accessError.message
+                  : String(accessError),
+            };
+          }
+          const destDir = path.dirname(normalizedDestination);
+          await fs.mkdir(destDir, { recursive: true });
+          const sourceStats = await fs.stat(normalizedSource);
+          await fs.copyFile(normalizedSource, normalizedDestination);
+          logger.info(
+            `[FILE-OPS] Copied file: ${normalizedSource} to ${normalizedDestination}`,
+          );
+          return {
+            success: true,
+            message: 'File copied successfully',
+            operation: {
+              source: normalizedSource,
+              destination: normalizedDestination,
+              size: sourceStats.size,
+              copiedAt: new Date().toISOString(),
+            },
+          };
+        } catch (error: unknown) {
+          logger.error('[FILE-OPS] Error copying file:', error);
+          const errObj = error as NodeJS.ErrnoException;
+          let errorCode = 'COPY_FAILED';
+          let userMessage = 'Failed to copy file';
+          if (errObj.code === 'ENOSPC') {
+            errorCode = 'INSUFFICIENT_SPACE';
+            userMessage = 'Insufficient disk space';
+          } else if (errObj.code === 'EACCES' || errObj.code === 'EPERM') {
+            errorCode = 'PERMISSION_DENIED';
+            userMessage = 'Permission denied';
+          } else if (errObj.code === 'EEXIST') {
+            errorCode = 'FILE_EXISTS';
+            userMessage = 'Destination file already exists';
+          }
           return {
             success: false,
-            error: 'Source file not found',
-            errorCode: 'SOURCE_NOT_FOUND',
-            details: accessError instanceof Error ? accessError.message : String(accessError),
+            error: userMessage,
+            errorCode,
+            details: errObj.message,
           };
         }
-        const destDir = path.dirname(normalizedDestination);
-        await fs.mkdir(destDir, { recursive: true });
-        const sourceStats = await fs.stat(normalizedSource);
-        await fs.copyFile(normalizedSource, normalizedDestination);
-        logger.info(
-          '[FILE-OPS] Copied file:',
-          normalizedSource,
-          'to',
-          normalizedDestination,
-        );
-        return {
-          success: true,
-          message: 'File copied successfully',
-          operation: {
-            source: normalizedSource,
-            destination: normalizedDestination,
-            size: sourceStats.size,
-            copiedAt: new Date().toISOString(),
-          },
-        };
-      } catch (error: unknown) {
-        logger.error('[FILE-OPS] Error copying file:', error);
-        const errObj = error as NodeJS.ErrnoException;
-        let errorCode = 'COPY_FAILED';
-        let userMessage = 'Failed to copy file';
-        if (errObj.code === 'ENOSPC') {
-          errorCode = 'INSUFFICIENT_SPACE';
-          userMessage = 'Insufficient disk space';
-        } else if (errObj.code === 'EACCES' || errObj.code === 'EPERM') {
-          errorCode = 'PERMISSION_DENIED';
-          userMessage = 'Permission denied';
-        } else if (errObj.code === 'EEXIST') {
-          errorCode = 'FILE_EXISTS';
-          userMessage = 'Destination file already exists';
-        }
-        return {
-          success: false,
-          error: userMessage,
-          errorCode,
-          details: errObj.message,
-        };
-      }
-    }),
+      },
+    ),
   );
 
   // Open Folder Handler - with full validation stack
@@ -901,7 +945,7 @@ export function registerFilesIpc({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(FileOpenSchema)
+      validateIpc(FileOpenSchema),
     )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
       const folderPath = data.path;
       try {
@@ -927,7 +971,10 @@ export function registerFilesIpc({
             success: false,
             error: 'Folder not found or inaccessible',
             errorCode: 'FOLDER_NOT_FOUND',
-            details: accessError instanceof Error ? accessError.message : String(accessError),
+            details:
+              accessError instanceof Error
+                ? accessError.message
+                : String(accessError),
           };
         }
         await shell.openPath(normalizedPath);
@@ -955,7 +1002,7 @@ export function registerFilesIpc({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(FileDeleteSchema)
+      validateIpc(FileDeleteSchema),
     )(async (_event: Electron.IpcMainInvokeEvent, data: { path: string }) => {
       const fullPath = data.path;
       try {

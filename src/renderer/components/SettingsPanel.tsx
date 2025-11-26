@@ -5,7 +5,8 @@ import React, {
   useCallback,
   useMemo,
 } from 'react';
-import { useDispatch } from 'react-redux';import { logger } from '../../shared/logger';
+import { useDispatch } from 'react-redux';
+import { logger } from '../../shared/logger';
 import { useNotification } from '../contexts/NotificationContext';
 import { closeModal } from '../store/slices/uiSlice';
 import { useDebouncedCallback } from '../hooks/usePerformance';
@@ -15,6 +16,41 @@ import Select from './ui/Select';
 import Collapsible from './ui/Collapsible';
 import AutoOrganizeSection from './settings/AutoOrganizeSection';
 import BackgroundModeSection from './settings/BackgroundModeSection';
+
+// Type definitions for API responses
+interface OllamaHealthResponse {
+  success: boolean;
+  modelCount?: number;
+  error?: string;
+}
+
+interface TestConnectionResponse {
+  success: boolean;
+  data?: {
+    version?: string;
+    models?: string[];
+  };
+  error?: string;
+}
+
+interface ModelListResponse {
+  success: boolean;
+  results?: Array<{ name: string; details?: { family?: string } }>;
+  error?: string;
+}
+
+interface SettingsResponse {
+  ollamaHost?: string;
+  textModel?: string;
+  visionModel?: string;
+  embeddingModel?: string;
+  maxConcurrentAnalysis?: number;
+  autoOrganize?: boolean;
+  backgroundMode?: boolean;
+  defaultSmartFolderLocation?: string;
+  launchOnStartup?: boolean;
+  [key: string]: unknown;
+}
 
 // Set logger context for this component
 logger.setContext('SettingsPanel');
@@ -44,9 +80,13 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     embedding: [],
     all: [],
   });
-  const [ollamaHealth, setOllamaHealth] = useState(null);
+  const [ollamaHealth, setOllamaHealth] = useState<OllamaHealthResponse | null>(
+    null,
+  );
   const [isRefreshingModels, setIsRefreshingModels] = useState(false);
-  const [testResults, setTestResults] = useState({});
+  const [testResults, setTestResults] = useState<TestConnectionResponse>(
+    {} as TestConnectionResponse,
+  );
   const [isTestingApi, setIsTestingApi] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isRebuildingFolders, setIsRebuildingFolders] = useState(false);
@@ -125,9 +165,10 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     if (didAutoHealthCheckRef.current) return;
     didAutoHealthCheckRef.current = true;
     (async () => {
-      try {        const res = await window.electronAPI.ollama.testConnection(
+      try {
+        const res = (await window.electronAPI.ollama.testConnection(
           settings.ollamaHost,
-        );
+        )) as any;
         setOllamaHealth(res?.ollamaHealth || null);
         if (res?.success) {
           // Refresh models to reflect current host/models
@@ -143,7 +184,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   }, [settingsLoaded]);
 
   const loadSettings = useCallback(async () => {
-    try {      const savedSettings = await window.electronAPI.settings.get();
+    try {
+      const savedSettings = (await window.electronAPI.settings.get()) as any;
       if (savedSettings) {
         setSettings((prev) => ({ ...prev, ...savedSettings }));
       }
@@ -159,7 +201,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
 
   const loadOllamaModels = useCallback(async () => {
     try {
-      setIsRefreshingModels(true);      const rawResponse = await window.electronAPI.ollama.getModels();
+      setIsRefreshingModels(true);
+      const rawResponse = (await window.electronAPI.ollama.getModels()) as any;
       // Handle both wrapped { success, data } and legacy direct format
       const response = rawResponse?.data ?? rawResponse ?? {};
       const categories = response?.categories || {
@@ -198,7 +241,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
 
   const saveSettings = useCallback(async () => {
     try {
-      setIsSaving(true);      await window.electronAPI.settings.save(settings);
+      setIsSaving(true);
+      await window.electronAPI.settings.save(settings);
       addNotification('Settings saved successfully!', 'success');
       handleCloseSettings();
     } catch (error) {
@@ -215,7 +259,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   // Auto-save settings on change (debounced), without closing the panel or toasts
   const autoSaveSettings = useDebouncedCallback(
     async () => {
-      try {        await window.electronAPI.settings.save(settings);
+      try {
+        await window.electronAPI.settings.save(settings);
       } catch (error) {
         logger.error('Auto-save settings failed', {
           error: error.message,
@@ -235,7 +280,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   }, [settings, settingsLoaded, autoSaveSettings]);
 
   const testOllamaConnection = useCallback(async () => {
-    try {      const res = await window.electronAPI.ollama.testConnection(
+    try {
+      const res = await window.electronAPI.ollama.testConnection(
         settings.ollamaHost,
       );
       setOllamaHealth(res?.ollamaHealth || null);
@@ -263,7 +309,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       // subscribe to progress
       try {
         if (progressUnsubRef.current) progressUnsubRef.current();
-        progressUnsubRef.current =          window.electronAPI.events.onOperationProgress((evt) => {
+        progressUnsubRef.current =
+          window.electronAPI.events.onOperationProgress((evt) => {
             if (
               evt?.type === 'ollama-pull' &&
               evt?.model?.includes(newModel.trim())
@@ -273,7 +320,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
           });
       } catch {
         // Non-fatal if progress subscription fails
-      }      const res = await window.electronAPI.ollama.pullModels([newModel.trim()]);
+      }
+      const res = await window.electronAPI.ollama.pullModels([newModel.trim()]);
       const result = res?.results?.[0];
       if (result?.success) {
         addNotification(`Added model ${newModel.trim()}`, 'success');
@@ -304,7 +352,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   const deleteOllamaModel = useCallback(async () => {
     if (!modelToDelete) return;
     try {
-      setIsDeletingModel(true);      const res = await window.electronAPI.ollama.deleteModel(modelToDelete);
+      setIsDeletingModel(true);
+      const res = await window.electronAPI.ollama.deleteModel(modelToDelete);
       if (res?.success) {
         addNotification(`Deleted model ${modelToDelete}`, 'success');
         setModelToDelete('');
@@ -326,28 +375,46 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     setIsTestingApi(true);
     const results = {};
 
-    try {      await window.electronAPI.files.getDocumentsPath();      results.fileOperations = '✅ Working';
-    } catch (error) {      results.fileOperations = `❌ Error: ${error.message}`;
+    try {
+      await window.electronAPI.files.getDocumentsPath();
+      results.fileOperations = '✅ Working';
+    } catch (error) {
+      results.fileOperations = `❌ Error: ${error.message}`;
     }
 
-    try {      await window.electronAPI.smartFolders.get();      results.smartFolders = '✅ Working';
-    } catch (error) {      results.smartFolders = `❌ Error: ${error.message}`;
+    try {
+      await window.electronAPI.smartFolders.get();
+      results.smartFolders = '✅ Working';
+    } catch (error) {
+      results.smartFolders = `❌ Error: ${error.message}`;
     }
 
-    try {      await window.electronAPI.analysisHistory.getStatistics();      results.analysisHistory = '✅ Working';
-    } catch (error) {      results.analysisHistory = `❌ Error: ${error.message}`;
+    try {
+      await window.electronAPI.analysisHistory.getStatistics();
+      results.analysisHistory = '✅ Working';
+    } catch (error) {
+      results.analysisHistory = `❌ Error: ${error.message}`;
     }
 
-    try {      await window.electronAPI.undoRedo.canUndo();      results.undoRedo = '✅ Working';
-    } catch (error) {      results.undoRedo = `❌ Error: ${error.message}`;
+    try {
+      await window.electronAPI.undoRedo.canUndo();
+      results.undoRedo = '✅ Working';
+    } catch (error) {
+      results.undoRedo = `❌ Error: ${error.message}`;
     }
 
-    try {      await window.electronAPI.system.getApplicationStatistics();      results.systemMonitoring = '✅ Working';
-    } catch (error) {      results.systemMonitoring = `❌ Error: ${error.message}`;
+    try {
+      await window.electronAPI.system.getApplicationStatistics();
+      results.systemMonitoring = '✅ Working';
+    } catch (error) {
+      results.systemMonitoring = `❌ Error: ${error.message}`;
     }
 
-    try {      await window.electronAPI.ollama.getModels();      results.ollama = '✅ Working';
-    } catch (error) {      results.ollama = `❌ Error: ${error.message}`;
+    try {
+      await window.electronAPI.ollama.getModels();
+      results.ollama = '✅ Working';
+    } catch (error) {
+      results.ollama = `❌ Error: ${error.message}`;
     }
 
     setTestResults(results);
@@ -363,7 +430,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
             <h2 className="text-xl font-bold text-system-gray-900">
               ⚙️ Settings
             </h2>
-            <div className="flex items-center gap-3">              <Button
+            <div className="flex items-center gap-3">
+              <Button
                 onClick={() => {
                   try {
                     [
@@ -383,7 +451,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                 className="text-xs"
               >
                 Expand all
-              </Button>              <Button
+              </Button>
+              <Button
                 onClick={() => {
                   try {
                     [
@@ -403,7 +472,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                 className="text-xs"
               >
                 Collapse all
-              </Button>              <Button
+              </Button>
+              <Button
                 onClick={handleCloseSettings}
                 variant="ghost"
                 className="text-system-gray-500 hover:text-system-gray-700 p-2"
@@ -416,7 +486,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
           </div>
         </div>
 
-        <div className="p-6 space-y-6">          <Collapsible
+        <div className="p-6 space-y-6">
+          <Collapsible
             title="🤖 AI Configuration"
             defaultOpen
             persistKey="settings-ai"
@@ -427,7 +498,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                   Ollama Host URL
                 </label>
                 <div className="flex gap-3">
-                  <Input                    type="text"
+                  <Input
+                    type="text"
                     value={settings.ollamaHost}
                     onChange={(e) =>
                       setSettings((prev) => ({
@@ -437,7 +509,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                     }
                     placeholder="http://127.0.0.1:11434"
                     className="flex-1"
-                  />                  <Button
+                  />
+                  <Button
                     onClick={testOllamaConnection}
                     variant="secondary"
                     type="button"
@@ -447,7 +520,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                   </Button>
                 </div>
               </div>
-              <div className="flex items-center gap-3">                <Button
+              <div className="flex items-center gap-3">
+                <Button
                   onClick={loadOllamaModels}
                   variant="secondary"
                   type="button"
@@ -455,7 +529,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                   disabled={isRefreshingModels}
                 >
                   {isRefreshingModels ? 'Refreshing…' : '🔄 Refresh Models'}
-                </Button>                <Button
+                </Button>
+                <Button
                   onClick={() => setShowAllModels((v) => !v)}
                   variant="subtle"
                   type="button"
@@ -502,7 +577,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                 <div>
                   <label className="block text-sm font-medium text-system-gray-700 mb-2">
                     Text Model
-                  </label>                  <Select
+                  </label>
+                  <Select
                     value={settings.textModel}
                     onChange={(e) =>
                       setSettings((prev) => ({
@@ -521,7 +597,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                 <div>
                   <label className="block text-sm font-medium text-system-gray-700 mb-2">
                     Vision Model
-                  </label>                  <Select
+                  </label>
+                  <Select
                     value={settings.visionModel}
                     onChange={(e) =>
                       setSettings((prev) => ({
@@ -540,7 +617,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                 <div>
                   <label className="block text-sm font-medium text-system-gray-700 mb-2">
                     Embedding Model
-                  </label>                  <Select
+                  </label>
+                  <Select
                     value={settings.embeddingModel}
                     onChange={(e) =>
                       setSettings((prev) => ({
@@ -563,12 +641,14 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                     Add Model
                   </label>
                   <div className="flex gap-3">
-                    <Input                      type="text"
+                    <Input
+                      type="text"
                       value={newModel}
                       onChange={(e) => setNewModel(e.target.value)}
                       placeholder="model:tag"
                       className="flex-1"
-                    />                    <Button
+                    />
+                    <Button
                       onClick={addOllamaModel}
                       variant="secondary"
                       type="button"
@@ -583,7 +663,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                   <label className="block text-sm font-medium text-system-gray-700 mb-2">
                     Delete Model
                   </label>
-                  <div className="flex gap-3">                    <Select
+                  <div className="flex gap-3">
+                    <Select
                       value={modelToDelete}
                       onChange={(e) => setModelToDelete(e.target.value)}
                       className="flex-1"
@@ -596,7 +677,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                           {model}
                         </option>
                       ))}
-                    </Select>                    <Button
+                    </Select>
+                    <Button
                       onClick={deleteOllamaModel}
                       variant="danger"
                       type="button"
@@ -617,11 +699,13 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                     Rebuild embeddings for all smart folders to improve semantic
                     matching after you edit folder names or descriptions.
                   </p>
-                  <div className="flex gap-3">                    <Button
+                  <div className="flex gap-3">
+                    <Button
                       onClick={async () => {
                         try {
                           setIsRebuildingFolders(true);
-                          const res =                            await window.electronAPI.embeddings.rebuildFolders();
+                          const res =
+                            await window.electronAPI.embeddings.rebuildFolders();
                           addNotification(
                             res?.success
                               ? `Rebuilt ${res.folders || 0} folder embeddings`
@@ -642,11 +726,13 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                       {isRebuildingFolders
                         ? 'Rebuilding…'
                         : 'Rebuild Folder Embeddings'}
-                    </Button>                    <Button
+                    </Button>
+                    <Button
                       onClick={async () => {
                         try {
                           setIsRebuildingFiles(true);
-                          const res =                            await window.electronAPI.embeddings.rebuildFiles();
+                          const res =
+                            await window.electronAPI.embeddings.rebuildFiles();
                           addNotification(
                             res?.success
                               ? `Rebuilt ${res.files || 0} file embeddings`
@@ -672,7 +758,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                 </div>
               </div>
             </div>
-          </Collapsible>          <Collapsible
+          </Collapsible>
+          <Collapsible
             title="⚡ Performance"
             defaultOpen
             persistKey="settings-performance"
@@ -705,7 +792,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                 setSettings={setSettings}
               />
             </div>
-          </Collapsible>          <Collapsible
+          </Collapsible>
+          <Collapsible
             title="📁 Default Locations"
             defaultOpen
             persistKey="settings-defaults"
@@ -716,7 +804,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                   Default Smart Folder Location
                 </label>
                 <div className="flex gap-3">
-                  <Input                    type="text"
+                  <Input
+                    type="text"
                     value={settings.defaultSmartFolderLocation}
                     onChange={(e) =>
                       setSettings((prev) => ({
@@ -726,9 +815,11 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                     }
                     className="flex-1"
                     placeholder="Documents"
-                  />                  <Button
+                  />
+                  <Button
                     onClick={async () => {
-                      const res =                        await window.electronAPI.files.selectDirectory();
+                      const res =
+                        await window.electronAPI.files.selectDirectory();
                       if (res?.success && res.folder) {
                         setSettings((prev) => ({
                           ...prev,
@@ -749,7 +840,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                 </p>
               </div>
             </div>
-          </Collapsible>          <Collapsible
+          </Collapsible>
+          <Collapsible
             title="🖥️ Application"
             defaultOpen
             persistKey="settings-app"
@@ -776,12 +868,14 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                 </label>
               </div>
             </div>
-          </Collapsible>          <Collapsible
+          </Collapsible>
+          <Collapsible
             title="🔧 Backend API Test"
             defaultOpen={false}
             persistKey="settings-api"
           >
-            <div className="p-4 bg-system-gray-50 rounded-lg">              <Button
+            <div className="p-4 bg-system-gray-50 rounded-lg">
+              <Button
                 onClick={runAPITests}
                 disabled={isTestingApi}
                 variant="primary"
@@ -795,7 +889,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                     <div key={service} className="flex justify-between">
                       <span className="capitalize">
                         {service.replace(/([A-Z])/g, ' $1').trim()}:
-                      </span>                      <span className="font-mono text-xs">{status}</span>
+                      </span>
+                      <span className="font-mono text-xs">{status}</span>
                     </div>
                   ))}
                 </div>
@@ -804,9 +899,11 @@ const SettingsPanel = React.memo(function SettingsPanel() {
           </Collapsible>
         </div>
 
-        <div className="p-6 border-t border-system-gray-200 flex justify-end gap-4">          <Button onClick={handleCloseSettings} variant="secondary">
+        <div className="p-6 border-t border-system-gray-200 flex justify-end gap-4">
+          <Button onClick={handleCloseSettings} variant="secondary">
             Cancel
-          </Button>          <Button onClick={saveSettings} variant="primary" disabled={isSaving}>
+          </Button>
+          <Button onClick={saveSettings} variant="primary" disabled={isSaving}>
             {isSaving ? 'Saving...' : 'Save Settings'}
           </Button>
         </div>

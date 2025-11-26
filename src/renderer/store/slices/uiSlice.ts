@@ -1,9 +1,40 @@
 /**
  * UI Slice - Manages UI state (modals, notifications, etc.)
  */
-import { createSlice } from '@reduxjs/toolkit';
+import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
-const initialState = {
+type Phase = 'setup' | 'discover' | 'organize' | 'complete';
+
+interface Notification {
+  id: number;
+  message: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  duration?: number;
+  timestamp: number;
+}
+
+interface PhaseData {
+  setup: Record<string, unknown>;
+  discover: Record<string, unknown>;
+  organize: Record<string, unknown>;
+  complete: Record<string, unknown>;
+}
+
+interface UIState {
+  currentPhase: Phase;
+  phaseData: PhaseData;
+  phaseHistory: Phase[];
+  notifications: Notification[];
+  nextNotificationId: number;
+  activeModal: string | null;
+  modalProps: Record<string, unknown>;
+  globalLoading: boolean;
+  loadingMessage: string;
+  sidebarCollapsed: boolean;
+  activeTooltip: string | null;
+}
+
+const initialState: UIState = {
   // Current phase
   currentPhase: 'discover', // 'setup', 'discover', 'organize', 'complete'
 
@@ -42,14 +73,14 @@ const uiSlice = createSlice({
   initialState,
   reducers: {
     // Phase management
-    setPhase: (state, action) => {
+    setPhase: (state, action: PayloadAction<Phase>) => {
       // Add to history before changing
       state.phaseHistory.push(state.currentPhase);
       state.currentPhase = action.payload;
     },
 
     nextPhase: (state) => {
-      const phases = ['discover', 'organize', 'complete'];
+      const phases: Phase[] = ['discover', 'organize', 'complete'];
       const currentIndex = phases.indexOf(state.currentPhase);
       if (currentIndex < phases.length - 1) {
         state.phaseHistory.push(state.currentPhase);
@@ -58,7 +89,7 @@ const uiSlice = createSlice({
     },
 
     previousPhase: (state) => {
-      const phases = ['discover', 'organize', 'complete'];
+      const phases: Phase[] = ['discover', 'organize', 'complete'];
       const currentIndex = phases.indexOf(state.currentPhase);
       if (currentIndex > 0) {
         state.phaseHistory.push(state.currentPhase);
@@ -66,7 +97,13 @@ const uiSlice = createSlice({
       }
     },
 
-    advancePhase: (state, action) => {
+    advancePhase: (
+      state,
+      action: PayloadAction<{
+        targetPhase: Phase;
+        data?: Record<string, unknown>;
+      }>,
+    ) => {
       const { targetPhase, data = {} } = action.payload || {};
 
       if (!targetPhase) {
@@ -88,11 +125,14 @@ const uiSlice = createSlice({
       }
     },
 
-    setPhaseData: (state, action) => {
+    setPhaseData: (
+      state,
+      action: PayloadAction<{ phase?: Phase; key: string; value: unknown }>,
+    ) => {
       const { phase, key, value } = action.payload;
 
       // If no phase specified, use current phase
-      const targetPhase = phase || state.currentPhase;
+      const targetPhase: Phase = phase || state.currentPhase;
 
       // Ensure phaseData object exists (safety for rehydration)
       if (!state.phaseData) {
@@ -111,8 +151,8 @@ const uiSlice = createSlice({
       state.phaseData[targetPhase][key] = value;
     },
 
-    clearPhaseData: (state, action) => {
-      const phase = action.payload || state.currentPhase;
+    clearPhaseData: (state, action: PayloadAction<Phase | undefined>) => {
+      const phase: Phase = action.payload || state.currentPhase;
       state.phaseData[phase] = {};
     },
 
@@ -130,7 +170,17 @@ const uiSlice = createSlice({
     },
 
     // Notifications
-    addNotification: (state, action) => {
+    addNotification: (
+      state,
+      action: PayloadAction<
+        | {
+            message: string;
+            type?: 'info' | 'success' | 'warning' | 'error';
+            duration?: number;
+          }
+        | string
+      >,
+    ) => {
       // Ensure notifications array exists (safety for rehydration)
       if (!Array.isArray(state.notifications)) {
         state.notifications = [];
@@ -141,17 +191,21 @@ const uiSlice = createSlice({
         state.nextNotificationId = 1;
       }
 
-      const notification = {
+      const payload =
+        typeof action.payload === 'string'
+          ? { message: action.payload }
+          : action.payload;
+      const notification: Notification = {
         id: state.nextNotificationId++,
-        message: action.payload.message || action.payload,
-        type: action.payload.type || 'info', // 'success', 'error', 'warning', 'info'
-        duration: action.payload.duration || 5000,
+        message: payload.message,
+        type: payload.type || 'info', // 'success', 'error', 'warning', 'info'
+        duration: payload.duration || 5000,
         timestamp: Date.now(),
       };
       state.notifications.push(notification);
     },
 
-    removeNotification: (state, action) => {
+    removeNotification: (state, action: PayloadAction<number>) => {
       const id = action.payload;
       state.notifications = state.notifications.filter((n) => n.id !== id);
     },
@@ -237,24 +291,30 @@ export const {
   resetUI,
 } = uiSlice.actions;
 
+// Define root state type for selectors
+interface RootState {
+  ui: UIState;
+}
+
 // Selectors
-export const selectCurrentPhase = (state) => state.ui.currentPhase;
-export const selectPhaseHistory = (state) => state.ui.phaseHistory;
-export const selectPhaseData = (state, phase) =>
+export const selectCurrentPhase = (state: RootState) => state.ui.currentPhase;
+export const selectPhaseHistory = (state: RootState) => state.ui.phaseHistory;
+export const selectPhaseData = (state: RootState, phase?: Phase) =>
   state.ui.phaseData[phase || state.ui.currentPhase] || {};
-export const selectCurrentPhaseData = (state) =>
+export const selectCurrentPhaseData = (state: RootState) =>
   state.ui.phaseData[state.ui.currentPhase] || {};
-export const selectNotifications = (state) => state.ui.notifications;
-export const selectActiveModal = (state) => state.ui.activeModal;
-export const selectModalProps = (state) => state.ui.modalProps;
-export const selectGlobalLoading = (state) => ({
+export const selectNotifications = (state: RootState) => state.ui.notifications;
+export const selectActiveModal = (state: RootState) => state.ui.activeModal;
+export const selectModalProps = (state: RootState) => state.ui.modalProps;
+export const selectGlobalLoading = (state: RootState) => ({
   loading: state.ui.globalLoading,
   message: state.ui.loadingMessage,
 });
-export const selectIsLoading = (state) => state.ui.globalLoading;
-export const selectShowSettings = (state) =>
+export const selectIsLoading = (state: RootState) => state.ui.globalLoading;
+export const selectShowSettings = (state: RootState) =>
   state.ui.activeModal === 'settings';
-export const selectSidebarCollapsed = (state) => state.ui.sidebarCollapsed;
-export const selectActiveTooltip = (state) => state.ui.activeTooltip;
+export const selectSidebarCollapsed = (state: RootState) =>
+  state.ui.sidebarCollapsed;
+export const selectActiveTooltip = (state: RootState) => state.ui.activeTooltip;
 
 export default uiSlice.reducer;

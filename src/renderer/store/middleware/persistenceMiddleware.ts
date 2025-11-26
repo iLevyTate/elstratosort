@@ -4,8 +4,15 @@
  */
 import { logger } from '../../../shared/logger';
 
+type SliceName = 'settings' | 'ui' | 'files';
+
+interface SliceConfig {
+  excludeKeys?: string[];
+  includeKeys?: string[];
+}
+
 // Configuration for which slices and keys to persist
-const PERSISTENCE_CONFIG = {
+const PERSISTENCE_CONFIG: Record<SliceName, SliceConfig> = {
   settings: {
     // Persist all settings except loading states
     excludeKeys: ['isLoading', 'isSaving', 'error'],
@@ -30,25 +37,33 @@ const STORAGE_KEY_PREFIX = 'stratosort_';
 const DEBOUNCE_DELAY = 500; // ms
 
 class PersistenceManager {
-  constructor() {    this.debounceTimers = new Map();    this.lastSavedState = new Map();
+  private debounceTimers: Map<string, ReturnType<typeof setTimeout>>;
+  private lastSavedState: Map<string, string>;
+
+  constructor() {
+    this.debounceTimers = new Map();
+    this.lastSavedState = new Map();
   }
 
   /**
    * Load persisted state from localStorage
    */
-  loadPersistedState() {
-    const persistedState = {};
+  loadPersistedState(): Record<string, unknown> {
+    const persistedState: Record<string, unknown> = {};
 
     try {
-      for (const sliceName of Object.keys(PERSISTENCE_CONFIG)) {
+      for (const sliceName of Object.keys(PERSISTENCE_CONFIG) as SliceName[]) {
         const storageKey = `${STORAGE_KEY_PREFIX}${sliceName}`;
         const savedData = localStorage.getItem(storageKey);
 
         if (savedData) {
           try {
             persistedState[sliceName] = JSON.parse(savedData);
-          } catch (parseError) {
-            logger.error(`[PersistenceMiddleware] Failed to parse ${sliceName}`, { error: parseError });
+          } catch (parseError: unknown) {
+            logger.error(
+              `[PersistenceMiddleware] Failed to parse ${sliceName}`,
+              { error: parseError },
+            );
             // Clear corrupted data
             localStorage.removeItem(storageKey);
           }
@@ -56,7 +71,7 @@ class PersistenceManager {
       }
 
       return persistedState;
-    } catch (error) {
+    } catch (error: unknown) {
       logger.error('[PersistenceMiddleware] Failed to load state', { error });
       return {};
     }
@@ -65,11 +80,14 @@ class PersistenceManager {
   /**
    * Extract persistable data from a slice based on config
    */
-  extractPersistableData(sliceName, sliceState) {
+  extractPersistableData(
+    sliceName: SliceName,
+    sliceState: Record<string, unknown>,
+  ): Record<string, unknown> | null {
     const config = PERSISTENCE_CONFIG[sliceName];
     if (!config) return null;
 
-    const data = {};
+    const data: Record<string, unknown> = {};
 
     if (config.includeKeys) {
       // Only include specified keys
@@ -93,8 +111,10 @@ class PersistenceManager {
   /**
    * Save slice state to localStorage with debouncing
    */
-  saveSlice(sliceName, sliceState) {
-    // Clear existing timer    if (this.debounceTimers.has(sliceName)) {      clearTimeout(this.debounceTimers.get(sliceName));
+  saveSlice(sliceName: SliceName, sliceState: Record<string, unknown>): void {
+    // Clear existing timer
+    if (this.debounceTimers.has(sliceName)) {
+      clearTimeout(this.debounceTimers.get(sliceName));
     }
 
     // Set new debounced timer
@@ -108,22 +128,30 @@ class PersistenceManager {
         if (!persistableData) return;
 
         // Check if data actually changed
-        const dataStr = JSON.stringify(persistableData);        if (this.lastSavedState.get(sliceName) === dataStr) {
+        const dataStr = JSON.stringify(persistableData);
+        if (this.lastSavedState.get(sliceName) === dataStr) {
           return; // No changes, skip save
         }
 
         const storageKey = `${STORAGE_KEY_PREFIX}${sliceName}`;
-        localStorage.setItem(storageKey, dataStr);        this.lastSavedState.set(sliceName, dataStr);
-      } catch (error) {
+        localStorage.setItem(storageKey, dataStr);
+        this.lastSavedState.set(sliceName, dataStr);
+      } catch (error: unknown) {
         // Handle quota exceeded errors gracefully
-        if (error.name === 'QuotaExceededError') {
-          logger.error(`[PersistenceMiddleware] localStorage quota exceeded for ${sliceName}`);
+        if (error instanceof Error && error.name === 'QuotaExceededError') {
+          logger.error(
+            `[PersistenceMiddleware] localStorage quota exceeded for ${sliceName}`,
+          );
         } else {
-          logger.error(`[PersistenceMiddleware] Failed to save ${sliceName}`, { error });
+          logger.error(`[PersistenceMiddleware] Failed to save ${sliceName}`, {
+            error,
+          });
         }
-      } finally {        this.debounceTimers.delete(sliceName);
+      } finally {
+        this.debounceTimers.delete(sliceName);
       }
-    }, DEBOUNCE_DELAY);    this.debounceTimers.set(sliceName, timer);
+    }, DEBOUNCE_DELAY);
+    this.debounceTimers.set(sliceName, timer);
   }
 
   /**
@@ -134,7 +162,8 @@ class PersistenceManager {
       for (const sliceName of Object.keys(PERSISTENCE_CONFIG)) {
         const storageKey = `${STORAGE_KEY_PREFIX}${sliceName}`;
         localStorage.removeItem(storageKey);
-      }      this.lastSavedState.clear();
+      }
+      this.lastSavedState.clear();
     } catch (error) {
       logger.error('[PersistenceMiddleware] Failed to clear state', { error });
     }
@@ -143,34 +172,39 @@ class PersistenceManager {
   /**
    * Cleanup timers
    */
-  cleanup() {    for (const timer of this.debounceTimers.values()) {
+  cleanup() {
+    for (const timer of this.debounceTimers.values()) {
       clearTimeout(timer);
-    }    this.debounceTimers.clear();
+    }
+    this.debounceTimers.clear();
   }
 }
 
 // Create singleton instance
 const persistenceManager = new PersistenceManager();
 
+import { Middleware, Dispatch, AnyAction } from '@reduxjs/toolkit';
+
 /**
  * Redux middleware that persists state changes to localStorage
  */
-export const persistenceMiddleware = (store) => (next) => (action) => {
-  // Execute action first
-  const result = next(action);
+export const persistenceMiddleware: Middleware =
+  (store) => (next: Dispatch<AnyAction>) => (action: AnyAction) => {
+    // Execute action first
+    const result = next(action);
 
-  // Get updated state
-  const state = store.getState();
+    // Get updated state
+    const state = store.getState() as Record<string, Record<string, unknown>>;
 
-  // Save each configured slice
-  for (const sliceName of Object.keys(PERSISTENCE_CONFIG)) {
-    if (state[sliceName]) {
-      persistenceManager.saveSlice(sliceName, state[sliceName]);
+    // Save each configured slice
+    for (const sliceName of Object.keys(PERSISTENCE_CONFIG) as SliceName[]) {
+      if (state[sliceName]) {
+        persistenceManager.saveSlice(sliceName, state[sliceName]);
+      }
     }
-  }
 
-  return result;
-};
+    return result;
+  };
 
 /**
  * Load persisted state (call this when creating the store)

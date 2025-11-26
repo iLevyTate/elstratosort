@@ -6,19 +6,60 @@ import React, {
   useEffect,
   useCallback,
 } from 'react';
-import PropTypes from 'prop-types';import { logger } from '../../shared/logger';
+import PropTypes from 'prop-types';
+import { logger } from '../../shared/logger';
 import { ConfirmModal } from './Modal';
 
 // Set logger context for this component
 logger.setContext('UndoRedoSystem');
 
-// Undo/Redo Contextconst UndoRedoContext = createContext();
+// Types for UndoRedo system
+interface UndoAction {
+  id: string;
+  type: string;
+  data: Record<string, unknown>;
+  timestamp: number;
+  description?: string;
+  undo?: () => Promise<void>;
+  redo?: () => Promise<void>;
+}
+
+interface StateCallbacks {
+  onExecute?: (action: UndoAction) => void;
+  onUndo?: (action: UndoAction) => void;
+  onRedo?: (action: UndoAction) => void;
+}
+
+interface UndoRedoContextValue {
+  canUndo: boolean;
+  canRedo: boolean;
+  undoStack?: UndoAction[];
+  redoStack?: UndoAction[];
+  currentPointer?: number;
+  pushAction?: (action: Omit<UndoAction, 'id' | 'timestamp'>) => void;
+  undo: () => Promise<void>;
+  redo: () => Promise<void>;
+  clearHistory?: () => void;
+  getActionDescription?: (action: UndoAction) => string;
+  executeAction?: (actionConfig: unknown) => Promise<unknown>;
+  getHistory?: () => UndoAction[];
+  isHistoryVisible?: boolean;
+  setIsHistoryVisible?: React.Dispatch<React.SetStateAction<boolean>>;
+  peek?: () => UndoAction | undefined;
+  peekRedo?: () => UndoAction | undefined;
+  registerStateCallbacks?: (callbacks: StateCallbacks) => void;
+  unregisterStateCallbacks?: () => void;
+}
+
+// Undo/Redo Context
+const UndoRedoContext = createContext<UndoRedoContextValue | null>(null);
 
 // Simple notification interface for UndoRedo system
 function useSimpleNotifications() {
   return {
     showSuccess: (title, description) => {
-      // Debug logging in development mode      if (process.env.NODE_ENV === 'development') {
+      // Debug logging in development mode
+      if (process.env.NODE_ENV === 'development') {
         logger.debug('Undo/Redo success', { title, description });
       }
     },
@@ -26,14 +67,16 @@ function useSimpleNotifications() {
       logger.error('Undo/Redo error', { title, description });
     },
     showInfo: (title, description) => {
-      // Debug logging in development mode      if (process.env.NODE_ENV === 'development') {
+      // Debug logging in development mode
+      if (process.env.NODE_ENV === 'development') {
         logger.debug('Undo/Redo info', { title, description });
       }
     },
   };
 }
 
-// Use shared action type constants so renderer/main/tests are alignedimport { ACTION_TYPES as SHARED_ACTION_TYPES } from '../../shared/constants';
+// Use shared action type constants so renderer/main/tests are aligned
+import { ACTION_TYPES as SHARED_ACTION_TYPES } from '../../shared/constants';
 const ACTION_TYPES = SHARED_ACTION_TYPES;
 
 // Action metadata for user-friendly descriptions
@@ -87,13 +130,21 @@ const ACTION_METADATA = {
 
 // Undo Stack Manager
 class UndoStack {
-  stack: any;
+  stack: UndoAction[];
+  pointer: number;
+  maxSize: number;
+  listeners: Set<() => void>;
+
   constructor(maxSize = 100) {
-    this.stack = [];    this.pointer = -1;    this.maxSize = maxSize;    this.listeners = new Set();
+    this.stack = [];
+    this.pointer = -1;
+    this.maxSize = maxSize;
+    this.listeners = new Set();
   }
 
   push(action) {
-    // Remove any actions after current pointer (when undoing then doing new action)    this.stack = this.stack.slice(0, this.pointer + 1);
+    // Remove any actions after current pointer (when undoing then doing new action)
+    this.stack = this.stack.slice(0, this.pointer + 1);
 
     // Add new action
     this.stack.push({
@@ -102,60 +153,76 @@ class UndoStack {
       timestamp: new Date().toISOString(),
     });
 
-    // Maintain max size    if (this.stack.length > this.maxSize) {
+    // Maintain max size
+    if (this.stack.length > this.maxSize) {
       this.stack.shift();
-    } else {      this.pointer++;
+    } else {
+      this.pointer++;
     }
 
     this.notifyListeners();
   }
 
-  canUndo() {    return this.pointer >= 0;
+  canUndo() {
+    return this.pointer >= 0;
   }
 
-  canRedo() {    return this.pointer < this.stack.length - 1;
+  canRedo() {
+    return this.pointer < this.stack.length - 1;
   }
 
   undo() {
-    if (!this.canUndo()) return null;    const action = this.stack[this.pointer];    this.pointer--;
+    if (!this.canUndo()) return null;
+    const action = this.stack[this.pointer];
+    this.pointer--;
     this.notifyListeners();
 
     return action;
   }
 
   redo() {
-    if (!this.canRedo()) return null;    this.pointer++;    const action = this.stack[this.pointer];
+    if (!this.canRedo()) return null;
+    this.pointer++;
+    const action = this.stack[this.pointer];
     this.notifyListeners();
 
     return action;
   }
 
-  peek() {    return this.canUndo() ? this.stack[this.pointer] : null;
+  peek() {
+    return this.canUndo() ? this.stack[this.pointer] : null;
   }
 
-  peekRedo() {    return this.canRedo() ? this.stack[this.pointer + 1] : null;
+  peekRedo() {
+    return this.canRedo() ? this.stack[this.pointer + 1] : null;
   }
 
-  getHistory() {    return this.stack.slice(0, this.pointer + 1);
+  getHistory() {
+    return this.stack.slice(0, this.pointer + 1);
   }
 
   clear() {
-    this.stack = [];    this.pointer = -1;
+    this.stack = [];
+    this.pointer = -1;
     this.notifyListeners();
   }
 
   // Revert the pointer after a failed redo operation
-  revertRedo() {    this.pointer--;
+  revertRedo() {
+    this.pointer--;
     this.notifyListeners();
   }
 
-  addListener(listener) {    this.listeners.add(listener);
+  addListener(listener) {
+    this.listeners.add(listener);
   }
 
-  removeListener(listener) {    this.listeners.delete(listener);
+  removeListener(listener) {
+    this.listeners.delete(listener);
   }
 
-  notifyListeners() {    this.listeners.forEach((listener) => listener());
+  notifyListeners() {
+    this.listeners.forEach((listener) => listener());
   }
 }
 
@@ -264,7 +331,8 @@ export function UndoRedoProvider({ children }) {
         action.description.toLowerCase().includes('delete'))
     ) {
       const confirmed = await showConfirm({
-        title: 'Undo Operation',        message: (
+        title: 'Undo Operation',
+        message: (
           <>
             <p>
               Are you sure you want to undo: &quot;{action.description}&quot;?
@@ -387,7 +455,8 @@ export function useUndoRedo() {
 }
 
 // History Modal Component
-function HistoryModal() {  const { getHistory, setIsHistoryVisible, clearHistory } = useUndoRedo();
+function HistoryModal() {
+  const { getHistory, setIsHistoryVisible, clearHistory } = useUndoRedo();
 
   const history = getHistory();
 
@@ -492,7 +561,15 @@ function HistoryModal() {  const { getHistory, setIsHistoryVisible, clearHistor
 
 // Undo/Redo Toolbar Component
 export function UndoRedoToolbar({ className = '' }) {
-  const {    undo,    redo,    canUndo,    canRedo,    peek,    peekRedo,    getActionDescription,    setIsHistoryVisible,
+  const {
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    peek,
+    peekRedo,
+    getActionDescription,
+    setIsHistoryVisible,
   } = useUndoRedo();
 
   const lastAction = peek();
@@ -616,7 +693,8 @@ export const createFileAction = ({
   description,
   execute: async () => {
     // Only move/copy/delete are supported here; match the main payload shape
-    if (destination) {      return await window.electronAPI.files.performOperation({
+    if (destination) {
+      return await window.electronAPI.files.performOperation({
         type: 'move',
         source,
         destination,
@@ -625,7 +703,8 @@ export const createFileAction = ({
     throw new Error('Unsupported operation: destination required for move');
   },
   undo: async () => {
-    if (destination) {      return await window.electronAPI.files.performOperation({
+    if (destination) {
+      return await window.electronAPI.files.performOperation({
         type: 'move',
         source: destination,
         destination: source,
@@ -643,42 +722,53 @@ export const createSettingsAction = (
 ) => ({
   type: ACTION_TYPES.SETTINGS_CHANGE,
   description,
-  execute: async () => {    return await window.electronAPI.settings.save(newSettings);
+  execute: async () => {
+    return await window.electronAPI.settings.save(newSettings);
   },
-  undo: async () => {    return await window.electronAPI.settings.save(oldSettings);
+  undo: async () => {
+    return await window.electronAPI.settings.save(oldSettings);
   },
   metadata: { newSettings, oldSettings },
 });
 
 // Batch organize action that uses main process to perform and record undo/redo
 export const createOrganizeBatchAction = (
-  description,
-  operations,
-  stateCallbacks = {},
+  description: string,
+  operations: unknown[],
+  stateCallbacks: StateCallbacks = {},
 ) => ({
   type: ACTION_TYPES.BATCH_OPERATION,
   description,
-  execute: async () => {    const result = await window.electronAPI.files.performOperation({
+  execute: async () => {
+    const result = await window.electronAPI.files.performOperation({
       type: 'batch_organize',
       operations,
-    });    if (stateCallbacks.onExecute) {
-      try {        stateCallbacks.onExecute(result);
+    });
+    if (stateCallbacks.onExecute) {
+      try {
+        stateCallbacks.onExecute(result);
       } catch {
         // Non-fatal if state callback fails
       }
     }
     return result;
   },
-  undo: async () => {    const result = await window.electronAPI.undoRedo.undo();    if (stateCallbacks.onUndo) {
-      try {        stateCallbacks.onUndo(result);
+  undo: async () => {
+    const result = await window.electronAPI.undoRedo.undo();
+    if (stateCallbacks.onUndo) {
+      try {
+        stateCallbacks.onUndo(result);
       } catch {
         // Non-fatal if state callback fails
       }
     }
     return result;
   },
-  redo: async () => {    const result = await window.electronAPI.undoRedo.redo();    if (stateCallbacks.onRedo) {
-      try {        stateCallbacks.onRedo(result);
+  redo: async () => {
+    const result = await window.electronAPI.undoRedo.redo();
+    if (stateCallbacks.onRedo) {
+      try {
+        stateCallbacks.onRedo(result);
       } catch {
         // Non-fatal if state callback fails
       }

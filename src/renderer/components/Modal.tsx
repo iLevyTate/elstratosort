@@ -1,4 +1,11 @@
-import React, { useEffect, useRef, useCallback, ReactNode, KeyboardEvent, MouseEvent } from 'react';
+import React, {
+  useEffect,
+  useRef,
+  useCallback,
+  ReactNode,
+  KeyboardEvent,
+  MouseEvent,
+} from 'react';
 
 type ModalSize = 'small' | 'medium' | 'large' | 'full';
 type ConfirmVariant = 'default' | 'danger' | 'warning' | 'info';
@@ -73,7 +80,9 @@ const Modal = ({
     );
 
     const firstElement = focusableElements[0] as HTMLElement;
-    const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
+    const lastElement = focusableElements[
+      focusableElements.length - 1
+    ] as HTMLElement;
 
     if (event.shiftKey) {
       if (document.activeElement === firstElement) {
@@ -167,7 +176,7 @@ interface ConfirmModalProps {
   onClose: () => void;
   onConfirm: () => void;
   title?: string;
-  message?: string;
+  message?: string | React.ReactNode;
   confirmText?: string;
   cancelText?: string;
   variant?: ConfirmVariant;

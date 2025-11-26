@@ -1,6 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDispatch } from 'react-redux';
-import { useUndoRedo, createOrganizeBatchAction } from '../components/UndoRedoSystem';
+import {
+  useUndoRedo,
+  createOrganizeBatchAction,
+} from '../components/UndoRedoSystem';
 import { addNotification, advancePhase } from '../store/slices/uiSlice';
 import { logger } from '../../shared/logger';
 
@@ -112,7 +115,9 @@ export const useOrganizeOperations = ({
   setOrganizedFiles,
 }: UseOrganizeOperationsProps) => {
   const dispatch = useDispatch();
-  const { executeAction } = useUndoRedo() as { executeAction: (action: unknown) => Promise<BatchResult> };
+  const { executeAction } = useUndoRedo() as {
+    executeAction: (action: unknown) => Promise<BatchResult>;
+  };
 
   const [isOrganizing, setIsOrganizing] = useState(false);
   const [batchProgress, setBatchProgress] = useState<BatchProgress>({
@@ -120,10 +125,15 @@ export const useOrganizeOperations = ({
     total: 0,
     currentFile: '',
   });
-  const [organizePreview, setOrganizePreview] = useState<OrganizePreviewItem[]>([]);
+  const [organizePreview, setOrganizePreview] = useState<OrganizePreviewItem[]>(
+    [],
+  );
 
   // Use ref to track listener state and avoid race conditions
-  const listenerRef = useRef<ListenerRef>({ unsubscribe: null, isCleanedUp: false });
+  const listenerRef = useRef<ListenerRef>({
+    unsubscribe: null,
+    isCleanedUp: false,
+  });
 
   // Progress Listener - Fixed race condition
   useEffect(() => {
@@ -132,27 +142,39 @@ export const useOrganizeOperations = ({
 
     const setupProgressListener = () => {
       if (listener.isCleanedUp) return;
-      const electronAPI = (window as { electronAPI?: { events?: { onOperationProgress?: (cb: (p: ProgressPayload) => void) => () => void } } }).electronAPI;
+      const electronAPI = (
+        window as {
+          electronAPI?: {
+            events?: {
+              onOperationProgress?: (
+                cb: (p: ProgressPayload) => void,
+              ) => () => void;
+            };
+          };
+        }
+      ).electronAPI;
       if (!electronAPI?.events?.onOperationProgress) return;
 
       try {
-        const unsubscribe = electronAPI.events.onOperationProgress((payload: ProgressPayload) => {
-          if (listener.isCleanedUp) return;
-          try {
-            if (!payload || payload.type !== 'batch_organize') return;
-            const current = Number(payload.current);
-            const total = Number(payload.total);
-            if (!Number.isFinite(current) || !Number.isFinite(total)) return;
+        const unsubscribe = electronAPI.events.onOperationProgress(
+          (payload: ProgressPayload) => {
+            if (listener.isCleanedUp) return;
+            try {
+              if (!payload || payload.type !== 'batch_organize') return;
+              const current = Number(payload.current);
+              const total = Number(payload.total);
+              if (!Number.isFinite(current) || !Number.isFinite(total)) return;
 
-            setBatchProgress({
-              current,
-              total,
-              currentFile: payload.currentFile || '',
-            });
-          } catch (error: unknown) {
-            logger.error('Error processing progress update', error);
-          }
-        });
+              setBatchProgress({
+                current,
+                total,
+                currentFile: payload.currentFile || '',
+              });
+            } catch (error: unknown) {
+              logger.error('Error processing progress update', error);
+            }
+          },
+        );
 
         // Store unsubscribe, but only if not already cleaned up
         if (!listener.isCleanedUp) {
@@ -190,18 +212,25 @@ export const useOrganizeOperations = ({
         const filesToProcess =
           filesToOrganize || unprocessedFiles.filter((f) => f.analysis);
         if (filesToProcess.length === 0) return;
-        
+
         setBatchProgress({
           current: 0,
           total: filesToProcess.length,
           currentFile: '',
         });
-        const electronAPI = (window as { electronAPI?: { organize?: { auto?: (opts: unknown) => Promise<BatchResult> }; files?: { normalizePath?: (p: string) => string } } }).electronAPI;
-        const useAutoOrganize = electronAPI?.organize?.auto;
+        const electronAPI = (
+          window as {
+            electronAPI?: {
+              organize?: { auto?: (opts: unknown) => Promise<BatchResult> };
+              files?: { normalizePath?: (p: string) => string };
+            };
+          }
+        ).electronAPI;
+        const autoOrganizeApi = electronAPI?.organize?.auto;
         let operations: Operation[];
 
-        if (useAutoOrganize) {
-          const result = await useAutoOrganize({
+        if (autoOrganizeApi) {
+          const result = await autoOrganizeApi({
             files: filesToProcess,
             smartFolders,
             options: {
@@ -214,17 +243,21 @@ export const useOrganizeOperations = ({
           operations = result.operations || [];
 
           if (result.needsReview && result.needsReview.length > 0) {
-            dispatch(addNotification({
-              message: `${result.needsReview.length} files need manual review due to low confidence`,
-              type: 'info',
-              duration: 4000,
-            }));
+            dispatch(
+              addNotification({
+                message: `${result.needsReview.length} files need manual review due to low confidence`,
+                type: 'info',
+                duration: 4000,
+              }),
+            );
           }
         } else {
           // Fallback logic
           const fileIndexMap = new Map<string, number>();
           filesToProcess.forEach((file) => {
-            const index = unprocessedFiles.findIndex((f) => f.path === file.path);
+            const index = unprocessedFiles.findIndex(
+              (f) => f.path === file.path,
+            );
             if (index >= 0) fileIndexMap.set(file.path, index);
           });
 
@@ -233,18 +266,21 @@ export const useOrganizeOperations = ({
             const edits = fileIndex >= 0 ? editingFiles[fileIndex] || {} : {};
             const fileWithEdits =
               fileIndex >= 0 ? getFileWithEdits(file, fileIndex) : file;
-            
-            let currentCategory = edits.category || fileWithEdits.analysis?.category;
+
+            let currentCategory =
+              edits.category || fileWithEdits.analysis?.category;
             if (currentCategory === 'document') {
               const documentFolder = findSmartFolderForCategory('document');
               if (!documentFolder) currentCategory = 'Uncategorized';
             }
-            
-            const smartFolder = findSmartFolderForCategory(currentCategory || 'Uncategorized');
+
+            const smartFolder = findSmartFolderForCategory(
+              currentCategory || 'Uncategorized',
+            );
             const destinationDir = smartFolder
               ? smartFolder.path || `${defaultLocation}/${smartFolder.name}`
               : `${defaultLocation}/${currentCategory || 'Uncategorized'}`;
-            
+
             const suggestedName =
               edits.suggestedName ||
               fileWithEdits.analysis?.suggestedName ||
@@ -266,11 +302,14 @@ export const useOrganizeOperations = ({
         }
 
         if (!operations || operations.length === 0) {
-          dispatch(addNotification({
-            message: 'No confident file moves were generated. Review files manually before organizing.',
-            type: 'info',
-            duration: 4000,
-          }));
+          dispatch(
+            addNotification({
+              message:
+                'No confident file moves were generated. Review files manually before organizing.',
+              type: 'info',
+              duration: 4000,
+            }),
+          );
           setIsOrganizing(false);
           setBatchProgress({ current: 0, total: 0, currentFile: '' });
           return;
@@ -278,11 +317,11 @@ export const useOrganizeOperations = ({
 
         // Preview generation (simplified)
         try {
-           const preview: OrganizePreviewItem[] = operations.map((op) => ({
-               fileName: op.destination.split(/[\\/]/).pop() || '',
-               destination: op.destination
-           }));
-           setOrganizePreview(preview);
+          const preview: OrganizePreviewItem[] = operations.map((op) => ({
+            fileName: op.destination.split(/[\\/]/).pop() || '',
+            destination: op.destination,
+          }));
+          setOrganizePreview(preview);
         } catch (error: unknown) {
           logger.debug('Failed to generate organize preview', {
             error: error instanceof Error ? error.message : String(error),
@@ -294,18 +333,24 @@ export const useOrganizeOperations = ({
         const stateCallbacks = {
           onExecute: (result: BatchResult) => {
             try {
-              const resArray = Array.isArray(result?.results) ? result.results : [];
+              const resArray = Array.isArray(result?.results)
+                ? result.results
+                : [];
               const uiResults: OrganizedFile[] = resArray
                 .filter((r) => r.success)
                 .map((r) => {
                   const original =
-                    analysisResults.find((a) => a.path === r.source) || {} as AnalysisResultItem;
+                    analysisResults.find((a) => a.path === r.source) ||
+                    ({} as AnalysisResultItem);
                   return {
                     originalPath: r.source,
                     path: r.destination,
                     originalName:
                       original.name ||
-                      (original.path ? original.path.split(/[\\/]/).pop() : '') || '',
+                      (original.path
+                        ? original.path.split(/[\\/]/).pop()
+                        : '') ||
+                      '',
                     newName: r.destination
                       ? r.destination.split(/[\\/]/).pop() || ''
                       : '',
@@ -316,10 +361,12 @@ export const useOrganizeOperations = ({
               if (uiResults.length > 0) {
                 setOrganizedFiles((prev) => [...prev, ...uiResults]);
                 markFilesAsProcessed(uiResults.map((r) => r.originalPath));
-                dispatch(addNotification({
-                  message: `Organized ${uiResults.length} files`,
-                  type: 'success',
-                }));
+                dispatch(
+                  addNotification({
+                    message: `Organized ${uiResults.length} files`,
+                    type: 'success',
+                  }),
+                );
                 setBatchProgress({
                   current: filesToProcess.length,
                   total: filesToProcess.length,
@@ -338,10 +385,12 @@ export const useOrganizeOperations = ({
                 prev.filter((of) => !sourcePathsSet.has(of.originalPath)),
               );
               unmarkFilesAsProcessed(Array.from(sourcePathsSet));
-              dispatch(addNotification({
-                message: 'Undo complete.',
-                type: 'info',
-              }));
+              dispatch(
+                addNotification({
+                  message: 'Undo complete.',
+                  type: 'info',
+                }),
+              );
             } catch (error: unknown) {
               logger.warn('Failed to update UI after undo', {
                 error: error instanceof Error ? error.message : String(error),
@@ -361,10 +410,12 @@ export const useOrganizeOperations = ({
               }));
               setOrganizedFiles((prev) => [...prev, ...uiResults]);
               markFilesAsProcessed(uiResults.map((r) => r.originalPath));
-              dispatch(addNotification({
-                message: 'Redo complete.',
-                type: 'info',
-              }));
+              dispatch(
+                addNotification({
+                  message: 'Redo complete.',
+                  type: 'info',
+                }),
+              );
             } catch (error: unknown) {
               logger.warn('Failed to update UI after redo', {
                 error: error instanceof Error ? error.message : String(error),
@@ -380,7 +431,7 @@ export const useOrganizeOperations = ({
             stateCallbacks,
           ),
         );
-        
+
         const successCount = Array.isArray(result?.results)
           ? result.results.filter((r) => r.success).length
           : 0;
@@ -388,29 +439,31 @@ export const useOrganizeOperations = ({
           dispatch(advancePhase({ targetPhase: 'complete' }));
         }
       } catch (error: unknown) {
-        dispatch(addNotification({
-          message: `Organization failed: ${error instanceof Error ? error.message : String(error)}`,
-          type: 'error',
-        }));
+        dispatch(
+          addNotification({
+            message: `Organization failed: ${error instanceof Error ? error.message : String(error)}`,
+            type: 'error',
+          }),
+        );
       } finally {
         setIsOrganizing(false);
         setBatchProgress({ current: 0, total: 0, currentFile: '' });
       }
     },
     [
-        unprocessedFiles,
-        editingFiles,
-        getFileWithEdits,
-        findSmartFolderForCategory,
-        defaultLocation,
-        smartFolders,
-        analysisResults,
-        markFilesAsProcessed,
-        unmarkFilesAsProcessed,
-        setOrganizedFiles,
-        dispatch,
-        executeAction
-    ]
+      unprocessedFiles,
+      editingFiles,
+      getFileWithEdits,
+      findSmartFolderForCategory,
+      defaultLocation,
+      smartFolders,
+      analysisResults,
+      markFilesAsProcessed,
+      unmarkFilesAsProcessed,
+      setOrganizedFiles,
+      dispatch,
+      executeAction,
+    ],
   );
 
   return {

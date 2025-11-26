@@ -1,8 +1,13 @@
-import { validateIpc, withRequestId, withErrorHandling, compose } from "./validation";
-import { app, dialog } from "electron";
-import { getConfigurableLimits } from "../../shared/settingsValidation";
-import { promises as fs } from "fs";
-import { z } from "zod";
+import {
+  validateIpc,
+  withRequestId,
+  withErrorHandling,
+  compose,
+} from './validation';
+import { app, dialog } from 'electron';
+import { getConfigurableLimits } from '../../shared/settingsValidation';
+import { promises as fs } from 'fs';
+import { z } from 'zod';
 
 /**
  * HIGH PRIORITY FIX (HIGH-14): Security validation for imported settings
@@ -19,7 +24,10 @@ interface Logger {
   setContext: (context: string) => void;
 }
 
-function validateImportedSettings(settings: Record<string, unknown>, logger: Logger): Record<string, unknown> {
+function validateImportedSettings(
+  settings: Record<string, unknown>,
+  logger: Logger,
+): Record<string, unknown> {
   if (!settings || typeof settings !== 'object') {
     throw new Error('Invalid settings: must be an object');
   }
@@ -140,7 +148,12 @@ function validateImportedSettings(settings: Record<string, unknown>, logger: Log
 
       case 'cacheSize':
       case 'maxBatchSize':
-        if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 100000) {
+        if (
+          typeof value !== 'number' ||
+          !Number.isInteger(value) ||
+          value < 0 ||
+          value > 100000
+        ) {
           throw new Error(
             `Invalid ${key}: must be integer between 0 and 100000`,
           );
@@ -168,7 +181,8 @@ interface SettingsIpcDependencies {
   ipcMain: Electron.IpcMain;
   IPC_CHANNELS: { SETTINGS: Record<string, string> };
   logger: Logger;
-  settingsService: { load: () => Promise<Record<string, unknown>>; save: (settings: Record<string, unknown>) => Promise<{ settings?: Record<string, unknown>; validationWarnings?: string[] } | Record<string, unknown>> };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  settingsService: any;
   setOllamaHost: (host: string) => Promise<void>;
   setOllamaModel: (model: string) => Promise<void>;
   setOllamaVisionModel: (model: string) => Promise<void>;
@@ -194,7 +208,7 @@ function registerSettingsIpc({
     IPC_CHANNELS.SETTINGS.GET,
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
         const loaded = await settingsService.load();
@@ -211,7 +225,7 @@ function registerSettingsIpc({
     'get-configurable-limits',
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
         const settings = await settingsService.load();
@@ -242,92 +256,102 @@ function registerSettingsIpc({
     compose(
       withErrorHandling,
       withRequestId,
-      validateIpc(SettingsSaveSchema)
-    )(async (_event: Electron.IpcMainInvokeEvent, settings: Record<string, unknown>) => {
-          try {
-            // Fixed: Handle validation results from SettingsService
-            const saveResult = await settingsService.save(settings);
-            const merged = (saveResult.settings || saveResult) as Record<string, unknown>; // Backward compatibility
-            const validationWarnings = saveResult.validationWarnings || [];
+      validateIpc(SettingsSaveSchema),
+    )(
+      async (
+        _event: Electron.IpcMainInvokeEvent,
+        settings: Record<string, unknown>,
+      ) => {
+        try {
+          // Fixed: Handle validation results from SettingsService
+          const saveResult = await settingsService.save(settings);
+          const merged = (saveResult.settings || saveResult) as Record<
+            string,
+            unknown
+          >; // Backward compatibility
+          const validationWarnings = saveResult.validationWarnings || [];
 
-            if (merged.ollamaHost) await setOllamaHost(merged.ollamaHost as string);
-            if (merged.textModel) await setOllamaModel(merged.textModel as string);
-            if (merged.visionModel)
-              await setOllamaVisionModel(merged.visionModel as string);
-            if (
-              merged.embeddingModel &&
-              typeof setOllamaEmbeddingModel === 'function'
-            )
-              await setOllamaEmbeddingModel(merged.embeddingModel as string);
-            if (typeof merged.launchOnStartup === 'boolean') {
-              try {
-                app.setLoginItemSettings({
-                  openAtLogin: merged.launchOnStartup,
-                });
-              } catch (error: unknown) {
-                logger.warn(
-                  '[SETTINGS] Failed to set login item settings:',
-                  error instanceof Error ? error.message : String(error),
-                );
-              }
-            }
-            logger.info('[SETTINGS] Saved settings');
-
-            // Fixed: Enhanced settings propagation with error logging
-            let propagationSuccess = true;
+          if (merged.ollamaHost)
+            await setOllamaHost(merged.ollamaHost as string);
+          if (merged.textModel)
+            await setOllamaModel(merged.textModel as string);
+          if (merged.visionModel)
+            await setOllamaVisionModel(merged.visionModel as string);
+          if (
+            merged.embeddingModel &&
+            typeof setOllamaEmbeddingModel === 'function'
+          )
+            await setOllamaEmbeddingModel(merged.embeddingModel as string);
+          if (typeof merged.launchOnStartup === 'boolean') {
             try {
-              if (typeof onSettingsChanged === 'function') {
-                await onSettingsChanged(merged);
-                logger.info(
-                  '[SETTINGS] Settings change notification sent successfully',
-                );
-              } else if (
-                onSettingsChanged !== undefined &&
-                onSettingsChanged !== null
-              ) {
-                logger.warn(
-                  '[SETTINGS] onSettingsChanged is not a function:',
-                  typeof onSettingsChanged,
-                );
-              }
-            } catch (error) {
-              propagationSuccess = false;
-              logger.error(
-                '[SETTINGS] Settings change notification failed:',
-                error,
+              app.setLoginItemSettings({
+                openAtLogin: merged.launchOnStartup,
+              });
+            } catch (error: unknown) {
+              logger.warn(
+                '[SETTINGS] Failed to set login item settings:',
+                error instanceof Error ? error.message : String(error),
               );
             }
-
-            return {
-              success: true,
-              settings: merged,
-              propagationSuccess,
-              validationWarnings,
-            };
-          } catch (error) {
-            logger.error('Failed to save settings:', error);
-
-            // Include validation errors if available
-            const response: {
-              success: false;
-              error: string;
-              validationErrors?: unknown[];
-              validationWarnings?: unknown[];
-            } = {
-              success: false,
-              error: (error as Error).message,
-            };
-
-            if ('validationErrors' in (error as object)) {
-              response.validationErrors = (error as any).validationErrors;
-            }
-            if ('validationWarnings' in (error as object)) {
-              response.validationWarnings = (error as any).validationWarnings;
-            }
-
-            return response;
           }
-        }),
+          logger.info('[SETTINGS] Saved settings');
+
+          // Fixed: Enhanced settings propagation with error logging
+          let propagationSuccess = true;
+          try {
+            if (typeof onSettingsChanged === 'function') {
+              await onSettingsChanged(merged);
+              logger.info(
+                '[SETTINGS] Settings change notification sent successfully',
+              );
+            } else if (
+              onSettingsChanged !== undefined &&
+              onSettingsChanged !== null
+            ) {
+              logger.warn(
+                '[SETTINGS] onSettingsChanged is not a function:',
+                typeof onSettingsChanged,
+              );
+            }
+          } catch (error) {
+            propagationSuccess = false;
+            logger.error(
+              '[SETTINGS] Settings change notification failed:',
+              error,
+            );
+          }
+
+          return {
+            success: true,
+            settings: merged,
+            propagationSuccess,
+            validationWarnings,
+          };
+        } catch (error) {
+          logger.error('Failed to save settings:', error);
+
+          // Include validation errors if available
+          const response: {
+            success: false;
+            error: string;
+            validationErrors?: unknown[];
+            validationWarnings?: unknown[];
+          } = {
+            success: false,
+            error: (error as Error).message,
+          };
+
+          if ('validationErrors' in (error as object)) {
+            response.validationErrors = (error as any).validationErrors;
+          }
+          if ('validationWarnings' in (error as object)) {
+            response.validationWarnings = (error as any).validationWarnings;
+          }
+
+          return response;
+        }
+      },
+    ),
   );
 
   // Fixed: Add config export handler
@@ -335,7 +359,7 @@ function registerSettingsIpc({
     'export-settings',
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async (_event: Electron.IpcMainInvokeEvent, exportPath: string) => {
       try {
         const settings = await settingsService.load();
@@ -395,108 +419,126 @@ function registerSettingsIpc({
     'import-settings',
     compose(
       withErrorHandling,
-      withRequestId
-    )(async (_event: Electron.IpcMainInvokeEvent, importPath: string | null) => {
-      try {
-        // If no path provided, show open dialog
-        let filePath = importPath;
-        if (!filePath) {
-          const result = await dialog.showOpenDialog({
-            title: 'Import Settings',
-            filters: [
-              { name: 'JSON Files', extensions: ['json'] },
-              { name: 'All Files', extensions: ['*'] },
-            ],
-            properties: ['openFile'],
-          });
+      withRequestId,
+    )(
+      async (
+        _event: Electron.IpcMainInvokeEvent,
+        importPath: string | null,
+      ) => {
+        try {
+          // If no path provided, show open dialog
+          let filePath = importPath;
+          if (!filePath) {
+            const result = await dialog.showOpenDialog({
+              title: 'Import Settings',
+              filters: [
+                { name: 'JSON Files', extensions: ['json'] },
+                { name: 'All Files', extensions: ['*'] },
+              ],
+              properties: ['openFile'],
+            });
 
-          if (result.canceled) {
-            return { success: false, canceled: true };
+            if (result.canceled) {
+              return { success: false, canceled: true };
+            }
+
+            filePath = result.filePaths[0];
           }
 
-          filePath = result.filePaths[0];
-        }
+          // Read and parse import file
+          const fileContent = await fs.readFile(filePath, 'utf8');
 
-        // Read and parse import file
-        const fileContent = await fs.readFile(filePath, 'utf8');
-
-        // Fixed: Add specific error handling for JSON parsing
-        let importData: { settings?: Record<string, unknown>; version?: string; exportDate?: string; appVersion?: string };
-        try {
-          importData = JSON.parse(fileContent);
-        } catch (parseError: unknown) {
-          throw new Error(
-            `Invalid JSON in settings file: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-          );
-        }
-
-        // Validate import data structure
-        if (!importData.settings || typeof importData.settings !== 'object') {
-          throw new Error(
-            'Invalid settings file: missing or invalid settings object',
-          );
-        }
-
-        // HIGH PRIORITY FIX (HIGH-14): Sanitize and validate imported settings
-        // Prevents prototype pollution, command injection, and data exfiltration
-        const sanitizedSettings = validateImportedSettings(
-          importData.settings,
-          logger,
-        );
-
-        // Save sanitized settings
-        const saveResult = await settingsService.save(sanitizedSettings as Record<string, unknown>);
-        const merged = ((saveResult as { settings?: Record<string, unknown> }).settings || saveResult) as Record<string, unknown>;
-        const validationWarnings = (saveResult as { validationWarnings?: string[] }).validationWarnings || [];
-
-        // Apply settings
-        if (merged.ollamaHost) await setOllamaHost(merged.ollamaHost as string);
-        if (merged.textModel) await setOllamaModel(merged.textModel as string);
-        if (merged.visionModel) await setOllamaVisionModel(merged.visionModel as string);
-        if (
-          merged.embeddingModel &&
-          typeof setOllamaEmbeddingModel === 'function'
-        )
-          await setOllamaEmbeddingModel(merged.embeddingModel as string);
-
-        if (typeof merged.launchOnStartup === 'boolean') {
+          // Fixed: Add specific error handling for JSON parsing
+          let importData: {
+            settings?: Record<string, unknown>;
+            version?: string;
+            exportDate?: string;
+            appVersion?: string;
+          };
           try {
-            app.setLoginItemSettings({
-              openAtLogin: merged.launchOnStartup,
-            });
-          } catch (error: unknown) {
-            logger.warn(
-              '[SETTINGS] Failed to set login item settings:',
-              error instanceof Error ? error.message : String(error),
+            importData = JSON.parse(fileContent);
+          } catch (parseError: unknown) {
+            throw new Error(
+              `Invalid JSON in settings file: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
             );
           }
+
+          // Validate import data structure
+          if (!importData.settings || typeof importData.settings !== 'object') {
+            throw new Error(
+              'Invalid settings file: missing or invalid settings object',
+            );
+          }
+
+          // HIGH PRIORITY FIX (HIGH-14): Sanitize and validate imported settings
+          // Prevents prototype pollution, command injection, and data exfiltration
+          const sanitizedSettings = validateImportedSettings(
+            importData.settings,
+            logger,
+          );
+
+          // Save sanitized settings
+          const saveResult = await settingsService.save(
+            sanitizedSettings as Record<string, unknown>,
+          );
+          const merged = ((saveResult as { settings?: Record<string, unknown> })
+            .settings || saveResult) as Record<string, unknown>;
+          const validationWarnings =
+            (saveResult as { validationWarnings?: string[] })
+              .validationWarnings || [];
+
+          // Apply settings
+          if (merged.ollamaHost)
+            await setOllamaHost(merged.ollamaHost as string);
+          if (merged.textModel)
+            await setOllamaModel(merged.textModel as string);
+          if (merged.visionModel)
+            await setOllamaVisionModel(merged.visionModel as string);
+          if (
+            merged.embeddingModel &&
+            typeof setOllamaEmbeddingModel === 'function'
+          )
+            await setOllamaEmbeddingModel(merged.embeddingModel as string);
+
+          if (typeof merged.launchOnStartup === 'boolean') {
+            try {
+              app.setLoginItemSettings({
+                openAtLogin: merged.launchOnStartup,
+              });
+            } catch (error: unknown) {
+              logger.warn(
+                '[SETTINGS] Failed to set login item settings:',
+                error instanceof Error ? error.message : String(error),
+              );
+            }
+          }
+
+          // Notify settings changed
+          if (typeof onSettingsChanged === 'function') {
+            await onSettingsChanged(merged);
+          }
+
+          logger.info('[SETTINGS] Imported settings from:', filePath);
+
+          return {
+            success: true,
+            settings: merged,
+            validationWarnings,
+            importInfo: {
+              version: importData.version,
+              exportDate: importData.exportDate,
+              appVersion: importData.appVersion,
+            },
+          };
+        } catch (error) {
+          logger.error('[SETTINGS] Failed to import settings:', error);
+          return {
+            success: false,
+            error: error.message,
+          };
         }
-
-        // Notify settings changed
-        if (typeof onSettingsChanged === 'function') {
-          await onSettingsChanged(merged);
-        }
-
-        logger.info('[SETTINGS] Imported settings from:', filePath);
-
-        return {
-          success: true,
-          settings: merged,
-          validationWarnings,
-          importInfo: {
-            version: importData.version,
-            exportDate: importData.exportDate,
-            appVersion: importData.appVersion,
-          },
-        };
-      } catch (error) {
-        logger.error('[SETTINGS] Failed to import settings:', error);
-        return {
-          success: false,
-          error: error.message,
-        };
-      }
-    }),
+      },
+    ),
   );
 
   // Fixed: Add backup management handlers
@@ -504,7 +546,7 @@ function registerSettingsIpc({
     'settings-create-backup',
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
         const result = await settingsService.createBackup();
@@ -524,7 +566,7 @@ function registerSettingsIpc({
     'settings-list-backups',
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async () => {
       try {
         const backups = await settingsService.listBackups();
@@ -547,7 +589,7 @@ function registerSettingsIpc({
     'settings-restore-backup',
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async (event, backupPath) => {
       void event;
       try {
@@ -603,7 +645,7 @@ function registerSettingsIpc({
     'settings-delete-backup',
     compose(
       withErrorHandling,
-      withRequestId
+      withRequestId,
     )(async (event, backupPath) => {
       void event;
       try {

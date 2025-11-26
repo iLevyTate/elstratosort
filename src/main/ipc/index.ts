@@ -1,3 +1,4 @@
+import { BrowserWindow } from 'electron';
 import registerFilesIpc from './files';
 import registerSmartFoldersIpc from './smartFolders';
 import { registerUndoRedoIpc } from './undoRedo';
@@ -11,6 +12,30 @@ import { registerWindowIpc } from './window';
 import { registerSuggestionsIpc } from './suggestions';
 import { registerOrganizeIpc } from './organize';
 import { registerServiceHealthHandlers } from './serviceHealth';
+
+interface Logger {
+  info: (message: string, ...args: unknown[]) => void;
+  warn: (message: string, ...args: unknown[]) => void;
+  error: (message: string, ...args: unknown[]) => void;
+  setContext: (context: string) => void;
+}
+
+interface SmartFolder {
+  name: string;
+  description?: string;
+  path?: string;
+  id?: string;
+}
+
+interface ServiceIntegration {
+  chromaDbService?: unknown;
+  folderMatchingService?: unknown;
+  [key: string]: unknown;
+}
+
+// Use loose types here since each registration function has its own specific type requirements
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type IpcDependencies = Record<string, any>;
 
 function registerAllIpc({
   ipcMain,
@@ -40,7 +65,7 @@ function registerAllIpc({
   setOllamaVisionModel,
   setOllamaEmbeddingModel,
   onSettingsChanged,
-}) {
+}: IpcDependencies): void {
   registerFilesIpc({
     ipcMain,
     IPC_CHANNELS,

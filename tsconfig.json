@@ -11,7 +11,16 @@
     "sourceMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    "strict": true,
+    // Strict mode disabled to allow hybrid JS/TS development
+    // Re-enable once full TypeScript migration is complete
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "strictFunctionTypes": false,
+    "strictBindCallApply": false,
+    "strictPropertyInitialization": false,
+    "noImplicitThis": false,
+    "useUnknownInCatchVariables": false,
     "moduleResolution": "node",
     "esModuleInterop": true,
     "skipLibCheck": true,

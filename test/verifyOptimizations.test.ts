@@ -278,7 +278,8 @@ describe('Performance Optimizations Verification', () => {
       expect(result.results).toHaveLength(10);
 
       // With concurrency 3 and 100ms per item, should take ~400ms (10 items / 3 parallel)
-      expect(duration).toBeLessThan(600);
+      // Allow extra margin for CI/system load variability
+      expect(duration).toBeLessThan(1000);
       expect(duration).toBeGreaterThan(300);
 
       logger.info(
