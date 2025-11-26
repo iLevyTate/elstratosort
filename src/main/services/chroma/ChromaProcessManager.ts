@@ -26,7 +26,8 @@ class ChromaProcessManager {
     this.client = null;
     this.isOnline = false;
     this.healthCheckInterval = null;
-    this.HEALTH_CHECK_INTERVAL_MS = 30000;
+    // Increased from 30s to 60s - health checks are also triggered by ServiceContainer
+    this.HEALTH_CHECK_INTERVAL_MS = 60000;
   }
 
   private _resolveUserDataPath(options: ChromaProcessOptions): string {
@@ -38,7 +39,9 @@ class ChromaProcessManager {
         userDataPath = app.getPath('userData');
       } catch (e) {
         if (!options.ignoreMissingPath) {
-          logger.warn('[ChromaProcessManager] Electron app not available and no userDataPath provided.');
+          logger.warn(
+            '[ChromaProcessManager] Electron app not available and no userDataPath provided.',
+          );
         }
         userDataPath = process.env.USER_DATA_PATH || process.cwd();
       }
@@ -52,14 +55,20 @@ class ChromaProcessManager {
     const DEFAULT_SERVER_PORT = 8000;
 
     // Environment variable parsing logic
-    return process.env.CHROMA_SERVER_URL || `${DEFAULT_SERVER_PROTOCOL}://${DEFAULT_SERVER_HOST}:${DEFAULT_SERVER_PORT}`;
+    return (
+      process.env.CHROMA_SERVER_URL ||
+      `${DEFAULT_SERVER_PROTOCOL}://${DEFAULT_SERVER_HOST}:${DEFAULT_SERVER_PORT}`
+    );
   }
 
   async ensureDbDirectory(): Promise<void> {
     try {
       await fs.mkdir(this.dbPath, { recursive: true });
     } catch (error) {
-      logger.error('[ChromaProcessManager] Failed to create database directory:', error);
+      logger.error(
+        '[ChromaProcessManager] Failed to create database directory:',
+        error,
+      );
       throw error;
     }
   }
@@ -73,25 +82,33 @@ class ChromaProcessManager {
   async checkHealth(): Promise<boolean> {
     try {
       const baseUrl = this.serverUrl;
-      const endpoints = ['/api/v2/heartbeat', '/api/v1/heartbeat', '/api/v1'];
+      // Only try the most common endpoint first to reduce latency
+      // Fall back to others only if needed
+      const endpoints = ['/api/v2/heartbeat'];
 
       const healthCheckPromises = endpoints.map(async (endpoint) => {
         try {
           const response = await axios.get(`${baseUrl}${endpoint}`, {
-            timeout: 500,
-            validateStatus: () => true
+            timeout: 300, // Reduced from 500ms to 300ms for faster failure detection
+            validateStatus: () => true,
           });
           return response.status === 200 ? endpoint : null;
         } catch (error: any) {
-          logger.debug(`[ChromaProcessManager] Health check failed for ${endpoint}`, {
-            error: error.message,
-          });
+          // Only log at debug level when offline to reduce noise
+          if (this.isOnline) {
+            logger.debug(
+              `[ChromaProcessManager] Health check failed for ${endpoint}`,
+              {
+                error: error.message,
+              },
+            );
+          }
           return null;
         }
       });
 
       const results = await Promise.all(healthCheckPromises);
-      const successfulEndpoint = results.find(r => r !== null);
+      const successfulEndpoint = results.find((r) => r !== null);
 
       if (successfulEndpoint) {
         if (!this.isOnline) {
@@ -104,10 +121,15 @@ class ChromaProcessManager {
       if (this.client) {
         try {
           const response = await this.client.heartbeat();
-          const isHealthy = response && (response.nanosecond_heartbeat > 0 || response['nanosecond heartbeat'] > 0);
+          const isHealthy =
+            response &&
+            (response.nanosecond_heartbeat > 0 ||
+              response['nanosecond heartbeat'] > 0);
           if (isHealthy && !this.isOnline) {
             this.isOnline = true;
-            logger.info('[ChromaProcessManager] Connection restored via client');
+            logger.info(
+              '[ChromaProcessManager] Connection restored via client',
+            );
           }
           return isHealthy;
         } catch (error: any) {
@@ -125,7 +147,10 @@ class ChromaProcessManager {
     } catch (error: any) {
       if (this.isOnline) {
         this.isOnline = false;
-        logger.warn('[ChromaProcessManager] Connection lost due to error:', error.message);
+        logger.warn(
+          '[ChromaProcessManager] Connection lost due to error:',
+          error.message,
+        );
       }
       return false;
     }
@@ -138,11 +163,15 @@ class ChromaProcessManager {
         error: error.message,
       });
     });
-    this.healthCheckInterval = setInterval(() => this.checkHealth().catch((error: any) => {
-      logger.debug('[ChromaProcessManager] Periodic health check failed', {
-        error: error.message,
-      });
-    }), this.HEALTH_CHECK_INTERVAL_MS);
+    this.healthCheckInterval = setInterval(
+      () =>
+        this.checkHealth().catch((error: any) => {
+          logger.debug('[ChromaProcessManager] Periodic health check failed', {
+            error: error.message,
+          });
+        }),
+      this.HEALTH_CHECK_INTERVAL_MS,
+    );
     if (this.healthCheckInterval.unref) this.healthCheckInterval.unref();
   }
 

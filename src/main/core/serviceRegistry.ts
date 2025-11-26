@@ -31,7 +31,7 @@ function registerServices(options = {}) {
     {
       dependencies: [],
       lazy: false, // Initialize early
-      healthCheckInterval: 60000, // 1 minute
+      healthCheckInterval: 180000, // 3 minutes (reduced frequency to prevent UI blocking)
     },
   );
 
@@ -45,7 +45,7 @@ function registerServices(options = {}) {
     {
       dependencies: [],
       lazy: false,
-      healthCheckInterval: 60000,
+      healthCheckInterval: 180000, // 3 minutes
     },
   );
 

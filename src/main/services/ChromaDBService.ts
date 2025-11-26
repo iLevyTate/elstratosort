@@ -30,9 +30,15 @@ class ChromaDBService {
     this.initialized = false; // Keep for backward compatibility
   }
 
-  get isOnline() { return this.processManager.isOnline; }
-  get fileCollection() { return this.collectionManager.fileCollection; }
-  get folderCollection() { return this.collectionManager.folderCollection; }
+  get isOnline() {
+    return this.processManager.isOnline;
+  }
+  get fileCollection() {
+    return this.collectionManager.fileCollection;
+  }
+  get folderCollection() {
+    return this.collectionManager.folderCollection;
+  }
 
   /**
    * Initialize ChromaDB with mutex-protected race condition prevention
@@ -58,7 +64,9 @@ class ChromaDBService {
     try {
       // Double-check after acquiring mutex (another thread may have initialized)
       if (this.state === 'initialized') {
-        logger.debug('[ChromaDB] Already initialized (double-check after mutex)');
+        logger.debug(
+          '[ChromaDB] Already initialized (double-check after mutex)',
+        );
         return;
       }
 
@@ -104,12 +112,16 @@ class ChromaDBService {
       const client = await this.processManager.initializeClient();
       this.collectionManager.client = client;
       await this.collectionManager.initialize();
-      this.processManager.startHealthCheck();
+      // Note: Health checks are managed by ServiceContainer, don't start internal loop
+      // this.processManager.startHealthCheck();
     })();
 
     // Race with timeout
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('ChromaDB initialization timed out after 30s')), timeout)
+      setTimeout(
+        () => reject(new Error('ChromaDB initialization timed out after 30s')),
+        timeout,
+      ),
     );
 
     await Promise.race([initPromise, timeoutPromise]);
@@ -127,17 +139,30 @@ class ChromaDBService {
     // ... batch logic can be moved to manager or kept here as orchestration ...
     // For now, let's delegate assuming manager handles raw arrays
     // If complexity remains high here, move specific batch mapping to manager
-    const ids: any[] = [], embeddings: any[] = [], metadatas: any[] = [], documents: any[] = [];
+    const ids: any[] = [],
+      embeddings: any[] = [],
+      metadatas: any[] = [],
+      documents: any[] = [];
     // ... mapping ...
     // Simplified for brevity, real impl should map like original
     const skipped: any[] = [];
     for (const f of folders) {
-      if (!f.id || !f.vector) { skipped.push({ folder: f, reason: 'invalid' }); continue; }
-      ids.push(f.id); embeddings.push(f.vector);
-      metadatas.push({ name: f.name, path: f.path }); documents.push(f.name || f.id);
+      if (!f.id || !f.vector) {
+        skipped.push({ folder: f, reason: 'invalid' });
+        continue;
+      }
+      ids.push(f.id);
+      embeddings.push(f.vector);
+      metadatas.push({ name: f.name, path: f.path });
+      documents.push(f.name || f.id);
     }
     if (ids.length) {
-      await this.collectionManager.batchUpsertFolders(ids, embeddings, metadatas, documents);
+      await this.collectionManager.batchUpsertFolders(
+        ids,
+        embeddings,
+        metadatas,
+        documents,
+      );
       this.queryBuilder._invalidateCacheForFolder();
     }
     return { count: ids.length, skipped };
@@ -151,15 +176,25 @@ class ChromaDBService {
 
   async batchUpsertFiles(files: any[]) {
     await this.initialize();
-    const ids: any[] = [], embeddings: any[] = [], metadatas: any[] = [], documents: any[] = [];
+    const ids: any[] = [],
+      embeddings: any[] = [],
+      metadatas: any[] = [],
+      documents: any[] = [];
     for (const f of files) {
       if (!f.id || !f.vector) continue;
-      ids.push(f.id); embeddings.push(f.vector);
-      metadatas.push(f.meta || {}); documents.push(f.meta?.path || f.id);
+      ids.push(f.id);
+      embeddings.push(f.vector);
+      metadatas.push(f.meta || {});
+      documents.push(f.meta?.path || f.id);
     }
     if (ids.length) {
-      await this.collectionManager.batchUpsertFiles(ids, embeddings, metadatas, documents);
-      ids.forEach(id => this.queryBuilder._invalidateCacheForFile(id));
+      await this.collectionManager.batchUpsertFiles(
+        ids,
+        embeddings,
+        metadatas,
+        documents,
+      );
+      ids.forEach((id) => this.queryBuilder._invalidateCacheForFile(id));
     }
     return ids.length;
   }
@@ -174,7 +209,7 @@ class ChromaDBService {
   async batchDeleteFileEmbeddings(fileIds: string[]) {
     await this.initialize();
     await this.collectionManager.deleteFiles(fileIds);
-    fileIds.forEach(id => this.queryBuilder._invalidateCacheForFile(id));
+    fileIds.forEach((id) => this.queryBuilder._invalidateCacheForFile(id));
     return fileIds.length;
   }
 
@@ -244,9 +279,9 @@ class ChromaDBService {
       queryCache: {
         size: this.queryBuilder.queryCache.size,
         maxSize: this.queryBuilder.maxCacheSize,
-        ttlMs: this.queryBuilder.queryCacheTTL
+        ttlMs: this.queryBuilder.queryCacheTTL,
       },
-      inflightQueries: this.queryBuilder.inflightQueries.size
+      inflightQueries: this.queryBuilder.inflightQueries.size,
     };
   }
 
@@ -254,7 +289,7 @@ class ChromaDBService {
     await this.initialize();
     const results = await this.collectionManager.fileCollection.query({
       queryEmbeddings: [queryEmbedding],
-      nResults: topK
+      nResults: topK,
     });
 
     if (!results.ids || results.ids[0].length === 0) return [];
@@ -268,7 +303,7 @@ class ChromaDBService {
         id: results.ids[0][i],
         score,
         metadata,
-        document: results.documents[0][i]
+        document: results.documents[0][i],
       });
     }
     return matches.sort((a, b) => b.score - a.score);
@@ -296,9 +331,12 @@ class ChromaDBService {
             migrated++;
           }
         } catch (error: any) {
-          logger.debug('[ChromaDB] Skipping invalid JSONL line during migration', {
-            error: error.message,
-          });
+          logger.debug(
+            '[ChromaDB] Skipping invalid JSONL line during migration',
+            {
+              error: error.message,
+            },
+          );
         }
       }
       return migrated;
@@ -318,18 +356,24 @@ class ChromaDBService {
 
       try {
         const existing = await this.collectionManager.getFile(update.oldId);
-        if (existing && existing.ids && existing.ids.length > 0 && existing.embeddings) {
+        if (
+          existing &&
+          existing.ids &&
+          existing.ids.length > 0 &&
+          existing.embeddings
+        ) {
           const oldMeta = existing.metadatas?.[0] || {};
           const newMeta = sanitizeMetadata({
-            ...oldMeta, ...update.newMeta,
+            ...oldMeta,
+            ...update.newMeta,
             path: update.newMeta.path || oldMeta.path,
             name: update.newMeta.name || oldMeta.name,
-            updatedAt: new Date().toISOString()
+            updatedAt: new Date().toISOString(),
           });
           await this.collectionManager.upsertFile({
             id: update.newId,
             vector: existing.embeddings[0],
-            meta: newMeta
+            meta: newMeta,
           });
 
           if (update.oldId !== update.newId) {
@@ -372,8 +416,13 @@ class ChromaDBService {
       }
 
       // Check collections exist
-      if (!this.collectionManager.fileCollection || !this.collectionManager.folderCollection) {
-        logger.warn('[ChromaDB] Health check failed: collections not initialized');
+      if (
+        !this.collectionManager.fileCollection ||
+        !this.collectionManager.folderCollection
+      ) {
+        logger.warn(
+          '[ChromaDB] Health check failed: collections not initialized',
+        );
         return false;
       }
 

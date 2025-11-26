@@ -30,14 +30,35 @@ interface ChromaDbService {
   initialize: () => Promise<void>;
   upsertFolder: (payload: FolderPayload) => Promise<void>;
   batchUpsertFolders: (payloads: FolderPayload[]) => Promise<void>;
-  upsertFile: (payload: { id: string; vector: number[]; model: string; meta: Record<string, unknown>; updatedAt: string }) => Promise<void>;
-  queryFolders: (fileId: string, topK: number) => Promise<Array<{ score?: number; [key: string]: unknown }>>;
-  batchQueryFolders: (fileIds: string[], topK: number) => Promise<Record<string, unknown[]>>;
-  queryFoldersByEmbedding: (vector: number[], topK: number) => Promise<unknown[]>;
+  upsertFile: (payload: {
+    id: string;
+    vector: number[];
+    model: string;
+    meta: Record<string, unknown>;
+    updatedAt: string;
+  }) => Promise<void>;
+  queryFolders: (
+    fileId: string,
+    topK: number,
+  ) => Promise<Array<{ score?: number; [key: string]: unknown }>>;
+  batchQueryFolders: (
+    fileIds: string[],
+    topK: number,
+  ) => Promise<Record<string, unknown[]>>;
+  queryFoldersByEmbedding: (
+    vector: number[],
+    topK: number,
+  ) => Promise<unknown[]>;
   querySimilarFiles: (embedding: number[], topK: number) => Promise<unknown[]>;
-  getStats: () => Promise<{ folderCount: number; fileCount: number; lastUpdate: string | null }>;
+  getStats: () => Promise<{
+    folderCount: number;
+    fileCount: number;
+    lastUpdate: string | null;
+  }>;
   healthCheck: () => Promise<boolean>;
-  fileCollection: { get: (params: { ids: string[] }) => Promise<{ embeddings?: number[][] }> };
+  fileCollection: {
+    get: (params: { ids: string[] }) => Promise<{ embeddings?: number[][] }>;
+  };
 }
 
 interface CacheOptions {
@@ -56,7 +77,10 @@ class FolderMatchingService {
   modelName: string;
   embeddingCache: EmbeddingCache;
 
-  constructor(chromaDbService: ChromaDbService | null, cacheOptions: CacheOptions = {}) {
+  constructor(
+    chromaDbService: ChromaDbService | null,
+    cacheOptions: CacheOptions = {},
+  ) {
     this.chromaDbService = chromaDbService;
     this.ollama = null;
     this.modelName = '';
@@ -180,7 +204,9 @@ class FolderMatchingService {
    * @param folders - Array of folders to upsert
    * @returns Result with count and skipped items
    */
-  async batchUpsertFolders(folders: SmartFolder[]): Promise<{ count: number; skipped: SkippedFolder[] }> {
+  async batchUpsertFolders(
+    folders: SmartFolder[],
+  ): Promise<{ count: number; skipped: SkippedFolder[] }> {
     try {
       if (!folders || folders.length === 0) {
         return { count: 0, skipped: [] };
@@ -199,35 +225,40 @@ class FolderMatchingService {
       const skipped: SkippedFolder[] = [];
 
       // Helper for batched processing
-      const processBatch = async (batch: SmartFolder[]): Promise<(FolderPayload | null)[]> => {
-        const promises = batch.map(async (folder: SmartFolder): Promise<FolderPayload | null> => {
-          try {
-            const folderText = [folder.name, folder.description]
-              .filter(Boolean)
-              .join(' - ');
+      const processBatch = async (
+        batch: SmartFolder[],
+      ): Promise<(FolderPayload | null)[]> => {
+        const promises = batch.map(
+          async (folder: SmartFolder): Promise<FolderPayload | null> => {
+            try {
+              const folderText = [folder.name, folder.description]
+                .filter(Boolean)
+                .join(' - ');
 
-            const { vector, model } = await this.embedText(folderText);
-            const folderId = folder.id || this.generateFolderId(folder);
+              const { vector, model } = await this.embedText(folderText);
+              const folderId = folder.id || this.generateFolderId(folder);
 
-            return {
-              id: folderId,
-              name: folder.name,
-              description: folder.description || '',
-              path: folder.path || '',
-              vector,
-              model,
-              updatedAt: new Date().toISOString(),
-            };
-          } catch (error: unknown) {
-            const errMsg = error instanceof Error ? error.message : String(error);
-            logger.warn(
-              `[FolderMatchingService] Failed to generate embedding for folder: ${folder.name}`,
-              { error: errMsg },
-            );
-            skipped.push({ folder, error: errMsg });
-            return null;
-          }
-        });
+              return {
+                id: folderId,
+                name: folder.name,
+                description: folder.description || '',
+                path: folder.path || '',
+                vector,
+                model,
+                updatedAt: new Date().toISOString(),
+              };
+            } catch (error: unknown) {
+              const errMsg =
+                error instanceof Error ? error.message : String(error);
+              logger.warn(
+                `[FolderMatchingService] Failed to generate embedding for folder: ${folder.name}`,
+                { error: errMsg },
+              );
+              skipped.push({ folder, error: errMsg });
+              return null;
+            }
+          },
+        );
         return Promise.all(promises);
       };
 
@@ -264,7 +295,11 @@ class FolderMatchingService {
     }
   }
 
-  async upsertFileEmbedding(fileId: string, contentSummary: string, fileMeta: Record<string, unknown> = {}): Promise<void> {
+  async upsertFileEmbedding(
+    fileId: string,
+    contentSummary: string,
+    fileMeta: Record<string, unknown> = {},
+  ): Promise<void> {
     try {
       // CRITICAL FIX: Ensure ChromaDB is initialized before upserting
       if (!this.chromaDbService) {
@@ -298,7 +333,10 @@ class FolderMatchingService {
     }
   }
 
-  async matchFileToFolders(fileId: string, topK = 5): Promise<Array<{ score?: number; [key: string]: unknown }>> {
+  async matchFileToFolders(
+    fileId: string,
+    topK = 5,
+  ): Promise<Array<{ score?: number; [key: string]: unknown }>> {
     try {
       // CRITICAL FIX: Ensure ChromaDB is initialized before querying
       if (!this.chromaDbService) {
@@ -348,7 +386,10 @@ class FolderMatchingService {
    * @param topK - Number of matches per file
    * @returns Map of fileId -> Array of folder matches
    */
-  async batchMatchFilesToFolders(fileIds: string[], topK = 5): Promise<Record<string, unknown[]>> {
+  async batchMatchFilesToFolders(
+    fileIds: string[],
+    topK = 5,
+  ): Promise<Record<string, unknown[]>> {
     try {
       if (!this.chromaDbService) {
         logger.error('[FolderMatchingService] ChromaDB service not available');
@@ -428,7 +469,12 @@ class FolderMatchingService {
   /**
    * Get database statistics
    */
-  async getStats(): Promise<{ folderCount: number; fileCount: number; lastUpdate: string | null; error?: string }> {
+  async getStats(): Promise<{
+    folderCount: number;
+    fileCount: number;
+    lastUpdate: string | null;
+    error?: string;
+  }> {
     try {
       return await this.chromaDbService!.getStats();
     } catch (error: unknown) {
@@ -470,33 +516,48 @@ class FolderMatchingService {
     try {
       // Check ChromaDB service availability
       if (!this.chromaDbService) {
-        logger.error('[FolderMatchingService] Health check failed: no ChromaDB service');
+        logger.error(
+          '[FolderMatchingService] Health check failed: no ChromaDB service',
+        );
         return false;
       }
 
       // Check ChromaDB is initialized and healthy
-      const chromaHealthy = await this.chromaDbService.healthCheck();
+      // Note: Don't call healthCheck() here to avoid cascade of health checks
+      // Just check if the service is available
+      const chromaHealthy =
+        this.chromaDbService &&
+        typeof this.chromaDbService.getCollections === 'function';
       if (!chromaHealthy) {
-        logger.warn('[FolderMatchingService] Health check warning: ChromaDB not healthy');
+        logger.warn(
+          '[FolderMatchingService] Health check warning: ChromaDB not available',
+        );
         // Continue checking other components
       }
 
       // Check embedding cache
       if (!this.embeddingCache) {
-        logger.error('[FolderMatchingService] Health check failed: no embedding cache');
+        logger.error(
+          '[FolderMatchingService] Health check failed: no embedding cache',
+        );
         return false;
       }
 
       // Check if embedding cache is initialized
       if (!this.embeddingCache.initialized) {
-        logger.warn('[FolderMatchingService] Health check warning: embedding cache not initialized');
+        logger.warn(
+          '[FolderMatchingService] Health check warning: embedding cache not initialized',
+        );
         // Try to initialize it
         try {
           this.embeddingCache.initialize();
         } catch (error: unknown) {
-          logger.error('[FolderMatchingService] Failed to initialize embedding cache', {
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.error(
+            '[FolderMatchingService] Failed to initialize embedding cache',
+            {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
           return false;
         }
       }
@@ -507,17 +568,24 @@ class FolderMatchingService {
         const model = getOllamaEmbeddingModel();
 
         if (!ollama) {
-          logger.warn('[FolderMatchingService] Health check warning: Ollama not available');
+          logger.warn(
+            '[FolderMatchingService] Health check warning: Ollama not available',
+          );
           // This might be OK if service is not yet initialized
         }
 
         if (!model) {
-          logger.warn('[FolderMatchingService] Health check warning: no embedding model configured');
+          logger.warn(
+            '[FolderMatchingService] Health check warning: no embedding model configured',
+          );
         }
       } catch (error: unknown) {
-        logger.error('[FolderMatchingService] Health check error accessing Ollama', {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.error(
+          '[FolderMatchingService] Health check error accessing Ollama',
+          {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
         return false;
       }
 
