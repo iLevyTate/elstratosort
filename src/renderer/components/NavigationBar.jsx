@@ -1,4 +1,4 @@
-import React, { useState, useEffect, memo, useCallback } from 'react';
+import React, { useState, useEffect, memo, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import {
   PHASES,
@@ -110,10 +110,15 @@ SettingsIcon.propTypes = {
 function NavigationBar() {
   const dispatch = useAppDispatch();
   const currentPhase = useAppSelector((state) => state.ui.currentPhase);
-  const actions = {
-    advancePhase: (phase) => dispatch(setPhase(phase)),
-    toggleSettings: () => dispatch(toggleSettings()),
-  };
+
+  // MEDIUM FIX: Memoize actions to prevent object recreation on every render
+  const actions = useMemo(
+    () => ({
+      advancePhase: (phase) => dispatch(setPhase(phase)),
+      toggleSettings: () => dispatch(toggleSettings()),
+    }),
+    [dispatch],
+  );
 
   const [isScrolled, setIsScrolled] = useState(false);
   const [hoveredTab, setHoveredTab] = useState(null);
@@ -232,9 +237,11 @@ function NavigationBar() {
           </div>
         </div>
 
-        <div
+        {/* MEDIUM FIX: Add role and aria-label for accessibility */}
+        <nav
           className="flex items-center gap-3 lg:gap-4 xl:gap-5"
           style={{ WebkitAppRegion: 'no-drag' }}
+          aria-label="Phase navigation"
         >
           {phaseOrder.map((phase) => {
             const metadata = PHASE_METADATA[phase];
@@ -281,7 +288,7 @@ function NavigationBar() {
               </button>
             );
           })}
-        </div>
+        </nav>
 
         <div
           className="flex items-center gap-2"

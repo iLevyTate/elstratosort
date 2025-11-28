@@ -37,7 +37,8 @@ export function useKeyboardShortcuts() {
   );
 
   useEffect(() => {
-    const handleKeyDown = (event) => {
+    // MEDIUM FIX: Make handler async to properly await IPC calls
+    const handleKeyDown = async (event) => {
       // Ctrl/Cmd + Z for Undo
       if (
         (event.ctrlKey || event.metaKey) &&
@@ -46,7 +47,7 @@ export function useKeyboardShortcuts() {
       ) {
         event.preventDefault();
         try {
-          window.electronAPI?.undoRedo?.undo?.();
+          await window.electronAPI?.undoRedo?.undo?.();
         } catch (error) {
           logger.error('Undo shortcut failed', {
             error: error.message,
@@ -63,7 +64,7 @@ export function useKeyboardShortcuts() {
       ) {
         event.preventDefault();
         try {
-          window.electronAPI?.undoRedo?.redo?.();
+          await window.electronAPI?.undoRedo?.redo?.();
         } catch (error) {
           logger.error('Redo shortcut failed', {
             error: error.message,
