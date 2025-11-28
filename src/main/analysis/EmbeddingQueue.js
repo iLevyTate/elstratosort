@@ -209,7 +209,9 @@ class EmbeddingQueue {
           300000,
         );
         logger.info(`[EmbeddingQueue] Retry in ${backoffDelay / 1000}s`);
-        setTimeout(() => this.scheduleFlush(), backoffDelay);
+        // HIGH FIX: Call unref() to allow process to exit cleanly during shutdown
+        const retryTimer = setTimeout(() => this.scheduleFlush(), backoffDelay);
+        if (retryTimer.unref) retryTimer.unref();
         return;
       }
 

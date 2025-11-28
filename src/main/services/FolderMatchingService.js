@@ -369,6 +369,13 @@ class FolderMatchingService {
    */
   async findSimilarFiles(fileId, topK = 10) {
     try {
+      // CRITICAL FIX: Ensure ChromaDB is initialized before accessing collections
+      if (!this.chromaDbService) {
+        logger.error('[FolderMatchingService] ChromaDB service not available');
+        return [];
+      }
+      await this.chromaDbService.initialize();
+
       // Get the file's embedding first
       const fileResult = await this.chromaDbService.fileCollection.get({
         ids: [fileId],
@@ -398,6 +405,18 @@ class FolderMatchingService {
    */
   async getStats() {
     try {
+      // CRITICAL FIX: Check service availability
+      if (!this.chromaDbService) {
+        logger.warn(
+          '[FolderMatchingService] ChromaDB service not available for stats',
+        );
+        return {
+          error: 'Service not available',
+          folderCount: 0,
+          fileCount: 0,
+          lastUpdate: null,
+        };
+      }
       return await this.chromaDbService.getStats();
     } catch (error) {
       logger.error('[FolderMatchingService] Failed to get stats:', error);

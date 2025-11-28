@@ -59,9 +59,19 @@ function registerAnalysisIpc({
                 stateError.message,
               );
             }
-            // Add null check for getCustomFolders
-            const folders =
-              typeof getCustomFolders === 'function' ? getCustomFolders() : [];
+            // HIGH FIX: Wrap getCustomFolders in try-catch to handle potential errors
+            let folders = [];
+            try {
+              folders =
+                typeof getCustomFolders === 'function'
+                  ? getCustomFolders()
+                  : [];
+            } catch (folderError) {
+              logger.warn(
+                '[IPC-ANALYSIS] Failed to get custom folders:',
+                folderError.message,
+              );
+            }
             const customFolders = ensureArray(folders).filter(
               (f) => f && (!f.isDefault || f.path),
             );

@@ -32,7 +32,11 @@ async function computeFileChecksum(filePath) {
     const stream = require('fs').createReadStream(filePath);
     stream.on('data', (chunk) => hash.update(chunk));
     stream.on('end', () => resolve(hash.digest('hex')));
-    stream.on('error', reject);
+    stream.on('error', (err) => {
+      // CRITICAL FIX: Ensure stream is destroyed to prevent file handle leak
+      stream.destroy();
+      reject(err);
+    });
   });
 }
 

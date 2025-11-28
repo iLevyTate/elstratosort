@@ -779,10 +779,12 @@ function DiscoverPhase() {
       if (result?.success && result?.folder) {
         // Fixed: Add timeout protection for folder scanning (30 seconds)
         const SCAN_TIMEOUT = 30000; // 30 seconds
+        // CRITICAL FIX: Track timeout ID for cleanup
+        let scanTimeoutId;
         const scanResult = await Promise.race([
           window.electronAPI.smartFolders.scanStructure(result.folder),
-          new Promise((_, reject) =>
-            setTimeout(
+          new Promise((_, reject) => {
+            scanTimeoutId = setTimeout(
               () =>
                 reject(
                   new Error(
@@ -790,9 +792,12 @@ function DiscoverPhase() {
                   ),
                 ),
               SCAN_TIMEOUT,
-            ),
-          ),
-        ]);
+            );
+          }),
+        ]).finally(() => {
+          // Clean up timeout when scan completes (success or failure)
+          if (scanTimeoutId) clearTimeout(scanTimeoutId);
+        });
         if (scanResult && scanResult.files && scanResult.files.length > 0) {
           const supportedExts = [
             '.pdf',
@@ -1311,17 +1316,21 @@ function DiscoverPhase() {
             const RETRY_BASE_DELAY = 1000; // 1 second
 
             const analyzeWithRetry = async (filePath, attempt = 1) => {
+              // CRITICAL FIX: Track timeout ID for cleanup
+              let analysisTimeoutId;
               try {
                 return await Promise.race([
                   window.electronAPI.files.analyze(filePath),
-                  new Promise((_, reject) =>
-                    setTimeout(
+                  new Promise((_, reject) => {
+                    analysisTimeoutId = setTimeout(
                       () =>
                         reject(new Error('Analysis timeout after 3 minutes')),
                       RENDERER_LIMITS.ANALYSIS_TIMEOUT_MS,
-                    ),
-                  ),
-                ]);
+                    );
+                  }),
+                ]).finally(() => {
+                  if (analysisTimeoutId) clearTimeout(analysisTimeoutId);
+                });
               } catch (error) {
                 // Retry on transient errors, fail fast on permanent errors
                 const isTransient =

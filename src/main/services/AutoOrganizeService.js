@@ -306,7 +306,8 @@ class AutoOrganizeService {
 
           // CRITICAL FIX #3a: Record feedback with proper error handling
           // Record feedback for learning (non-blocking but with proper error handling)
-          this.suggestionService
+          // HIGH FIX: Use void to explicitly mark intentional floating promise
+          void this.suggestionService
             .recordFeedback(file, suggestion, true)
             .catch((err) => {
               // Log error but don't fail the operation - batch processing continues
