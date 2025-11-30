@@ -1,6 +1,9 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { app } = require('electron');
+// FIX: Add logger for error reporting
+const { logger } = require('../../shared/logger');
+logger.setContext('ProcessingStateService');
 
 /**
  * ProcessingStateService
@@ -88,27 +91,61 @@ class ProcessingStateService {
   async _saveStateInternal() {
     this.state.updatedAt = new Date().toISOString();
     await this.ensureParentDirectory(this.statePath);
-    await fs.writeFile(this.statePath, JSON.stringify(this.state, null, 2));
+    // FIX: Use atomic write (temp + rename) to prevent corruption on crash
+    const tempPath = this.statePath + '.tmp.' + Date.now();
+    try {
+      await fs.writeFile(tempPath, JSON.stringify(this.state, null, 2));
+      await fs.rename(tempPath, this.statePath);
+    } catch (error) {
+      // Clean up temp file on failure
+      try {
+        await fs.unlink(tempPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+      throw error;
+    }
   }
 
   /**
    * Save state with write lock to prevent concurrent writes
    */
   async saveState() {
-    // Fixed: Use write lock to prevent concurrent state file corruption
-    // CRITICAL: Lock must always resolve to maintain the chain
     const previousLock = this._writeLock;
 
-    // Create new lock that waits for previous, handling both success and failure
+    // Create the actual save operation as a separate promise
+    // so we can return its result to the caller
+    let saveOperation;
+
+    // Chain continues regardless of previous failures
     this._writeLock = previousLock
-      .then(() => this._saveStateInternal())
       .catch(() => {
-        // Previous operation failed, but we still try current operation
-        // This prevents error propagation from breaking the lock chain
-        return this._saveStateInternal();
+        // Previous save failed - log but don't block current save
+      })
+      .then(() => {
+        saveOperation = this._saveStateInternal();
+        return saveOperation;
+      })
+      .then(() => {
+        // Success - chain continues
+      })
+      .catch((error) => {
+        logger.error('[ProcessingStateService] Save failed', {
+          error: error?.message,
+        });
+        // Don't re-throw - keep chain alive for next operation
+        // The actual error is returned via saveOperation below
       });
 
-    return this._writeLock;
+    // Wait for previous lock, then return actual save result
+    await previousLock.catch(() => {});
+
+    try {
+      return await this._saveStateInternal();
+    } catch (error) {
+      logger.error('[ProcessingStateService] Save failed', { error: error?.message });
+      throw error;
+    }
   }
 
   // ===== Analysis tracking =====

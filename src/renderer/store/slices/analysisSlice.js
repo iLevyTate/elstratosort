@@ -1,4 +1,5 @@
 import { createSlice } from '@reduxjs/toolkit';
+import { FILE_STATES } from '../../../shared/constants';
 
 const initialState = {
   isAnalyzing: false,
@@ -46,7 +47,7 @@ const analysisSlice = createSlice({
       const result = {
         ...file,
         analysis,
-        status: 'analyzed',
+        status: FILE_STATES.CATEGORIZED,
         analyzedAt: new Date().toISOString(),
       };
 
@@ -63,7 +64,7 @@ const analysisSlice = createSlice({
         ...file,
         analysis: null,
         error: error,
-        status: 'failed',
+        status: FILE_STATES.ERROR,
         analyzedAt: new Date().toISOString(),
       };
 

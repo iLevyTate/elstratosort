@@ -14,10 +14,11 @@ export default function AppShell({ header, subheader, footer, children }) {
   return (
     <div className="app-surface flex min-h-screen flex-col">
       {header}
-      <main className="flex flex-1 flex-col pt-[var(--app-nav-height)] overflow-hidden">
+      {/* FIX: Changed overflow-hidden to overflow-auto to allow phase content to scroll */}
+      <main className="flex flex-1 flex-col pt-[var(--app-nav-height)] overflow-auto">
         {subheader}
         <div className="flex-1 overflow-y-auto">
-          <div className="animate-fade-in">{children}</div>
+          <div className="animate-fade-in h-full">{children}</div>
         </div>
       </main>
       {footer}

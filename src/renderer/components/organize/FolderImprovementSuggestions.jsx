@@ -76,9 +76,10 @@ function FolderImprovementSuggestions({
         </span>
       </div>
 
-      {improvements.map((improvement, index) => (
+      {/* FIX: Use stable identifier instead of array index as key */}
+      {improvements.map((improvement) => (
         <Card
-          key={index}
+          key={improvement.id || improvement.type || improvement.title}
           className={`overflow-hidden ${
             improvement.priority === 'high'
               ? 'border-red-200'
@@ -125,9 +126,9 @@ function FolderImprovementSuggestions({
             <div className="border-t bg-gray-50 p-4">
               {improvement.type === 'missing_categories' && (
                 <div className="space-y-3">
-                  {improvement.suggestions.map((category, idx) => (
+                  {improvement.suggestions.map((category) => (
                     <div
-                      key={idx}
+                      key={category.name || category.id || JSON.stringify(category)}
                       className="flex items-center justify-between p-3 bg-white rounded border"
                     >
                       <div>
@@ -139,7 +140,7 @@ function FolderImprovementSuggestions({
                       <Button
                         size="sm"
                         variant="primary"
-                        onClick={() => onCreateFolder(category)}
+                        onClick={() => onCreateFolder && onCreateFolder(category)}
                         className="bg-stratosort-blue hover:bg-stratosort-blue/90"
                       >
                         Create Folder
@@ -151,15 +152,15 @@ function FolderImprovementSuggestions({
 
               {improvement.type === 'folder_overlaps' && (
                 <div className="space-y-3">
-                  {improvement.suggestions.map((overlap, idx) => (
-                    <div key={idx} className="p-3 bg-white rounded border">
+                  {(improvement.suggestions || []).map((overlap) => (
+                    <div key={overlap.folders?.join('-') || overlap.id} className="p-3 bg-white rounded border">
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="font-medium text-sm">
-                            {overlap.folders.join(' ↔ ')}
+                            {(overlap.folders || []).join(' ↔ ')}
                           </div>
                           <div className="text-sm text-system-gray-600 mt-1">
-                            {Math.round(overlap.similarity * 100)}% similar
+                            {Math.round((overlap.similarity || 0) * 100)}% similar
                           </div>
                           <div className="text-xs text-system-gray-500 mt-1">
                             {overlap.suggestion}
@@ -168,7 +169,7 @@ function FolderImprovementSuggestions({
                         <Button
                           size="sm"
                           variant="secondary"
-                          onClick={() => onMergeFolders(overlap.folders)}
+                          onClick={() => onMergeFolders && onMergeFolders(overlap.folders)}
                         >
                           Review Merge
                         </Button>
@@ -180,8 +181,8 @@ function FolderImprovementSuggestions({
 
               {improvement.type === 'underutilized_folders' && (
                 <div className="space-y-3">
-                  {improvement.suggestions.map((folder, idx) => (
-                    <div key={idx} className="p-3 bg-white rounded border">
+                  {(improvement.suggestions || []).map((folder) => (
+                    <div key={folder.name || folder.id} className="p-3 bg-white rounded border">
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="font-medium text-sm">
@@ -230,8 +231,8 @@ function FolderImprovementSuggestions({
 
               {improvement.type === 'hierarchy_improvements' && (
                 <div className="space-y-3">
-                  {improvement.suggestions.map((hierarchy, idx) => (
-                    <div key={idx} className="p-3 bg-white rounded border">
+                  {(improvement.suggestions || []).map((hierarchy) => (
+                    <div key={hierarchy.parent || hierarchy.id} className="p-3 bg-white rounded border">
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="font-medium text-sm">
@@ -240,7 +241,7 @@ function FolderImprovementSuggestions({
                           <div className="text-xs text-system-gray-600 mt-2">
                             <div>Parent: {hierarchy.parent}</div>
                             <div className="mt-1">
-                              Children: {hierarchy.children.join(', ')}
+                              Children: {(hierarchy.children || []).join(', ')}
                             </div>
                           </div>
                         </div>
@@ -248,7 +249,7 @@ function FolderImprovementSuggestions({
                           size="sm"
                           variant="secondary"
                           onClick={() =>
-                            onCreateFolder({
+                            onCreateFolder && onCreateFolder({
                               name: hierarchy.parent,
                               isParent: true,
                               children: hierarchy.children,
@@ -305,7 +306,7 @@ function FolderImprovementSuggestions({
         <Button
           variant="primary"
           onClick={() =>
-            onAcceptImprovement(
+            onAcceptImprovement && onAcceptImprovement(
               improvements.filter((i) => i.priority === 'high'),
             )
           }

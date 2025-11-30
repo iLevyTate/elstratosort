@@ -54,6 +54,11 @@ const { analyzeImageFile } = require('./analysis/ollamaImageAnalysis');
 const tesseract = require('node-tesseract-ocr');
 const fs = require('fs').promises;
 const path = require('path');
+const {
+  isWindows,
+  isMacOS,
+  getQuitAccelerator,
+} = require('../shared/platformUtils');
 
 let mainWindow;
 let customFolders = []; // Initialize customFolders at module level
@@ -123,7 +128,7 @@ async function verifyIpcHandlersRegistered() {
     'test-ollama-connection',
 
     // Window controls (if on Windows)
-    ...(process.platform === 'win32'
+    ...(isWindows
       ? [
           'window-minimize',
           'window-maximize',
@@ -368,7 +373,7 @@ function createApplicationMenu() {
         { type: 'separator' },
         {
           label: 'Exit',
-          accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Ctrl+Q',
+          accelerator: getQuitAccelerator(),
           click: () => {
             app.quit();
           },
@@ -565,7 +570,7 @@ function createWindow() {
     }
 
     // 7. On Windows, force window to foreground after state restoration
-    if (process.platform === 'win32' && mainWindow.isVisible()) {
+    if (isWindows && mainWindow.isVisible()) {
       // Use setAlwaysOnTop trick to bring window to front
       mainWindow.setAlwaysOnTop(true);
       setTimeout(() => {
@@ -747,7 +752,7 @@ if (!gotTheLock) {
       mainWindow.focus();
 
       // Windows-specific foreground forcing
-      if (process.platform === 'win32') {
+      if (isWindows) {
         mainWindow.setAlwaysOnTop(true);
         mainWindow.setAlwaysOnTop(false);
       }
@@ -1054,7 +1059,8 @@ app.whenReady().then(async () => {
     createApplicationMenu();
 
     // Register IPC event listeners (not handlers) for renderer-to-main communication
-    ipcMain.on('renderer-error-report', (event, errorData) => {
+    // FIX: Store handler reference for proper cleanup tracking
+    const rendererErrorReportHandler = (event, errorData) => {
       try {
         logger.error('[RENDERER ERROR]', {
           message: errorData?.message || 'Unknown error',
@@ -1066,6 +1072,12 @@ app.whenReady().then(async () => {
       } catch (err) {
         logger.error('[RENDERER ERROR] Failed to process error report:', err);
       }
+    };
+    ipcMain.on('renderer-error-report', rendererErrorReportHandler);
+
+    // FIX: Track renderer-error-report listener for explicit cleanup
+    eventListeners.push(() => {
+      ipcMain.removeListener('renderer-error-report', rendererErrorReportHandler);
     });
 
     // HIGH PRIORITY FIX (HIGH-1): Removed unreliable setImmediate delay
@@ -1186,8 +1198,11 @@ app.whenReady().then(async () => {
           }
 
           // Mark setup as complete
+          // FIX: Use atomic write (temp + rename) to prevent corruption
           try {
-            await fs.writeFile(setupMarker, new Date().toISOString());
+            const tempPath = setupMarker + '.tmp.' + Date.now();
+            await fs.writeFile(tempPath, new Date().toISOString());
+            await fs.rename(tempPath, setupMarker);
           } catch (e) {
             logger.debug('[STARTUP] Could not create setup marker:', e.message);
           }
@@ -1264,7 +1279,7 @@ app.whenReady().then(async () => {
     }
     // Windows Jump List tasks
     try {
-      if (process.platform === 'win32') {
+      if (isWindows) {
         app.setAppUserModelId('com.stratosort.app');
         app.setJumpList([
           {
@@ -1344,8 +1359,10 @@ app.whenReady().then(async () => {
     try {
       if (!isDev) {
         autoUpdater.autoDownload = true;
-        autoUpdater.on('error', (err) => logger.error('[UPDATER] Error:', err));
-        autoUpdater.on('update-available', () => {
+
+        // FIX: Store handler references for proper cleanup
+        const autoUpdaterErrorHandler = (err) => logger.error('[UPDATER] Error:', err);
+        const autoUpdaterAvailableHandler = () => {
           logger.info('[UPDATER] Update available');
           try {
             const win = BrowserWindow.getAllWindows()[0];
@@ -1357,8 +1374,8 @@ app.whenReady().then(async () => {
               error,
             );
           }
-        });
-        autoUpdater.on('update-not-available', () => {
+        };
+        const autoUpdaterNotAvailableHandler = () => {
           logger.info('[UPDATER] No updates available');
           try {
             const win = BrowserWindow.getAllWindows()[0];
@@ -1370,8 +1387,8 @@ app.whenReady().then(async () => {
               error,
             );
           }
-        });
-        autoUpdater.on('update-downloaded', () => {
+        };
+        const autoUpdaterDownloadedHandler = () => {
           logger.info('[UPDATER] Update downloaded');
           try {
             const win = BrowserWindow.getAllWindows()[0];
@@ -1383,7 +1400,21 @@ app.whenReady().then(async () => {
               error,
             );
           }
+        };
+
+        autoUpdater.on('error', autoUpdaterErrorHandler);
+        autoUpdater.on('update-available', autoUpdaterAvailableHandler);
+        autoUpdater.on('update-not-available', autoUpdaterNotAvailableHandler);
+        autoUpdater.on('update-downloaded', autoUpdaterDownloadedHandler);
+
+        // FIX: Track autoUpdater listeners for cleanup
+        eventListeners.push(() => {
+          autoUpdater.removeListener('error', autoUpdaterErrorHandler);
+          autoUpdater.removeListener('update-available', autoUpdaterAvailableHandler);
+          autoUpdater.removeListener('update-not-available', autoUpdaterNotAvailableHandler);
+          autoUpdater.removeListener('update-downloaded', autoUpdaterDownloadedHandler);
         });
+
         try {
           await autoUpdater.checkForUpdatesAndNotify();
         } catch (e) {
@@ -1524,7 +1555,7 @@ app.on('before-quit', async () => {
         chromaDbProcess.removeAllListeners();
 
         // Fixed: Use synchronous kill to ensure completion before continuing
-        if (process.platform === 'win32') {
+        if (isWindows) {
           // On Windows, use async taskkill with force flag to avoid blocking
           const { asyncSpawn } = require('./utils/asyncSpawnUtils');
           const result = await asyncSpawn(
@@ -1581,7 +1612,7 @@ app.on('before-quit', async () => {
         // Synchronous sleep for cleanup
         const { execSync } = require('child_process');
         try {
-          if (process.platform === 'win32') {
+          if (isWindows) {
             execSync('timeout /t 1 /nobreak', {
               timeout: 2000,
               windowsHide: true,
@@ -1772,7 +1803,7 @@ async function verifyShutdownCleanup() {
 }
 
 const windowAllClosedHandler = () => {
-  if (process.platform !== 'darwin') {
+  if (!isMacOS) {
     app.quit();
   }
 };
@@ -1829,16 +1860,20 @@ let tray = null;
 function createSystemTray() {
   try {
     const path = require('path');
+const {
+  isWindows,
+  isMacOS,
+} = require('../shared/platformUtils');
     const iconPath = path.join(
       __dirname,
-      process.platform === 'win32'
+      isWindows
         ? '../../assets/icons/icons/win/icon.ico'
-        : process.platform === 'darwin'
+        : isMacOS
           ? '../../assets/icons/icons/png/24x24.png'
           : '../../assets/icons/icons/png/16x16.png',
     );
     const trayIcon = nativeImage.createFromPath(iconPath);
-    if (process.platform === 'darwin') {
+    if (isMacOS) {
       trayIcon.setTemplateImage(true);
     }
     tray = new Tray(trayIcon);

@@ -34,7 +34,7 @@ if errorlevel 1 (
 
 echo.
 echo [3/5] Checking Ollama setup...
-call node setup-ollama.js --check >nul 2>&1
+call node scripts/setup-ollama.js --check >nul 2>&1
 if errorlevel 1 (
     echo WARNING: Ollama not configured. AI features will be limited.
     echo Run 'npm run setup:ollama' to configure Ollama.

@@ -10,12 +10,18 @@ const {
   hasPythonModuleAsync,
   asyncSpawn,
 } = require('../utils/asyncSpawnUtils');
+const { container } = require('./ServiceContainer');
+const {
+  isWindows,
+  shouldUseShell,
+} = require('../../shared/platformUtils');
+const { withTimeout, delay } = require('../../shared/promiseUtils');
 
 // FIXED Bug #28: Named constant for axios timeout
 const DEFAULT_AXIOS_TIMEOUT = 5000; // 5 seconds
 
 /**
- * StartupManager
+ * StartupManager - Application startup orchestration
  *
  * Centralized service for managing application startup sequence with:
  * - Retry logic with exponential backoff
@@ -24,9 +30,31 @@ const DEFAULT_AXIOS_TIMEOUT = 5000; // 5 seconds
  * - Pre-flight checks before startup
  * - User-friendly error reporting
  * - Timeout protection
+ * - Integration with the ServiceContainer for dependency injection
+ *
+ * The StartupManager can be used standalone or with the ServiceContainer.
+ * When registered with the container, it provides lifecycle management
+ * for all application services.
+ *
+ * @example
+ * // Standalone usage
+ * const startupManager = new StartupManager();
+ * await startupManager.performStartup();
+ *
+ * // With ServiceContainer
+ * container.registerSingleton(ServiceIds.STARTUP_MANAGER, () => new StartupManager());
+ * const manager = container.resolve(ServiceIds.STARTUP_MANAGER);
  */
 class StartupManager {
-  constructor() {
+  /**
+   * Create a StartupManager instance
+   *
+   * @param {Object} [options={}] - Configuration options
+   * @param {number} [options.startupTimeout=60000] - Overall startup timeout in ms
+   * @param {number} [options.healthCheckInterval=120000] - Health check interval in ms
+   * @param {number} [options.maxRetries=3] - Maximum retry attempts
+   */
+  constructor(options = {}) {
     this.services = new Map();
     this.healthMonitor = null;
     this.healthCheckInProgress = false;
@@ -34,15 +62,17 @@ class StartupManager {
     this.startupState = 'initializing';
     this.errors = [];
     this.serviceProcesses = new Map();
+
+    // Merge provided options with defaults
     this.config = {
-      startupTimeout: 60000, // 60 seconds overall timeout
-      healthCheckInterval: 120000, // 120 seconds (2 minutes) between health checks - reduced frequency to prevent UI blocking
-      maxRetries: 3,
-      baseRetryDelay: 1000, // Base delay for exponential backoff
-      axiosTimeout: DEFAULT_AXIOS_TIMEOUT, // Default axios timeout
+      startupTimeout: options.startupTimeout || 60000, // 60 seconds overall timeout
+      healthCheckInterval: options.healthCheckInterval || 120000, // 120 seconds (2 minutes) between health checks - reduced frequency to prevent UI blocking
+      maxRetries: options.maxRetries || 3,
+      baseRetryDelay: options.baseRetryDelay || 1000, // Base delay for exponential backoff
+      axiosTimeout: options.axiosTimeout || DEFAULT_AXIOS_TIMEOUT, // Default axios timeout
       // Bug #45: Circuit breaker configuration for failed services
-      circuitBreakerThreshold: 5, // Auto-disable after 5 consecutive failures
-      circuitBreakerConsecutiveFailures: 3, // Attempt restart after 3 consecutive failures
+      circuitBreakerThreshold: options.circuitBreakerThreshold || 5, // Auto-disable after 5 consecutive failures
+      circuitBreakerConsecutiveFailures: options.circuitBreakerConsecutiveFailures || 3, // Attempt restart after 3 consecutive failures
     };
 
     // Service status tracking
@@ -60,6 +90,9 @@ class StartupManager {
     };
     // PERFORMANCE FIX: Cache successful ChromaDB spawn plan to avoid re-detection issues
     this.cachedChromaSpawnPlan = null;
+
+    // Reference to the container for service access
+    this.container = container;
   }
   async hasPythonModule(moduleName) {
     // Use async version to prevent UI blocking
@@ -101,7 +134,6 @@ class StartupManager {
    * Helper to wrap promises with timeout (uses standardized promiseUtils)
    */
   _withTimeout(promise, timeoutMs, operation) {
-    const { withTimeout } = require('../utils/promiseUtils');
     return withTimeout(promise, timeoutMs, operation);
   }
 
@@ -290,7 +322,7 @@ class StartupManager {
     logger.debug('[PREFLIGHT] Checking Python installation...');
 
     const pythonCommands =
-      process.platform === 'win32'
+      isWindows
         ? [
             { cmd: 'py', args: ['-3', '--version'] },
             { cmd: 'python3', args: ['--version'] },
@@ -309,7 +341,7 @@ class StartupManager {
         const result = await asyncSpawn(cmd, args, {
           timeout: 3000,
           windowsHide: true,
-          shell: process.platform === 'win32',
+          shell: shouldUseShell(),
         });
 
         if (result.status === 0) {
@@ -338,7 +370,7 @@ class StartupManager {
       const result = await asyncSpawn('ollama', ['--version'], {
         timeout: 3000,
         windowsHide: true,
-        shell: process.platform === 'win32',
+        shell: shouldUseShell(),
       });
 
       if (result.status === 0) {
@@ -1028,13 +1060,21 @@ class StartupManager {
     try {
       // Wrap entire startup in timeout
       const startupPromise = this._runStartupSequence();
+      // FIX: Store timeout ID to clear it after race resolves
+      let timeoutId;
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
           reject(new Error('Startup timeout exceeded'));
         }, this.config.startupTimeout);
       });
 
-      const result = await Promise.race([startupPromise, timeoutPromise]);
+      let result;
+      try {
+        result = await Promise.race([startupPromise, timeoutPromise]);
+      } finally {
+        // FIX: Always clear timeout to prevent memory leak
+        if (timeoutId) clearTimeout(timeoutId);
+      }
 
       this.startupState = 'completed';
       this.reportProgress('ready', 'Application ready', 100);
@@ -1375,10 +1415,9 @@ class StartupManager {
         );
 
         // Attempt restart
-        const baseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
+        // FIX: startOllama() takes no parameters - remove incorrect arguments
         try {
-          const url = new URL(baseUrl);
-          await this.startOllama(url.hostname, parseInt(url.port || '11434'));
+          await this.startOllama();
 
           // HIGH PRIORITY FIX (HIGH-4): Verify service is actually healthy before resetting circuit breaker
           const isHealthy = await this.checkOllamaHealth();
@@ -1827,19 +1866,75 @@ class StartupManager {
    * Utility: delay helper
    */
   delay(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return delay(ms);
   }
 }
 
 // Singleton instance
 let instance = null;
 
+/**
+ * Get the singleton StartupManager instance
+ *
+ * This function provides the singleton instance for backward compatibility.
+ * For new code, prefer using the ServiceContainer:
+ *
+ * @example
+ * // Using ServiceContainer (recommended)
+ * const { container } = require('./ServiceContainer');
+const {
+  isWindows,
+  shouldUseShell,
+} = require('../../shared/platformUtils');
+ * container.registerSingleton(ServiceIds.STARTUP_MANAGER, () => new StartupManager());
+ * const manager = container.resolve(ServiceIds.STARTUP_MANAGER);
+ *
+ * // Using getStartupManager (backward compatible)
+ * const { getStartupManager } = require('./StartupManager');
+ * const manager = getStartupManager();
+ *
+ * @param {Object} [options] - Options passed to StartupManager constructor if creating new instance
+ * @returns {StartupManager} The singleton instance
+ */
+function getStartupManager(options = {}) {
+  if (!instance) {
+    instance = new StartupManager(options);
+  }
+  return instance;
+}
+
+/**
+ * Create a new StartupManager instance (for testing or custom configuration)
+ *
+ * Unlike getStartupManager(), this creates a fresh instance not tied to the singleton.
+ * Useful for testing or when custom configuration is needed.
+ *
+ * @param {Object} [options] - Configuration options
+ * @returns {StartupManager} A new StartupManager instance
+ */
+function createInstance(options = {}) {
+  return new StartupManager(options);
+}
+
+/**
+ * Reset the singleton instance (primarily for testing)
+ *
+ * This clears the singleton instance, allowing a fresh one to be created
+ * on the next getStartupManager() call.
+ */
+function resetInstance() {
+  if (instance) {
+    // Attempt graceful shutdown
+    instance.shutdown().catch((err) => {
+      logger.warn('[StartupManager] Error during reset shutdown:', err.message);
+    });
+    instance = null;
+  }
+}
+
 module.exports = {
   StartupManager,
-  getStartupManager: () => {
-    if (!instance) {
-      instance = new StartupManager();
-    }
-    return instance;
-  },
+  getStartupManager,
+  createInstance,
+  resetInstance,
 };

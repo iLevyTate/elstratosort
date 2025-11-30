@@ -126,30 +126,47 @@ function OrganizeProgress({
 
       {/* Preview upcoming or recent operations */}
       {Array.isArray(preview) && preview.length > 0 && (
-        <div className="bg-system-gray-50 border border-system-gray-200 rounded-lg p-8">
+        <div className="bg-system-gray-50 border border-system-gray-200 rounded-lg p-8 overflow-hidden">
           <div className="text-xs font-semibold text-system-gray-700 mb-5">
-            Planned operations
+            Planned operations ({preview.length} files)
           </div>
           <div className="space-y-5 max-h-40 overflow-y-auto pr-5">
-            {preview.slice(0, 6).map((op, idx) => (
-              <div key={idx} className="flex items-start gap-8 text-sm">
-                <span className="mt-1">📄</span>
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-system-gray-900 break-words">
-                    {op.fileName}
-                  </div>
-                  <div
-                    className="text-xs text-system-gray-600 break-words"
-                    style={{
-                      overflowWrap: 'break-word',
-                      wordBreak: 'break-word',
-                    }}
-                  >
-                    → {op.destination}
+            {preview.slice(0, 6).map((op, idx) => {
+              const isCurrentFile =
+                batchProgress.currentFile &&
+                op.fileName === batchProgress.currentFile;
+              const isProcessed = hasTotals && idx < batchProgress.current;
+
+              return (
+                <div
+                  key={op.destination || op.fileName || idx}
+                  className={`flex items-start gap-8 text-sm ${isCurrentFile ? 'bg-stratosort-blue/10 -mx-2 px-2 py-1 rounded' : ''}`}
+                >
+                  <span className="mt-1 flex-shrink-0">
+                    {isProcessed ? '✅' : isCurrentFile ? '⏳' : '📄'}
+                  </span>
+                  <div className="min-w-0 flex-1 overflow-hidden">
+                    <div
+                      className="font-medium text-system-gray-900 truncate"
+                      title={op.fileName}
+                    >
+                      {op.fileName}
+                    </div>
+                    <div
+                      className="text-xs text-system-gray-600 truncate"
+                      title={op.destination}
+                    >
+                      → {op.destination}
+                    </div>
                   </div>
                 </div>
+              );
+            })}
+            {preview.length > 6 && (
+              <div className="text-xs text-system-gray-500 italic">
+                ...and {preview.length - 6} more files
               </div>
-            ))}
+            )}
           </div>
         </div>
       )}

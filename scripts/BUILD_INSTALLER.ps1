@@ -35,7 +35,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "[3/5] Checking Ollama setup..." -ForegroundColor Yellow
-node setup-ollama.js --check 2>$null
+node scripts/setup-ollama.js --check 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "WARNING: Ollama not configured. AI features will be limited." -ForegroundColor Yellow
     Write-Host "Run 'npm run setup:ollama' to configure Ollama." -ForegroundColor Yellow

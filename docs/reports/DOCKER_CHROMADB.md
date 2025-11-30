@@ -87,12 +87,57 @@ services:
     volumes:
       - chromadb-data:/chroma/chroma
     environment:
-      - ALLOW_RESET=true
-      - ANONYMIZED_TELEMETRY=false
+      # ============================================================
+      # IMPORTANT: Review these settings for production deployments!
+      # ============================================================
+
+      # ALLOW_RESET: Enables the reset API endpoint
+      # - true:  Allows programmatic deletion of ALL data via API
+      # - false: Disables reset endpoint (RECOMMENDED FOR PRODUCTION)
+      #
+      # WARNING: Setting ALLOW_RESET=true in production allows any client
+      # with network access to delete all your vector embeddings!
+      # Only use ALLOW_RESET=true for development/testing environments.
+      - ALLOW_RESET=false  # Set to true only for development
+
+      # ANONYMIZED_TELEMETRY: Controls anonymous usage data collection
+      # - true:  Send anonymized usage statistics to ChromaDB developers
+      # - false: Disable all telemetry (no data sent)
+      #
+      # Privacy consideration: Set to false if your organization has
+      # strict data policies or if running in air-gapped environments.
+      # Setting to true helps the ChromaDB project improve the software.
+      - ANONYMIZED_TELEMETRY=true  # Set to false to disable telemetry
     restart: unless-stopped
 
 volumes:
   chromadb-data:
+    driver: local
+```
+
+**Development Configuration:**
+
+For local development and testing, you can use more permissive settings:
+
+```yaml
+# docker-compose.dev.yml - FOR DEVELOPMENT ONLY
+version: '3.8'
+
+services:
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: stratosort-chromadb-dev
+    ports:
+      - '8000:8000'
+    volumes:
+      - chromadb-data-dev:/chroma/chroma
+    environment:
+      - ALLOW_RESET=true   # Enables reset for testing
+      - ANONYMIZED_TELEMETRY=false
+    restart: unless-stopped
+
+volumes:
+  chromadb-data-dev:
     driver: local
 ```
 

@@ -1,65 +1,49 @@
 /**
- * Safe access utilities to prevent null reference errors
+ * Safe access utilities to prevent null reference errors.
+ *
+ * Some utilities are re-exported from consolidated modules for consistency.
+ *
+ * @module main/utils/safeAccess
  */
 
 const { logger } = require('../../shared/logger');
+const {
+  safeGetNestedProperty,
+  safeGet: consolidatedSafeGet,
+  safeString,
+} = require('../../shared/edgeCaseUtils');
+const { safeCall: consolidatedSafeCall } = require('../../shared/promiseUtils');
+
 logger.setContext('SafeAccess');
 
 /**
- * Safely access nested object properties
+ * Safely access nested object properties.
+ * Re-exported from edgeCaseUtils for backward compatibility.
+ *
  * @param {Object} obj - The object to access
  * @param {string} path - The path to access (e.g., 'a.b.c')
  * @param {*} defaultValue - The default value if path doesn't exist
  * @returns {*} The value at the path or default value
+ * @see module:shared/edgeCaseUtils.safeGetNestedProperty
  */
 function safeGet(obj, path, defaultValue = null) {
-  if (!obj || typeof obj !== 'object') {
-    return defaultValue;
-  }
-
-  const keys = path.split('.');
-  let current = obj;
-
-  for (const key of keys) {
-    if (current === null || current === undefined) {
-      return defaultValue;
-    }
-
-    if (typeof current !== 'object' || !(key in current)) {
-      return defaultValue;
-    }
-
-    current = current[key];
-  }
-
-  return current !== undefined ? current : defaultValue;
+  return safeGetNestedProperty(obj, path, defaultValue);
 }
 
 /**
- * Safely call a function with error handling
+ * Safely call a function with error handling.
+ * Wrapper around consolidated safeCall that supports the legacy (fn, args, defaultValue) signature.
+ *
  * @param {Function} fn - The function to call
  * @param {Array} args - Arguments to pass to the function
  * @param {*} defaultValue - Default value on error
  * @returns {*} Function result or default value
+ * @see module:shared/promiseUtils.safeCall
  */
 async function safeCall(fn, args = [], defaultValue = null) {
-  if (typeof fn !== 'function') {
-    logger.warn('[SafeCall] Attempted to call non-function', {
-      type: typeof fn,
-    });
-    return defaultValue;
-  }
-
-  try {
-    const result = await fn(...args);
-    return result !== undefined ? result : defaultValue;
-  } catch (error) {
-    logger.error('[SafeCall] Function call failed', {
-      error: error.message,
-      stack: error.stack,
-    });
-    return defaultValue;
-  }
+  // Use the consolidated safeCall but apply with provided args
+  const wrappedFn = consolidatedSafeCall(fn, defaultValue);
+  return wrappedFn(...args);
 }
 
 /**
@@ -84,22 +68,17 @@ function validateRequired(obj, requiredProps) {
 }
 
 /**
- * Safely access array element
+ * Safely access array element.
+ * Delegates to safeGet from edgeCaseUtils.
+ *
  * @param {Array} arr - The array to access
  * @param {number} index - Index to access
  * @param {*} defaultValue - Default value if out of bounds
  * @returns {*} Element at index or default value
+ * @see module:shared/edgeCaseUtils.safeGet
  */
 function safeArrayAccess(arr, index, defaultValue = null) {
-  if (!Array.isArray(arr)) {
-    return defaultValue;
-  }
-
-  if (index < 0 || index >= arr.length) {
-    return defaultValue;
-  }
-
-  return arr[index] !== undefined ? arr[index] : defaultValue;
+  return consolidatedSafeGet(arr, index, defaultValue);
 }
 
 /**
@@ -153,9 +132,12 @@ function safeJsonParse(jsonString, defaultValue = null) {
 }
 
 /**
- * Ensure a value is an array
+ * Ensure a value is an array.
+ * Wraps safeArray from edgeCaseUtils with legacy behavior (wraps single values in array).
+ *
  * @param {*} value - Value to check
  * @returns {Array} The value as array or empty array
+ * @see module:shared/edgeCaseUtils.safeArray
  */
 function ensureArray(value) {
   if (Array.isArray(value)) {
@@ -166,25 +148,21 @@ function ensureArray(value) {
     return [];
   }
 
+  // Legacy behavior: wrap single values in an array
   return [value];
 }
 
 /**
- * Ensure a value is a string
+ * Ensure a value is a string.
+ * Delegates to safeString from edgeCaseUtils.
+ *
  * @param {*} value - Value to check
  * @param {string} defaultValue - Default string value
  * @returns {string} The value as string
+ * @see module:shared/edgeCaseUtils.safeString
  */
 function ensureString(value, defaultValue = '') {
-  if (typeof value === 'string') {
-    return value;
-  }
-
-  if (value === null || value === undefined) {
-    return defaultValue;
-  }
-
-  return String(value);
+  return safeString(value, defaultValue);
 }
 
 /**

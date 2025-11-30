@@ -151,6 +151,7 @@ module.exports = {
   app: {
     getPath: jest.fn(() => '/test/path'),
     on: jest.fn(),
+    once: jest.fn(),
     quit: jest.fn(),
   },
   // Expose the mock API for tests to use

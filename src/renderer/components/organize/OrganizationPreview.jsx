@@ -21,6 +21,9 @@ function OrganizationPreview({
   useEffect(() => {
     if (!files || !suggestions) return;
 
+    // FIX: Track mounted state to prevent state updates after unmount
+    let isMounted = true;
+
     // Build preview tree structure
     const tree = {};
     const folderCount = new Set();
@@ -28,7 +31,10 @@ function OrganizationPreview({
     let renamedCount = 0;
 
     files.forEach((file, index) => {
-      const suggestion = suggestions[index] || suggestions.primary;
+      // FIX: Add bounds check for array access
+      const suggestion = (Array.isArray(suggestions) && index < suggestions.length)
+        ? suggestions[index]
+        : suggestions.primary;
       if (!suggestion) return;
 
       const folderPath = suggestion.path || suggestion.folder;
@@ -58,6 +64,9 @@ function OrganizationPreview({
       if (newName !== file.name) renamedCount++;
     });
 
+    // FIX: Check mounted state before setting state
+    if (!isMounted) return;
+
     setPreviewTree(tree);
     setStats({
       totalFiles: files.length,
@@ -74,6 +83,11 @@ function OrganizationPreview({
       }
     });
     setExpandedFolders(toExpand);
+
+    // FIX: Cleanup function to mark as unmounted
+    return () => {
+      isMounted = false;
+    };
   }, [files, suggestions]);
 
   const toggleFolder = (folderPath) => {
@@ -187,9 +201,10 @@ function OrganizationPreview({
               {expandedFolders.has(folderPath) && (
                 <div className="border-t bg-gray-50 p-3">
                   <div className="space-y-1">
-                    {folder.files.map((fileInfo, index) => (
+                    {/* FIX: Use stable file path as key instead of array index */}
+                    {folder.files.map((fileInfo) => (
                       <div
-                        key={index}
+                        key={fileInfo.original?.path || fileInfo.original?.name || fileInfo.newName}
                         className="flex items-center justify-between text-sm py-1"
                       >
                         <div className="flex items-center gap-2">

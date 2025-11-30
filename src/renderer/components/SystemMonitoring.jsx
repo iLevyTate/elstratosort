@@ -44,6 +44,7 @@ const SystemMonitoring = React.memo(function SystemMonitoring() {
   useEffect(() => {
     isMountedRef.current = true;
     let timeoutId = null;
+    let intervalId = null; // MED-12: Track interval ID locally for reliable cleanup
 
     const startMonitoring = async () => {
       try {
@@ -59,9 +60,15 @@ const SystemMonitoring = React.memo(function SystemMonitoring() {
 
         // PERFORMANCE FIX: Increased interval from 5s to 10s to reduce polling overhead
         // Main process also sends metrics via IPC, so less frequent polling is sufficient
-        intervalRef.current = setInterval(() => {
-          fetchMetrics();
+        // FIX: Wrap async fetchMetrics in try/catch to prevent unhandled promise rejections
+        intervalId = setInterval(async () => {
+          try {
+            await fetchMetrics();
+          } catch (error) {
+            logger.warn('System monitoring fetch failed:', { error: error.message });
+          }
         }, 10000); // Increased from 5000ms to 10000ms (10 seconds)
+        intervalRef.current = intervalId; // Also store in ref for external access
       } catch (error) {
         logger.error('Failed to start system monitoring', {
           error: error.message,
@@ -79,16 +86,23 @@ const SystemMonitoring = React.memo(function SystemMonitoring() {
     const MONITORING_START_DELAY_MS = 100; // Could be moved to shared constants
     timeoutId = setTimeout(startMonitoring, MONITORING_START_DELAY_MS);
 
-    // Cleanup function
+    // MED-12: Enhanced cleanup function with multiple safeguards
     return () => {
       isMountedRef.current = false;
 
       // Clear timeout if it exists
       if (timeoutId) {
         clearTimeout(timeoutId);
+        timeoutId = null;
       }
 
-      // Clear interval if it exists
+      // Clear interval using local variable (primary)
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+
+      // Also clear via ref (fallback/safety)
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;

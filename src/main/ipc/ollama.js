@@ -1,5 +1,6 @@
 const { Ollama } = require('ollama');
 const { withErrorLogging, withValidation } = require('./withErrorLogging');
+const { normalizeOllamaUrl } = require('../../shared/utils');
 let z;
 try {
   z = require('zod');
@@ -93,20 +94,8 @@ function registerOllamaIpc({
     z && hostSchema
       ? withValidation(logger, hostSchema, async (event, hostUrl) => {
           try {
-            // Fixed: Normalize URL to prevent double http://
-            let testUrl = hostUrl || 'http://127.0.0.1:11434';
-            if (testUrl && typeof testUrl === 'string') {
-              testUrl = testUrl.trim();
-              // Remove any existing protocol
-              testUrl = testUrl.replace(/^https?:\/\//i, '');
-              // Add http:// if no protocol specified
-              if (
-                !testUrl.startsWith('http://') &&
-                !testUrl.startsWith('https://')
-              ) {
-                testUrl = `http://${testUrl}`;
-              }
-            }
+            // DUP-1: Use shared URL normalization utility
+            const testUrl = normalizeOllamaUrl(hostUrl);
 
             const testOllama = new Ollama({ host: testUrl });
             const response = await testOllama.list();
@@ -141,20 +130,8 @@ function registerOllamaIpc({
         })
       : withErrorLogging(logger, async (event, hostUrl) => {
           try {
-            // Fixed: Normalize URL to prevent double http://
-            let testUrl = hostUrl || 'http://127.0.0.1:11434';
-            if (testUrl && typeof testUrl === 'string') {
-              testUrl = testUrl.trim();
-              // Remove any existing protocol
-              testUrl = testUrl.replace(/^https?:\/\//i, '');
-              // Add http:// if no protocol specified
-              if (
-                !testUrl.startsWith('http://') &&
-                !testUrl.startsWith('https://')
-              ) {
-                testUrl = `http://${testUrl}`;
-              }
-            }
+            // DUP-1: Use shared URL normalization utility
+            const testUrl = normalizeOllamaUrl(hostUrl);
 
             const testOllama = new Ollama({ host: testUrl });
             const response = await testOllama.list();

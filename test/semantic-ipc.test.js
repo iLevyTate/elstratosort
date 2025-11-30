@@ -40,6 +40,21 @@ describe('Embeddings/Semantic IPC', () => {
           batchUpserts.push(...payloads);
           return payloads.length;
         }),
+        // Event emitter methods required for chromadb IPC
+        on: jest.fn(),
+        off: jest.fn(),
+        emit: jest.fn(),
+        isOnline: true,
+        initialized: true,
+        isServiceAvailable: jest.fn(() => true),
+        isServerAvailable: jest.fn(async () => true),
+        getCircuitState: jest.fn(() => 'CLOSED'),
+        getCircuitStats: jest.fn(() => ({})),
+        getQueueStats: jest.fn(() => ({ queueSize: 0 })),
+        offlineQueue: { size: () => 0 },
+        serverUrl: 'http://localhost:8000',
+        checkHealth: jest.fn().mockResolvedValue(true),
+        forceRecovery: jest.fn(),
       }),
     }));
     const { registerAllIpc } = require('../src/main/ipc');
@@ -106,6 +121,21 @@ describe('Embeddings/Semantic IPC', () => {
           payloads.forEach((p) => inserted.push(p));
           return payloads.length;
         }),
+        // Event emitter methods required for chromadb IPC
+        on: jest.fn(),
+        off: jest.fn(),
+        emit: jest.fn(),
+        isOnline: true,
+        initialized: true,
+        isServiceAvailable: jest.fn(() => true),
+        isServerAvailable: jest.fn(async () => true),
+        getCircuitState: jest.fn(() => 'CLOSED'),
+        getCircuitStats: jest.fn(() => ({})),
+        getQueueStats: jest.fn(() => ({ queueSize: 0 })),
+        offlineQueue: { size: () => 0 },
+        serverUrl: 'http://localhost:8000',
+        checkHealth: jest.fn().mockResolvedValue(true),
+        forceRecovery: jest.fn(),
       }),
     }));
     const { registerAllIpc } = require('../src/main/ipc');
@@ -160,6 +190,21 @@ describe('Embeddings/Semantic IPC', () => {
         }),
         migrateFromJsonl: jest.fn(async () => 0),
         cleanup: jest.fn(async () => {}),
+        // Event emitter methods required for chromadb IPC
+        on: jest.fn(),
+        off: jest.fn(),
+        emit: jest.fn(),
+        isOnline: true,
+        initialized: true,
+        isServiceAvailable: jest.fn(() => true),
+        isServerAvailable: jest.fn(async () => true),
+        getCircuitState: jest.fn(() => 'CLOSED'),
+        getCircuitStats: jest.fn(() => ({})),
+        getQueueStats: jest.fn(() => ({ queueSize: 0 })),
+        offlineQueue: { size: () => 0 },
+        serverUrl: 'http://localhost:8000',
+        checkHealth: jest.fn().mockResolvedValue(true),
+        forceRecovery: jest.fn(),
       }),
     }));
     const { registerAllIpc } = require('../src/main/ipc');

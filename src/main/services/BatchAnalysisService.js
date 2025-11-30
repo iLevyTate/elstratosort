@@ -3,24 +3,43 @@ const { logger } = require('../../shared/logger');
 logger.setContext('BatchAnalysisService');
 const { analyzeDocumentFile } = require('../analysis/ollamaDocumentAnalysis');
 const { analyzeImageFile } = require('../analysis/ollamaImageAnalysis');
+const { getInstance: getParallelEmbeddingService } = require('./ParallelEmbeddingService');
+const embeddingQueue = require('../analysis/EmbeddingQueue');
 const path = require('path');
 const os = require('os');
+const { get: getConfig } = require('../../shared/config');
 
 /**
  * BatchAnalysisService
  * Processes multiple files in parallel with intelligent concurrency control
  * Reduces total processing time by analyzing files concurrently
+ *
+ * FIX: Now integrates with ParallelEmbeddingService for improved embedding throughput
  */
 class BatchAnalysisService {
   constructor(options = {}) {
+    // Get max concurrency from unified config
+    const configMaxConcurrency = getConfig('ANALYSIS.maxConcurrency', 3);
+    const configRetryAttempts = getConfig('ANALYSIS.retryAttempts', 3);
+
     // Calculate optimal concurrency based on CPU cores if not specified
     this.concurrency =
-      options.concurrency || this.calculateOptimalConcurrency();
+      options.concurrency || Math.min(this.calculateOptimalConcurrency(), configMaxConcurrency);
     this.batchProcessor = globalBatchProcessor;
     this.batchProcessor.concurrencyLimit = this.concurrency;
 
+    // FIX: Initialize parallel embedding service for batch embedding operations
+    this.parallelEmbeddingService = getParallelEmbeddingService({
+      concurrencyLimit: Math.min(this.concurrency, 5), // Embedding concurrency capped at 5
+      maxRetries: configRetryAttempts,
+    });
+
+    // FIX: Track embedding progress for comprehensive reporting
+    this._embeddingProgressUnsubscribe = null;
+
     logger.info('[BATCH-ANALYSIS] Service initialized', {
       concurrency: this.concurrency,
+      embeddingConcurrency: this.parallelEmbeddingService.concurrencyLimit,
       cpuCores: os.cpus().length,
     });
   }
@@ -33,7 +52,8 @@ class BatchAnalysisService {
     const cpuCores = os.cpus().length;
     const freeMem = os.freemem();
     const totalMem = os.totalmem();
-    const memUsage = 1 - freeMem / totalMem;
+    // FIX: Prevent division by zero and clamp to valid range (VMs/containers may report freeMem > totalMem)
+    const memUsage = totalMem > 0 ? Math.max(0, Math.min(1, 1 - freeMem / totalMem)) : 0.5;
 
     // Base concurrency on CPU cores (75% utilization to leave headroom)
     let concurrency = Math.max(2, Math.floor(cpuCores * 0.75));
@@ -64,6 +84,7 @@ class BatchAnalysisService {
 
   /**
    * Analyze multiple files in parallel
+   * FIX: Enhanced with improved progress tracking and embedding statistics
    * @param {Array} filePaths - Array of file paths to analyze
    * @param {Array} smartFolders - Smart folders for categorization
    * @param {Object} options - Processing options
@@ -72,9 +93,16 @@ class BatchAnalysisService {
   async analyzeFiles(filePaths, smartFolders = [], options = {}) {
     const {
       onProgress = null,
+      onEmbeddingProgress = null,
       stopOnError = false,
-      concurrency = this.concurrency,
+      concurrency: rawConcurrency = this.concurrency,
     } = options;
+
+    // FIX: Validate concurrency to prevent invalid values (0, negative, NaN)
+    const concurrency = Math.max(1, Math.min(
+      Number.isFinite(rawConcurrency) ? rawConcurrency : this.concurrency,
+      8, // Cap at 8 to prevent overwhelming system
+    ));
 
     if (!Array.isArray(filePaths) || filePaths.length === 0) {
       return {
@@ -92,6 +120,17 @@ class BatchAnalysisService {
     });
 
     const startTime = Date.now();
+
+    // FIX: Subscribe to embedding queue progress if callback provided
+    if (onEmbeddingProgress) {
+      this._embeddingProgressUnsubscribe = embeddingQueue.onProgress(onEmbeddingProgress);
+    }
+
+    // FIX: Track embedding statistics for this batch
+    const embeddingStats = {
+      startQueueSize: embeddingQueue.getStats().queueLength,
+      embeddings: 0,
+    };
 
     // Process each file
     const processFile = async (filePath, index) => {
@@ -111,6 +150,9 @@ class BatchAnalysisService {
         } else {
           result = await analyzeDocumentFile(filePath, smartFolders);
         }
+
+        // Track embedding count
+        embeddingStats.embeddings++;
 
         return {
           filePath,
@@ -140,16 +182,36 @@ class BatchAnalysisService {
       processFile,
       {
         concurrency,
-        onProgress,
+        onProgress: onProgress ? (progress) => {
+          // FIX: Enhanced progress with embedding info
+          const queueStats = embeddingQueue.getStats();
+          onProgress({
+            ...progress,
+            phase: 'analysis',
+            embeddingQueueSize: queueStats.queueLength,
+            embeddingQueueCapacity: queueStats.capacityPercent,
+          });
+        } : null,
         stopOnError,
       },
     );
 
-    const duration = Date.now() - startTime;
-    const avgTime = duration / filePaths.length;
+    const analysisDuration = Date.now() - startTime;
+
+    // FIX: Report analysis phase complete
+    if (onProgress) {
+      onProgress({
+        phase: 'flushing_embeddings',
+        completed: filePaths.length,
+        total: filePaths.length,
+        percent: 100,
+        message: 'Flushing embeddings to database...',
+      });
+    }
 
     // CRITICAL FIX: Flush any remaining embeddings in queue after batch analysis completes
     // This ensures all embeddings are persisted even if batch size wasn't reached
+    const flushStartTime = Date.now();
     try {
       const {
         flushAllEmbeddings: flushDocumentEmbeddings,
@@ -177,14 +239,51 @@ class BatchAnalysisService {
         error: error.message,
       });
     }
+    const flushDuration = Date.now() - flushStartTime;
+
+    // FIX: Unsubscribe from embedding progress
+    if (this._embeddingProgressUnsubscribe) {
+      this._embeddingProgressUnsubscribe();
+      this._embeddingProgressUnsubscribe = null;
+    }
+
+    const totalDuration = Date.now() - startTime;
+    const avgTime = totalDuration / filePaths.length;
+
+    // FIX: Get final embedding stats
+    const finalQueueStats = embeddingQueue.getStats();
+    const embeddingServiceStats = this.parallelEmbeddingService.getStats();
+
+    // Aggregate error details for better debugging
+    const errorDetails = batchResult.results
+      .filter(r => !r.success || r.error)
+      .map(r => ({
+        file: r.filePath || r.path || r.name,
+        error: r.error?.message || r.error || 'Unknown error',
+        code: r.error?.code
+      }));
+
+    if (errorDetails.length > 0) {
+      logger.warn(`[BATCH-ANALYSIS] ${errorDetails.length} files failed analysis`, {
+        failedCount: errorDetails.length,
+        errors: errorDetails.slice(0, 10) // Log first 10 for brevity
+      });
+    }
 
     logger.info('[BATCH-ANALYSIS] Batch analysis complete', {
       total: filePaths.length,
       successful: batchResult.successful,
       failed: batchResult.errors.length,
-      duration: `${duration}ms`,
+      analysisDuration: `${analysisDuration}ms`,
+      flushDuration: `${flushDuration}ms`,
+      totalDuration: `${totalDuration}ms`,
       avgPerFile: `${Math.round(avgTime)}ms`,
-      speedup: `${Math.round(filePaths.length / (duration / 1000))} files/sec`,
+      throughput: `${(filePaths.length / (totalDuration / 1000)).toFixed(2)} files/sec`,
+      embeddingStats: {
+        queueProcessed: embeddingStats.startQueueSize - finalQueueStats.queueLength,
+        remainingInQueue: finalQueueStats.queueLength,
+        failedItems: finalQueueStats.failedItemsCount,
+      },
     });
 
     return {
@@ -193,10 +292,20 @@ class BatchAnalysisService {
       errors: batchResult.errors,
       total: filePaths.length,
       successful: batchResult.successful,
+      hasErrors: batchResult.errors.length > 0,
+      errorSummary: errorDetails,
       stats: {
-        totalDuration: duration,
+        totalDuration,
+        analysisDuration,
+        flushDuration,
         avgPerFile: avgTime,
-        filesPerSecond: filePaths.length / (duration / 1000),
+        filesPerSecond: filePaths.length / (totalDuration / 1000),
+        embedding: {
+          queueSize: finalQueueStats.queueLength,
+          failedItems: finalQueueStats.failedItemsCount,
+          deadLetterItems: finalQueueStats.deadLetterCount,
+          serviceStats: embeddingServiceStats,
+        },
       },
     };
   }
@@ -318,12 +427,76 @@ class BatchAnalysisService {
 
   /**
    * Get current processing statistics
+   * FIX: Enhanced with embedding service and queue statistics
    */
   getStats() {
+    const queueStats = embeddingQueue.getStats();
+    const embeddingServiceStats = this.parallelEmbeddingService.getStats();
+
     return {
       concurrency: this.concurrency,
       ...this.batchProcessor.getStats(),
+      embedding: {
+        queue: queueStats,
+        service: embeddingServiceStats,
+      },
     };
+  }
+
+  /**
+   * Get embedding queue statistics
+   * @returns {Object} Queue statistics
+   */
+  getEmbeddingQueueStats() {
+    return embeddingQueue.getStats();
+  }
+
+  /**
+   * Get parallel embedding service statistics
+   * @returns {Object} Service statistics
+   */
+  getEmbeddingServiceStats() {
+    return this.parallelEmbeddingService.getStats();
+  }
+
+  /**
+   * Set embedding concurrency limit
+   * @param {number} limit - New concurrency limit (1-10)
+   */
+  setEmbeddingConcurrency(limit) {
+    this.parallelEmbeddingService.setConcurrencyLimit(limit);
+    logger.info('[BATCH-ANALYSIS] Embedding concurrency updated', {
+      embeddingConcurrency: this.parallelEmbeddingService.concurrencyLimit,
+    });
+  }
+
+  /**
+   * Force flush the embedding queue
+   * Useful for ensuring all embeddings are persisted before shutdown
+   * @returns {Promise<void>}
+   */
+  async flushEmbeddings() {
+    logger.info('[BATCH-ANALYSIS] Force flushing embedding queue');
+    await embeddingQueue.forceFlush();
+  }
+
+  /**
+   * Graceful shutdown - flush embeddings and cleanup
+   * @returns {Promise<void>}
+   */
+  async shutdown() {
+    logger.info('[BATCH-ANALYSIS] Shutting down...');
+
+    // Unsubscribe from progress events
+    if (this._embeddingProgressUnsubscribe) {
+      this._embeddingProgressUnsubscribe();
+      this._embeddingProgressUnsubscribe = null;
+    }
+
+    // Flush embeddings
+    await embeddingQueue.shutdown();
+
+    logger.info('[BATCH-ANALYSIS] Shutdown complete');
   }
 }
 

@@ -7,7 +7,7 @@ const { spawn } = require('child_process');
 const {
   asyncSpawn,
   findPythonLauncherAsync,
-} = require('./src/main/utils/asyncSpawnUtils');
+} = require('../../src/main/utils/asyncSpawnUtils');
 const path = require('path');
 const fs = require('fs');
 

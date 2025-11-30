@@ -1,5 +1,7 @@
 const { spawn } = require('child_process');
 const { logger } = require('../../shared/logger');
+const { isWindows, shouldUseShell } = require('../../shared/platformUtils');
+
 logger.setContext('AsyncSpawnUtils');
 
 /**
@@ -138,17 +140,17 @@ async function asyncSpawn(command, args = [], options = {}) {
  * @returns {Promise<boolean>}
  */
 async function hasPythonModuleAsync(moduleName) {
-  const pythonCommands =
-    process.platform === 'win32'
-      ? [
-          { cmd: 'py', args: ['-3'] },
-          { cmd: 'python3', args: [] },
-          { cmd: 'python', args: [] },
-        ]
-      : [
-          { cmd: 'python3', args: [] },
-          { cmd: 'python', args: [] },
-        ];
+  // Use centralized platform utils for Python commands
+  const pythonCommands = isWindows
+    ? [
+        { cmd: 'py', args: ['-3'] },
+        { cmd: 'python3', args: [] },
+        { cmd: 'python', args: [] },
+      ]
+    : [
+        { cmd: 'python3', args: [] },
+        { cmd: 'python', args: [] },
+      ];
 
   for (const { cmd, args } of pythonCommands) {
     try {
@@ -196,17 +198,17 @@ async function hasPythonModuleAsync(moduleName) {
  * @returns {Promise<{command: string, args: string[]} | null>}
  */
 async function findPythonLauncherAsync() {
-  const candidates =
-    process.platform === 'win32'
-      ? [
-          { command: 'py', args: ['-3'] },
-          { command: 'python3', args: [] },
-          { command: 'python', args: [] },
-        ]
-      : [
-          { command: 'python3', args: [] },
-          { command: 'python', args: [] },
-        ];
+  // Use centralized platform utils for Python commands
+  const candidates = isWindows
+    ? [
+        { command: 'py', args: ['-3'] },
+        { command: 'python3', args: [] },
+        { command: 'python', args: [] },
+      ]
+    : [
+        { command: 'python3', args: [] },
+        { command: 'python', args: [] },
+      ];
 
   for (const candidate of candidates) {
     try {
@@ -236,14 +238,15 @@ async function findPythonLauncherAsync() {
  * @returns {Promise<boolean>}
  */
 async function checkChromaExecutableAsync() {
-  const chromaExecutable = process.platform === 'win32' ? 'chroma' : 'chroma';
+  // System-installed chroma binary is just 'chroma' on all platforms
+  const chromaExecutable = 'chroma';
 
   try {
     const result = await asyncSpawn(chromaExecutable, ['--help'], {
       stdio: 'pipe',
       windowsHide: true,
       timeout: 5000,
-      shell: process.platform === 'win32',
+      shell: shouldUseShell(),
     });
 
     // Handle timeout case separately from "not found"

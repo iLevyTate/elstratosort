@@ -31,6 +31,27 @@ jest.mock('../src/shared/constants', () => ({
       MAX_TOKENS: 1000,
       MAX_CONTENT_LENGTH: 50000,
     },
+    IMAGE: {
+      MODEL: 'llava',
+      TEMPERATURE: 0.2,
+      MAX_TOKENS: 1000,
+    },
+  },
+  DEFAULT_AI_MODELS: {
+    TEXT_ANALYSIS: 'llama3.2:latest',
+    IMAGE_ANALYSIS: 'llava:latest',
+    FALLBACK_MODELS: ['llama3.2:latest', 'gemma3:4b', 'llama3', 'mistral', 'phi3'],
+  },
+  FILE_SIZE_LIMITS: {
+    MAX_TEXT_FILE_SIZE: 50 * 1024 * 1024,
+    MAX_IMAGE_FILE_SIZE: 100 * 1024 * 1024,
+    MAX_DOCUMENT_FILE_SIZE: 200 * 1024 * 1024,
+  },
+  PROCESSING_LIMITS: {
+    MAX_CONCURRENT_ANALYSIS: 3,
+    MAX_BATCH_SIZE: 100,
+    ANALYSIS_TIMEOUT: 60000,
+    RETRY_ATTEMPTS: 3,
   },
 }));
 

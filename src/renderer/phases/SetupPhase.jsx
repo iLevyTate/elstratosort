@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { PHASES } from '../../shared/constants';
 import { logger } from '../../shared/logger';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -19,12 +19,16 @@ function SetupPhase() {
   const documentsPathFromStore = useAppSelector(
     (state) => state.system.documentsPath,
   );
-  const actions = {
-    setPhaseData: (key, value) => {
-      if (key === 'smartFolders') dispatch(setSmartFoldersAction(value));
-    },
-    advancePhase: (phase) => dispatch(setPhase(phase)),
-  };
+  // FIX: Memoize actions object to prevent recreation on every render
+  const actions = useMemo(
+    () => ({
+      setPhaseData: (key, value) => {
+        if (key === 'smartFolders') dispatch(setSmartFoldersAction(value));
+      },
+      advancePhase: (phase) => dispatch(setPhase(phase)),
+    }),
+    [dispatch],
+  );
 
   const { showConfirm, ConfirmDialog } = useConfirmDialog();
   const { showSuccess, showError, showWarning, showInfo, addNotification } =
@@ -642,17 +646,15 @@ function SetupPhase() {
                   'Please add at least one smart folder before continuing. Smart folders help the AI organize your files effectively.',
                 );
               } else {
-                // Fixed: Update phase data synchronously BEFORE advancing to prevent race condition
+                // FIX: Update phase data synchronously BEFORE advancing to prevent race condition
                 // This ensures Discover phase has access to latest folder data
+                // Redux dispatch is synchronous - no setTimeout needed (removed arbitrary 50ms delay)
                 actions.setPhaseData('smartFolders', currentFolders);
 
-                // Update local state (async, but not critical for phase transition)
+                // Update local state (for UI consistency, not critical for phase transition)
                 setSmartFolders(currentFolders);
 
-                // Small delay to ensure context update propagates
-                await new Promise((resolve) => setTimeout(resolve, 50));
-
-                // Now safe to advance - Discover phase will have fresh folder data
+                // Advance immediately - Redux state is already updated synchronously
                 actions.advancePhase(PHASES.DISCOVER);
               }
             }}

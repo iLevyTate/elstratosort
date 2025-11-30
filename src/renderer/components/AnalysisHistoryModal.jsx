@@ -13,8 +13,25 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState('statistics');
+  // FIX H3: Track if initial load has been done to prevent infinite loop
+  const hasLoadedRef = React.useRef(false);
+  // FIX: Track mounted state to prevent state updates after unmount
+  const isMountedRef = React.useRef(true);
+
+  // FIX: Cleanup on unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
+    // FIX H3: Only load data once on mount to prevent infinite re-renders
+    if (hasLoadedRef.current) {
+      return;
+    }
+    hasLoadedRef.current = true;
     loadAnalysisData();
   }, []);
 
@@ -25,12 +42,23 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
         window.electronAPI.analysisHistory.getStatistics(),
         window.electronAPI.analysisHistory.get({ all: true }),
       ]);
+      // FIX: Check if still mounted before updating state
+      if (!isMountedRef.current) return;
       setAnalysisStats(stats);
-      setHistoryData(history);
+      // FIX H1: Validate history is an array before setting
+      if (Array.isArray(history)) {
+        setHistoryData(history);
+      } else {
+        logger.warn('History data is not an array, falling back to empty array', { historyType: typeof history, history });
+        setHistoryData([]);
+      }
     } catch (error) {
+      if (!isMountedRef.current) return;
       addNotification('Failed to load analysis history', 'error');
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -41,8 +69,12 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
         searchQuery,
         { limit: 200 },
       );
-      setHistoryData(results);
+      // FIX: Check if still mounted before updating state
+      if (!isMountedRef.current) return;
+      // FIX H1: Validate results is an array before setting
+      setHistoryData(Array.isArray(results) ? results : []);
     } catch (error) {
+      if (!isMountedRef.current) return;
       addNotification('Search failed', 'error');
     }
   };
@@ -228,9 +260,11 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
                     </Button>
                   </div>
                   <div className="space-y-4 max-h-[50vh] overflow-y-auto modern-scrollbar">
-                    {historyData.map((entry, index) => (
+                    {/* FIX: Use stable identifier instead of array index as key */}
+                    {/* FIX H1: Add defensive check for historyData being an array */}
+                    {(Array.isArray(historyData) ? historyData : []).map((entry) => (
                       <div
-                        key={index}
+                        key={entry.id || entry.filePath || entry.timestamp || entry.fileName}
                         className="bg-surface-primary rounded-xl border border-border-light shadow-sm p-4"
                       >
                         <div className="flex items-start justify-between">
@@ -254,11 +288,12 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
                             </div>
                             {entry.keywords && entry.keywords.length > 0 && (
                               <div className="flex flex-wrap gap-2 mt-2">
+                                {/* FIX: Use keyword value as key instead of array index for stable rendering */}
                                 {entry.keywords
                                   .slice(0, 5)
-                                  .map((keyword, i) => (
+                                  .map((keyword) => (
                                     <span
-                                      key={i}
+                                      key={`${entry.id || entry.filePath || entry.timestamp}-kw-${keyword}`}
                                       className="text-xs bg-stratosort-blue/10 text-stratosort-blue px-2 py-1 rounded-full"
                                     >
                                       {keyword}
@@ -270,11 +305,12 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
                               entry?.analysis?.tags &&
                               entry.analysis.tags.length > 0 && (
                                 <div className="flex flex-wrap gap-2 mt-2">
+                                  {/* FIX: Use tag value as key instead of array index for stable rendering */}
                                   {entry.analysis.tags
                                     .slice(0, 5)
-                                    .map((tag, i) => (
+                                    .map((tag) => (
                                       <span
-                                        key={i}
+                                        key={`${entry.id || entry.filePath || entry.timestamp}-tag-${tag}`}
                                         className="text-xs bg-stratosort-blue/10 text-stratosort-blue px-2 py-1 rounded-full"
                                       >
                                         {tag}

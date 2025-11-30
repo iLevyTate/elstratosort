@@ -2,32 +2,48 @@ const { app } = require('electron');
 const { ChromaClient } = require('chromadb');
 const path = require('path');
 const fs = require('fs').promises;
+const { EventEmitter } = require('events');
+// FIX: Move axios require to module scope instead of inline in checkHealth
+const axios = require('axios');
 const { logger } = require('../../shared/logger');
 const { withRetry } = require('../../shared/errorHandlingUtils');
 logger.setContext('ChromaDBService');
 const { sanitizeMetadata } = require('../../shared/pathSanitization');
+const { CircuitBreaker, CircuitState } = require('../utils/CircuitBreaker');
+const { OfflineQueue, OperationType } = require('../utils/OfflineQueue');
+const { get: getConfig } = require('../../shared/config');
 
-// FIXED Bug #26: Named constants for magic numbers
-const QUERY_CACHE_TTL_MS = 120000; // 2 minutes
-const MAX_CACHE_SIZE = 200;
-const BATCH_INSERT_DELAY_MS = 100;
-const DEFAULT_SERVER_PROTOCOL = 'http';
-const DEFAULT_SERVER_HOST = '127.0.0.1';
-const DEFAULT_SERVER_PORT = 8000;
+// Configuration from unified config module
+const QUERY_CACHE_TTL_MS = getConfig('PERFORMANCE.cacheTtlShort', 120000); // 2 minutes
+const MAX_CACHE_SIZE = getConfig('PERFORMANCE.queryCacheSize', 200);
+const BATCH_INSERT_DELAY_MS = getConfig('PERFORMANCE.batchInsertDelay', 100);
+const DEFAULT_SERVER_PROTOCOL = getConfig('SERVER.chromaProtocol', 'http');
+const DEFAULT_SERVER_HOST = getConfig('SERVER.chromaHost', '127.0.0.1');
+const DEFAULT_SERVER_PORT = getConfig('SERVER.chromaPort', 8000);
 const DEFAULT_HTTPS_PORT = 443;
 const DEFAULT_HTTP_PORT = 80;
 
-// FIXED Bug #40: Validation constants for environment variables
-const MAX_PORT_NUMBER = 65535;
-const MIN_PORT_NUMBER = 1;
+// Import network constants for validation
+const { NETWORK } = require('../../shared/performanceConstants');
+
+// Validation constants
+const MAX_PORT_NUMBER = NETWORK.MAX_PORT;
+const MIN_PORT_NUMBER = NETWORK.MIN_PORT;
 const VALID_PROTOCOLS = ['http', 'https'];
 
 /**
  * ChromaDB-based Vector Database Service
  * Replaces the JSON-based EmbeddingIndexService with a proper vector database
+ *
+ * Features:
+ * - Circuit breaker pattern for fault tolerance
+ * - Offline queue with disk persistence for crash recovery
+ * - Automatic health checks and recovery
+ * - Event emission for UI status updates
  */
-class ChromaDBService {
+class ChromaDBService extends EventEmitter {
   constructor() {
+    super();
     this.dbPath = path.join(app.getPath('userData'), 'chromadb');
     this.client = null;
     this.fileCollection = null;
@@ -54,7 +70,56 @@ class ChromaDBService {
     // Connection health monitoring
     this.isOnline = false;
     this.healthCheckInterval = null;
-    this.HEALTH_CHECK_INTERVAL_MS = 30000; // Check every 30 seconds
+    this.HEALTH_CHECK_INTERVAL_MS = getConfig('PERFORMANCE.healthCheckInterval', 30000);
+
+    // Circuit breaker configuration from centralized config
+    const circuitBreakerConfig = {
+      failureThreshold: getConfig('CIRCUIT_BREAKER.failureThreshold', 5),
+      successThreshold: getConfig('CIRCUIT_BREAKER.successThreshold', 2),
+      timeout: getConfig('CIRCUIT_BREAKER.timeout', 30000),
+      resetTimeout: getConfig('CIRCUIT_BREAKER.resetTimeout', 60000),
+    };
+
+    // Initialize circuit breaker
+    this.circuitBreaker = new CircuitBreaker('ChromaDB', circuitBreakerConfig);
+
+    // Forward circuit breaker events
+    this.circuitBreaker.on('stateChange', (data) => {
+      this._onCircuitStateChange(data);
+    });
+    this.circuitBreaker.on('open', (data) => {
+      logger.warn('[ChromaDB] Circuit breaker opened due to failures', data);
+      this.emit('offline', {
+        reason: 'circuit_open',
+        failureCount: data.failureCount,
+      });
+    });
+    this.circuitBreaker.on('close', () => {
+      logger.info('[ChromaDB] Circuit breaker closed, service recovered');
+      this.emit('online', { reason: 'circuit_closed' });
+    });
+    this.circuitBreaker.on('halfOpen', () => {
+      logger.info('[ChromaDB] Circuit breaker half-open, testing recovery');
+      this.emit('recovering', { reason: 'circuit_half_open' });
+    });
+
+    // Initialize offline queue with configured max size
+    this.offlineQueue = new OfflineQueue({
+      maxQueueSize: getConfig('CIRCUIT_BREAKER.maxQueueSize', 1000),
+      flushBatchSize: 50,
+      flushDelayMs: 1000,
+    });
+
+    // Forward queue events
+    this.offlineQueue.on('enqueued', (op) => {
+      this.emit('operationQueued', {
+        type: op.type,
+        queueSize: this.offlineQueue.size(),
+      });
+    });
+    this.offlineQueue.on('flushComplete', (result) => {
+      this.emit('queueFlushed', result);
+    });
 
     // FIXED Bug #40: Validate and sanitize environment variables
     this.serverProtocol = DEFAULT_SERVER_PROTOCOL;
@@ -196,6 +261,118 @@ class ChromaDBService {
   }
 
   /**
+   * Handle circuit breaker state changes
+   * @private
+   * @param {Object} data - State change data
+   */
+  _onCircuitStateChange(data) {
+    logger.info('[ChromaDB] Circuit state changed', {
+      from: data.previousState,
+      to: data.currentState,
+    });
+
+    this.emit('circuitStateChange', {
+      serviceName: 'chromadb',
+      previousState: data.previousState,
+      currentState: data.currentState,
+      timestamp: data.timestamp,
+    });
+
+    // When circuit closes (service recovered), try to flush the queue
+    if (data.currentState === CircuitState.CLOSED) {
+      this._flushOfflineQueue().catch((error) => {
+        logger.error('[ChromaDB] Failed to flush offline queue', {
+          error: error.message,
+        });
+      });
+    }
+  }
+
+  /**
+   * Flush the offline queue when service recovers
+   * @private
+   * @returns {Promise<Object>} Flush results
+   */
+  async _flushOfflineQueue() {
+    if (this.offlineQueue.isEmpty()) {
+      return { processed: 0, failed: 0, remaining: 0 };
+    }
+
+    logger.info('[ChromaDB] Flushing offline queue', {
+      queueSize: this.offlineQueue.size(),
+    });
+
+    const processor = async (operation) => {
+      switch (operation.type) {
+        case OperationType.UPSERT_FILE:
+          await this._directUpsertFile(operation.data);
+          break;
+        case OperationType.UPSERT_FOLDER:
+          await this._directUpsertFolder(operation.data);
+          break;
+        case OperationType.DELETE_FILE:
+          await this.deleteFileEmbedding(operation.data.fileId);
+          break;
+        case OperationType.BATCH_UPSERT_FILES:
+          await this._directBatchUpsertFiles(operation.data.files);
+          break;
+        case OperationType.BATCH_UPSERT_FOLDERS:
+          await this._directBatchUpsertFolders(operation.data.folders);
+          break;
+        case OperationType.UPDATE_FILE_PATHS:
+          await this.updateFilePaths(operation.data.pathUpdates);
+          break;
+        default:
+          logger.warn('[ChromaDB] Unknown operation type in queue', {
+            type: operation.type,
+          });
+      }
+    };
+
+    return this.offlineQueue.flush(processor);
+  }
+
+  /**
+   * Get the current circuit breaker state
+   * @returns {string} Circuit state
+   */
+  getCircuitState() {
+    return this.circuitBreaker.getState();
+  }
+
+  /**
+   * Get circuit breaker statistics
+   * @returns {Object} Statistics
+   */
+  getCircuitStats() {
+    return this.circuitBreaker.getStats();
+  }
+
+  /**
+   * Get offline queue statistics
+   * @returns {Object} Statistics
+   */
+  getQueueStats() {
+    return this.offlineQueue.getStats();
+  }
+
+  /**
+   * Check if service is available (circuit not open)
+   * @returns {boolean} True if available
+   */
+  isServiceAvailable() {
+    return this.circuitBreaker.isAvailable();
+  }
+
+  /**
+   * Force recovery attempt by resetting circuit breaker
+   */
+  forceRecovery() {
+    logger.info('[ChromaDB] Forcing recovery attempt');
+    this.circuitBreaker.reset();
+  }
+
+  /**
    * Check if ChromaDB connection is healthy
    * @returns {boolean} true if healthy, false otherwise
    */
@@ -203,7 +380,6 @@ class ChromaDBService {
     try {
       // CRITICAL FIX: Use HTTP endpoint directly for health check instead of client.heartbeat()
       // which may fail due to connection state issues
-      const axios = require('axios');
       const baseUrl = this.serverUrl;
 
       // Try multiple endpoints for compatibility with different ChromaDB versions
@@ -268,9 +444,16 @@ class ChromaDBService {
       const successfulEndpoint = results.find((result) => result !== null);
 
       if (successfulEndpoint) {
+        const wasOffline = !this.isOnline;
         if (!this.isOnline) {
           logger.info('[ChromaDB] Connection restored/established');
           this.isOnline = true;
+        }
+        // Record success with circuit breaker
+        this.circuitBreaker.recordSuccess();
+        // Emit online event if we just came back online
+        if (wasOffline) {
+          this.emit('online', { reason: 'health_check_success' });
         }
         return true;
       }
@@ -287,9 +470,14 @@ class ChromaDBService {
             logger.debug(
               '[ChromaDB] Health check successful via client.heartbeat()',
             );
+            const wasOffline = !this.isOnline;
             if (!this.isOnline) {
               logger.info('[ChromaDB] Connection restored via client');
               this.isOnline = true;
+            }
+            this.circuitBreaker.recordSuccess();
+            if (wasOffline) {
+              this.emit('online', { reason: 'health_check_client' });
             }
           }
           return isHealthy;
@@ -298,16 +486,27 @@ class ChromaDBService {
         }
       }
 
+      // Health check failed - record failure with circuit breaker
+      const wasOnline = this.isOnline;
       if (this.isOnline) {
         logger.warn('[ChromaDB] Connection lost');
         this.isOnline = false;
       }
+      this.circuitBreaker.recordFailure(new Error('Health check failed'));
+      if (wasOnline) {
+        this.emit('offline', { reason: 'health_check_failed' });
+      }
       return false;
     } catch (error) {
       logger.debug('[ChromaDB] Health check failed:', error.message);
+      const wasOnline = this.isOnline;
       if (this.isOnline) {
         logger.warn('[ChromaDB] Connection lost due to error:', error.message);
         this.isOnline = false;
+      }
+      this.circuitBreaker.recordFailure(error);
+      if (wasOnline) {
+        this.emit('offline', { reason: 'health_check_error', error: error.message });
       }
       return false;
     }
@@ -410,6 +609,9 @@ class ChromaDBService {
       try {
         await this.ensureDbDirectory();
 
+        // Initialize offline queue (loads persisted operations)
+        await this.offlineQueue.initialize();
+
         // Initialize ChromaDB client with configured server
         this.client = new ChromaClient({
           path: this.serverUrl,
@@ -484,15 +686,36 @@ class ChromaDBService {
 
   /**
    * Upsert a folder embedding into the database
+   * Uses circuit breaker pattern - queues operation if service is unavailable
    * @param {Object} folder - Folder object with id, name, vector, etc.
    */
   async upsertFolder(folder) {
-    await this.initialize();
-
     if (!folder.id || !folder.vector || !Array.isArray(folder.vector)) {
       throw new Error('Invalid folder data: missing id or vector');
     }
 
+    // Check circuit breaker state - if open, queue the operation
+    if (!this.circuitBreaker.isAllowed()) {
+      logger.debug('[ChromaDB] Circuit open, queueing folder upsert', {
+        folderId: folder.id,
+      });
+      this.offlineQueue.enqueue(OperationType.UPSERT_FOLDER, folder);
+      return { queued: true, folderId: folder.id };
+    }
+
+    await this.initialize();
+
+    return this.circuitBreaker.execute(async () => {
+      return this._directUpsertFolder(folder);
+    });
+  }
+
+  /**
+   * Direct upsert folder without circuit breaker (used by queue flush)
+   * @private
+   * @param {Object} folder - Folder object
+   */
+  async _directUpsertFolder(folder) {
     return withRetry(
       async () => {
         try {
@@ -545,16 +768,38 @@ class ChromaDBService {
 
   /**
    * Batch upsert folder embeddings (optimization for bulk operations)
+   * Uses circuit breaker pattern - queues operation if service is unavailable
    * @param {Array<Object>} folders - Array of folder objects
    * @returns {Object} Object with count of successful upserts and array of skipped items
    */
   async batchUpsertFolders(folders) {
-    await this.initialize();
-
     if (!folders || folders.length === 0) {
       return { count: 0, skipped: [] };
     }
 
+    // Check circuit breaker state - if open, queue the operation
+    if (!this.circuitBreaker.isAllowed()) {
+      logger.debug('[ChromaDB] Circuit open, queueing batch folder upsert', {
+        count: folders.length,
+      });
+      this.offlineQueue.enqueue(OperationType.BATCH_UPSERT_FOLDERS, { folders });
+      return { queued: true, count: folders.length, skipped: [] };
+    }
+
+    await this.initialize();
+
+    return this.circuitBreaker.execute(async () => {
+      return this._directBatchUpsertFolders(folders);
+    });
+  }
+
+  /**
+   * Direct batch upsert folders without circuit breaker (used by queue flush)
+   * @private
+   * @param {Array<Object>} folders - Array of folder objects
+   * @returns {Object} Object with count of successful upserts and array of skipped items
+   */
+  async _directBatchUpsertFolders(folders) {
     return withRetry(
       async () => {
         const ids = [];
@@ -642,15 +887,36 @@ class ChromaDBService {
 
   /**
    * Upsert a file embedding into the database
+   * Uses circuit breaker pattern - queues operation if service is unavailable
    * @param {Object} file - File object with id, vector, meta, etc.
    */
   async upsertFile(file) {
-    await this.initialize();
-
     if (!file.id || !file.vector || !Array.isArray(file.vector)) {
       throw new Error('Invalid file data: missing id or vector');
     }
 
+    // Check circuit breaker state - if open, queue the operation
+    if (!this.circuitBreaker.isAllowed()) {
+      logger.debug('[ChromaDB] Circuit open, queueing file upsert', {
+        fileId: file.id,
+      });
+      this.offlineQueue.enqueue(OperationType.UPSERT_FILE, file);
+      return { queued: true, fileId: file.id };
+    }
+
+    await this.initialize();
+
+    return this.circuitBreaker.execute(async () => {
+      return this._directUpsertFile(file);
+    });
+  }
+
+  /**
+   * Direct upsert file without circuit breaker (used by queue flush)
+   * @private
+   * @param {Object} file - File object
+   */
+  async _directUpsertFile(file) {
     return withRetry(
       async () => {
         try {
@@ -703,16 +969,38 @@ class ChromaDBService {
 
   /**
    * Batch upsert file embeddings (optimization for bulk operations)
+   * Uses circuit breaker pattern - queues operation if service is unavailable
    * @param {Array<Object>} files - Array of file objects
-   * @returns {number} Number of successfully upserted files
+   * @returns {number|Object} Number of successfully upserted files or queued status
    */
   async batchUpsertFiles(files) {
-    await this.initialize();
-
     if (!files || files.length === 0) {
       return 0;
     }
 
+    // Check circuit breaker state - if open, queue the operation
+    if (!this.circuitBreaker.isAllowed()) {
+      logger.debug('[ChromaDB] Circuit open, queueing batch file upsert', {
+        count: files.length,
+      });
+      this.offlineQueue.enqueue(OperationType.BATCH_UPSERT_FILES, { files });
+      return { queued: true, count: files.length };
+    }
+
+    await this.initialize();
+
+    return this.circuitBreaker.execute(async () => {
+      return this._directBatchUpsertFiles(files);
+    });
+  }
+
+  /**
+   * Direct batch upsert files without circuit breaker (used by queue flush)
+   * @private
+   * @param {Array<Object>} files - Array of file objects
+   * @returns {number} Number of successfully upserted files
+   */
+  async _directBatchUpsertFiles(files) {
     return withRetry(
       async () => {
         const ids = [];
@@ -1716,45 +2004,58 @@ class ChromaDBService {
    * FIXED Bug #38: Wait for pending operations before cleanup
    */
   async cleanup() {
-    if (this.client) {
-      // Clear batch insert timer if active
-      if (this.batchInsertTimer) {
-        clearTimeout(this.batchInsertTimer);
-        this.batchInsertTimer = null;
-      }
+    // Clear batch insert timer if active
+    if (this.batchInsertTimer) {
+      clearTimeout(this.batchInsertTimer);
+      this.batchInsertTimer = null;
+    }
 
-      // FIXED Bug #38: Wait for all in-flight queries to complete
-      if (this.inflightQueries.size > 0) {
-        logger.info(
-          `[ChromaDB] Waiting for ${this.inflightQueries.size} in-flight queries to complete...`,
+    // FIXED Bug #38: Wait for all in-flight queries to complete
+    if (this.inflightQueries.size > 0) {
+      logger.info(
+        `[ChromaDB] Waiting for ${this.inflightQueries.size} in-flight queries to complete...`,
+      );
+      try {
+        // Wait for all in-flight queries with a timeout
+        await Promise.race([
+          Promise.allSettled(Array.from(this.inflightQueries.values())),
+          (() => {
+            const { TIMEOUTS } = require('../../shared/performanceConstants');
+            return new Promise((resolve) =>
+              setTimeout(resolve, TIMEOUTS.HEALTH_CHECK),
+            );
+          })(), // 5 second timeout
+        ]);
+      } catch (error) {
+        logger.warn(
+          '[ChromaDB] Error waiting for in-flight queries:',
+          error.message,
         );
-        try {
-          // Wait for all in-flight queries with a timeout
-          await Promise.race([
-            Promise.allSettled(Array.from(this.inflightQueries.values())),
-            (() => {
-              const { TIMEOUTS } = require('../../shared/performanceConstants');
-              return new Promise((resolve) =>
-                setTimeout(resolve, TIMEOUTS.HEALTH_CHECK),
-              );
-            })(), // 5 second timeout
-          ]);
-        } catch (error) {
-          logger.warn(
-            '[ChromaDB] Error waiting for in-flight queries:',
-            error.message,
-          );
-        }
       }
+    }
 
-      // Clear caches
-      this.queryCache.clear();
-      this.inflightQueries.clear();
+    // Clean up circuit breaker
+    if (this.circuitBreaker) {
+      this.circuitBreaker.cleanup();
+    }
 
-      this.stopHealthCheck(); // Stop monitoring
+    // Clean up offline queue (persists pending operations)
+    if (this.offlineQueue) {
+      await this.offlineQueue.cleanup();
+    }
 
-      // ChromaDB client doesn't require explicit cleanup in JS
-      // but we'll reset our references
+    // Clear caches
+    this.queryCache.clear();
+    this.inflightQueries.clear();
+
+    this.stopHealthCheck(); // Stop monitoring
+
+    // Remove all event listeners
+    this.removeAllListeners();
+
+    // ChromaDB client doesn't require explicit cleanup in JS
+    // but we'll reset our references
+    if (this.client) {
       this.fileCollection = null;
       this.folderCollection = null;
       this.client = null;
@@ -1784,14 +2085,22 @@ class ChromaDBService {
           });
 
         // Wrap heartbeat in Promise.race with timeout (reduced from 10s to 3s)
+        // FIX: Track timeout ID and clear it to prevent memory leak
+        let timeoutId;
         const heartbeatPromise = client.heartbeat();
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => {
+          timeoutId = setTimeout(() => {
             reject(new Error(`Heartbeat timeout after ${timeoutMs}ms`));
           }, timeoutMs);
         });
 
-        const hb = await Promise.race([heartbeatPromise, timeoutPromise]);
+        let hb;
+        try {
+          hb = await Promise.race([heartbeatPromise, timeoutPromise]);
+        } finally {
+          // FIX: Always clear timeout to prevent memory leak
+          if (timeoutId) clearTimeout(timeoutId);
+        }
 
         logger.debug('[ChromaDB] Server heartbeat successful:', {
           hb,
@@ -1868,12 +2177,64 @@ class ChromaDBService {
 // Export as singleton to maintain single database connection
 let instance = null;
 
+/**
+ * Get the singleton ChromaDBService instance
+ *
+ * This function provides the singleton instance for backward compatibility.
+ * For new code, prefer using the ServiceContainer:
+ *
+ * @example
+ * // Using ServiceContainer (recommended)
+ * const { container, ServiceIds } = require('./ServiceContainer');
+ * const chromaDb = container.resolve(ServiceIds.CHROMA_DB);
+ *
+ * // Using getInstance (backward compatible)
+ * const { getInstance } = require('./ChromaDBService');
+ * const chromaDb = getInstance();
+ *
+ * @returns {ChromaDBService} The singleton instance
+ */
+function getInstance() {
+  if (!instance) {
+    instance = new ChromaDBService();
+  }
+  return instance;
+}
+
+/**
+ * Create a new ChromaDBService instance (for testing or custom configuration)
+ *
+ * Unlike getInstance(), this creates a fresh instance not tied to the singleton.
+ * Useful for testing or when custom configuration is needed.
+ *
+ * @param {Object} options - Configuration options (reserved for future use)
+ * @returns {ChromaDBService} A new ChromaDBService instance
+ */
+function createInstance(options = {}) {
+  return new ChromaDBService(options);
+}
+
+/**
+ * Reset the singleton instance (primarily for testing)
+ *
+ * This clears the singleton instance, allowing a fresh one to be created
+ * on the next getInstance() call. Should be called with caution in production.
+ */
+function resetInstance() {
+  if (instance) {
+    // FIX: Use cleanup() instead of shutdown() - shutdown doesn't exist on ChromaDBService
+    if (typeof instance.cleanup === 'function') {
+      instance.cleanup().catch((err) => {
+        logger.warn('[ChromaDB] Error during reset cleanup:', err.message);
+      });
+    }
+    instance = null;
+  }
+}
+
 module.exports = {
   ChromaDBService,
-  getInstance: () => {
-    if (!instance) {
-      instance = new ChromaDBService();
-    }
-    return instance;
-  },
+  getInstance,
+  createInstance,
+  resetInstance,
 };

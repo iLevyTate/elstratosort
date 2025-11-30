@@ -19,6 +19,11 @@ const Toast = ({
   // CRITICAL FIX: Use ref to track animation timer so cleanup can always access current value
   const animationTimerRef = useRef(null);
 
+  // Sync show prop changes to isVisible state
+  useEffect(() => {
+    setIsVisible(show);
+  }, [show]);
+
   useEffect(() => {
     if (show && duration > 0) {
       const timer = setTimeout(() => {
@@ -40,7 +45,8 @@ const Toast = ({
 
   const handleClose = () => {
     setIsVisible(false);
-    setTimeout(() => onClose?.(), 300);
+    // FIX: Store timeout in ref for proper cleanup on unmount
+    animationTimerRef.current = setTimeout(() => onClose?.(), 300);
   };
 
   const handleKeyDown = (e) => {

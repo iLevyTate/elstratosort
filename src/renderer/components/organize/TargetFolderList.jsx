@@ -1,19 +1,41 @@
-import React, { memo } from 'react';
+import React, { memo, useMemo } from 'react';
 import PropTypes from 'prop-types';
+import { List } from 'react-window';
+
+// FIX: Implement virtualization for large folder lists to prevent UI lag
+const ITEM_HEIGHT = 120; // Approximate height of each folder item
+const LIST_HEIGHT = 400; // Visible area height
+const VIRTUALIZATION_THRESHOLD = 20; // Only virtualize when > 20 folders
 
 // Memoized FolderItem to prevent re-renders when folder data hasn't changed
-const FolderItem = memo(function FolderItem({ folder, defaultLocation }) {
+// FIX: Added proper text overflow handling for long paths with title tooltips
+const FolderItem = memo(function FolderItem({ folder, defaultLocation, style }) {
+  const fullPath = folder.path || `${defaultLocation}/${folder.name}`;
+
   return (
-    <div className="p-13 bg-surface-secondary rounded-lg border border-stratosort-blue/20">
-      <div className="font-medium text-system-gray-900 mb-2">{folder.name}</div>
-      <div className="text-sm text-system-gray-600 mb-3">
-        📂 {folder.path || `${defaultLocation}/${folder.name}`}
-      </div>
-      {folder.description && (
-        <div className="text-xs text-system-gray-500 bg-stratosort-blue/5 p-5 rounded italic">
-          &ldquo;{folder.description}&rdquo;
+    <div style={style} className="p-2">
+      <div className="p-4 bg-surface-secondary rounded-lg border border-stratosort-blue/20 min-w-0 h-full overflow-hidden">
+        <div
+          className="font-medium text-system-gray-900 mb-2 truncate"
+          title={folder.name}
+        >
+          {folder.name}
         </div>
-      )}
+        <div
+          className="text-sm text-system-gray-600 mb-3 truncate"
+          title={fullPath}
+        >
+          📂 {fullPath}
+        </div>
+        {folder.description && (
+          <div
+            className="text-xs text-system-gray-500 bg-stratosort-blue/5 p-2 rounded italic truncate"
+            title={folder.description}
+          >
+            &ldquo;{folder.description}&rdquo;
+          </div>
+        )}
+      </div>
     </div>
   );
 });
@@ -26,14 +48,81 @@ FolderItem.propTypes = {
     description: PropTypes.string,
   }).isRequired,
   defaultLocation: PropTypes.string.isRequired,
+  style: PropTypes.object,
+};
+
+/**
+ * Virtualized row component for rendering folder items
+ */
+const VirtualizedFolderRow = memo(function VirtualizedFolderRow({ index, style, data }) {
+  const { folders, defaultLocation } = data;
+  const folder = folders[index];
+
+  if (!folder) return null;
+
+  return (
+    <FolderItem
+      folder={folder}
+      defaultLocation={defaultLocation}
+      style={style}
+    />
+  );
+});
+
+VirtualizedFolderRow.propTypes = {
+  index: PropTypes.number.isRequired,
+  style: PropTypes.object.isRequired,
+  data: PropTypes.shape({
+    folders: PropTypes.array.isRequired,
+    defaultLocation: PropTypes.string.isRequired,
+  }).isRequired,
 };
 
 const TargetFolderList = memo(function TargetFolderList({
   folders = [],
   defaultLocation = 'Documents',
 }) {
+  const shouldVirtualize = folders.length > VIRTUALIZATION_THRESHOLD;
+
+  // Memoize item data to prevent unnecessary re-renders
+  const itemData = useMemo(
+    () => ({
+      folders,
+      defaultLocation,
+    }),
+    [folders, defaultLocation]
+  );
+
+  // Calculate optimal list height based on number of items
+  const listHeight = useMemo(() => {
+    const calculatedHeight = Math.min(folders.length * ITEM_HEIGHT, LIST_HEIGHT);
+    return Math.max(calculatedHeight, ITEM_HEIGHT); // At least show one item
+  }, [folders.length]);
+
+  if (shouldVirtualize) {
+    return (
+      <div className="w-full">
+        <div className="text-xs text-system-gray-500 mb-2">
+          Showing {folders.length} folders (virtualized for performance)
+        </div>
+        <List
+          height={listHeight}
+          itemCount={folders.length}
+          itemSize={ITEM_HEIGHT}
+          width="100%"
+          itemData={itemData}
+          overscanCount={3}
+          className="scrollbar-thin scrollbar-thumb-system-gray-300 scrollbar-track-transparent"
+        >
+          {VirtualizedFolderRow}
+        </List>
+      </div>
+    );
+  }
+
+  // For smaller lists, render normally without virtualization overhead
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {folders.map((folder) => (
         <FolderItem
           key={folder.id}

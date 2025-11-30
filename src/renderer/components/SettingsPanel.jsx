@@ -20,17 +20,31 @@ import BackgroundModeSection from './settings/BackgroundModeSection';
 // Set logger context for this component
 logger.setContext('SettingsPanel');
 
+// FIX: Helper to safely check if electronAPI is available
+const isElectronAPIAvailable = () => {
+  return typeof window !== 'undefined' && window.electronAPI != null;
+};
+
 const SettingsPanel = React.memo(function SettingsPanel() {
   const dispatch = useAppDispatch();
-  const actions = {
-    toggleSettings: () => dispatch(toggleSettings()),
-  };
+
+  // FIX: Guard against missing electronAPI (e.g., if preload fails or non-Electron context)
+  if (!isElectronAPIAvailable()) {
+    return (
+      <div className="p-6 text-center">
+        <p className="text-red-600 font-medium">Settings unavailable</p>
+        <p className="text-sm text-system-gray-500 mt-2">
+          Electron API not available. Please restart the application.
+        </p>
+      </div>
+    );
+  }
   const { addNotification } = useNotification();
 
-  // Memoize the toggleSettings function to avoid unnecessary re-renders
+  // Memoize the toggleSettings function - dispatch is stable so no recreations
   const handleToggleSettings = useCallback(() => {
-    actions.toggleSettings();
-  }, [actions]);
+    dispatch(toggleSettings());
+  }, [dispatch]);
   const [settings, setSettings] = useState({
     ollamaHost: 'http://127.0.0.1:11434',
     textModel: 'llama3.2:latest',
@@ -129,13 +143,19 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     if (!settingsLoaded) return;
     if (didAutoHealthCheckRef.current) return;
     didAutoHealthCheckRef.current = true;
+
+    // FIX: Track mounted state to prevent state updates after unmount
+    let isMounted = true;
+
     (async () => {
       try {
         const res = await window.electronAPI.ollama.testConnection(
           settings.ollamaHost,
         );
+        // FIX: Check mounted state before setting state
+        if (!isMounted) return;
         setOllamaHealth(res?.ollamaHealth || null);
-        if (res?.success) {
+        if (res?.success && isMounted) {
           // Refresh models to reflect current host/models
           await loadOllamaModels();
         }
@@ -146,6 +166,11 @@ const SettingsPanel = React.memo(function SettingsPanel() {
         });
       }
     })();
+
+    // FIX: Cleanup function to mark as unmounted
+    return () => {
+      isMounted = false;
+    };
   }, [settingsLoaded, settings.ollamaHost, loadOllamaModels]);
 
   const loadSettings = useCallback(async () => {

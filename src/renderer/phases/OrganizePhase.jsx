@@ -13,19 +13,21 @@ import {
   setOrganizedFiles as setOrganizedFilesAction,
   setFileStates as setFileStatesAction,
 } from '../store/slices/filesSlice';
-import { setPhase } from '../store/slices/uiSlice';
+// FIX: Use centralized selector to ensure files always have analysis merged
+import { selectFilesWithAnalysis, selectFileStats } from '../store/selectors';
+import { setPhase, setOrganizing } from '../store/slices/uiSlice';
 import { fetchDocumentsPath } from '../store/slices/systemSlice';
 import { useNotification } from '../contexts/NotificationContext';
 import { Collapsible, Button } from '../components/ui';
 import {
   StatusOverview,
   TargetFolderList,
-  ReadyFileItem,
   BulkOperations,
   OrganizeProgress,
+  VirtualizedFileGrid,
+  VirtualizedProcessedFiles,
 } from '../components/organize';
-import { UndoRedoToolbar, useUndoRedo } from '../components/UndoRedoSystem';
-import { createOrganizeBatchAction } from '../components/UndoRedoSystem';
+import { UndoRedoToolbar, useUndoRedo, createOrganizeBatchAction } from '../components/UndoRedoSystem';
 const { debounce } = require('../utils/performance');
 
 // Set logger context for this component
@@ -34,6 +36,10 @@ logger.setContext('OrganizePhase');
 function OrganizePhase() {
   const dispatch = useAppDispatch();
   const organizedFiles = useAppSelector((state) => state.files.organizedFiles);
+  // FIX: Use merged selector to ensure files always have analysis + extension
+  const filesWithAnalysis = useAppSelector(selectFilesWithAnalysis);
+  const fileStats = useAppSelector(selectFileStats);
+  // Keep analysisResults for backward compatibility with phaseData
   const analysisResults = useAppSelector((state) => state.analysis.results);
   const smartFolders = useAppSelector((state) => state.files.smartFolders);
   const fileStates = useAppSelector((state) => state.files.fileStates);
@@ -83,25 +89,48 @@ function OrganizePhase() {
     fileStates,
   };
 
-  const actions = {
+  // Memoize actions to prevent recreation on every render
+  // MED-17: Include setOrganizedFiles and setFileStates in deps for correct closure
+  const actions = useMemo(() => ({
     setPhaseData: (key, value) => {
       if (key === 'smartFolders') dispatch(setSmartFoldersAction(value));
       if (key === 'organizedFiles') setOrganizedFiles(value);
       if (key === 'fileStates') setFileStates(value);
     },
     advancePhase: (phase) => dispatch(setPhase(phase)),
-  };
+  }), [dispatch, setOrganizedFiles, setFileStates]);
+
+  // FIX: Use refs to prevent stale closures in useEffect with empty deps
+  // This allows accessing the latest values without triggering re-runs
+  const smartFoldersRef = useRef(smartFolders);
+  const addNotificationRef = useRef(addNotification);
+  const dispatchRef = useRef(dispatch);
+
+  // Keep refs updated with latest values
+  useEffect(() => {
+    smartFoldersRef.current = smartFolders;
+  }, [smartFolders]);
+
+  useEffect(() => {
+    addNotificationRef.current = addNotification;
+  }, [addNotification]);
+
+  useEffect(() => {
+    dispatchRef.current = dispatch;
+  }, [dispatch]);
 
   // Ensure smart folders are available even if user skipped Setup
   // Note: Empty deps is intentional - we only want to check once on mount
+  // FIX: Now uses refs to access latest values without stale closures
   useEffect(() => {
     const loadSmartFoldersIfMissing = async () => {
       try {
-        if (!Array.isArray(smartFolders) || smartFolders.length === 0) {
+        const currentSmartFolders = smartFoldersRef.current;
+        if (!Array.isArray(currentSmartFolders) || currentSmartFolders.length === 0) {
           const folders = await window.electronAPI.smartFolders.get();
           if (Array.isArray(folders) && folders.length > 0) {
-            actions.setPhaseData('smartFolders', folders);
-            addNotification(
+            dispatchRef.current(setSmartFoldersAction(folders));
+            addNotificationRef.current(
               `Loaded ${folders.length} smart folder${folders.length > 1 ? 's' : ''}`,
               'info',
             );
@@ -124,67 +153,29 @@ function OrganizePhase() {
     }
   }, [dispatch, documentsPath]);
 
+  // FIX: Track if persisted data has been loaded to prevent infinite loop
+  // The issue was that phaseData and actions are recreated every render,
+  // and calling actions.setPhaseData updates state which triggers a re-render
+  const hasLoadedPersistedDataRef = useRef(false);
+
   useEffect(() => {
+    // FIX: Only load persisted data once on mount to prevent infinite re-renders
+    if (hasLoadedPersistedDataRef.current) {
+      return;
+    }
+    hasLoadedPersistedDataRef.current = true;
+
     const loadPersistedData = () => {
-      const persistedStates = phaseData.fileStates || {};
-      setFileStates(persistedStates);
+      const persistedStates = fileStates || {};
+      // FIX: Don't call setFileStates if there's no change - this was causing unnecessary updates
+      // setFileStates(persistedStates); // REMOVED - fileStates is already from Redux
+
       if (
-        (phaseData.analysisResults || []).length === 0 &&
+        analysisResults.length === 0 &&
         Object.keys(persistedStates).length > 0
       ) {
-        // Bug #34: Use spread operator to preserve all fields during state reconstruction
-        const reconstructedResults = Object.entries(persistedStates).map(
-          ([filePath, stateObj]) => {
-            // Fixed: Validate and sanitize analysis object to prevent crashes
-            const analysis = stateObj.analysis
-              ? {
-                  // Bug #34: Use spread operator to preserve all original analysis fields
-                  ...stateObj.analysis,
-                  // Then apply safe defaults for critical fields
-                  category: stateObj.analysis.category || 'Uncategorized',
-                  suggestedName:
-                    stateObj.analysis.suggestedName ||
-                    filePath.split(/[\\/]/).pop(),
-                  confidence:
-                    // HIGH PRIORITY FIX #3: Use Number.isFinite() instead of isNaN()
-                    Number.isFinite(stateObj.analysis.confidence)
-                      ? Math.max(0, Math.min(1, stateObj.analysis.confidence)) // Clamp to 0-1
-                      : 0.5,
-                  summary: stateObj.analysis.summary || '',
-                  keywords: Array.isArray(stateObj.analysis.keywords)
-                    ? stateObj.analysis.keywords
-                    : [],
-                }
-              : null;
-
-            // Bug #34: Use spread operator to preserve all original state fields
-            return {
-              // Preserve all original fields from stateObj
-              ...stateObj,
-              // Override/ensure critical fields have safe values
-              name: stateObj.name || filePath.split(/[\\/]/).pop(),
-              path: filePath,
-              size: typeof stateObj.size === 'number' ? stateObj.size : 0,
-              type: stateObj.type || 'file',
-              source: stateObj.source || 'reconstructed',
-              analysis,
-              error: stateObj.error || null,
-              analyzedAt: stateObj.analyzedAt || new Date().toISOString(),
-              confidence:
-                // HIGH PRIORITY FIX #3: Use Number.isFinite() for proper type checking
-                Number.isFinite(stateObj.confidence)
-                  ? stateObj.confidence
-                  : 0.5,
-              status:
-                stateObj.state === 'ready'
-                  ? 'analyzed'
-                  : stateObj.state === 'error'
-                    ? 'failed'
-                    : 'unknown',
-            };
-          },
-        );
-        actions.setPhaseData('analysisResults', reconstructedResults);
+        // Clear stale file states - Redux persistence handles actual state reconstruction
+        dispatch(setFileStatesAction({}));
       }
       if (
         Object.keys(persistedStates).length === 0 &&
@@ -212,27 +203,29 @@ function OrganizePhase() {
               timestamp: new Date().toISOString(),
             };
         });
-        setFileStates(reconstructedStates);
-        actions.setPhaseData('fileStates', reconstructedStates);
+        dispatch(setFileStatesAction(reconstructedStates));
       }
-      const previouslyOrganized = phaseData.organizedFiles || [];
+      const previouslyOrganized = organizedFiles || [];
       const processedIds = new Set(
         previouslyOrganized.map((file) => file.originalPath || file.path),
       );
       setProcessedFileIds(processedIds);
-      if (previouslyOrganized.length > 0)
-        setOrganizedFiles(previouslyOrganized);
+      // FIX: Don't call setOrganizedFiles if organizedFiles is already populated
+      // This was causing unnecessary state updates
     };
     loadPersistedData();
-  }, [phaseData, analysisResults, actions]);
+  }, []); // FIX: Empty deps - only run once on mount to prevent infinite loop
+
+  // FIX: Use ref to store unsubscribe so cleanup always has access to latest value
+  // This fixes race condition where cleanup runs before async setup completes
+  const progressUnsubscribeRef = useRef(null);
 
   // HIGH PRIORITY FIX #1: Use AbortController pattern for reliable cleanup
   // This ensures proper cleanup even if component unmounts during async setup
   useEffect(() => {
     const abortController = new AbortController();
-    let unsubscribe = null;
 
-    const setupProgressListener = async () => {
+    const setupProgressListener = () => {
       // Check abort signal early
       if (abortController.signal.aborted) return;
 
@@ -245,7 +238,8 @@ function OrganizePhase() {
       }
 
       try {
-        unsubscribe = window.electronAPI.events.onOperationProgress(
+        // FIX: Store in ref immediately so cleanup can access it
+        progressUnsubscribeRef.current = window.electronAPI.events.onOperationProgress(
           (payload) => {
             // Check if cleanup has been initiated
             if (abortController.signal.aborted) return;
@@ -281,11 +275,11 @@ function OrganizePhase() {
         );
 
         // Verify subscription succeeded
-        if (typeof unsubscribe !== 'function') {
+        if (typeof progressUnsubscribeRef.current !== 'function') {
           logger.error(
             'Progress subscription failed - unsubscribe is not a function',
           );
-          unsubscribe = null;
+          progressUnsubscribeRef.current = null;
         }
       } catch (error) {
         logger.error('Failed to subscribe to progress events', {
@@ -295,7 +289,7 @@ function OrganizePhase() {
       }
     };
 
-    // Execute setup
+    // Execute setup synchronously - no async needed for event subscription
     setupProgressListener();
 
     // Return cleanup function that will ALWAYS execute
@@ -303,10 +297,11 @@ function OrganizePhase() {
       // Signal abort to all async operations
       abortController.abort();
 
-      // Clean up event listener if it exists
-      if (typeof unsubscribe === 'function') {
+      // FIX: Access ref for latest unsubscribe function
+      if (typeof progressUnsubscribeRef.current === 'function') {
         try {
-          unsubscribe();
+          progressUnsubscribeRef.current();
+          progressUnsubscribeRef.current = null;
         } catch (error) {
           logger.error('Error unsubscribing from progress events', {
             error: error.message,
@@ -376,14 +371,13 @@ function OrganizePhase() {
     [getFileState],
   );
 
+  // FIX: Use merged filesWithAnalysis for consistent data with analysis + extension
   const unprocessedFiles = useMemo(
     () =>
-      Array.isArray(analysisResults)
-        ? analysisResults.filter(
-            (file) => !processedFileIds.has(file.path) && file && file.analysis,
-          )
-        : [],
-    [analysisResults, processedFileIds],
+      filesWithAnalysis.filter(
+        (file) => !processedFileIds.has(file.path) && file && file.analysis,
+      ),
+    [filesWithAnalysis, processedFileIds],
   );
   const processedFiles = useMemo(
     () =>
@@ -395,14 +389,8 @@ function OrganizePhase() {
     [organizedFiles, processedFileIds],
   );
 
-  // Memoized computed values to avoid repeated filter operations in render
-  const failedCount = useMemo(
-    () =>
-      Array.isArray(analysisResults)
-        ? analysisResults.filter((f) => !f.analysis).length
-        : 0,
-    [analysisResults],
-  );
+  // FIX: Use fileStats from selector for consistent counts
+  const failedCount = fileStats.failed;
 
   const readyFilesCount = useMemo(
     () => unprocessedFiles.filter((f) => f.analysis).length,
@@ -554,7 +542,11 @@ function OrganizePhase() {
       (category, selected, edits, notify) => {
         if (!category) return;
         const newEdits = {};
-        selected.forEach((i) => (newEdits[i] = { ...edits[i], category }));
+        // FIX: Add bounds check for edits[i] to prevent undefined spread
+        selected.forEach((i) => {
+          const existingEdit = edits[i] || {};
+          newEdits[i] = { ...existingEdit, category };
+        });
         setEditingFiles((prev) => ({ ...prev, ...newEdits }));
         setBulkEditMode(false);
         setBulkCategory('');
@@ -591,6 +583,8 @@ function OrganizePhase() {
     async (filesToOrganize = null) => {
       try {
         setIsOrganizing(true);
+        // Update global navigation state to disable navigation buttons during operation
+        dispatch(setOrganizing(true));
         // Use provided files or fall back to all unprocessed files
         const filesToProcess =
           filesToOrganize || unprocessedFiles.filter((f) => f.analysis);
@@ -617,15 +611,38 @@ function OrganizePhase() {
             },
           });
 
-          operations = result.operations || [];
+          // FIX: Validate IPC response - check success flag
+          if (result && result.success === false) {
+            addNotification(
+              result.error || 'Auto-organize service is not available',
+              'error',
+              5000,
+              'organize-service-error',
+            );
+            logger.error('Auto-organize failed:', result.error);
+            setIsOrganizing(false);
+            return;
+          }
+
+          operations = result?.operations || result?.organized || [];
 
           // Handle files that need review
-          if (result.needsReview && result.needsReview.length > 0) {
+          if (result?.needsReview && result.needsReview.length > 0) {
             addNotification(
               `${result.needsReview.length} files need manual review due to low confidence`,
               'info',
               4000,
               'organize-needs-review',
+            );
+          }
+
+          // Handle failed files
+          if (result?.failed && result.failed.length > 0) {
+            addNotification(
+              `${result.failed.length} files could not be organized`,
+              'warning',
+              4000,
+              'organize-failed-files',
             );
           }
         } else {
@@ -855,6 +872,8 @@ function OrganizePhase() {
         addNotification(`Organization failed: ${error.message}`, 'error');
       } finally {
         setIsOrganizing(false);
+        // Clear global navigation state to re-enable navigation buttons
+        dispatch(setOrganizing(false));
         setBatchProgress({ current: 0, total: 0, currentFile: '' });
       }
     },
@@ -879,7 +898,9 @@ function OrganizePhase() {
     if (selectedFiles.size === 0) return;
     // Organize only the selected files
     const selectedIndices = Array.from(selectedFiles);
+    // FIX: Filter out stale indices that are out of bounds before accessing array
     const filesToProcess = selectedIndices
+      .filter((index) => index >= 0 && index < unprocessedFiles.length)
       .map((index) => unprocessedFiles[index])
       .filter((f) => f && f.analysis);
 
@@ -969,39 +990,14 @@ function OrganizePhase() {
           )}
           {processedFiles.length > 0 && (
             <Collapsible
-              title="✅ Previously Organized Files"
+              title="Previously Organized Files"
               defaultOpen={false}
               persistKey="organize-history"
               contentClassName="p-8"
               className="glass-panel"
             >
-              <div className="space-y-5">
-                {processedFiles.map((file) => (
-                  <div
-                    key={
-                      file.originalPath ||
-                      `${file.originalName}-${file.organizedAt}`
-                    }
-                    className="flex items-center justify-between p-8 bg-green-50 rounded-lg border border-green-200"
-                  >
-                    <div className="flex items-center gap-8">
-                      <span className="text-green-600">✅</span>
-                      <div>
-                        <div className="text-sm font-medium text-system-gray-900">
-                          {file.originalName} → {file.newName}
-                        </div>
-                        <div className="text-xs text-system-gray-500">
-                          Moved to {file.smartFolder} •{' '}
-                          {new Date(file.organizedAt).toLocaleDateString()}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="text-xs text-green-600 font-medium">
-                      Organized
-                    </div>
-                  </div>
-                ))}
-              </div>
+              {/* FIX: Use virtualized list for large processed file lists to prevent UI lag */}
+              <VirtualizedProcessedFiles files={processedFiles} />
             </Collapsible>
           )}
 
@@ -1034,40 +1030,19 @@ function OrganizePhase() {
                 )}
               </div>
             ) : (
-              <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
-                {unprocessedFiles.map((file, index) => {
-                  const fileWithEdits = getFileWithEdits(file, index);
-                  const currentCategory =
-                    editingFiles[index]?.category ||
-                    fileWithEdits.analysis?.category;
-                  const smartFolder =
-                    findSmartFolderForCategory(currentCategory);
-                  const isSelected = selectedFiles.has(index);
-                  const stateDisplay = getFileStateDisplay(
-                    file.path,
-                    !!file.analysis,
-                  );
-                  const destination = smartFolder
-                    ? smartFolder.path ||
-                      `${defaultLocation}/${smartFolder.name}`
-                    : `${defaultLocation}/${currentCategory || 'Uncategorized'}`;
-                  return (
-                    <ReadyFileItem
-                      key={file.path}
-                      file={fileWithEdits}
-                      index={index}
-                      isSelected={isSelected}
-                      onToggleSelected={toggleFileSelection}
-                      stateDisplay={stateDisplay}
-                      smartFolders={smartFolders}
-                      editing={editingFiles[index]}
-                      onEdit={handleEditFile}
-                      destination={destination}
-                      category={currentCategory}
-                    />
-                  );
-                })}
-              </div>
+              /* FIX: Use virtualized grid for large file lists to prevent UI lag */
+              <VirtualizedFileGrid
+                files={unprocessedFiles}
+                selectedFiles={selectedFiles}
+                toggleFileSelection={toggleFileSelection}
+                getFileWithEdits={getFileWithEdits}
+                editingFiles={editingFiles}
+                findSmartFolderForCategory={findSmartFolderForCategory}
+                getFileStateDisplay={getFileStateDisplay}
+                handleEditFile={handleEditFile}
+                smartFolders={smartFolders}
+                defaultLocation={defaultLocation}
+              />
             )}
           </Collapsible>
 
@@ -1096,9 +1071,10 @@ function OrganizePhase() {
                     onClick={handleOrganizeFiles}
                     variant="success"
                     className="text-lg px-8 py-4"
-                    disabled={readyFilesCount === 0}
+                    disabled={readyFilesCount === 0 || isOrganizing}
+                    isLoading={isOrganizing}
                   >
-                    ✨ Organize Files Now
+                    {isOrganizing ? 'Organizing...' : '✨ Organize Files Now'}
                   </Button>
                 )}
               </div>

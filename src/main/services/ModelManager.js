@@ -564,7 +564,19 @@ class ModelManager {
         selectedModel: this.selectedModel,
         lastUpdated: new Date().toISOString(),
       };
-      await fs.writeFile(this.configPath, JSON.stringify(config, null, 2));
+      // FIX: Use atomic write (temp + rename) to prevent corruption on crash
+      const tempPath = this.configPath + '.tmp.' + Date.now();
+      try {
+        await fs.writeFile(tempPath, JSON.stringify(config, null, 2));
+        await fs.rename(tempPath, this.configPath);
+      } catch (writeError) {
+        try {
+          await fs.unlink(tempPath);
+        } catch {
+          // Ignore cleanup errors
+        }
+        throw writeError;
+      }
     } catch (error) {
       logger.error('[ModelManager] Error saving config', {
         error: error.message,

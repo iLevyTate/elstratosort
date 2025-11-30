@@ -2,6 +2,13 @@ const { withErrorLogging, withValidation } = require('./withErrorLogging');
 const { app, dialog } = require('electron');
 const { getConfigurableLimits } = require('../../shared/settingsValidation');
 const fs = require('fs').promises;
+
+// Import centralized security configuration
+const {
+  SETTINGS_VALIDATION,
+  PROTOTYPE_POLLUTION_KEYS,
+} = require('../../shared/securityConfig');
+
 let z;
 try {
   z = require('zod');
@@ -22,31 +29,15 @@ function validateImportedSettings(settings, logger) {
     throw new Error('Invalid settings: must be an object');
   }
 
-  // Whitelist of allowed settings keys
-  const ALLOWED_SETTINGS_KEYS = new Set([
-    'ollamaHost',
-    'textModel',
-    'visionModel',
-    'embeddingModel',
-    'launchOnStartup',
-    'autoOrganize',
-    'backgroundMode',
-    'theme',
-    'language',
-    'loggingLevel',
-    'cacheSize',
-    'maxBatchSize',
-    'autoUpdateCheck',
-    'telemetryEnabled',
-  ]);
+  // Use centralized settings validation config
+  const ALLOWED_SETTINGS_KEYS = SETTINGS_VALIDATION.allowedKeys;
 
-  // Regex patterns for validation
-  const URL_REGEX = /^https?:\/\/[\w-]+(\.[\w-]+)*(:\d+)?$/;
-  const MODEL_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9\-_.@:]*[a-zA-Z0-9]$/;
+  // Regex patterns from centralized config
+  const URL_REGEX = SETTINGS_VALIDATION.patterns.url;
+  const MODEL_REGEX = SETTINGS_VALIDATION.patterns.modelName;
 
-  // Check for prototype pollution attempts
-  const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
-  for (const key of dangerousKeys) {
+  // Check for prototype pollution attempts using centralized config
+  for (const key of PROTOTYPE_POLLUTION_KEYS) {
     if (key in settings) {
       throw new Error(
         `Security: Prototype pollution attempt detected (${key})`,
@@ -113,9 +104,9 @@ function validateImportedSettings(settings, logger) {
       case 'theme':
         if (
           typeof value !== 'string' ||
-          !['light', 'dark', 'auto'].includes(value)
+          !['light', 'dark', 'auto', 'system'].includes(value)
         ) {
-          throw new Error(`Invalid ${key}: must be 'light', 'dark', or 'auto'`);
+          throw new Error(`Invalid ${key}: must be 'light', 'dark', 'auto', or 'system'`);
         }
         break;
 
@@ -188,7 +179,7 @@ function registerSettingsIpc({
 
   // Fixed: Add endpoint to get configurable limits
   ipcMain.handle(
-    'get-configurable-limits',
+    IPC_CHANNELS.SETTINGS.GET_CONFIGURABLE_LIMITS,
     withErrorLogging(logger, async () => {
       try {
         const settings = await settingsService.load();
@@ -382,7 +373,7 @@ function registerSettingsIpc({
 
   // Fixed: Add config export handler
   ipcMain.handle(
-    'export-settings',
+    IPC_CHANNELS.SETTINGS.EXPORT,
     withErrorLogging(logger, async (event, exportPath) => {
       void event;
       try {
@@ -416,11 +407,24 @@ function registerSettingsIpc({
         }
 
         // Write export file
-        await fs.writeFile(
-          filePath,
-          JSON.stringify(exportData, null, 2),
-          'utf8',
-        );
+        // FIX: Use atomic write (temp + rename) to prevent corruption on crash
+        const tempPath = filePath + '.tmp.' + Date.now();
+        try {
+          await fs.writeFile(
+            tempPath,
+            JSON.stringify(exportData, null, 2),
+            'utf8',
+          );
+          await fs.rename(tempPath, filePath);
+        } catch (writeError) {
+          // Clean up temp file on failure
+          try {
+            await fs.unlink(tempPath);
+          } catch {
+            // Ignore cleanup errors
+          }
+          throw writeError;
+        }
 
         logger.info('[SETTINGS] Exported settings to:', filePath);
 
@@ -440,7 +444,7 @@ function registerSettingsIpc({
 
   // Fixed: Add config import handler
   ipcMain.handle(
-    'import-settings',
+    IPC_CHANNELS.SETTINGS.IMPORT,
     withErrorLogging(logger, async (event, importPath) => {
       void event;
       try {
@@ -547,7 +551,7 @@ function registerSettingsIpc({
 
   // Fixed: Add backup management handlers
   ipcMain.handle(
-    'settings-create-backup',
+    IPC_CHANNELS.SETTINGS.CREATE_BACKUP,
     withErrorLogging(logger, async () => {
       try {
         const result = await settingsService.createBackup();
@@ -564,7 +568,7 @@ function registerSettingsIpc({
   );
 
   ipcMain.handle(
-    'settings-list-backups',
+    IPC_CHANNELS.SETTINGS.LIST_BACKUPS,
     withErrorLogging(logger, async () => {
       try {
         const backups = await settingsService.listBackups();
@@ -584,7 +588,7 @@ function registerSettingsIpc({
   );
 
   ipcMain.handle(
-    'settings-restore-backup',
+    IPC_CHANNELS.SETTINGS.RESTORE_BACKUP,
     withErrorLogging(logger, async (event, backupPath) => {
       void event;
       try {
@@ -637,7 +641,7 @@ function registerSettingsIpc({
   );
 
   ipcMain.handle(
-    'settings-delete-backup',
+    IPC_CHANNELS.SETTINGS.DELETE_BACKUP,
     withErrorLogging(logger, async (event, backupPath) => {
       void event;
       try {

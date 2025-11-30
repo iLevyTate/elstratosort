@@ -1,12 +1,20 @@
 /**
  * Edge Case Utilities - Centralized Defensive Programming Patterns
- * Provides reusable utilities to handle common edge cases across the application
+ * Provides reusable utilities to handle common edge cases across the application.
+ *
+ * Async utilities (withTimeout, retry, debounce) are imported from the
+ * consolidated promiseUtils module.
+ *
+ * @module shared/edgeCaseUtils
  */
 
-// Import standardized withTimeout from promiseUtils
+// Import consolidated async utilities from promiseUtils
 const {
-  withTimeout: promiseWithTimeout,
-} = require('../main/utils/promiseUtils');
+  withTimeout: consolidatedWithTimeout,
+  withRetry: consolidatedWithRetry,
+  safeAwait: consolidatedSafeAwait,
+  debounce: consolidatedDebounce,
+} = require('./promiseUtils');
 
 /**
  * CATEGORY 1: EMPTY ARRAY/STRING HANDLING
@@ -37,17 +45,6 @@ function safeArray(value, defaultValue = []) {
 }
 
 /**
- * Safely get non-empty array from unknown input
- * @param {*} value - Input that might or might not be a non-empty array
- * @param {Array} defaultValue - Default value if input is invalid or empty
- * @returns {Array} Valid non-empty array
- */
-function safeNonEmptyArray(value, defaultValue = []) {
-  const arr = safeArray(value, defaultValue);
-  return arr.length > 0 ? arr : defaultValue;
-}
-
-/**
  * Safely get string from unknown input
  * @param {*} value - Input that might or might not be a string
  * @param {string} defaultValue - Default value if input is invalid
@@ -70,18 +67,6 @@ function safeString(value, defaultValue = '') {
 }
 
 /**
- * Safely get non-empty string from unknown input
- * @param {*} value - Input that might or might not be a non-empty string
- * @param {string} defaultValue - Default value if input is invalid or empty
- * @returns {string} Valid non-empty string
- */
-function safeNonEmptyString(value, defaultValue = '') {
-  const str = safeString(value, defaultValue);
-  const trimmed = str.trim();
-  return trimmed.length > 0 ? trimmed : defaultValue;
-}
-
-/**
  * Safely get number from unknown input
  * @param {*} value - Input that might or might not be a number
  * @param {number} defaultValue - Default value if input is invalid
@@ -96,17 +81,6 @@ function safeNumber(value, defaultValue = 0) {
   }
   const num = Number(value);
   return !isNaN(num) && isFinite(num) ? num : defaultValue;
-}
-
-/**
- * Safely get positive number from unknown input
- * @param {*} value - Input that might or might not be a positive number
- * @param {number} defaultValue - Default value if input is invalid or not positive
- * @returns {number} Valid positive number
- */
-function safePositiveNumber(value, defaultValue = 0) {
-  const num = safeNumber(value, defaultValue);
-  return num > 0 ? num : defaultValue;
 }
 
 /**
@@ -329,25 +303,25 @@ function safeHasProperty(obj, prop) {
  */
 
 /**
- * Wraps a promise with a timeout (delegates to promiseUtils for consistency)
+ * Wraps a promise with a timeout.
+ * Re-exported from promiseUtils for backward compatibility.
+ *
  * @param {Promise} promise - Promise to wrap
  * @param {number} timeoutMs - Timeout in milliseconds
  * @param {string} timeoutMessage - Timeout error message
  * @returns {Promise} Promise with timeout
+ * @see module:shared/promiseUtils.withTimeout
  */
-function withTimeout(
-  promise,
-  timeoutMs,
-  timeoutMessage = 'Operation timed out',
-) {
-  return promiseWithTimeout(promise, timeoutMs, timeoutMessage);
-}
+const withTimeout = consolidatedWithTimeout;
 
 /**
- * Retry async operation with exponential backoff
+ * Retry async operation with exponential backoff.
+ * Wrapper around consolidatedWithRetry that immediately invokes the result.
+ *
  * @param {Function} operation - Async operation to retry
  * @param {Object} options - Retry options
  * @returns {Promise} Result of successful operation
+ * @see module:shared/promiseUtils.withRetry
  */
 async function retry(operation, options = {}) {
   const {
@@ -358,50 +332,28 @@ async function retry(operation, options = {}) {
     shouldRetry = () => true,
   } = options;
 
-  let lastError = null;
+  // Delegate to consolidated implementation with mapped parameter names
+  const wrappedFn = consolidatedWithRetry(operation, {
+    maxRetries,
+    initialDelay,
+    maxDelay,
+    backoff: backoffFactor,
+    shouldRetry,
+  });
 
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error;
-
-      if (attempt === maxRetries - 1) {
-        // Final attempt failed
-        break;
-      }
-
-      if (!shouldRetry(error, attempt)) {
-        // Error is not retriable
-        break;
-      }
-
-      // Calculate delay with exponential backoff
-      const delay = Math.min(
-        initialDelay * Math.pow(backoffFactor, attempt),
-        maxDelay,
-      );
-
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
-
-  throw lastError || new Error('Retry failed');
+  return wrappedFn();
 }
 
 /**
- * Safely await promise with fallback value
+ * Safely await promise with fallback value.
+ * Re-exported from promiseUtils for backward compatibility.
+ *
  * @param {Promise} promise - Promise to await
  * @param {*} defaultValue - Default value if promise rejects
  * @returns {Promise} Result or default
+ * @see module:shared/promiseUtils.safeAwait
  */
-async function safeAwait(promise, defaultValue = null) {
-  try {
-    return await promise;
-  } catch {
-    return defaultValue;
-  }
-}
+const safeAwait = consolidatedSafeAwait;
 
 /**
  * CATEGORY 6: TYPE VALIDATION
@@ -521,56 +473,6 @@ function validateType(value, constraints) {
  */
 
 /**
- * Create a bounded cache with LRU eviction
- * @param {number} maxSize - Maximum cache size
- * @returns {Object} Cache object with get/set/has/clear methods
- */
-function createBoundedCache(maxSize = 100) {
-  const cache = new Map();
-
-  return {
-    get(key) {
-      if (!cache.has(key)) {
-        return undefined;
-      }
-
-      // LRU: Move to end by re-inserting
-      const value = cache.get(key);
-      cache.delete(key);
-      cache.set(key, value);
-      return value;
-    },
-
-    set(key, value) {
-      // Remove existing key to update position
-      if (cache.has(key)) {
-        cache.delete(key);
-      }
-
-      // Evict oldest if at capacity
-      if (cache.size >= maxSize) {
-        const oldestKey = cache.keys().next().value;
-        cache.delete(oldestKey);
-      }
-
-      cache.set(key, value);
-    },
-
-    has(key) {
-      return cache.has(key);
-    },
-
-    clear() {
-      cache.clear();
-    },
-
-    get size() {
-      return cache.size;
-    },
-  };
-}
-
-/**
  * Create a rate limiter
  * @param {number} maxCalls - Maximum calls per window
  * @param {number} windowMs - Time window in milliseconds
@@ -598,34 +500,21 @@ function createRateLimiter(maxCalls, windowMs) {
 }
 
 /**
- * Create a debounced function
+ * Create a debounced function.
+ * Re-exported from promiseUtils for backward compatibility.
+ *
  * @param {Function} func - Function to debounce
  * @param {number} waitMs - Wait time in milliseconds
- * @returns {Function} Debounced function
+ * @returns {Function} Debounced function with cancel() method
+ * @see module:shared/promiseUtils.debounce
  */
-function debounce(func, waitMs) {
-  let timeoutId = null;
-
-  return function debounced(...args) {
-    if (timeoutId !== null) {
-      clearTimeout(timeoutId);
-    }
-
-    timeoutId = setTimeout(() => {
-      timeoutId = null;
-      func.apply(this, args);
-    }, waitMs);
-  };
-}
+const debounce = consolidatedDebounce;
 
 module.exports = {
   // Empty array/string handling
   safeArray,
-  safeNonEmptyArray,
   safeString,
-  safeNonEmptyString,
   safeNumber,
-  safePositiveNumber,
 
   // Division by zero / empty collections
   safeAverage,
@@ -654,7 +543,6 @@ module.exports = {
   validateType,
 
   // Resource limiting
-  createBoundedCache,
   createRateLimiter,
   debounce,
 };

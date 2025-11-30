@@ -50,6 +50,14 @@ const CACHE_CONFIG = {
   DEFAULT_CONFIDENCE: 85, // Default confidence for successful analysis
 };
 
+// Folder matching configuration constants
+const FOLDER_MATCHING_CONFIG = {
+  // Minimum score threshold for automatic category refinement based on folder match
+  // Files with folder match scores above this threshold will have their category
+  // automatically refined to match the top-scoring folder
+  MIN_SCORE_THRESHOLD: 0.55,
+};
+
 // In-memory cache of per-file analysis results (path|size|mtimeMs -> result)
 const fileAnalysisCache = new Map();
 function setFileCache(signature, value) {
@@ -119,12 +127,11 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       logger.warn(
         `Ollama unavailable (${connectionCheck.error}). Using filename-based analysis for ${fileName}.`,
       );
+      // FIX: Corrected arguments - was passing stray numeric literals (96, 97)
       const intelligentCategory = getIntelligentCategory(
         fileName,
         fileExtension,
-        96,
         smartFolders,
-        97,
       );
       const intelligentKeywords = getIntelligentKeywords(
         fileName,
@@ -165,19 +172,26 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
     };
   }
 
+  // FIX: Flattened nested try/catch - separate cache logic from main extraction
+  // Step 1: Attempt to compute file signature and check cache (non-fatal if fails)
+  let fileSignature = null;
   try {
-    // Compute file signature and check cache
-    try {
-      const stats = await fs.stat(filePath);
-      const signature = `${filePath}|${stats.size}|${stats.mtimeMs}`;
-      if (fileAnalysisCache.has(signature)) {
-        return fileAnalysisCache.get(signature);
-      }
-      logger.debug('Cache miss, analyzing', { path: filePath });
-    } catch {
-      // Non-fatal if stats fail, proceed to analysis
+    const stats = await fs.stat(filePath);
+    fileSignature = `${filePath}|${stats.size}|${stats.mtimeMs}`;
+    if (fileAnalysisCache.has(fileSignature)) {
+      return fileAnalysisCache.get(fileSignature);
     }
+    logger.debug('Cache miss, analyzing', { path: filePath });
+  } catch (statError) {
+    // Non-fatal: proceed without cache if stats fail
+    logger.debug('Could not stat file for caching, proceeding with analysis', {
+      path: filePath,
+      error: statError.message,
+    });
+  }
 
+  // Step 2: Main content extraction and analysis (errors handled separately)
+  try {
     let extractedText = null;
 
     if (fileExtension === '.pdf') {
@@ -524,7 +538,8 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
             });
 
             const top = candidates[0];
-            if (top && top.score >= 0.55) {
+            // Use configurable threshold instead of hardcoded value
+            if (top && top.score >= FOLDER_MATCHING_CONFIG.MIN_SCORE_THRESHOLD) {
               logger.info(
                 '[DocumentAnalysis] Refining category based on folder match',
                 {
@@ -590,12 +605,9 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
           },
           { category: 'document', keywords: [], confidence: 0 },
         );
-        try {
-          const stats = await fs.stat(filePath);
-          const signature = `${filePath}|${stats.size}|${stats.mtimeMs}`;
-          setFileCache(signature, normalized);
-        } catch {
-          // Non-fatal if stats fail, result is still valid
+        // Use pre-computed signature if available, otherwise skip caching
+        if (fileSignature) {
+          setFileCache(fileSignature, normalized);
         }
         return normalized;
       }
@@ -636,12 +648,9 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       confidence: 50,
       extractionMethod: 'failed',
     };
-    try {
-      const stats = await fs.stat(filePath);
-      const signature = `${filePath}|${stats.size}|${stats.mtimeMs}`;
-      setFileCache(signature, result);
-    } catch {
-      // Non-fatal if stats fail
+    // Use pre-computed signature if available, otherwise skip caching
+    if (fileSignature) {
+      setFileCache(fileSignature, result);
     }
     return result;
   } catch (error) {

@@ -28,15 +28,27 @@ describe('AnalysisHistory IPC', () => {
       getServiceIntegration: () => ({ analysisHistory: service }),
     });
 
+    // IPC handlers expect (event, ...args) - pass null for event
+    // All handlers need their expected arguments since service is appended by wrapper
+    const mockEvent = null;
+
     const hGet = ipcMain._handlers.get(IPC_CHANNELS.ANALYSIS_HISTORY.GET);
-    expect(Array.isArray(await hGet())).toBe(true);
+    // GET expects (event, options) - options defaults to {} if not provided
+    expect(Array.isArray(await hGet(mockEvent, {}))).toBe(true);
+
     const hSearch = ipcMain._handlers.get(IPC_CHANNELS.ANALYSIS_HISTORY.SEARCH);
-    expect(Array.isArray(await hSearch('term', {}))).toBe(true);
+    // SEARCH expects (event, query, options)
+    const searchResult = await hSearch(mockEvent, 'term', {});
+    expect(Array.isArray(searchResult)).toBe(true);
+
     const hStats = ipcMain._handlers.get(
       IPC_CHANNELS.ANALYSIS_HISTORY.GET_STATISTICS,
     );
-    expect((await hStats()).total).toBe(0);
+    // GET_STATISTICS expects just (event)
+    expect((await hStats(mockEvent)).total).toBe(0);
+
     const hExport = ipcMain._handlers.get(IPC_CHANNELS.ANALYSIS_HISTORY.EXPORT);
-    expect((await hExport('json')).success).toBe(true);
+    // EXPORT expects (event, format)
+    expect((await hExport(mockEvent, 'json')).success).toBe(true);
   });
 });

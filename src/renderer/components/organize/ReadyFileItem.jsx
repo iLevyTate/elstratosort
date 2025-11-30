@@ -31,25 +31,32 @@ function ReadyFileItem({
     [onEdit, index],
   );
 
+  // Extract file path for tooltip
+  const filePath = file.path || '';
+
   return (
     <div
-      className={`border rounded-lg p-4 transition-all duration-200 ${isSelected ? 'border-stratosort-blue bg-stratosort-blue/5' : 'border-system-gray-200'}`}
+      className={`border rounded-lg p-4 transition-all duration-200 overflow-hidden ${isSelected ? 'border-stratosort-blue bg-stratosort-blue/5' : 'border-system-gray-200'}`}
     >
       <div className="flex items-start gap-4">
         <input
           type="checkbox"
           checked={isSelected}
           onChange={handleToggle}
-          className="form-checkbox mt-1"
+          className="form-checkbox mt-1 flex-shrink-0"
+          aria-label={`Select ${file.name}`}
         />
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 overflow-hidden">
           <div className="flex items-center gap-3 mb-3">
-            <div className="text-2xl">📄</div>
-            <div className="flex-1 min-w-0">
-              <div className="font-medium text-system-gray-900 break-words">
+            <div className="text-2xl flex-shrink-0">📄</div>
+            <div className="flex-1 min-w-0 overflow-hidden">
+              <div
+                className="font-medium text-system-gray-900 truncate"
+                title={`${file.name}${filePath ? ` (${filePath})` : ''}`}
+              >
                 {file.name}
               </div>
-              <div className="text-sm text-system-gray-500">
+              <div className="text-sm text-system-gray-500 truncate">
                 {file.size
                   ? `${Math.round(file.size / 1024)} KB`
                   : 'Unknown size'}{' '}
@@ -69,6 +76,7 @@ function ReadyFileItem({
                     value={suggestedName}
                     onChange={handleEditName}
                     className="text-sm w-full"
+                    title={suggestedName}
                   />
                 </div>
                 <div>
@@ -89,14 +97,11 @@ function ReadyFileItem({
                 </div>
               </div>
               {destination && (
-                <div className="text-sm text-system-gray-600 mt-2">
+                <div className="text-sm text-system-gray-600 mt-2 overflow-hidden">
                   <strong>Destination:</strong>{' '}
                   <span
-                    className="text-stratosort-blue break-words block mt-1"
-                    style={{
-                      overflowWrap: 'break-word',
-                      wordBreak: 'break-word',
-                    }}
+                    className="text-stratosort-blue block mt-1 truncate"
+                    title={destination}
                   >
                     {destination}
                   </span>
@@ -110,7 +115,7 @@ function ReadyFileItem({
           )}
         </div>
         <div
-          className={`text-sm font-medium flex items-center gap-2 ${stateDisplay.color}`}
+          className={`text-sm font-medium flex items-center gap-2 flex-shrink-0 ${stateDisplay.color}`}
         >
           <span className={stateDisplay.spinning ? 'animate-spin' : ''}>
             {stateDisplay.icon}
@@ -125,6 +130,7 @@ function ReadyFileItem({
 ReadyFileItem.propTypes = {
   file: PropTypes.shape({
     name: PropTypes.string.isRequired,
+    path: PropTypes.string,
     size: PropTypes.number,
     source: PropTypes.string,
     analysis: PropTypes.object,

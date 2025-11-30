@@ -3,18 +3,18 @@
 
 const path = require('path');
 const fs = require('fs');
-const { asyncSpawn } = require('./src/main/utils/asyncSpawnUtils');
+const { asyncSpawn } = require('../src/main/utils/asyncSpawnUtils');
 const chalk = require('chalk');
 
 try {
   // eslint-disable-next-line global-require
-  require('dotenv').config({ path: path.join(__dirname, '.env') });
+  require('dotenv').config({ path: path.join(__dirname, '../.env') });
 } catch (_) {
   // Silently ignore dotenv errors (file may not exist)
 }
 
 function checkFileExists(relativePath) {
-  const fullPath = path.join(__dirname, relativePath);
+  const fullPath = path.join(__dirname, '../', relativePath);
   return fs.existsSync(fullPath);
 }
 

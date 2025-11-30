@@ -8,7 +8,7 @@ const {
   hasPythonModuleAsync,
   findPythonLauncherAsync,
   checkChromaExecutableAsync,
-} = require('./src/main/utils/asyncSpawnUtils');
+} = require('../../src/main/utils/asyncSpawnUtils');
 
 async function runTests() {
   console.log('Testing Async Spawn Utilities');

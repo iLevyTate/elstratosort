@@ -6,6 +6,10 @@ const {
   findPythonLauncherAsync,
   checkChromaExecutableAsync,
 } = require('./asyncSpawnUtils');
+const {
+  getChromaDbBinName,
+  shouldUseShell,
+} = require('../../shared/platformUtils');
 
 /**
  * Utility functions for ChromaDB spawning
@@ -14,7 +18,8 @@ const {
 
 async function resolveChromaCliExecutable() {
   try {
-    const binName = process.platform === 'win32' ? 'chromadb.cmd' : 'chromadb';
+    // Use cross-platform utility for chromadb binary name
+    const binName = getChromaDbBinName();
     const nodeModulesPath = path.resolve(
       __dirname,
       '../../../node_modules/.bin',
@@ -89,7 +94,8 @@ async function buildChromaSpawnPlan(config) {
 
   // Check for system-installed chroma executable (ChromaDB 1.0.x+)
   // This is the preferred method for newer ChromaDB versions
-  const chromaExecutable = process.platform === 'win32' ? 'chroma' : 'chroma';
+  // System-installed chroma binary is just 'chroma' on all platforms
+  const chromaExecutable = 'chroma';
   const hasChroma = await checkChromaExecutableAsync();
 
   if (hasChroma) {
@@ -108,7 +114,8 @@ async function buildChromaSpawnPlan(config) {
       source: 'system-chroma',
       options: {
         windowsHide: true,
-        shell: process.platform === 'win32', // Consistent shell usage for spawn
+        // Use cross-platform shell detection
+        shell: shouldUseShell(),
       },
     };
   }

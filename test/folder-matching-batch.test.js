@@ -10,6 +10,18 @@ jest.mock('../src/main/ollamaUtils', () => ({
   getOllamaEmbeddingModel: jest.fn().mockReturnValue('mxbai-embed-large'),
 }));
 
+// Mock ParallelEmbeddingService
+const mockBatchEmbedFolders = jest.fn();
+jest.mock('../src/main/services/ParallelEmbeddingService', () => ({
+  getInstance: jest.fn(() => ({
+    batchEmbedFolders: mockBatchEmbedFolders,
+    embedText: jest.fn(),
+    getStats: jest.fn().mockReturnValue({}),
+    setConcurrencyLimit: jest.fn(),
+    concurrencyLimit: 5,
+  })),
+}));
+
 // Mock logger
 jest.mock('../src/shared/logger', () => ({
   logger: {
@@ -47,6 +59,9 @@ describe('FolderMatchingService Batch Operations', () => {
     const { getOllama } = require('../src/main/ollamaUtils');
     getOllama.mockReturnValue(mockOllama);
 
+    // Reset the mockBatchEmbedFolders for each test
+    mockBatchEmbedFolders.mockReset();
+
     service = new FolderMatchingService(mockChromaDBService);
     service.initialize();
   });
@@ -57,6 +72,16 @@ describe('FolderMatchingService Batch Operations', () => {
   });
 
   test('batchUpsertFolders processes multiple folders', async () => {
+    // Setup mock for ParallelEmbeddingService to return successful embeddings
+    mockBatchEmbedFolders.mockResolvedValue({
+      results: [
+        { id: 'folder:1', vector: new Array(1024).fill(0.1), model: 'mxbai-embed-large', success: true },
+        { id: 'folder:2', vector: new Array(1024).fill(0.2), model: 'mxbai-embed-large', success: true },
+      ],
+      errors: [],
+      stats: { total: 2, successful: 2, failed: 0 },
+    });
+
     const folders = [
       { name: 'F1', description: 'D1' },
       { name: 'F2', description: 'D2' },
@@ -64,7 +89,7 @@ describe('FolderMatchingService Batch Operations', () => {
 
     const result = await service.batchUpsertFolders(folders);
 
-    expect(mockOllama.embeddings).toHaveBeenCalledTimes(2);
+    expect(mockBatchEmbedFolders).toHaveBeenCalledTimes(1);
     expect(mockChromaDBService.batchUpsertFolders).toHaveBeenCalledTimes(1);
 
     // Verify payload passed to ChromaDB
@@ -82,10 +107,15 @@ describe('FolderMatchingService Batch Operations', () => {
   });
 
   test('batchUpsertFolders handles errors gracefully with fallback', async () => {
-    // Mock embedding failure for one folder
-    mockOllama.embeddings
-      .mockResolvedValueOnce({ embedding: [] }) // Success for first
-      .mockRejectedValueOnce(new Error('Embedding failed')); // Fail for second (caught by embedText)
+    // Mock ParallelEmbeddingService to return one success and one fallback
+    mockBatchEmbedFolders.mockResolvedValue({
+      results: [
+        { id: 'folder:1', vector: new Array(1024).fill(0.1), model: 'mxbai-embed-large', success: true },
+        { id: 'folder:2', vector: new Array(1024).fill(0), model: 'fallback', success: true },
+      ],
+      errors: [],
+      stats: { total: 2, successful: 2, failed: 0 },
+    });
 
     const folders = [
       { name: 'Success', description: 'D1' },
@@ -94,7 +124,7 @@ describe('FolderMatchingService Batch Operations', () => {
 
     const result = await service.batchUpsertFolders(folders);
 
-    // embedText catches errors and returns fallback, so batchUpsertFolders still processes it
+    // ParallelEmbeddingService handles errors internally and uses fallback
     expect(mockChromaDBService.batchUpsertFolders).toHaveBeenCalledTimes(1);
     const payload = mockChromaDBService.batchUpsertFolders.mock.calls[0][0];
     expect(payload).toHaveLength(2);
@@ -104,5 +134,35 @@ describe('FolderMatchingService Batch Operations', () => {
 
     // Skipped should be empty as fallback was used
     expect(result.skipped).toHaveLength(0);
+  });
+
+  test('batchUpsertFolders tracks errors when embedding fails completely', async () => {
+    // Mock ParallelEmbeddingService to return one success and one error
+    mockBatchEmbedFolders.mockResolvedValue({
+      results: [
+        { id: 'folder:1', vector: new Array(1024).fill(0.1), model: 'mxbai-embed-large', success: true },
+      ],
+      errors: [
+        { id: 'folder:2', error: 'Embedding failed' },
+      ],
+      stats: { total: 2, successful: 1, failed: 1 },
+    });
+
+    const folders = [
+      { name: 'Success', description: 'D1' },
+      { name: 'Fail', description: 'D2' },
+    ];
+
+    const result = await service.batchUpsertFolders(folders);
+
+    // Only one folder should be upserted
+    expect(mockChromaDBService.batchUpsertFolders).toHaveBeenCalledTimes(1);
+    const payload = mockChromaDBService.batchUpsertFolders.mock.calls[0][0];
+    expect(payload).toHaveLength(1);
+    expect(payload[0].name).toBe('Success');
+
+    // One should be in skipped
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0].error).toBe('Embedding failed');
   });
 });

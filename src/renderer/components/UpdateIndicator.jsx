@@ -101,14 +101,22 @@ const UpdateIndicator = React.memo(function UpdateIndicator() {
           const updatePromise = window.electronAPI.system.applyUpdate();
           // Use constant for timeout (30 seconds)
           const UPDATE_TIMEOUT_MS = 30000; // Could be moved to shared constants
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(
+          // FIX: Store timeout ID so we can clear it to prevent memory leak
+          let timeoutId;
+          const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(
               () => reject(new Error('Update timeout')),
               UPDATE_TIMEOUT_MS,
-            ),
-          );
+            );
+          });
 
-          const res = await Promise.race([updatePromise, timeoutPromise]);
+          let res;
+          try {
+            res = await Promise.race([updatePromise, timeoutPromise]);
+          } finally {
+            // FIX: Always clear timeout to prevent memory leak
+            if (timeoutId) clearTimeout(timeoutId);
+          }
 
           if (!res?.success) {
             setStatus('error');

@@ -7,7 +7,7 @@ import React, {
   Suspense,
   lazy,
 } from 'react';
-import { PHASES, RENDERER_LIMITS } from '../../shared/constants';
+import { PHASES, RENDERER_LIMITS, FILE_STATES } from '../../shared/constants';
 import { logger } from '../../shared/logger';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import {
@@ -23,9 +23,9 @@ import {
   setAnalysisResults as setAnalysisResultsAction,
   resetAnalysisState as resetAnalysisStateAction,
 } from '../store/slices/analysisSlice';
-import { setPhase } from '../store/slices/uiSlice';
+import { setPhase, setAnalyzing } from '../store/slices/uiSlice';
 import { useNotification } from '../contexts/NotificationContext';
-import { useConfirmDialog, useDragAndDrop } from '../hooks';
+import { useConfirmDialog, useDragAndDrop, useSettingsSubscription } from '../hooks';
 import { Button } from '../components/ui';
 import { ModalLoadingOverlay } from '../components/LoadingSkeleton';
 const AnalysisHistoryModal = lazy(
@@ -70,6 +70,25 @@ function DiscoverPhase() {
   const [isScanning, setIsScanning] = useState(false);
   const [showAnalysisHistory, setShowAnalysisHistory] = useState(false);
   const [analysisStats, setAnalysisStats] = useState(null);
+  const [totalAnalysisFailure, setTotalAnalysisFailure] = useState(false);
+
+  // FIX: Subscribe to external settings changes (e.g., Ollama host URL changes)
+  // This ensures the phase uses updated settings for analysis without requiring a refresh
+  useSettingsSubscription(
+    useCallback((changedSettings) => {
+      logger.info('Settings changed externally:', Object.keys(changedSettings));
+      // If Ollama settings changed and analysis is not running, could notify user
+      if (changedSettings.ollamaHost && !isAnalyzing) {
+        addNotification(
+          'Ollama settings updated. New analyses will use the updated configuration.',
+          'info',
+          3000,
+          'settings-changed'
+        );
+      }
+    }, [isAnalyzing, addNotification]),
+    { enabled: true, watchKeys: ['ollamaHost', 'ollamaModels', 'analysisSettings'] }
+  );
 
   // Redux action wrappers to maintain compatibility with existing code structure
   const setSelectedFiles = useCallback(
@@ -99,9 +118,15 @@ function DiscoverPhase() {
 
   const setIsAnalyzing = useCallback(
     (val) => {
-      if (val)
+      if (val) {
         dispatch(startAnalysisAction({ total: analysisProgress.total })); // Keep total?
-      else dispatch(stopAnalysisAction());
+        // Update global UI navigation state to disable navigation during analysis
+        dispatch(setAnalyzing(true));
+      } else {
+        dispatch(stopAnalysisAction());
+        // Clear global UI navigation state to re-enable navigation
+        dispatch(setAnalyzing(false));
+      }
     },
     [dispatch, analysisProgress],
   );
@@ -160,9 +185,12 @@ function DiscoverPhase() {
     currentAnalysisFile,
     fileStates,
     namingConvention: namingConventionState,
+    totalAnalysisFailure,
   };
 
-  const actions = {
+  // Memoize actions object to prevent recreation on every render
+  // All state setters and dispatch are stable, so empty deps is safe
+  const actions = useMemo(() => ({
     setPhaseData: (key, value) => {
       if (key === 'isAnalyzing') setIsAnalyzing(value);
       if (key === 'analysisProgress') setAnalysisProgress(value);
@@ -171,10 +199,17 @@ function DiscoverPhase() {
       if (key === 'analysisResults') setAnalysisResults(value);
       if (key === 'namingConvention')
         dispatch(setNamingConventionAction(value));
-      // fileStates ignored for now
+      if (key === 'totalAnalysisFailure') setTotalAnalysisFailure(value);
+      // FIX: Handle fileStates key - was previously ignored causing state bridge gap
+      if (key === 'fileStates') setFileStates(value);
+      // FIX: Handle failedFileCount for total analysis failure scenarios
+      if (key === 'failedFileCount') {
+        // Store in local state or log - this is informational only
+        logger.debug('Failed file count updated', { count: value });
+      }
     },
     advancePhase: (phase) => dispatch(setPhase(phase)),
-  };
+  }), [dispatch]);
   const hasResumedRef = useRef(false);
   const analysisLockRef = useRef(false); // Add analysis lock to prevent multiple simultaneous calls
   const [globalAnalysisActive, setGlobalAnalysisActive] = useState(false); // Global analysis state
@@ -548,11 +583,23 @@ function DiscoverPhase() {
           );
         }
 
-        const enhancedFiles = newFiles.map((file) => ({
-          ...file,
-          source: 'drag_drop',
-          droppedAt: new Date().toISOString(),
-        }));
+        // FIX: Ensure extension property is always set for proper file matching downstream
+        const enhancedFiles = newFiles.map((file) => {
+          // Compute extension from name or path if not already set
+          let extension = file.extension;
+          if (!extension) {
+            const fileName = file.name || (file.path ? file.path.split(/[\\/]/).pop() : '');
+            extension = fileName.includes('.')
+              ? '.' + fileName.split('.').pop().toLowerCase()
+              : '';
+          }
+          return {
+            ...file,
+            extension,
+            source: 'drag_drop',
+            droppedAt: new Date().toISOString(),
+          };
+        });
 
         // Update file states for new files only
         enhancedFiles.forEach((file) => updateFileState(file.path, 'pending'));
@@ -564,8 +611,9 @@ function DiscoverPhase() {
             index === self.findIndex((f) => f.path === file.path),
         );
 
+        // FIX: Removed duplicate dispatch - setSelectedFiles already dispatches to Redux
+        // actions.setPhaseData('selectedFiles', ...) internally calls setSelectedFiles, causing double dispatch
         setSelectedFiles(uniqueFiles);
-        actions.setPhaseData('selectedFiles', uniqueFiles);
 
         // Use batch notification for multiple files
         if (enhancedFiles.length > 1) {
@@ -592,7 +640,7 @@ function DiscoverPhase() {
         }
       }
     },
-    [selectedFiles, addNotification, actions, updateFileState, analyzeFilesRef],
+    [selectedFiles, addNotification, updateFileState, analyzeFilesRef],
   );
 
   const { isDragging, dragProps } = useDragAndDrop(handleFileDrop);
@@ -714,8 +762,8 @@ function DiscoverPhase() {
             index === self.findIndex((f) => f.path === file.path),
         );
 
+        // FIX: Removed duplicate dispatch - setSelectedFiles already dispatches to Redux
         setSelectedFiles(uniqueFiles);
-        actions.setPhaseData('selectedFiles', uniqueFiles);
 
         const failedFiles = fileObjects.filter((f) => !f.success);
         if (failedFiles.length > 0) {
@@ -767,7 +815,6 @@ function DiscoverPhase() {
   }, [
     selectedFiles,
     addNotification,
-    actions,
     updateFileState,
     getBatchFileStats,
   ]);
@@ -895,8 +942,8 @@ function DiscoverPhase() {
               index === self.findIndex((f) => f.path === file.path),
           );
 
+          // FIX: Removed duplicate dispatch - setSelectedFiles already dispatches to Redux
           setSelectedFiles(uniqueFiles);
-          actions.setPhaseData('selectedFiles', uniqueFiles);
 
           // Use batch notification for multiple files
           if (enhancedFiles.length > 1) {
@@ -952,7 +999,6 @@ function DiscoverPhase() {
   }, [
     selectedFiles,
     addNotification,
-    actions,
     updateFileState,
     getBatchFileStats,
   ]);
@@ -1295,6 +1341,9 @@ function DiscoverPhase() {
 
             // Validate progress before updating
             if (validateProgressState(progress)) {
+              // FIX #8: Update refs to prevent stale closure in heartbeat
+              analysisProgressRef.current = progress;
+
               // Update all progress states atomically
               setAnalysisProgress(progress);
               setCurrentAnalysisFile(fileName);
@@ -1382,7 +1431,7 @@ function DiscoverPhase() {
               const result = {
                 ...fileInfo,
                 analysis: enhancedAnalysis,
-                status: 'analyzed',
+                status: FILE_STATES.CATEGORIZED,
                 analyzedAt: new Date().toISOString(),
               };
               results.push(result);
@@ -1400,7 +1449,7 @@ function DiscoverPhase() {
                 ...fileInfo,
                 analysis: null,
                 error: analysis?.error || 'Analysis failed',
-                status: 'failed',
+                status: FILE_STATES.ERROR,
                 analyzedAt: new Date().toISOString(),
               };
               results.push(result);
@@ -1583,12 +1632,17 @@ function DiscoverPhase() {
             actions.advancePhase(PHASES.ORGANIZE);
           }, 2000);
         } else if (failureCount > 0) {
+          // FIX: When all analyses fail, show error but allow user to continue
+          // This prevents users from being stuck with no way to proceed
           addNotification(
-            `Analysis failed for all ${failureCount} files`,
+            `Analysis failed for all ${failureCount} files. You can retry or continue without AI analysis.`,
             'error',
-            5000,
+            8000,
             'analysis-complete',
           );
+          // Store flag indicating total failure so UI can show recovery options
+          actions.setPhaseData('totalAnalysisFailure', true);
+          actions.setPhaseData('failedFileCount', failureCount);
         }
       } catch (error) {
         addNotification(
@@ -1609,6 +1663,8 @@ function DiscoverPhase() {
           clearTimeout(analysisTimeoutRef.current);
           analysisTimeoutRef.current = null;
         }
+        // FIX #8: Update local refs to prevent stale state in heartbeat
+        isAnalyzingRef.current = false;
         setIsAnalyzing(false);
         setCurrentAnalysisFile('');
         setAnalysisProgress({ current: 0, total: 0 });
@@ -1682,8 +1738,9 @@ function DiscoverPhase() {
   }, [actions, addNotification]);
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden bg-system-gray-50/30">
-      <div className="container-responsive flex flex-col h-full gap-6 py-6 overflow-hidden">
+    <div className="h-full w-full flex flex-col overflow-auto bg-system-gray-50/30">
+      {/* FIX H2: Changed overflow-hidden to overflow-auto to allow scrolling */}
+      <div className="container-responsive flex flex-col min-h-full gap-6 py-6 pb-24">
         {/* Header Section */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 flex-shrink-0">
           <div className="space-y-1">
@@ -1703,7 +1760,7 @@ function DiscoverPhase() {
           </Button>
         </div>
 
-        <div className="flex-1 min-h-0 flex flex-col gap-6 overflow-hidden">
+        <div className="flex-1 flex flex-col gap-6">
           {/* Dashboard Grid - Top Section */}
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 flex-shrink-0 min-h-[350px]">
             {/* Input Source Card - Left Side */}
@@ -1852,6 +1909,54 @@ function DiscoverPhase() {
           )}
         </div>
 
+        {/* Analysis Failure Recovery Banner */}
+        {totalAnalysisFailure && (
+          <div className="flex-shrink-0 glass-panel p-4 border border-amber-200 bg-amber-50/80 backdrop-blur-md animate-fade-in">
+            <div className="flex items-start gap-3">
+              <span className="text-xl flex-shrink-0">⚠️</span>
+              <div className="flex-1">
+                <h4 className="text-sm font-semibold text-amber-800 mb-1">
+                  All File Analyses Failed
+                </h4>
+                <p className="text-xs text-amber-700 mb-3">
+                  AI analysis could not process your files. This may be due to network issues,
+                  unsupported file types, or API limits. You can still proceed to organize your
+                  files manually, or try adding different files.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => {
+                      setTotalAnalysisFailure(false);
+                      clearAnalysisQueue();
+                    }}
+                    className="px-3 py-1.5 text-xs font-medium bg-white text-amber-700 rounded-md hover:bg-amber-100 transition-colors border border-amber-300"
+                  >
+                    Clear and Try Again
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTotalAnalysisFailure(false);
+                      actions.advancePhase(PHASES.ORGANIZE);
+                    }}
+                    className="px-3 py-1.5 text-xs font-medium bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors"
+                  >
+                    Skip to Organize Phase →
+                  </button>
+                </div>
+              </div>
+              <button
+                onClick={() => setTotalAnalysisFailure(false)}
+                className="text-amber-600 hover:text-amber-800 p-1 rounded transition-colors"
+                aria-label="Dismiss warning"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Footer Navigation */}
         <div className="mt-auto pt-4 border-t border-system-gray-200/50 flex flex-col sm:flex-row items-center justify-between gap-4 flex-shrink-0">
           <Button
@@ -1872,26 +1977,30 @@ function DiscoverPhase() {
                 );
                 return;
               }
-              if (readyAnalysisCount === 0) {
+              if (readyAnalysisCount === 0 && !totalAnalysisFailure) {
                 addNotification(
                   analysisResults.length > 0
-                    ? 'All files failed analysis'
+                    ? 'All files failed analysis. Use the recovery options above or click "Continue Without Analysis".'
                     : 'Please analyze files first',
                   'warning',
                   4000,
                 );
                 return;
               }
+              // Clear the total failure flag when proceeding
+              if (totalAnalysisFailure) {
+                setTotalAnalysisFailure(false);
+              }
               actions.advancePhase(PHASES.ORGANIZE);
             }}
-            variant="primary"
-            className="w-full sm:w-auto shadow-lg shadow-blue-500/20"
+            variant={totalAnalysisFailure ? 'secondary' : 'primary'}
+            className={`w-full sm:w-auto ${totalAnalysisFailure ? 'border-amber-300 text-amber-700 hover:bg-amber-50' : 'shadow-lg shadow-blue-500/20'}`}
             disabled={
               isAnalyzing ||
-              (analysisResults.length === 0 && readySelectedFilesCount === 0)
+              (analysisResults.length === 0 && readySelectedFilesCount === 0 && !totalAnalysisFailure)
             }
           >
-            Continue to Organize →
+            {totalAnalysisFailure ? 'Continue Without Analysis →' : 'Continue to Organize →'}
           </Button>
         </div>
 

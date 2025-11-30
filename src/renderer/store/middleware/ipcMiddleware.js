@@ -5,6 +5,8 @@ import { logger } from '../../../shared/logger';
 // Track listeners for cleanup to prevent memory leaks
 let listenersInitialized = false;
 let cleanupFunctions = [];
+// FIX: Track beforeunload handler reference for proper cleanup
+let beforeUnloadHandler = null;
 
 const ipcMiddleware = (store) => {
   // Set up listeners once (with cleanup tracking)
@@ -28,7 +30,9 @@ const ipcMiddleware = (store) => {
     if (metricsCleanup) cleanupFunctions.push(metricsCleanup);
 
     // Clean up listeners on window unload to prevent memory leaks
-    window.addEventListener('beforeunload', cleanupIpcListeners);
+    // FIX: Store handler reference so it can be removed during cleanup
+    beforeUnloadHandler = cleanupIpcListeners;
+    window.addEventListener('beforeunload', beforeUnloadHandler);
 
     // Handle HMR cleanup if webpack hot module replacement is enabled
     if (module.hot) {
@@ -54,6 +58,12 @@ export const cleanupIpcListeners = () => {
   });
   cleanupFunctions = [];
   listenersInitialized = false;
+
+  // FIX: Remove the beforeunload listener to prevent accumulation during HMR
+  if (beforeUnloadHandler) {
+    window.removeEventListener('beforeunload', beforeUnloadHandler);
+    beforeUnloadHandler = null;
+  }
 };
 
 export default ipcMiddleware;

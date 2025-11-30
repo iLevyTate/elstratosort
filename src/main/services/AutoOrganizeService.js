@@ -4,20 +4,62 @@ const path = require('path');
 const fs = require('fs').promises;
 const crypto = require('crypto');
 const { app } = require('electron');
+const { BATCH, THRESHOLDS } = require('../../shared/performanceConstants');
 
 // Helper to generate secure random IDs
 const generateSecureId = (prefix) =>
   `${prefix}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
 
-// LOW PRIORITY FIX (LOW-8): Make batch size configurable via constant
-const DEFAULT_BATCH_SIZE = 10; // Default number of files to process per batch
+// Batch size from centralized configuration
+const DEFAULT_BATCH_SIZE = BATCH.AUTO_ORGANIZE_BATCH_SIZE;
 
 /**
  * AutoOrganizeService - Handles automatic file organization
- * Uses the suggestion system behind the scenes for better accuracy
- * Only requires user intervention for low-confidence matches
+ *
+ * This service orchestrates automatic file organization using AI-powered suggestions.
+ * It uses constructor-based dependency injection for all its dependencies.
+ *
+ * Dependencies:
+ * - suggestionService: OrganizationSuggestionService for getting folder suggestions
+ * - settingsService: Application settings service
+ * - folderMatchingService: Service for folder matching operations
+ * - undoRedoService: Service for recording undo/redo operations
+ *
+ * Key features:
+ * - Batch processing for improved performance
+ * - Confidence-based auto-approval or review routing
+ * - Fallback mechanisms for low-confidence matches
+ * - Undo/redo support for all operations
+ *
+ * @example
+ * // Using dependency injection (recommended)
+ * const autoOrganize = new AutoOrganizeService({
+ *   suggestionService: container.resolve(ServiceIds.ORGANIZATION_SUGGESTION),
+ *   settingsService: container.resolve(ServiceIds.SETTINGS),
+ *   folderMatchingService: container.resolve(ServiceIds.FOLDER_MATCHING),
+ *   undoRedoService: container.resolve(ServiceIds.UNDO_REDO),
+ * });
+ *
+ * // Using with ServiceContainer
+ * container.registerSingleton(ServiceIds.AUTO_ORGANIZE, (c) => {
+ *   return new AutoOrganizeService({
+ *     suggestionService: c.resolve(ServiceIds.ORGANIZATION_SUGGESTION),
+ *     settingsService: c.resolve(ServiceIds.SETTINGS),
+ *     folderMatchingService: c.resolve(ServiceIds.FOLDER_MATCHING),
+ *     undoRedoService: c.resolve(ServiceIds.UNDO_REDO),
+ *   });
+ * });
  */
 class AutoOrganizeService {
+  /**
+   * Create an AutoOrganizeService instance
+   *
+   * @param {Object} dependencies - Service dependencies
+   * @param {Object} dependencies.suggestionService - Organization suggestion service
+   * @param {Object} dependencies.settingsService - Settings service
+   * @param {Object} dependencies.folderMatchingService - Folder matching service
+   * @param {Object} dependencies.undoRedoService - Undo/redo service
+   */
   constructor({
     suggestionService,
     settingsService,
@@ -29,11 +71,11 @@ class AutoOrganizeService {
     this.folderMatcher = folderMatchingService;
     this.undoRedo = undoRedoService;
 
-    // Confidence thresholds for automatic organization
+    // Confidence thresholds for automatic organization (from centralized config)
     this.thresholds = {
-      autoApprove: 0.8, // Automatically approve >= 80% confidence
-      requireReview: 0.5, // Require review for 50-79% confidence
-      reject: 0.3, // Reject below 30% confidence
+      autoApprove: THRESHOLDS.CONFIDENCE_HIGH, // Automatically approve >= 80% confidence
+      requireReview: THRESHOLDS.MIN_SIMILARITY_SCORE, // Require review for 50-79% confidence
+      reject: THRESHOLDS.CONFIDENCE_LOW, // Reject below 30% confidence
     };
   }
 
@@ -1134,4 +1176,39 @@ class AutoOrganizeService {
   }
 }
 
+/**
+ * Create an AutoOrganizeService instance with default dependencies
+ *
+ * This factory function creates an AutoOrganizeService with the default
+ * singleton services. Use for simple cases where manual DI is not needed.
+ *
+ * @returns {AutoOrganizeService} A new service instance
+ */
+function createWithDefaults() {
+  const { getInstance: getChromaDB } = require('./ChromaDBService');
+  const FolderMatchingService = require('./FolderMatchingService');
+  const { getService: getSettingsService } = require('./SettingsService');
+  const OrganizationSuggestionService = require('./OrganizationSuggestionService');
+  const UndoRedoService = require('./UndoRedoService');
+
+  const chromaDbService = getChromaDB();
+  const settingsService = getSettingsService();
+  const folderMatchingService = new FolderMatchingService(chromaDbService);
+  const suggestionService = new OrganizationSuggestionService({
+    chromaDbService,
+    folderMatchingService,
+    settingsService,
+  });
+  const undoRedoService = new UndoRedoService();
+
+  return new AutoOrganizeService({
+    suggestionService,
+    settingsService,
+    folderMatchingService,
+    undoRedoService,
+  });
+}
+
 module.exports = AutoOrganizeService;
+module.exports.AutoOrganizeService = AutoOrganizeService;
+module.exports.createWithDefaults = createWithDefaults;

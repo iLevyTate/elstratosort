@@ -51,6 +51,11 @@ coverage/
 test-results/
 junit.xml
 
+# Playwright
+playwright-report/
+playwright/.cache/
+blob-report/
+
 # Temporary files
 *.tmp
 *.temp

@@ -5,7 +5,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 try {
   // eslint-disable-next-line global-require
-  require('dotenv').config({ path: path.join(__dirname, '.env') });
+  require('dotenv').config({ path: path.join(__dirname, '../.env') });
 } catch {
   // Silently ignore dotenv errors
 }

@@ -4,6 +4,7 @@
  */
 
 const { logger } = require('../../shared/logger');
+const { CACHE } = require('../../shared/performanceConstants');
 logger.setContext('CacheManager');
 
 /**
@@ -16,7 +17,7 @@ logger.setContext('CacheManager');
  * @returns {Object} Cache instance with get, set, has, delete, clear methods
  */
 function createLRUCache(options = {}) {
-  const { maxSize = 100, ttl = 3600000, onEvict } = options;
+  const { maxSize = CACHE.MAX_LRU_CACHE, ttl = CACHE.TTL_LONG, onEvict } = options;
   const cache = new Map();
   const accessOrder = new Map();
 
@@ -78,8 +79,18 @@ function createLRUCache(options = {}) {
       }
 
       // Evict if at capacity
-      while (cache.size >= maxSize) {
+      // FIX: Add safety counter to prevent infinite loop if cache/accessOrder become out of sync
+      let evictionAttempts = 0;
+      const maxEvictionAttempts = maxSize + 1;
+      while (cache.size >= maxSize && evictionAttempts < maxEvictionAttempts) {
+        const sizeBefore = cache.size;
         evictOldest();
+        evictionAttempts++;
+        // FIX: Break if eviction didn't reduce size (prevents infinite loop)
+        if (cache.size >= sizeBefore) {
+          logger.warn('[CacheManager] Eviction failed to reduce cache size, breaking loop');
+          break;
+        }
       }
 
       cache.set(key, {
@@ -325,6 +336,26 @@ function createBatchProcessor(processor, options = {}) {
         maxBatchSize,
         maxWaitTime,
       };
+    },
+
+    /**
+     * FIX: Cleanup method to clear pending timers and reject pending promises
+     * Should be called when the batch processor is no longer needed
+     */
+    destroy() {
+      // Clear any pending timeout
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+
+      // Reject all pending promises
+      for (const callbacks of batch.values()) {
+        for (const { reject } of callbacks) {
+          reject(new Error('Batch processor destroyed'));
+        }
+      }
+      batch.clear();
     },
   };
 }

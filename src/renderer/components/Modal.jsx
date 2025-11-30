@@ -71,8 +71,14 @@ const Modal = ({
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
     );
 
+    // FIX #18: Guard against empty focusable elements to prevent crash
+    if (focusableElements.length === 0) return;
+
     const firstElement = focusableElements[0];
     const lastElement = focusableElements[focusableElements.length - 1];
+
+    // FIX #18: Extra null check before calling focus()
+    if (!firstElement || !lastElement) return;
 
     if (event.shiftKey) {
       // Shift + Tab

@@ -13,7 +13,7 @@ global.app = {
   },
 };
 
-const { StartupManager } = require('./src/main/services/StartupManager');
+const { StartupManager } = require('../../src/main/services/StartupManager');
 
 async function measureStartupResponsiveness() {
   console.log('Testing Startup Non-blocking Operations');

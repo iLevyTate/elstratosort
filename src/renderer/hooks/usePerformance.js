@@ -42,16 +42,17 @@ export function useDebounce(value, delay) {
  * @param {Array} deps - Dependencies array
  * @returns {Function} The debounced callback
  */
-export function useDebouncedCallback(callback, delay, deps = []) {
+export function useDebouncedCallback(callback, delay) {
   const callbackRef = useRef(callback);
 
   useEffect(() => {
     callbackRef.current = callback;
   }, [callback]);
 
+  // Since we use callbackRef, deps parameter is unnecessary - callback updates are tracked via ref
   const debouncedCallback = useMemo(
     () => debounce((...args) => callbackRef.current(...args), delay),
-    [delay, ...deps],
+    [delay],
   );
 
   useEffect(() => {
@@ -71,16 +72,17 @@ export function useDebouncedCallback(callback, delay, deps = []) {
  * @param {Array} deps - Dependencies array
  * @returns {Function} The throttled callback
  */
-export function useThrottledCallback(callback, delay, deps = []) {
+export function useThrottledCallback(callback, delay) {
   const callbackRef = useRef(callback);
 
   useEffect(() => {
     callbackRef.current = callback;
   }, [callback]);
 
+  // Since we use callbackRef, deps parameter is unnecessary - callback updates are tracked via ref
   const throttledCallback = useMemo(
     () => throttle((...args) => callbackRef.current(...args), delay),
-    [delay, ...deps],
+    [delay],
   );
 
   useEffect(() => {
@@ -193,7 +195,7 @@ export function useAsyncMemo(asyncFn, deps = [], options = {}) {
 
       throw error;
     }
-  }, [asyncFn, cacheKey, cacheTime, onSuccess, onError, ...deps]);
+  }, [asyncFn, cacheKey, cacheTime, onSuccess, onError, deps.length]);
 
   useEffect(() => {
     fetchData();

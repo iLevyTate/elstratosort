@@ -16,7 +16,49 @@ function calculateOptimalConcurrency() {
   return Math.min(Math.max(2, Math.floor(cpuCores * 0.75)), 8);
 }
 
+/**
+ * OrganizationSuggestionService - AI-powered file organization suggestions
+ *
+ * This service provides intelligent suggestions for organizing files into folders
+ * using semantic matching, user patterns, and LLM-based analysis. It uses
+ * constructor-based dependency injection for all its dependencies.
+ *
+ * Dependencies:
+ * - chromaDbService: Vector database for semantic matching
+ * - folderMatchingService: Service for embedding-based folder matching
+ * - settingsService: Application settings service
+ *
+ * @example
+ * // Using dependency injection (recommended)
+ * const suggestionService = new OrganizationSuggestionService({
+ *   chromaDbService: container.resolve(ServiceIds.CHROMA_DB),
+ *   folderMatchingService: container.resolve(ServiceIds.FOLDER_MATCHING),
+ *   settingsService: container.resolve(ServiceIds.SETTINGS),
+ * });
+ *
+ * // Using with ServiceContainer
+ * container.registerSingleton(ServiceIds.ORGANIZATION_SUGGESTION, (c) => {
+ *   return new OrganizationSuggestionService({
+ *     chromaDbService: c.resolve(ServiceIds.CHROMA_DB),
+ *     folderMatchingService: c.resolve(ServiceIds.FOLDER_MATCHING),
+ *     settingsService: c.resolve(ServiceIds.SETTINGS),
+ *   });
+ * });
+ */
 class OrganizationSuggestionService {
+  /**
+   * Create an OrganizationSuggestionService instance
+   *
+   * @param {Object} dependencies - Service dependencies
+   * @param {Object} dependencies.chromaDbService - ChromaDB service for vector storage
+   * @param {Object} dependencies.folderMatchingService - Folder matching service
+   * @param {Object} dependencies.settingsService - Settings service
+   * @param {Object} [dependencies.config={}] - Additional configuration options
+   * @param {number} [dependencies.config.semanticMatchThreshold=0.4] - Threshold for semantic matches
+   * @param {number} [dependencies.config.strategyMatchThreshold=0.3] - Threshold for strategy matches
+   * @param {number} [dependencies.config.patternSimilarityThreshold=0.5] - Threshold for pattern similarity
+   * @param {number} [dependencies.config.topKSemanticMatches=8] - Number of top semantic matches to return
+   */
   constructor({
     chromaDbService,
     folderMatchingService,
@@ -125,12 +167,25 @@ class OrganizationSuggestionService {
       }
     } catch (error) {
       if (error.code !== 'ENOENT') {
+        // FIX: Include file path and more context in error log to aid debugging
         logger.error(
           '[OrganizationSuggestionService] Error loading user patterns:',
-          error,
+          {
+            filePath: this.patternsFilePath,
+            errorCode: error.code,
+            errorMessage: error.message,
+            stack: error.stack,
+          },
         );
+        // FIX: Re-throw non-ENOENT errors so caller knows loading failed
+        // This prevents silent failure when patterns file is corrupted
+        throw error;
       }
       // If file doesn't exist, that's okay - we'll create it on first save
+      logger.debug(
+        '[OrganizationSuggestionService] No existing patterns file found, starting fresh',
+        { filePath: this.patternsFilePath },
+      );
     }
   }
 
@@ -1956,4 +2011,32 @@ Return JSON: {
   }
 }
 
+/**
+ * Create an OrganizationSuggestionService instance with default dependencies
+ *
+ * This factory function creates an OrganizationSuggestionService with the default
+ * singleton services. Use for simple cases where manual DI is not needed.
+ *
+ * @param {Object} [config={}] - Configuration options passed to constructor
+ * @returns {OrganizationSuggestionService} A new service instance
+ */
+function createWithDefaults(config = {}) {
+  const { getInstance: getChromaDB } = require('./ChromaDBService');
+  const FolderMatchingService = require('./FolderMatchingService');
+  const { getService: getSettingsService } = require('./SettingsService');
+
+  const chromaDbService = getChromaDB();
+  const folderMatchingService = new FolderMatchingService(chromaDbService);
+  const settingsService = getSettingsService();
+
+  return new OrganizationSuggestionService({
+    chromaDbService,
+    folderMatchingService,
+    settingsService,
+    config,
+  });
+}
+
 module.exports = OrganizationSuggestionService;
+module.exports.OrganizationSuggestionService = OrganizationSuggestionService;
+module.exports.createWithDefaults = createWithDefaults;

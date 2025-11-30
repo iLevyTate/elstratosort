@@ -1,6 +1,67 @@
-const { withErrorLogging } = require('./withErrorLogging');
+/**
+ * Auto-Organize IPC Handlers
+ *
+ * Handles file organization operations including auto-organize,
+ * batch organize, and organization statistics.
+ */
+const { createHandler, createErrorResponse } = require('./ipcWrappers');
+const { schemas } = require('./validationSchemas');
 const { logger } = require('../../shared/logger');
+const fs = require('fs').promises;
+
 logger.setContext('IPC:Organize');
+
+/**
+ * Validate that a source file exists and is a file before moving
+ * @param {string} sourcePath - Path to validate
+ * @returns {Promise<boolean>} True if valid
+ * @throws {Error} If source doesn't exist or isn't a file
+ */
+async function validateSourceFile(sourcePath) {
+  try {
+    const stats = await fs.stat(sourcePath);
+    if (!stats.isFile()) {
+      throw new Error(`Source path is not a file: ${sourcePath}`);
+    }
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      throw new Error(`Source file does not exist: ${sourcePath}`);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Validate all files in an array before processing
+ * @param {Array<{path: string}>} files - Files to validate
+ * @returns {Promise<{valid: Array, invalid: Array}>} Validated results
+ */
+async function validateSourceFiles(files) {
+  const valid = [];
+  const invalid = [];
+
+  for (const file of files) {
+    const sourcePath = file.path || file.source;
+    if (!sourcePath) {
+      invalid.push({ file, error: 'Missing file path' });
+      continue;
+    }
+
+    try {
+      await validateSourceFile(sourcePath);
+      valid.push(file);
+    } catch (error) {
+      logger.warn('[ORGANIZE] File validation failed', {
+        path: sourcePath,
+        error: error.message,
+      });
+      invalid.push({ file, error: error.message });
+    }
+  }
+
+  return { valid, invalid };
+}
 
 function registerOrganizeIpc({
   ipcMain,
@@ -8,30 +69,69 @@ function registerOrganizeIpc({
   getServiceIntegration,
   getCustomFolders,
 }) {
-  // Auto-organize files
+  const context = 'Organize';
+
+  // Helper to get auto-organize service
+  const getOrganizeService = () => getServiceIntegration()?.autoOrganizeService;
+
+  // Auto-organize files with AI suggestions
   ipcMain.handle(
     IPC_CHANNELS.ORGANIZE.AUTO,
-    withErrorLogging(
+    createHandler({
       logger,
-      async (event, { files, smartFolders, options = {} }) => {
-        void event;
+      context,
+      schema: schemas?.autoOrganize,
+      serviceName: 'autoOrganizeService',
+      getService: getOrganizeService,
+      fallbackResponse: {
+        success: false,
+        error: 'Auto-organize service not available',
+        organized: [],
+        needsReview: [],
+        failed: [],
+      },
+      handler: async (event, { files, smartFolders, options = {} }, service) => {
+        const path = require('path');
+
+        // HIGH-11: Validate all source files exist before processing
+        const { valid: validFiles, invalid: invalidFiles } = await validateSourceFiles(files);
+
+        if (invalidFiles.length > 0) {
+          logger.warn('[ORGANIZE] Some files were skipped (not found or invalid)', {
+            skippedCount: invalidFiles.length,
+            skippedFiles: invalidFiles.slice(0, 5).map(f => f.error),
+          });
+        }
+
+        if (validFiles.length === 0) {
+          return {
+            success: false,
+            error: 'No valid files to organize - all source files are missing or invalid',
+            organized: [],
+            needsReview: [],
+            failed: invalidFiles.map(f => ({
+              file: f.file,
+              error: f.error
+            })),
+          };
+        }
+
+        // FIX: Ensure extension property exists on all files (compute from path if missing)
+        const filesWithExtension = validFiles.map(file => {
+          if (!file.extension && file.path) {
+            const ext = path.extname(file.path).toLowerCase();
+            return { ...file, extension: ext };
+          }
+          return file;
+        });
         try {
           logger.info('[ORGANIZE] Starting auto-organize', {
-            fileCount: files.length,
+            fileCount: filesWithExtension.length,
+            skippedCount: invalidFiles.length,
           });
 
-          const serviceIntegration = getServiceIntegration();
-          if (!serviceIntegration || !serviceIntegration.autoOrganizeService) {
-            throw new Error('Auto-organize service not available');
-          }
-
           const folders = smartFolders || getCustomFolders();
-          const result =
-            await serviceIntegration.autoOrganizeService.organizeFiles(
-              files,
-              folders,
-              options,
-            );
+          const result = await service.organizeFiles(filesWithExtension, folders, options);
 
           logger.info('[ORGANIZE] Auto-organize complete', {
             organized: result.organized.length,
@@ -42,49 +142,39 @@ function registerOrganizeIpc({
           return result;
         } catch (error) {
           logger.error('[ORGANIZE] Auto-organize failed:', error);
-          // CRITICAL FIX: Return error response instead of throwing to prevent unhandled rejections
-          return {
-            success: false,
-            error: error.message,
+          return createErrorResponse(error, {
             organized: [],
             needsReview: [],
             failed: [],
-          };
+          });
         }
       },
-    ),
+    }),
   );
 
   // Batch organize with auto-approval
   ipcMain.handle(
     IPC_CHANNELS.ORGANIZE.BATCH,
-    withErrorLogging(
+    createHandler({
       logger,
-      async (event, { files, smartFolders, options = {} }) => {
-        void event;
+      context,
+      schema: schemas?.autoOrganize,
+      serviceName: 'autoOrganizeService',
+      getService: getOrganizeService,
+      fallbackResponse: {
+        success: false,
+        error: 'Auto-organize service not available',
+        operations: [],
+        groups: [],
+      },
+      handler: async (event, { files, smartFolders, options = {} }, service) => {
         try {
           logger.info('[ORGANIZE] Starting batch organize', {
             fileCount: files.length,
           });
 
-          const serviceIntegration = getServiceIntegration();
-          if (!serviceIntegration || !serviceIntegration.autoOrganizeService) {
-            // CRITICAL FIX: Return error response instead of throwing
-            return {
-              success: false,
-              error: 'Auto-organize service not available',
-              operations: [],
-              groups: [],
-            };
-          }
-
           const folders = smartFolders || getCustomFolders();
-          const result =
-            await serviceIntegration.autoOrganizeService.batchOrganize(
-              files,
-              folders,
-              options,
-            );
+          const result = await service.batchOrganize(files, folders, options);
 
           logger.info('[ORGANIZE] Batch organize complete', {
             operationCount: result.operations.length,
@@ -94,71 +184,75 @@ function registerOrganizeIpc({
           return result;
         } catch (error) {
           logger.error('[ORGANIZE] Batch organize failed:', error);
-          // CRITICAL FIX: Return error response instead of throwing
-          return {
-            success: false,
-            error: error.message,
+          return createErrorResponse(error, {
             operations: [],
             groups: [],
-          };
+          });
         }
       },
-    ),
+    }),
   );
 
   // Process new file (for auto-organize on download)
   ipcMain.handle(
     IPC_CHANNELS.ORGANIZE.PROCESS_NEW,
-    withErrorLogging(logger, async (event, { filePath, options = {} }) => {
-      void event;
-      try {
-        logger.info('[ORGANIZE] Processing new file', { filePath });
+    createHandler({
+      logger,
+      context,
+      serviceName: 'autoOrganizeService',
+      getService: getOrganizeService,
+      fallbackResponse: {
+        success: false,
+        error: 'Auto-organize service not available',
+      },
+      handler: async (event, { filePath, options = {} }, service) => {
+        try {
+          logger.info('[ORGANIZE] Processing new file', { filePath });
 
-        const serviceIntegration = getServiceIntegration();
-        if (!serviceIntegration || !serviceIntegration.autoOrganizeService) {
-          // CRITICAL FIX: Return error response instead of throwing
-          return {
-            success: false,
-            error: 'Auto-organize service not available',
-          };
-        }
-
-        const smartFolders = getCustomFolders();
-        const result =
-          await serviceIntegration.autoOrganizeService.processNewFile(
+          const smartFolders = getCustomFolders();
+          const result = await service.processNewFile(
             filePath,
             smartFolders,
             options,
           );
 
-        if (result) {
-          logger.info('[ORGANIZE] New file organized', result);
-        } else {
-          logger.info(
-            '[ORGANIZE] New file not organized (low confidence or disabled)',
-          );
-        }
+          if (result) {
+            logger.info('[ORGANIZE] New file organized', result);
+          } else {
+            logger.info(
+              '[ORGANIZE] New file not organized (low confidence or disabled)',
+            );
+          }
 
-        return result;
-      } catch (error) {
-        logger.error('[ORGANIZE] Failed to process new file:', error);
-        // CRITICAL FIX: Return error response instead of throwing
-        return {
-          success: false,
-          error: error.message,
-        };
-      }
+          return result;
+        } catch (error) {
+          logger.error('[ORGANIZE] Failed to process new file:', error);
+          return createErrorResponse(error);
+        }
+      },
     }),
   );
 
   // Get organization statistics
   ipcMain.handle(
     IPC_CHANNELS.ORGANIZE.GET_STATS,
-    withErrorLogging(logger, async (event) => {
-      void event;
-      try {
-        const serviceIntegration = getServiceIntegration();
-        if (!serviceIntegration || !serviceIntegration.autoOrganizeService) {
+    createHandler({
+      logger,
+      context,
+      serviceName: 'autoOrganizeService',
+      getService: getOrganizeService,
+      fallbackResponse: {
+        userPatterns: 0,
+        feedbackHistory: 0,
+        folderUsageStats: [],
+        thresholds: {},
+      },
+      handler: async (event, service) => {
+        try {
+          const stats = await service.getStatistics();
+          return stats;
+        } catch (error) {
+          logger.error('[ORGANIZE] Failed to get statistics:', error);
           return {
             userPatterns: 0,
             feedbackHistory: 0,
@@ -166,46 +260,36 @@ function registerOrganizeIpc({
             thresholds: {},
           };
         }
-
-        const stats =
-          await serviceIntegration.autoOrganizeService.getStatistics();
-        return stats;
-      } catch (error) {
-        logger.error('[ORGANIZE] Failed to get statistics:', error);
-        return {
-          userPatterns: 0,
-          feedbackHistory: 0,
-          folderUsageStats: [],
-          thresholds: {},
-        };
-      }
+      },
     }),
   );
 
   // Update confidence thresholds
   ipcMain.handle(
     IPC_CHANNELS.ORGANIZE.UPDATE_THRESHOLDS,
-    withErrorLogging(logger, async (event, { thresholds }) => {
-      void event;
-      try {
-        const serviceIntegration = getServiceIntegration();
-        if (!serviceIntegration || !serviceIntegration.autoOrganizeService) {
-          throw new Error('Auto-organize service not available');
+    createHandler({
+      logger,
+      context,
+      schema: schemas?.thresholds,
+      serviceName: 'autoOrganizeService',
+      getService: getOrganizeService,
+      fallbackResponse: {
+        success: false,
+        error: 'Auto-organize service not available',
+      },
+      handler: async (event, { thresholds }, service) => {
+        try {
+          service.updateThresholds(thresholds);
+
+          return {
+            success: true,
+            thresholds,
+          };
+        } catch (error) {
+          logger.error('[ORGANIZE] Failed to update thresholds:', error);
+          return createErrorResponse(error);
         }
-
-        serviceIntegration.autoOrganizeService.updateThresholds(thresholds);
-
-        return {
-          success: true,
-          thresholds,
-        };
-      } catch (error) {
-        logger.error('[ORGANIZE] Failed to update thresholds:', error);
-        return {
-          success: false,
-          error: error.message,
-        };
-      }
+      },
     }),
   );
 

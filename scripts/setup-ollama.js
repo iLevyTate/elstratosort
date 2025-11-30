@@ -2,7 +2,7 @@
 'use strict';
 
 const { spawn } = require('child_process');
-const { asyncSpawn } = require('./src/main/utils/asyncSpawnUtils');
+const { asyncSpawn } = require('../src/main/utils/asyncSpawnUtils');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');

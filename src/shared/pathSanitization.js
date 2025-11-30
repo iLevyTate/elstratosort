@@ -6,41 +6,14 @@
 const path = require('path');
 const os = require('os');
 
-// Path length limits by platform
-const MAX_PATH_LENGTHS = {
-  win32: 260, // Windows MAX_PATH
-  linux: 4096, // Linux PATH_MAX
-  darwin: 1024, // macOS PATH_MAX (typically 1024)
-};
-
-// Reserved Windows filenames (case-insensitive)
-const RESERVED_WINDOWS_NAMES = new Set([
-  'CON',
-  'PRN',
-  'AUX',
-  'NUL',
-  'COM1',
-  'COM2',
-  'COM3',
-  'COM4',
-  'COM5',
-  'COM6',
-  'COM7',
-  'COM8',
-  'COM9',
-  'LPT1',
-  'LPT2',
-  'LPT3',
-  'LPT4',
-  'LPT5',
-  'LPT6',
-  'LPT7',
-  'LPT8',
-  'LPT9',
-]);
-
-// Maximum path depth to prevent deep nesting attacks
-const MAX_PATH_DEPTH = 100;
+// Import centralized security configuration
+const {
+  MAX_PATH_LENGTHS,
+  MAX_PATH_DEPTH,
+  RESERVED_WINDOWS_NAMES,
+  PROTOTYPE_POLLUTION_KEYS,
+  ALLOWED_METADATA_FIELDS,
+} = require('./securityConfig');
 
 /**
  * Sanitize a file path for safe storage in database
@@ -147,22 +120,8 @@ function sanitizeMetadata(metadata, allowedFields = null) {
 
   const sanitized = {};
 
-  // Define default allowed fields if not specified
-  const defaultAllowed = [
-    'path',
-    'name',
-    'model',
-    'updatedAt',
-    'description',
-    'fileSize',
-    'mimeType',
-    'fileExtension',
-    'category',
-    'tags',
-    'confidence',
-  ];
-
-  const allowed = allowedFields || defaultAllowed;
+  // Use centralized config for allowed metadata fields
+  const allowed = allowedFields || ALLOWED_METADATA_FIELDS;
 
   for (const [key, value] of Object.entries(metadata)) {
     // Skip if not in allowed list
@@ -170,9 +129,8 @@ function sanitizeMetadata(metadata, allowedFields = null) {
       continue;
     }
 
-    // Skip dangerous keys
-    const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
-    if (dangerousKeys.includes(key)) {
+    // Skip dangerous keys using centralized config
+    if (PROTOTYPE_POLLUTION_KEYS.includes(key)) {
       continue;
     }
 

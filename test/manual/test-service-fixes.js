@@ -182,7 +182,7 @@ async function testStartupManager() {
   log('\n=== Test 4: StartupManager Integration ===', 'blue');
 
   try {
-    const { getStartupManager } = require('./src/main/services/StartupManager');
+    const { getStartupManager } = require('../../src/main/services/StartupManager');
     const startupManager = getStartupManager();
 
     // Set up progress callback to monitor startup

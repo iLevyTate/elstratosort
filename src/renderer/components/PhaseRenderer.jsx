@@ -88,7 +88,8 @@ function PhaseRenderer() {
   };
 
   return (
-    <div className="flex flex-col w-full h-full overflow-hidden">
+    <div className="flex flex-col w-full h-full overflow-auto">
+      {/* FIX: Changed overflow-hidden to overflow-auto to allow scrolling in phases */}
       <Suspense fallback={<LazyLoadingSpinner message="Loading phase..." />}>
         <AnimatePresence mode="wait">
           <motion.div
@@ -98,7 +99,7 @@ function PhaseRenderer() {
             exit="out"
             variants={pageVariants}
             transition={pageTransition}
-            className="w-full h-full flex flex-col overflow-hidden"
+            className="w-full h-full flex flex-col overflow-auto"
           >
             {renderCurrentPhase()}
           </motion.div>

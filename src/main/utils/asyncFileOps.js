@@ -4,8 +4,15 @@
  */
 
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const path = require('path');
 const { logger } = require('../../shared/logger');
+const {
+  FileSystemError,
+  WatcherError,
+  FILE_SYSTEM_ERROR_CODES,
+} = require('../errors/FileSystemError');
+
 logger.setContext('AsyncFileOps');
 
 /**
@@ -28,15 +35,42 @@ async function exists(filePath) {
  *
  * @param {string} filePath - Path to file
  * @param {string|Object} options - Encoding or options object
- * @returns {Promise<string|Buffer|null>} File contents or null on error
+ * @returns {Promise<{data: string|Buffer|null, error: FileSystemError|null}>} File contents and error info
  */
 async function safeReadFile(filePath, options = 'utf8') {
   try {
-    return await fs.readFile(filePath, options);
+    const data = await fs.readFile(filePath, options);
+    return { data, error: null };
   } catch (error) {
-    logger.warn(`Failed to read file ${filePath}:`, error.message);
-    return null;
+    const fsError = FileSystemError.fromNodeError(error, {
+      path: filePath,
+      operation: 'read',
+    });
+
+    // Only log warning for non-ENOENT errors (missing files are often expected)
+    if (error.code !== 'ENOENT') {
+      logger.warn(`[ASYNC-OPS] Failed to read file:`, {
+        path: filePath,
+        error: fsError.getUserFriendlyMessage(),
+        code: fsError.code,
+      });
+    }
+
+    return { data: null, error: fsError };
   }
+}
+
+/**
+ * Read a file with legacy return signature (null on error)
+ * For backwards compatibility
+ *
+ * @param {string} filePath - Path to file
+ * @param {string|Object} options - Encoding or options object
+ * @returns {Promise<string|Buffer|null>} File contents or null on error
+ */
+async function safeReadFileLegacy(filePath, options = 'utf8') {
+  const result = await safeReadFile(filePath, options);
+  return result.data;
 }
 
 /**
@@ -45,40 +79,129 @@ async function safeReadFile(filePath, options = 'utf8') {
  * @param {string} filePath - Path to file
  * @param {string|Buffer} data - Data to write
  * @param {string|Object} options - Encoding or options object
- * @returns {Promise<boolean>} True on success, false on error
+ * @returns {Promise<{success: boolean, error: FileSystemError|null}>} Result with error info
  */
 async function safeWriteFile(filePath, data, options = 'utf8') {
   try {
     // Ensure directory exists
     const dir = path.dirname(filePath);
-    await ensureDirectory(dir);
+    const dirResult = await ensureDirectory(dir);
+    if (!dirResult.success) {
+      return { success: false, error: dirResult.error };
+    }
 
-    await fs.writeFile(filePath, data, options);
-    return true;
+    // FIX: Use atomic write (temp + rename) to prevent corruption on crash
+    const tempPath = filePath + '.tmp.' + Date.now();
+    try {
+      await fs.writeFile(tempPath, data, options);
+
+      // Verify write succeeded before renaming
+      const stats = await fs.stat(tempPath);
+      const expectedSize = Buffer.isBuffer(data) ? data.length : Buffer.byteLength(data, typeof options === 'string' ? options : options.encoding || 'utf8');
+
+      if (stats.size !== expectedSize) {
+        // Clean up temp file
+        try {
+          await fs.unlink(tempPath);
+        } catch {
+          // Ignore cleanup errors
+        }
+        const fsError = new FileSystemError(FILE_SYSTEM_ERROR_CODES.PARTIAL_WRITE, {
+          path: filePath,
+          operation: 'write',
+          expectedSize,
+          actualSize: stats.size,
+        });
+        logger.error('[ASYNC-OPS] Partial write detected:', {
+          path: filePath,
+          expectedSize,
+          actualSize: stats.size,
+        });
+        return { success: false, error: fsError };
+      }
+
+      // Atomic rename
+      await fs.rename(tempPath, filePath);
+    } catch (writeError) {
+      // Clean up temp file on failure
+      try {
+        await fs.unlink(tempPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+      throw writeError;
+    }
+
+    return { success: true, error: null };
   } catch (error) {
-    logger.error(`Failed to write file ${filePath}:`, error.message);
-    return false;
+    const fsError = FileSystemError.fromNodeError(error, {
+      path: filePath,
+      operation: 'write',
+    });
+    logger.error('[ASYNC-OPS] Failed to write file:', {
+      path: filePath,
+      error: fsError.getUserFriendlyMessage(),
+      code: fsError.code,
+    });
+    return { success: false, error: fsError };
   }
+}
+
+/**
+ * Write a file with legacy return signature (boolean)
+ * For backwards compatibility
+ *
+ * @param {string} filePath - Path to file
+ * @param {string|Buffer} data - Data to write
+ * @param {string|Object} options - Encoding or options object
+ * @returns {Promise<boolean>} True on success, false on error
+ */
+async function safeWriteFileLegacy(filePath, data, options = 'utf8') {
+  const result = await safeWriteFile(filePath, data, options);
+  return result.success;
 }
 
 /**
  * Ensure a directory exists, creating it if necessary
  *
  * @param {string} dirPath - Directory path
- * @returns {Promise<boolean>} True if directory exists or was created
+ * @returns {Promise<{success: boolean, error: FileSystemError|null}>} Result with error info
  */
 async function ensureDirectory(dirPath) {
   try {
     await fs.mkdir(dirPath, { recursive: true });
-    return true;
+    return { success: true, error: null };
   } catch (error) {
     // Check if it already exists
     if (error.code === 'EEXIST') {
-      return true;
+      return { success: true, error: null };
     }
-    logger.error(`Failed to create directory ${dirPath}:`, error.message);
-    return false;
+
+    const fsError = FileSystemError.fromNodeError(error, {
+      path: dirPath,
+      operation: 'mkdir',
+    });
+
+    logger.error('[ASYNC-OPS] Failed to create directory:', {
+      path: dirPath,
+      error: fsError.getUserFriendlyMessage(),
+      code: fsError.code,
+    });
+
+    return { success: false, error: fsError };
   }
+}
+
+/**
+ * Ensure directory with legacy return signature (boolean)
+ * For backwards compatibility
+ *
+ * @param {string} dirPath - Directory path
+ * @returns {Promise<boolean>} True if directory exists or was created
+ */
+async function ensureDirectoryLegacy(dirPath) {
+  const result = await ensureDirectory(dirPath);
+  return result.success;
 }
 
 /**
@@ -290,33 +413,143 @@ async function processBatch(files, processor, batchSize = 5) {
 }
 
 /**
- * Watch a file or directory for changes
+ * Watch a file or directory for changes with resilient error handling
+ *
+ * @param {string} targetPath - Path to watch
+ * @param {Function} callback - Callback on change (eventType, filename)
+ * @param {Object} options - Watch options
+ * @param {boolean} options.persistent - Keep process running (default: true)
+ * @param {boolean} options.recursive - Watch recursively (default: false)
+ * @param {Function} options.onError - Error callback
+ * @returns {Promise<{close: Function, isActive: Function, error: FileSystemError|null}>} Watcher control object
+ */
+async function watchPath(targetPath, callback, options = {}) {
+  const {
+    persistent = true,
+    recursive = false,
+    onError = null,
+  } = options;
+
+  let watcher = null;
+  let isActive = false;
+  let lastError = null;
+
+  try {
+    // Verify path exists before watching
+    try {
+      await fs.access(targetPath);
+    } catch (accessError) {
+      const fsError = FileSystemError.fromNodeError(accessError, {
+        path: targetPath,
+        operation: 'watch',
+      });
+      logger.error('[ASYNC-OPS] Cannot watch path - does not exist:', {
+        path: targetPath,
+        error: fsError.getUserFriendlyMessage(),
+      });
+      return {
+        close: () => {},
+        isActive: () => false,
+        error: fsError,
+      };
+    }
+
+    // Use synchronous fs.watch (not promisified) for watching
+    watcher = fsSync.watch(
+      targetPath,
+      { persistent, recursive },
+      (eventType, filename) => {
+        try {
+          callback(eventType, filename);
+        } catch (callbackError) {
+          logger.error('[ASYNC-OPS] Watcher callback error:', {
+            path: targetPath,
+            eventType,
+            filename,
+            error: callbackError.message,
+          });
+        }
+      },
+    );
+
+    isActive = true;
+
+    // Handle watcher errors
+    watcher.on('error', (error) => {
+      isActive = false;
+      const fsError = new WatcherError(targetPath, error);
+      lastError = fsError;
+
+      logger.error('[ASYNC-OPS] Watcher error:', {
+        path: targetPath,
+        error: fsError.getUserFriendlyMessage(),
+        code: fsError.code,
+      });
+
+      if (onError) {
+        try {
+          onError(fsError);
+        } catch (onErrorError) {
+          logger.error('[ASYNC-OPS] onError callback failed:', onErrorError.message);
+        }
+      }
+    });
+
+    // Handle watcher close
+    watcher.on('close', () => {
+      isActive = false;
+      logger.debug('[ASYNC-OPS] Watcher closed:', targetPath);
+    });
+
+    logger.debug('[ASYNC-OPS] Started watching:', targetPath);
+
+    return {
+      close: () => {
+        if (watcher) {
+          try {
+            watcher.close();
+          } catch (closeError) {
+            logger.warn('[ASYNC-OPS] Error closing watcher:', closeError.message);
+          }
+          isActive = false;
+        }
+      },
+      isActive: () => isActive,
+      error: null,
+      getLastError: () => lastError,
+    };
+  } catch (error) {
+    const fsError = new WatcherError(targetPath, error);
+    logger.error('[ASYNC-OPS] Failed to start watcher:', {
+      path: targetPath,
+      error: fsError.getUserFriendlyMessage(),
+      code: fsError.code,
+    });
+
+    return {
+      close: () => {},
+      isActive: () => false,
+      error: fsError,
+    };
+  }
+}
+
+/**
+ * Watch path with legacy return signature (just close function)
+ * For backwards compatibility
  *
  * @param {string} targetPath - Path to watch
  * @param {Function} callback - Callback on change
  * @param {Object} options - Watch options
  * @returns {Promise<Function>} Function to stop watching
  */
-async function watchPath(targetPath, callback, options = {}) {
-  const { persistent = true, recursive = false } = options;
-
-  try {
-    const watcher = fs.watch(
-      targetPath,
-      { persistent, recursive },
-      (eventType, filename) => {
-        callback(eventType, filename);
-      },
-    );
-
-    return () => watcher.close();
-  } catch (error) {
-    logger.error(`Failed to watch ${targetPath}:`, error.message);
-    return () => {};
-  }
+async function watchPathLegacy(targetPath, callback, options = {}) {
+  const result = await watchPath(targetPath, callback, options);
+  return result.close;
 }
 
 module.exports = {
+  // Core functions with error info
   exists,
   safeReadFile,
   safeWriteFile,
@@ -330,4 +563,15 @@ module.exports = {
   writeJSON,
   processBatch,
   watchPath,
+
+  // Legacy functions for backwards compatibility
+  safeReadFileLegacy,
+  safeWriteFileLegacy,
+  ensureDirectoryLegacy,
+  watchPathLegacy,
+
+  // Re-export error classes for convenience
+  FileSystemError,
+  WatcherError,
+  FILE_SYSTEM_ERROR_CODES,
 };

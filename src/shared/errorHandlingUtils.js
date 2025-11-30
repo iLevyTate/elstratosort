@@ -1,9 +1,20 @@
 /**
  * Centralized Error Handling Utilities
- * Provides reusable error handling patterns across the application
+ * Provides reusable error handling patterns across the application.
+ *
+ * Note: Core async utilities (withTimeout, withRetry) are consolidated in
+ * promiseUtils.js. This module re-exports them for backward compatibility
+ * and provides error-specific utilities.
+ *
+ * @module shared/errorHandlingUtils
  */
 
 const { logger } = require('./logger');
+const {
+  withTimeout: consolidatedWithTimeout,
+  withRetry: consolidatedWithRetry,
+  safeCall: consolidatedSafeCall,
+} = require('./promiseUtils');
 
 logger.setContext('ErrorHandlingUtils');
 
@@ -175,95 +186,38 @@ function mapErrorToCode(error) {
 }
 
 /**
- * Retry wrapper with exponential backoff
+ * Retry wrapper with exponential backoff.
+ * Re-exported from promiseUtils for backward compatibility.
+ *
  * @param {Function} fn - Function to retry
  * @param {Object} options - Retry options
- * @param {number} [options.maxRetries=3] - Maximum number of retries
- * @param {number} [options.initialDelay=1000] - Initial delay in ms
- * @param {number} [options.maxDelay=10000] - Maximum delay in ms
- * @param {Function} [options.shouldRetry] - Function to determine if error is retryable
  * @returns {Function} Wrapped function with retry logic
+ * @see module:shared/promiseUtils.withRetry
  */
-function withRetry(
-  fn,
-  {
-    maxRetries = 3,
-    initialDelay = 1000,
-    maxDelay = 10000,
-    shouldRetry = () => true,
-  } = {},
-) {
-  return async function (...args) {
-    let lastError;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        return await fn(...args);
-      } catch (error) {
-        lastError = error;
-
-        if (attempt < maxRetries && shouldRetry(error)) {
-          const delay = Math.min(initialDelay * Math.pow(2, attempt), maxDelay);
-          logger.warn(
-            `Retry attempt ${attempt + 1}/${maxRetries} after ${delay}ms`,
-            {
-              error: error.message,
-            },
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        } else {
-          break;
-        }
-      }
-    }
-
-    throw lastError;
-  };
-}
+const withRetry = consolidatedWithRetry;
 
 /**
- * Timeout wrapper for async operations
- * @param {Function} fn - Async function to wrap
+ * Timeout wrapper for async operations.
+ * Re-exported from promiseUtils for backward compatibility.
+ *
+ * @param {Function|Promise} fnOrPromise - Async function to wrap OR a promise to timeout
  * @param {number} timeoutMs - Timeout in milliseconds
- * @param {string} [message] - Custom timeout message
- * @returns {Function} Wrapped function with timeout
+ * @param {string} [operationName] - Operation name for error messages
+ * @returns {Function|Promise} Wrapped function with timeout OR promise that races with timeout
+ * @see module:shared/promiseUtils.withTimeout
  */
-function withTimeout(fn, timeoutMs, message) {
-  return async function (...args) {
-    return Promise.race([
-      fn(...args),
-      new Promise((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(message || `Operation timed out after ${timeoutMs}ms`),
-            ),
-          timeoutMs,
-        ),
-      ),
-    ]);
-  };
-}
+const withTimeout = consolidatedWithTimeout;
 
 /**
- * Safe execution wrapper that catches all errors and returns ErrorResponse
+ * Safe execution wrapper that catches all errors and returns fallback.
+ * Re-exported from promiseUtils for backward compatibility.
+ *
  * @param {Function} fn - Function to execute safely
  * @param {*} [fallbackValue] - Value to return on error
  * @returns {Function} Wrapped function
+ * @see module:shared/promiseUtils.safeCall
  */
-function safeExecute(fn, fallbackValue = null) {
-  return async function (...args) {
-    try {
-      return await fn(...args);
-    } catch (error) {
-      logger.error('Safe execution caught error', {
-        function: fn.name,
-        error: error.message,
-      });
-      return fallbackValue;
-    }
-  };
-}
+const safeExecute = consolidatedSafeCall;
 
 /**
  * Validates input and throws standardized error if invalid

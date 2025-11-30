@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import { PHASES } from '../../shared/constants';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { setPhase, resetUi } from '../store/slices/uiSlice';
@@ -12,21 +12,25 @@ function CompletePhase() {
   const organizedFiles =
     useAppSelector((state) => state.files.organizedFiles) || [];
 
-  const actions = {
-    advancePhase: (phase) => dispatch(setPhase(phase)),
-    resetWorkflow: () => {
-      dispatch(resetUi());
-      dispatch(resetFilesState());
-      dispatch(resetAnalysisState());
-      // Clear persistence
-      try {
-        localStorage.removeItem('stratosort_workflow_state');
-        localStorage.removeItem('stratosort_redux_state');
-      } catch {
-        // Ignore cleanup errors
-      }
-    },
-  };
+  // FIX: Memoize actions object to prevent recreation on every render
+  const actions = useMemo(
+    () => ({
+      advancePhase: (phase) => dispatch(setPhase(phase)),
+      resetWorkflow: () => {
+        dispatch(resetUi());
+        dispatch(resetFilesState());
+        dispatch(resetAnalysisState());
+        // Clear persistence
+        try {
+          localStorage.removeItem('stratosort_workflow_state');
+          localStorage.removeItem('stratosort_redux_state');
+        } catch {
+          // Ignore cleanup errors
+        }
+      },
+    }),
+    [dispatch],
+  );
 
   return (
     <div className="h-full w-full overflow-y-auto overflow-x-hidden modern-scrollbar">
@@ -83,14 +87,30 @@ function CompletePhase() {
             contentClassName="p-8"
             className="glass-panel"
           >
-            <div className="space-y-5">
-              {organizedFiles.slice(0, 5).map((file, index) => (
-                <div key={index} className="text-sm">
-                  <span className="text-system-gray-600">✓</span>{' '}
-                  {file.originalName || `File ${index + 1}`} →{' '}
-                  {file.path || file.newLocation || 'Organized'}
-                </div>
-              ))}
+            <div className="space-y-5 overflow-hidden">
+              {/* FIX: Add null check for file objects and use stable identifier */}
+              {organizedFiles.slice(0, 5).map((file, index) => {
+                // FIX: Guard against null/undefined file objects
+                if (!file || typeof file !== 'object') {
+                  return null;
+                }
+                const originalName = file.originalName || file.name || `File ${index + 1}`;
+                const destination = file.path || file.newLocation || file.destination || 'Organized';
+                return (
+                  <div
+                    key={file.path || file.id || file.originalPath || file.originalName || `file-${index}`}
+                    className="text-sm flex items-center gap-2 overflow-hidden"
+                  >
+                    <span className="text-green-600 flex-shrink-0">✓</span>
+                    <span
+                      className="truncate flex-1"
+                      title={`${originalName} → ${destination}`}
+                    >
+                      {originalName} → {destination}
+                    </span>
+                  </div>
+                );
+              })}
               {organizedFiles.length > 5 && (
                 <div className="text-sm text-system-gray-500 italic">
                   ...and {organizedFiles.length - 5} more files
@@ -137,4 +157,5 @@ function CompletePhase() {
   );
 }
 
-export default CompletePhase;
+// FIX: Wrap with memo to prevent unnecessary re-renders from parent changes
+export default memo(CompletePhase);

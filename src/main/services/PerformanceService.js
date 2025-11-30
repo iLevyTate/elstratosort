@@ -1,5 +1,6 @@
 const os = require('os');
 const { spawn } = require('child_process');
+const { getNvidiaSmiCommand } = require('../../shared/platformUtils');
 
 /**
  * PerformanceService
@@ -12,8 +13,9 @@ let cachedCapabilities = null;
 async function detectNvidiaGpu() {
   return new Promise((resolve) => {
     try {
+      // Use cross-platform utility for nvidia-smi executable name
       const proc = spawn(
-        process.platform === 'win32' ? 'nvidia-smi.exe' : 'nvidia-smi',
+        getNvidiaSmiCommand(),
         ['--query-gpu=name,memory.total', '--format=csv,noheader,nounits'],
       );
 
@@ -70,7 +72,7 @@ async function buildOllamaOptions(task = 'text') {
   // Context window: keep moderate to avoid RAM spikes, tune by task
   const numCtx = task === 'vision' ? 2048 : 2048;
 
-  // Batch sizing – larger when GPU VRAM is available
+  // Batch sizing - larger when GPU VRAM is available
   let numBatch = 256;
   if (caps.hasNvidiaGpu) {
     if ((caps.gpuMemoryMB || 0) >= 12000) numBatch = 512;
@@ -80,7 +82,7 @@ async function buildOllamaOptions(task = 'text') {
     numBatch = 128; // CPU-only safe default
   }
 
-  // GPU offload hint – many Ollama backends accept num_gpu/num_gpu_layers; unknown keys are ignored
+  // GPU offload hint - many Ollama backends accept num_gpu/num_gpu_layers; unknown keys are ignored
   // We set an aggressive hint when GPU is present.
   const gpuHints = caps.hasNvidiaGpu
     ? { num_gpu: 9999, num_gpu_layers: 9999 }

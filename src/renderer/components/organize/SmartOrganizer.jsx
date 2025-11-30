@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { logger } from '../../../shared/logger';
 import { useNotification } from '../../contexts/NotificationContext';
@@ -11,6 +11,14 @@ import GlobalErrorBoundary from '../GlobalErrorBoundary';
 
 // Set logger context for this component
 logger.setContext('SmartOrganizer');
+
+// FIX: Move steps array outside component to prevent recreation on every render
+const ORGANIZATION_STEPS = [
+  { id: 'analyze', label: 'Analyze', icon: '🔍' },
+  { id: 'review', label: 'Review', icon: '👀' },
+  { id: 'preview', label: 'Preview', icon: '📋' },
+  { id: 'organize', label: 'Organize', icon: '✅' },
+];
 
 /**
  * SmartOrganizer - Simplified, intuitive interface for file organization
@@ -31,13 +39,10 @@ function SmartOrganizer({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [mode, setMode] = useState('quick'); // 'quick' or 'detailed'
 
-  useEffect(() => {
-    if (files.length > 0) {
-      analyzeFiles();
-    }
-  }, [files]);
+  // FIX: Wrap analyzeFiles in useCallback to prevent stale closure issues
+  const analyzeFiles = useCallback(async () => {
+    if (files.length === 0) return;
 
-  const analyzeFiles = async () => {
     setIsAnalyzing(true);
     try {
       // Get suggestions for all files
@@ -60,16 +65,28 @@ function SmartOrganizer({
       // Get folder improvement suggestions
       const improvements =
         await window.electronAPI.suggestions.analyzeFolderStructure(files);
-      setFolderImprovements(improvements.improvements || []);
+      setFolderImprovements(improvements?.improvements || []);
     } catch (error) {
       logger.error('Failed to analyze files', {
         error: error.message,
         stack: error.stack,
       });
+      // FIX: Notify user about the failure so they're aware analysis didn't work
+      addNotification(
+        'Failed to analyze files. Please try again or check your connection.',
+        'error',
+      );
     } finally {
       setIsAnalyzing(false);
     }
-  };
+  }, [files, addNotification]);
+
+  // FIX: Include analyzeFiles in dependency array
+  useEffect(() => {
+    if (files.length > 0) {
+      analyzeFiles();
+    }
+  }, [files, analyzeFiles]);
 
   const handleQuickOrganize = () => {
     // Apply all high-confidence suggestions
@@ -94,45 +111,68 @@ function SmartOrganizer({
     setCurrentStep('preview');
   };
 
-  const handleAcceptSuggestion = (file, suggestion) => {
-    setAcceptedSuggestions((prev) => ({
-      ...prev,
-      [file.path]: suggestion,
-    }));
+  // Track feedback recording state - use ref since value isn't used for rendering
+  const isRecordingFeedbackRef = useRef(false);
 
-    // Record feedback for learning
-    (async () => {
-      try {
-        await window.electronAPI.suggestions.recordFeedback(
-          file,
-          suggestion,
-          true,
-        );
-      } catch (error) {
-        logger.error('Failed to record feedback', {
-          error: error.message,
-          stack: error.stack,
-        });
-      }
-    })();
+  const handleAcceptSuggestion = async (file, suggestion) => {
+    // Await feedback recording before finalizing UI state
+    isRecordingFeedbackRef.current = true;
+    try {
+      await window.electronAPI.suggestions.recordFeedback(
+        file,
+        suggestion,
+        true,
+      );
+      // Only update UI state after successful feedback recording
+      setAcceptedSuggestions((prev) => ({
+        ...prev,
+        [file.path]: suggestion,
+      }));
+    } catch (error) {
+      logger.error('Failed to record accept feedback', {
+        error: error.message,
+        stack: error.stack,
+        filePath: file.path,
+      });
+      // Still update UI but notify user of the failure
+      addNotification('Feedback recording failed, but suggestion accepted locally', 'warning');
+      setAcceptedSuggestions((prev) => ({
+        ...prev,
+        [file.path]: suggestion,
+      }));
+    } finally {
+      isRecordingFeedbackRef.current = false;
+    }
   };
 
-  const handleRejectSuggestion = (file, suggestion) => {
-    // Record feedback for learning
-    (async () => {
-      try {
-        await window.electronAPI.suggestions.recordFeedback(
-          file,
-          suggestion,
-          false,
-        );
-      } catch (error) {
-        logger.error('Failed to record feedback', {
-          error: error.message,
-          stack: error.stack,
-        });
-      }
-    })();
+  // Track rejected suggestions - use ref since value isn't used for rendering
+  const rejectedSuggestionsRef = useRef({});
+
+  const handleRejectSuggestion = async (file, suggestion) => {
+    // Await feedback recording and update ref on completion
+    isRecordingFeedbackRef.current = true;
+    try {
+      await window.electronAPI.suggestions.recordFeedback(
+        file,
+        suggestion,
+        false,
+      );
+      // Update rejected ref
+      rejectedSuggestionsRef.current = {
+        ...rejectedSuggestionsRef.current,
+        [file.path]: suggestion,
+      };
+    } catch (error) {
+      logger.error('Failed to record reject feedback', {
+        error: error.message,
+        stack: error.stack,
+        filePath: file.path,
+      });
+      // Notify user of failure
+      addNotification('Failed to record rejection feedback', 'warning');
+    } finally {
+      isRecordingFeedbackRef.current = false;
+    }
   };
 
   const handleConfirmOrganization = () => {
@@ -141,17 +181,11 @@ function SmartOrganizer({
     }
   };
 
-  const getStepIndicator = () => {
-    const steps = [
-      { id: 'analyze', label: 'Analyze', icon: '🔍' },
-      { id: 'review', label: 'Review', icon: '👀' },
-      { id: 'preview', label: 'Preview', icon: '📋' },
-      { id: 'organize', label: 'Organize', icon: '✅' },
-    ];
-
-    return (
+  // FIX: Memoize step indicator to prevent recreation on every render
+  const stepIndicator = useMemo(
+    () => (
       <div className="flex items-center justify-center mb-6">
-        {steps.map((step, index) => (
+        {ORGANIZATION_STEPS.map((step, index) => (
           <div key={step.id} className="flex items-center">
             <div
               className={`flex items-center justify-center w-10 h-10 rounded-full ${
@@ -171,14 +205,31 @@ function SmartOrganizer({
                 {step.label}
               </span>
             </div>
-            {index < steps.length - 1 && (
+            {index < ORGANIZATION_STEPS.length - 1 && (
               <div className="w-8 h-0.5 bg-gray-300 mr-4" />
             )}
           </div>
         ))}
       </div>
-    );
-  };
+    ),
+    [currentStep],
+  );
+
+  // FIX: Memoize average confidence calculation to prevent recalculation on every render
+  const averageConfidence = useMemo(() => {
+    if (files.length === 1) {
+      const suggestion = suggestions[files[0]?.path];
+      return suggestion ? Math.round(suggestion.confidence * 100) : 0;
+    } else if (batchSuggestions?.groups?.length > 0) {
+      const avg =
+        batchSuggestions.groups.reduce(
+          (sum, group) => sum + (group.confidence || 0),
+          0,
+        ) / batchSuggestions.groups.length;
+      return Math.round(avg * 100);
+    }
+    return 0;
+  }, [files, suggestions, batchSuggestions]);
 
   return (
     <div className="space-y-6">
@@ -221,7 +272,7 @@ function SmartOrganizer({
       </div>
 
       {/* Step Indicator */}
-      {getStepIndicator()}
+      {stepIndicator}
 
       {/* Content based on current step */}
       {currentStep === 'analyze' && (
@@ -383,7 +434,7 @@ function SmartOrganizer({
       {(suggestions || batchSuggestions) && (
         <div className="flex items-center justify-between text-sm text-system-gray-600 pt-4 border-t">
           <div className="flex items-center gap-4">
-            <span>📊 Accuracy: {calculateAverageConfidence()}%</span>
+            <span>📊 Accuracy: {averageConfidence}%</span>
             <span>📁 {smartFolders.length} Smart Folders</span>
             <span>✅ {Object.keys(acceptedSuggestions).length} Accepted</span>
           </div>
@@ -392,21 +443,6 @@ function SmartOrganizer({
       )}
     </div>
   );
-
-  function calculateAverageConfidence() {
-    if (files.length === 1) {
-      const suggestion = suggestions[files[0].path];
-      return suggestion ? Math.round(suggestion.confidence * 100) : 0;
-    } else if (batchSuggestions) {
-      const avg =
-        batchSuggestions.groups.reduce(
-          (sum, group) => sum + group.confidence,
-          0,
-        ) / batchSuggestions.groups.length;
-      return Math.round(avg * 100);
-    }
-    return 0;
-  }
 }
 
 const fileShape = PropTypes.shape({

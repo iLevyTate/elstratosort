@@ -1,5 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const { Logger, LOG_LEVELS } = require('../shared/logger');
+// Import IPC_CHANNELS from shared constants to avoid duplication
+const { IPC_CHANNELS } = require('../shared/constants');
+// Import performance constants for configuration values
+const { LIMITS: PERF_LIMITS } = require('../shared/performanceConstants');
+// Import centralized security config to avoid channel definition drift
+const {
+  ALLOWED_RECEIVE_CHANNELS: SECURITY_RECEIVE_CHANNELS,
+  ALLOWED_SEND_CHANNELS: SECURITY_SEND_CHANNELS,
+} = require('../shared/securityConfig');
 
 const preloadLogger = new Logger();
 preloadLogger.setContext('Preload');
@@ -27,142 +36,13 @@ const log = {
 
 log.info('Secure preload script loaded');
 
-// Hardcoded IPC_CHANNELS to avoid requiring Node.js path module in sandboxed environment
-// This is copied from src/shared/constants.js and must be kept in sync
-const IPC_CHANNELS = {
-  // File Operations
-  FILES: {
-    SELECT: 'handle-file-selection',
-    SELECT_DIRECTORY: 'select-directory',
-    GET_DOCUMENTS_PATH: 'get-documents-path',
-    CREATE_FOLDER_DIRECT: 'create-folder-direct',
-    GET_FILE_STATS: 'get-file-stats',
-    GET_FILES_IN_DIRECTORY: 'get-files-in-directory',
-    DELETE_FOLDER: 'delete-folder',
-    DELETE_FILE: 'delete-file',
-    OPEN_FILE: 'open-file',
-    REVEAL_FILE: 'reveal-file',
-    COPY_FILE: 'copy-file',
-    OPEN_FOLDER: 'open-folder',
-    PERFORM_OPERATION: 'perform-file-operation',
-  },
-
-  // Smart Folders
-  SMART_FOLDERS: {
-    GET: 'get-smart-folders',
-    GET_CUSTOM: 'get-custom-folders',
-    SAVE: 'save-smart-folders',
-    UPDATE_CUSTOM: 'update-custom-folders',
-    SCAN_STRUCTURE: 'scan-folder-structure',
-    ADD: 'add-smart-folder',
-    EDIT: 'edit-smart-folder',
-    DELETE: 'delete-smart-folder',
-    MATCH: 'match-smart-folder',
-  },
-
-  // Analysis
-  ANALYSIS: {
-    ANALYZE_DOCUMENT: 'analyze-document',
-    ANALYZE_IMAGE: 'analyze-image',
-    EXTRACT_IMAGE_TEXT: 'extract-text-from-image',
-  },
-
-  // Organization Suggestions
-  SUGGESTIONS: {
-    GET_FILE_SUGGESTIONS: 'get-file-suggestions',
-    GET_BATCH_SUGGESTIONS: 'get-batch-suggestions',
-    RECORD_FEEDBACK: 'record-suggestion-feedback',
-    GET_STRATEGIES: 'get-organization-strategies',
-    APPLY_STRATEGY: 'apply-organization-strategy',
-    GET_USER_PATTERNS: 'get-user-patterns',
-    CLEAR_PATTERNS: 'clear-user-patterns',
-    ANALYZE_FOLDER_STRUCTURE: 'analyze-folder-structure',
-    SUGGEST_NEW_FOLDER: 'suggest-new-folder',
-  },
-
-  // Auto-Organize
-  ORGANIZE: {
-    AUTO: 'auto-organize-files',
-    BATCH: 'batch-organize-files',
-    PROCESS_NEW: 'process-new-file',
-    GET_STATS: 'get-organize-stats',
-    UPDATE_THRESHOLDS: 'update-organize-thresholds',
-  },
-
-  // Settings
-  SETTINGS: {
-    GET: 'get-settings',
-    SAVE: 'save-settings',
-  },
-
-  // Embeddings / Semantic Matching
-  EMBEDDINGS: {
-    REBUILD_FOLDERS: 'embeddings-rebuild-folders',
-    REBUILD_FILES: 'embeddings-rebuild-files',
-    CLEAR_STORE: 'embeddings-clear-store',
-    GET_STATS: 'embeddings-get-stats',
-    FIND_SIMILAR: 'embeddings-find-similar',
-  },
-
-  // Ollama
-  OLLAMA: {
-    GET_MODELS: 'get-ollama-models',
-    TEST_CONNECTION: 'test-ollama-connection',
-    PULL_MODELS: 'ollama-pull-models',
-    DELETE_MODEL: 'ollama-delete-model',
-  },
-
-  // Undo/Redo
-  UNDO_REDO: {
-    CAN_UNDO: 'can-undo',
-    CAN_REDO: 'can-redo',
-    UNDO: 'undo-action',
-    REDO: 'redo-action',
-    GET_HISTORY: 'get-action-history',
-    CLEAR_HISTORY: 'clear-action-history',
-  },
-
-  // Analysis History
-  ANALYSIS_HISTORY: {
-    GET: 'get-analysis-history',
-    SEARCH: 'search-analysis-history',
-    GET_STATISTICS: 'get-analysis-statistics',
-    GET_FILE_HISTORY: 'get-file-analysis-history',
-    CLEAR: 'clear-analysis-history',
-    EXPORT: 'export-analysis-history',
-  },
-
-  // System Monitoring
-  SYSTEM: {
-    GET_APPLICATION_STATISTICS: 'get-application-statistics',
-    GET_METRICS: 'get-system-metrics',
-    APPLY_UPDATE: 'apply-update',
-  },
-
-  // Window Controls
-  WINDOW: {
-    MINIMIZE: 'window-minimize',
-    MAXIMIZE: 'window-maximize',
-    UNMAXIMIZE: 'window-unmaximize',
-    TOGGLE_MAXIMIZE: 'window-toggle-maximize',
-    IS_MAXIMIZED: 'window-is-maximized',
-    CLOSE: 'window-close',
-  },
-
-  // Menu Actions
-  MENU: {
-    NEW_ANALYSIS: 'menu-new-analysis',
-    UNDO: 'menu-undo',
-    REDO: 'menu-redo',
-  },
-};
-
 // Dynamically derive allowed send channels from centralized IPC_CHANNELS to prevent drift
+// FIX: Removed hardcoded SETTINGS_EXTENDED - now all settings channels are in IPC_CHANNELS.SETTINGS
 const ALLOWED_CHANNELS = {
   FILES: Object.values(IPC_CHANNELS.FILES),
   SMART_FOLDERS: Object.values(IPC_CHANNELS.SMART_FOLDERS),
   ANALYSIS: Object.values(IPC_CHANNELS.ANALYSIS),
-  SETTINGS: Object.values(IPC_CHANNELS.SETTINGS),
+  SETTINGS: Object.values(IPC_CHANNELS.SETTINGS), // Now includes all extended settings channels
   OLLAMA: Object.values(IPC_CHANNELS.OLLAMA),
   UNDO_REDO: Object.values(IPC_CHANNELS.UNDO_REDO),
   ANALYSIS_HISTORY: Object.values(IPC_CHANNELS.ANALYSIS_HISTORY),
@@ -171,39 +51,19 @@ const ALLOWED_CHANNELS = {
   WINDOW: Object.values(IPC_CHANNELS.WINDOW || {}),
   SUGGESTIONS: Object.values(IPC_CHANNELS.SUGGESTIONS || {}),
   ORGANIZE: Object.values(IPC_CHANNELS.ORGANIZE || {}),
-  // Fixed: Add new settings-related channels
-  SETTINGS_EXTENDED: [
-    'get-configurable-limits',
-    'export-settings',
-    'import-settings',
-    'settings-create-backup',
-    'settings-list-backups',
-    'settings-restore-backup',
-    'settings-delete-backup',
-  ],
+  CHROMADB: Object.values(IPC_CHANNELS.CHROMADB || {}),
 };
 
+// FIX: Use centralized security config to prevent drift between preload and main process
+// FIX: Use IPC_CHANNELS constant instead of hardcoded string
 const ALLOWED_RECEIVE_CHANNELS = [
-  'system-metrics',
-  'operation-progress',
-  'app:error',
-  'app:update',
-  'startup-progress',
-  'startup-error',
-  'menu-action',
-  'settings-changed-external',
-  'operation-error',
-  'operation-complete',
-  'operation-failed',
+  ...SECURITY_RECEIVE_CHANNELS,
+  IPC_CHANNELS.CHROMADB.STATUS_CHANGED, // ChromaDB status events
 ];
 
 // Allowed send channels (for ipcRenderer.send, not invoke)
-// These are fire-and-forget messages that don't need handlers
-const ALLOWED_SEND_CHANNELS = [
-  'renderer-error-report', // Error reporting from renderer to main
-  'startup-continue', // Startup flow control
-  'startup-quit', // Startup flow control
-];
+// FIX: Use centralized security config
+const ALLOWED_SEND_CHANNELS = [...SECURITY_SEND_CHANNELS];
 
 // Flatten allowed send channels for validation
 const ALL_SEND_CHANNELS = Object.values(ALLOWED_CHANNELS).flat();
@@ -215,7 +75,7 @@ class SecureIPCManager {
   constructor() {
     this.activeListeners = new Map();
     this.rateLimiter = new Map();
-    this.maxRequestsPerSecond = 200; // Increased from 100 to handle large file selections
+    this.maxRequestsPerSecond = PERF_LIMITS.MAX_IPC_REQUESTS_PER_SECOND; // From centralized config
   }
 
   /**
@@ -239,12 +99,12 @@ class SecureIPCManager {
     this.rateLimiter.set(channel, channelData);
 
     // Fixed: Cleanup old rate limit entries to prevent memory leak
-    if (this.rateLimiter.size > 100) {
+    if (this.rateLimiter.size > PERF_LIMITS.RATE_LIMIT_CLEANUP_THRESHOLD) {
       // Arbitrary limit
       const staleEntries = [];
       for (const [ch, data] of this.rateLimiter.entries()) {
         // Remove entries that are more than 1 minute old
-        if (now > data.resetTime + 60000) {
+        if (now > data.resetTime + PERF_LIMITS.RATE_LIMIT_STALE_MS) {
           staleEntries.push(ch);
         }
       }
@@ -677,6 +537,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ),
     openFolder: (folderPath) =>
       secureIPC.safeInvoke(IPC_CHANNELS.FILES.OPEN_FOLDER, folderPath),
+    deleteFolder: (folderPath) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.FILES.DELETE_FOLDER, folderPath),
     // Add file analysis method that routes to appropriate analyzer
     analyze: (filePath) => {
       // Fixed: Enhanced path validation to prevent directory traversal and unauthorized access
@@ -930,7 +792,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     canRedo: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.CAN_REDO),
   },
 
-  // System Monitoring (only metrics and app statistics currently implemented)
+  // System Monitoring
   system: {
     getMetrics: () => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.GET_METRICS),
     getApplicationStatistics: () =>
@@ -939,6 +801,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       IPC_CHANNELS.SYSTEM.APPLY_UPDATE
         ? secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.APPLY_UPDATE)
         : undefined,
+    // FIX: Expose config handlers that were registered but not exposed
+    getConfig: () => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.GET_CONFIG),
+    getConfigValue: (path) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.GET_CONFIG_VALUE, path),
   },
 
   // Window controls (Windows custom title bar)
@@ -1024,21 +890,41 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
-  // Settings
+  // Settings - FIX: Use centralized IPC_CHANNELS constants to prevent drift
   settings: {
     get: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET),
     save: (settings) =>
       secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.SAVE, settings),
     getConfigurableLimits: () =>
-      secureIPC.safeInvoke('get-configurable-limits'),
-    export: (exportPath) => secureIPC.safeInvoke('export-settings', exportPath),
-    import: (importPath) => secureIPC.safeInvoke('import-settings', importPath),
-    createBackup: () => secureIPC.safeInvoke('settings-create-backup'),
-    listBackups: () => secureIPC.safeInvoke('settings-list-backups'),
+      secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET_CONFIGURABLE_LIMITS),
+    export: (exportPath) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.EXPORT, exportPath),
+    import: (importPath) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.IMPORT, importPath),
+    createBackup: () =>
+      secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.CREATE_BACKUP),
+    listBackups: () =>
+      secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.LIST_BACKUPS),
     restoreBackup: (backupPath) =>
-      secureIPC.safeInvoke('settings-restore-backup', backupPath),
+      secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.RESTORE_BACKUP, backupPath),
     deleteBackup: (backupPath) =>
-      secureIPC.safeInvoke('settings-delete-backup', backupPath),
+      secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.DELETE_BACKUP, backupPath),
+  },
+
+  // ChromaDB Service Status
+  chromadb: {
+    getStatus: () => secureIPC.safeInvoke(IPC_CHANNELS.CHROMADB.GET_STATUS),
+    getCircuitStats: () =>
+      secureIPC.safeInvoke(IPC_CHANNELS.CHROMADB.GET_CIRCUIT_STATS),
+    getQueueStats: () =>
+      secureIPC.safeInvoke(IPC_CHANNELS.CHROMADB.GET_QUEUE_STATS),
+    forceRecovery: () =>
+      secureIPC.safeInvoke(IPC_CHANNELS.CHROMADB.FORCE_RECOVERY),
+    healthCheck: () =>
+      secureIPC.safeInvoke(IPC_CHANNELS.CHROMADB.HEALTH_CHECK),
+    // FIX: Use IPC_CHANNELS constant instead of hardcoded string
+    onStatusChanged: (callback) =>
+      secureIPC.safeOn(IPC_CHANNELS.CHROMADB.STATUS_CHANGED, callback),
   },
 });
 

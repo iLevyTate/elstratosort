@@ -249,8 +249,10 @@ class SettingsService {
         // This prevents error propagation from breaking the mutex chain
       });
 
+      // FIX: Store timeout ID to clear it after mutex acquisition
+      let timeoutId;
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
           reject(
             new Error(
               `Mutex deadlock detected: Previous operation did not complete within ${this._mutexTimeoutMs}ms. ` +
@@ -261,7 +263,12 @@ class SettingsService {
       });
 
       // Race between waiting for previous mutex and timeout
-      await Promise.race([waitForPrevious, timeoutPromise]);
+      try {
+        await Promise.race([waitForPrevious, timeoutPromise]);
+      } finally {
+        // FIX: Always clear timeout to prevent memory leak
+        if (timeoutId) clearTimeout(timeoutId);
+      }
 
       // CRITICAL FIX: Track when this operation acquires the mutex for deadlock detection
       this._mutexAcquiredAt = Date.now();

@@ -17,7 +17,7 @@
     "src/preload/**/*",
     "src/shared/**/*",
     "package.json",
-    "setup-ollama.js",
+    "scripts/setup-ollama.js",
     "!**/*.map",
     "!test/**",
     "!coverage/**",

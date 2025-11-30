@@ -7,6 +7,12 @@ const {
 } = require('../services/SmartFoldersLLMService');
 const { withErrorLogging } = require('./withErrorLogging');
 
+// Import centralized security configuration
+const {
+  getDangerousPaths,
+  ALLOWED_APP_PATHS,
+} = require('../../shared/securityConfig');
+
 /**
  * CRITICAL SECURITY FIX: Sanitize and validate folder paths to prevent path traversal attacks
  * @param {string} inputPath - User-provided path to validate
@@ -26,17 +32,14 @@ function sanitizeFolderPath(inputPath) {
     throw new Error('Invalid path: contains null bytes');
   }
 
-  // Define allowed base paths (user directories only)
-  const ALLOWED_BASE_PATHS = [
-    app.getPath('userData'), // App data directory
-    app.getPath('documents'), // User documents
-    app.getPath('downloads'), // Downloads
-    app.getPath('desktop'), // Desktop
-    app.getPath('pictures'), // Pictures
-    app.getPath('videos'), // Videos
-    app.getPath('music'), // Music
-    app.getPath('home'), // Home directory
-  ];
+  // Get allowed base paths from centralized config
+  const ALLOWED_BASE_PATHS = ALLOWED_APP_PATHS.map((appPath) => {
+    try {
+      return app.getPath(appPath);
+    } catch {
+      return null;
+    }
+  }).filter(Boolean);
 
   // Check if path is within allowed directories
   const isAllowed = ALLOWED_BASE_PATHS.some((basePath) => {
@@ -53,22 +56,8 @@ function sanitizeFolderPath(inputPath) {
     );
   }
 
-  // Block access to system directories
-  const dangerousPaths = [
-    '/etc',
-    '/sys',
-    '/proc',
-    '/dev',
-    '/boot',
-    'C:\\Windows',
-    'C:\\Program Files',
-    'C:\\Program Files (x86)',
-    '/System',
-    '/Library/System',
-    '/private/etc',
-    '/private/var',
-  ];
-
+  // Block access to system directories using centralized config
+  const dangerousPaths = getDangerousPaths();
   const normalizedLower = normalized.toLowerCase();
   const isDangerous = dangerousPaths.some((dangerous) =>
     normalizedLower.startsWith(dangerous.toLowerCase()),

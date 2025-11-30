@@ -1,4 +1,10 @@
-const { withErrorLogging } = require('./withErrorLogging');
+/**
+ * Undo/Redo IPC Handlers
+ *
+ * Handles undo, redo, and action history operations.
+ * Demonstrates the service check pattern with fallback responses.
+ */
+const { createHandler } = require('./ipcWrappers');
 
 function registerUndoRedoIpc({
   ipcMain,
@@ -6,95 +12,134 @@ function registerUndoRedoIpc({
   logger,
   getServiceIntegration,
 }) {
-  // Undo
+  const context = 'UndoRedo';
+
+  // Helper to get undo/redo service
+  const getUndoRedoService = () => getServiceIntegration()?.undoRedo;
+
+  // Undo action
   ipcMain.handle(
     IPC_CHANNELS.UNDO_REDO.UNDO,
-    withErrorLogging(logger, async () => {
-      try {
-        return (
-          (await getServiceIntegration()?.undoRedo?.undo()) || {
+    createHandler({
+      logger,
+      context,
+      serviceName: 'undoRedo',
+      getService: getUndoRedoService,
+      fallbackResponse: { success: false, message: 'Undo service unavailable' },
+      handler: async (event, service) => {
+        try {
+          return (await service.undo()) || {
             success: false,
-            message: 'Undo service unavailable',
-          }
-        );
-      } catch (error) {
-        logger.error('Failed to execute undo:', error);
-        return { success: false, message: error.message };
-      }
+            message: 'Nothing to undo',
+          };
+        } catch (error) {
+          logger.error('Failed to execute undo:', error);
+          return { success: false, message: error.message };
+        }
+      },
     }),
   );
 
-  // Redo
+  // Redo action
   ipcMain.handle(
     IPC_CHANNELS.UNDO_REDO.REDO,
-    withErrorLogging(logger, async () => {
-      try {
-        return (
-          (await getServiceIntegration()?.undoRedo?.redo()) || {
+    createHandler({
+      logger,
+      context,
+      serviceName: 'undoRedo',
+      getService: getUndoRedoService,
+      fallbackResponse: { success: false, message: 'Redo service unavailable' },
+      handler: async (event, service) => {
+        try {
+          return (await service.redo()) || {
             success: false,
-            message: 'Redo service unavailable',
-          }
-        );
-      } catch (error) {
-        logger.error('Failed to execute redo:', error);
-        return { success: false, message: error.message };
-      }
+            message: 'Nothing to redo',
+          };
+        } catch (error) {
+          logger.error('Failed to execute redo:', error);
+          return { success: false, message: error.message };
+        }
+      },
     }),
   );
 
-  // History
+  // Get action history
   ipcMain.handle(
     IPC_CHANNELS.UNDO_REDO.GET_HISTORY,
-    withErrorLogging(logger, async (event, limit = 50) => {
-      try {
-        return (
-          (await getServiceIntegration()?.undoRedo?.getHistory(limit)) || []
-        );
-      } catch (error) {
-        logger.error('Failed to get action history:', error);
-        return [];
-      }
+    createHandler({
+      logger,
+      context,
+      serviceName: 'undoRedo',
+      getService: getUndoRedoService,
+      fallbackResponse: [],
+      handler: async (event, limit = 50, service) => {
+        try {
+          return (await service.getHistory(limit)) || [];
+        } catch (error) {
+          logger.error('Failed to get action history:', error);
+          return [];
+        }
+      },
     }),
   );
 
+  // Clear action history
   ipcMain.handle(
     IPC_CHANNELS.UNDO_REDO.CLEAR_HISTORY,
-    withErrorLogging(logger, async () => {
-      try {
-        return (
-          (await getServiceIntegration()?.undoRedo?.clearHistory()) || {
-            success: true,
-          }
-        );
-      } catch (error) {
-        logger.error('Failed to clear action history:', error);
-        return { success: false, message: error.message };
-      }
+    createHandler({
+      logger,
+      context,
+      serviceName: 'undoRedo',
+      getService: getUndoRedoService,
+      fallbackResponse: { success: true },
+      handler: async (event, service) => {
+        try {
+          return (await service.clearHistory()) || { success: true };
+        } catch (error) {
+          logger.error('Failed to clear action history:', error);
+          return { success: false, message: error.message };
+        }
+      },
     }),
   );
 
-  // Status
+  // Check if undo is available
   ipcMain.handle(
     IPC_CHANNELS.UNDO_REDO.CAN_UNDO,
-    withErrorLogging(logger, async () => {
-      try {
-        return (await getServiceIntegration()?.undoRedo?.canUndo()) || false;
-      } catch (error) {
-        logger.error('Failed to check undo status:', error);
-        return false;
-      }
+    createHandler({
+      logger,
+      context,
+      serviceName: 'undoRedo',
+      getService: getUndoRedoService,
+      fallbackResponse: false,
+      handler: async (event, service) => {
+        try {
+          return (await service.canUndo()) || false;
+        } catch (error) {
+          logger.error('Failed to check undo status:', error);
+          return false;
+        }
+      },
     }),
   );
 
+  // Check if redo is available
   ipcMain.handle(
     IPC_CHANNELS.UNDO_REDO.CAN_REDO,
-    withErrorLogging(logger, async () => {
-      try {
-        return (await getServiceIntegration()?.undoRedo?.canRedo()) || false;
-      } catch (error) {
-        logger.error('Failed to check redo status:', error);
-        return false;
-      }
+    createHandler({
+      logger,
+      context,
+      serviceName: 'undoRedo',
+      getService: getUndoRedoService,
+      fallbackResponse: false,
+      handler: async (event, service) => {
+        try {
+          return (await service.canRedo()) || false;
+        } catch (error) {
+          logger.error('Failed to check redo status:', error);
+          return false;
+        }
+      },
     }),
   );
 }

@@ -3,6 +3,24 @@
  * Sets up necessary globals before tests run
  */
 
+// Polyfill setImmediate for test environment (Node.js function not available in jsdom)
+if (typeof setImmediate === 'undefined') {
+  global.setImmediate = (fn, ...args) => setTimeout(fn, 0, ...args);
+  global.clearImmediate = (id) => clearTimeout(id);
+}
+
+// Patch setTimeout to add unref() method (needed by DownloadWatcher)
+// jsdom timers don't have unref() which is a Node.js-specific method
+const originalSetTimeout = global.setTimeout;
+global.setTimeout = (...args) => {
+  const timer = originalSetTimeout(...args);
+  if (timer && typeof timer === 'object' && !timer.unref) {
+    timer.unref = () => timer;
+    timer.ref = () => timer;
+  }
+  return timer;
+};
+
 // Mock DOM globals that packages like officeparser expect
 global.window = global.window || {
   location: { href: 'http://localhost' },

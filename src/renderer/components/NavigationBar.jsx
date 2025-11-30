@@ -110,6 +110,9 @@ SettingsIcon.propTypes = {
 function NavigationBar() {
   const dispatch = useAppDispatch();
   const currentPhase = useAppSelector((state) => state.ui.currentPhase);
+  const isOrganizing = useAppSelector((state) => state.ui.isOrganizing);
+  const isAnalyzing = useAppSelector((state) => state.ui.isAnalyzing);
+  const isLoading = useAppSelector((state) => state.ui.isLoading);
 
   // MEDIUM FIX: Memoize actions to prevent object recreation on every render
   const actions = useMemo(
@@ -246,11 +249,16 @@ function NavigationBar() {
           {phaseOrder.map((phase) => {
             const metadata = PHASE_METADATA[phase];
             const allowedTransitions = PHASE_TRANSITIONS[currentPhase] || [];
+            // Check if transition is allowed AND no blocking operations are in progress
+            const isBlockedByOperation = isOrganizing || isAnalyzing || isLoading;
             const canNavigate =
-              allowedTransitions.includes(phase) || phase === currentPhase;
+              (allowedTransitions.includes(phase) || phase === currentPhase) &&
+              !isBlockedByOperation;
             const label = getTwoWordLabel(metadata.title, metadata.navLabel);
             const isActive = phase === currentPhase;
             const IconComponent = phaseIcons[phase];
+            // Show loading state on current phase during operations
+            const showSpinner = isActive && isBlockedByOperation;
 
             return (
               <button
@@ -269,20 +277,49 @@ function NavigationBar() {
                 ].join(' ')}
                 aria-label={metadata.title}
                 aria-current={isActive ? 'page' : undefined}
-                title={metadata.description || metadata.title}
+                aria-busy={showSpinner}
+                title={
+                  isBlockedByOperation && !isActive
+                    ? 'Navigation disabled during operation'
+                    : metadata.description || metadata.title
+                }
                 style={{ WebkitAppRegion: 'no-drag' }}
               >
-                {IconComponent && (
-                  <IconComponent
-                    className={`h-4 w-4 ${
-                      isActive || hoveredTab === phase
-                        ? 'text-stratosort-blue'
-                        : 'text-current opacity-70'
-                    }`}
-                  />
+                {showSpinner ? (
+                  <svg
+                    className="animate-spin h-4 w-4 text-stratosort-blue"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    />
+                  </svg>
+                ) : (
+                  IconComponent && (
+                    <IconComponent
+                      className={`h-4 w-4 ${
+                        isActive || hoveredTab === phase
+                          ? 'text-stratosort-blue'
+                          : 'text-current opacity-70'
+                      }`}
+                    />
+                  )
                 )}
                 <span className="font-medium">{label}</span>
-                {isActive && (
+                {isActive && !showSpinner && (
                   <span className="absolute -bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-gradient-primary-start" />
                 )}
               </button>
@@ -326,4 +363,6 @@ function NavigationBar() {
   );
 }
 
-export default NavigationBar;
+// FIX: Wrap in memo for consistency with other components
+// Note: Limited benefit since component reads from Redux, but prevents re-renders from parent
+export default memo(NavigationBar);

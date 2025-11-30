@@ -144,7 +144,23 @@ async function saveCustomFolders(folders) {
   try {
     const filePath = getCustomFoldersPath();
     const toSave = normalizeFolderPaths(folders);
-    await fs.writeFile(filePath, JSON.stringify(toSave, null, 2));
+    const data = JSON.stringify(toSave, null, 2);
+
+    // FIX: Use atomic write (temp file + rename) to prevent corruption on crash
+    const tempPath = filePath + '.tmp.' + Date.now();
+    try {
+      await fs.writeFile(tempPath, data);
+      await fs.rename(tempPath, filePath);
+    } catch (writeError) {
+      // Clean up temp file on failure
+      try {
+        await fs.unlink(tempPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+      throw writeError;
+    }
+
     logger.info('[STORAGE] Saved custom folders to:', filePath);
   } catch (error) {
     logger.error('[ERROR] Failed to save custom folders:', error);

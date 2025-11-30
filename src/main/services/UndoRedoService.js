@@ -116,7 +116,19 @@ class UndoRedoService {
       lastSaved: new Date().toISOString(),
     };
     await this.ensureParentDirectory(this.actionsPath);
-    await fs.writeFile(this.actionsPath, JSON.stringify(data, null, 2));
+    // FIX: Use atomic write (temp + rename) to prevent corruption on crash
+    const tempPath = this.actionsPath + '.tmp.' + Date.now();
+    try {
+      await fs.writeFile(tempPath, JSON.stringify(data, null, 2));
+      await fs.rename(tempPath, this.actionsPath);
+    } catch (error) {
+      try {
+        await fs.unlink(tempPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+      throw error;
+    }
   }
 
   async recordAction(actionType, actionData) {

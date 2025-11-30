@@ -25,8 +25,17 @@ const NamingSettings = memo(function NamingSettings({
     (e) => setCaseConvention(e.target.value),
     [setCaseConvention],
   );
+  // FIX #19: Validate separator against unsafe characters that could break file paths
+  const UNSAFE_SEPARATOR_CHARS = /[/\\:*?"<>|]/;
   const handleSeparatorChange = useCallback(
-    (e) => setSeparator(e.target.value),
+    (e) => {
+      const value = e.target.value;
+      // Only allow safe characters (reject path-breaking ones)
+      if (value === '' || !UNSAFE_SEPARATOR_CHARS.test(value)) {
+        setSeparator(value);
+      }
+      // Silently reject unsafe characters
+    },
     [setSeparator],
   );
 

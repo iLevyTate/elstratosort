@@ -118,7 +118,7 @@ const OrganizationSuggestions = memo(function OrganizationSuggestions({
               <Button
                 size="sm"
                 variant="primary"
-                onClick={() => onAccept(file, primary)}
+                onClick={() => onAccept && onAccept(file, primary)}
                 className="bg-stratosort-blue hover:bg-stratosort-blue/90"
               >
                 Accept
@@ -126,7 +126,7 @@ const OrganizationSuggestions = memo(function OrganizationSuggestions({
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => onReject(file, primary)}
+                onClick={() => onReject && onReject(file, primary)}
               >
                 Reject
               </Button>
@@ -185,9 +185,10 @@ const OrganizationSuggestions = memo(function OrganizationSuggestions({
 
           {expandedAlternatives && (
             <div className="mt-3 space-y-2">
-              {alternatives.map((alt, index) => (
+              {/* FIX: Use stable identifier (folder + confidence) instead of array index */}
+              {alternatives.map((alt) => (
                 <Card
-                  key={index}
+                  key={`${alt.folder}-${alt.confidence}-${alt.method || 'default'}`}
                   className="p-3 border-gray-200 hover:border-stratosort-blue/50 transition-colors"
                 >
                   <div className="flex items-center justify-between">

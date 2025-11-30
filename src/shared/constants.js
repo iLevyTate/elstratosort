@@ -123,6 +123,14 @@ const IPC_CHANNELS = {
   SETTINGS: {
     GET: 'get-settings',
     SAVE: 'save-settings',
+    // Extended settings operations (backup, export, import)
+    GET_CONFIGURABLE_LIMITS: 'get-configurable-limits',
+    EXPORT: 'export-settings',
+    IMPORT: 'import-settings',
+    CREATE_BACKUP: 'settings-create-backup',
+    LIST_BACKUPS: 'settings-list-backups',
+    RESTORE_BACKUP: 'settings-restore-backup',
+    DELETE_BACKUP: 'settings-delete-backup',
   },
 
   // Embeddings / Semantic Matching
@@ -167,6 +175,8 @@ const IPC_CHANNELS = {
     GET_APPLICATION_STATISTICS: 'get-application-statistics',
     GET_METRICS: 'get-system-metrics',
     APPLY_UPDATE: 'apply-update',
+    GET_CONFIG: 'get-app-config',
+    GET_CONFIG_VALUE: 'get-config-value',
   },
 
   // Window Controls
@@ -184,6 +194,17 @@ const IPC_CHANNELS = {
     NEW_ANALYSIS: 'menu-new-analysis',
     UNDO: 'menu-undo',
     REDO: 'menu-redo',
+  },
+
+  // ChromaDB Service Status
+  CHROMADB: {
+    GET_STATUS: 'chromadb-get-status',
+    GET_CIRCUIT_STATS: 'chromadb-get-circuit-stats',
+    GET_QUEUE_STATS: 'chromadb-get-queue-stats',
+    FORCE_RECOVERY: 'chromadb-force-recovery',
+    HEALTH_CHECK: 'chromadb-health-check',
+    // Events (sent from main to renderer)
+    STATUS_CHANGED: 'chromadb-status-changed',
   },
 };
 
@@ -227,6 +248,68 @@ const ERROR_TYPES = {
   PROCESSING_FAILED: 'PROCESSING_FAILED',
 };
 
+// File system error codes - comprehensive codes for file operations
+const FILE_SYSTEM_ERROR_CODES = {
+  // Access and permission errors
+  FILE_ACCESS_DENIED: 'FILE_ACCESS_DENIED',
+  FILE_NOT_FOUND: 'FILE_NOT_FOUND',
+  DIRECTORY_NOT_FOUND: 'DIRECTORY_NOT_FOUND',
+  PERMISSION_DENIED: 'PERMISSION_DENIED',
+
+  // Write and modification errors
+  WRITE_FAILED: 'WRITE_FAILED',
+  READ_FAILED: 'READ_FAILED',
+  DELETE_FAILED: 'DELETE_FAILED',
+  RENAME_FAILED: 'RENAME_FAILED',
+  COPY_FAILED: 'COPY_FAILED',
+  MOVE_FAILED: 'MOVE_FAILED',
+
+  // Directory errors
+  MKDIR_FAILED: 'MKDIR_FAILED',
+  RMDIR_FAILED: 'RMDIR_FAILED',
+  DIRECTORY_NOT_EMPTY: 'DIRECTORY_NOT_EMPTY',
+  NOT_A_DIRECTORY: 'NOT_A_DIRECTORY',
+  NOT_A_FILE: 'NOT_A_FILE',
+
+  // Space and resource errors
+  DISK_FULL: 'DISK_FULL',
+  QUOTA_EXCEEDED: 'QUOTA_EXCEEDED',
+  TOO_MANY_OPEN_FILES: 'TOO_MANY_OPEN_FILES',
+
+  // File state errors
+  FILE_IN_USE: 'FILE_IN_USE',
+  FILE_LOCKED: 'FILE_LOCKED',
+  FILE_EXISTS: 'FILE_EXISTS',
+  FILE_TOO_LARGE: 'FILE_TOO_LARGE',
+
+  // Path errors
+  PATH_TOO_LONG: 'PATH_TOO_LONG',
+  INVALID_PATH: 'INVALID_PATH',
+  CROSS_DEVICE_LINK: 'CROSS_DEVICE_LINK',
+
+  // Integrity errors
+  CHECKSUM_MISMATCH: 'CHECKSUM_MISMATCH',
+  SIZE_MISMATCH: 'SIZE_MISMATCH',
+  PARTIAL_WRITE: 'PARTIAL_WRITE',
+  CORRUPTED_FILE: 'CORRUPTED_FILE',
+
+  // Watcher errors
+  WATCHER_FAILED: 'WATCHER_FAILED',
+  WATCHER_CLOSED: 'WATCHER_CLOSED',
+
+  // Atomic operation errors
+  ATOMIC_OPERATION_FAILED: 'ATOMIC_OPERATION_FAILED',
+  ROLLBACK_FAILED: 'ROLLBACK_FAILED',
+  TRANSACTION_TIMEOUT: 'TRANSACTION_TIMEOUT',
+
+  // I/O errors
+  IO_ERROR: 'IO_ERROR',
+  NETWORK_ERROR: 'NETWORK_ERROR',
+
+  // Generic
+  UNKNOWN_ERROR: 'UNKNOWN_ERROR',
+};
+
 // Action types for undo/redo
 const ACTION_TYPES = {
   FILE_MOVE: 'FILE_MOVE',
@@ -245,6 +328,7 @@ const THEMES = {
   LIGHT: 'light',
   DARK: 'dark',
   SYSTEM: 'system',
+  AUTO: 'auto', // Alias for 'system' - follow system theme
 };
 
 // Keyboard shortcuts
@@ -266,13 +350,7 @@ const LIMITS = {
   MAX_FILENAME_LENGTH: 255,
 };
 
-// Time constants - Optimized for faster models
-const TIMEOUTS = {
-  AI_REQUEST: 60000, // 1 minute for faster models (llama3.2, whisper-tiny)
-  FILE_OPERATION: 10000, // 10 seconds
-  DEBOUNCE: 300,
-  THROTTLE: 100,
-};
+// Note: TIMEOUTS moved to performanceConstants.js - use that as single source of truth
 
 // File type mappings
 const SUPPORTED_TEXT_EXTENSIONS = [
@@ -426,11 +504,11 @@ const exports_object = {
   NOTIFICATION_TYPES,
   FILE_STATES,
   ERROR_TYPES,
+  FILE_SYSTEM_ERROR_CODES,
   ACTION_TYPES,
   THEMES,
   SHORTCUTS,
   LIMITS,
-  TIMEOUTS,
   SUPPORTED_TEXT_EXTENSIONS,
   SUPPORTED_DOCUMENT_EXTENSIONS,
   SUPPORTED_IMAGE_EXTENSIONS,

@@ -8,3 +8,5 @@ export { default as BatchOrganizationSuggestions } from './BatchOrganizationSugg
 export { default as OrganizationPreview } from './OrganizationPreview';
 export { default as FolderImprovementSuggestions } from './FolderImprovementSuggestions';
 export { default as SmartOrganizer } from './SmartOrganizer';
+export { default as VirtualizedFileGrid } from './VirtualizedFileGrid';
+export { default as VirtualizedProcessedFiles } from './VirtualizedProcessedFiles';

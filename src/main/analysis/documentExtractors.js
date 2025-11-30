@@ -1,8 +1,13 @@
 const fs = require('fs').promises;
+const { createReadStream } = require('fs');
 
 const { FileProcessingError } = require('../errors/AnalysisError');
 const { logger } = require('../../shared/logger');
 logger.setContext('DocumentExtractors');
+
+// Streaming thresholds for large file handling
+const STREAM_THRESHOLD = 50 * 1024 * 1024; // 50MB - use streaming for files larger than this
+const MAX_CONTENT_LENGTH = 2 * 1024 * 1024; // 2MB of text max for LLM
 
 // Pre-compiled regex patterns for performance (compiled once at module load)
 const REGEX_PATTERNS = {
@@ -81,15 +86,93 @@ function truncateText(text) {
   );
 }
 
+/**
+ * Extract content with streaming for large files
+ * Uses streaming for files over STREAM_THRESHOLD to prevent memory issues
+ * @param {string} filePath - Path to file
+ * @returns {Promise<string>} Extracted text content
+ */
+async function extractContentWithSizeCheck(filePath) {
+  const stats = await fs.stat(filePath);
+
+  if (stats.size > STREAM_THRESHOLD) {
+    logger.info(`[EXTRACT] Using streaming for large file (${Math.round(stats.size / 1024 / 1024)}MB)`, { filePath });
+    return extractContentStreaming(filePath);
+  }
+
+  return extractContentBuffered(filePath);
+}
+
+/**
+ * Read file content into buffer (for smaller files)
+ * @param {string} filePath - Path to file
+ * @returns {Promise<string>} File content
+ */
+async function extractContentBuffered(filePath) {
+  const content = await fs.readFile(filePath, 'utf8');
+  return truncateText(content);
+}
+
+/**
+ * Stream large file content with early termination
+ * Stops reading once MAX_CONTENT_LENGTH is reached to prevent memory overflow
+ * @param {string} filePath - Path to file
+ * @returns {Promise<string>} Streamed and truncated content
+ */
+async function extractContentStreaming(filePath) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalLength = 0;
+
+    const stream = createReadStream(filePath, {
+      encoding: 'utf8',
+      highWaterMark: 64 * 1024 // 64KB chunks
+    });
+
+    stream.on('data', (chunk) => {
+      if (totalLength >= MAX_CONTENT_LENGTH) {
+        stream.destroy(); // Stop reading
+        return;
+      }
+
+      const remaining = MAX_CONTENT_LENGTH - totalLength;
+      const toAdd = chunk.slice(0, remaining);
+      chunks.push(toAdd);
+      totalLength += toAdd.length;
+    });
+
+    stream.on('end', () => {
+      resolve(chunks.join(''));
+    });
+
+    stream.on('error', reject);
+
+    stream.on('close', () => {
+      // Handle early termination
+      if (totalLength >= MAX_CONTENT_LENGTH) {
+        logger.debug('[EXTRACT] Truncated large file content', {
+          filePath,
+          maxLength: MAX_CONTENT_LENGTH
+        });
+      }
+      resolve(chunks.join(''));
+    });
+  });
+}
+
 async function extractTextFromPdf(filePath, fileName) {
-  const pdf = require('pdf-parse');
+  const pdfModule = require('pdf-parse');
+  // Handle both old (function) and new (object with PDFParse function) export formats
+  // pdf-parse 2.x exports an object with PDFParse as a callable function (NOT a constructor)
+  const pdfParseFn = typeof pdfModule === 'function' ? pdfModule : (pdfModule.PDFParse || pdfModule.default);
   // Fixed: Check file size before loading into memory
   await checkFileSize(filePath, fileName);
 
   let dataBuffer = null;
   try {
     dataBuffer = await fs.readFile(filePath);
-    const pdfData = await pdf(dataBuffer);
+    // pdf-parse 2.x: PDFParse is a function that returns a promise, NOT a constructor
+    const pdfData = await pdfParseFn(dataBuffer);
 
     if (!pdfData.text || pdfData.text.trim().length === 0) {
       throw new FileProcessingError('PDF_NO_TEXT_CONTENT', fileName, {
@@ -670,4 +753,8 @@ module.exports = {
   extractTextFromKmz,
   extractPlainTextFromRtf,
   extractPlainTextFromHtml,
+  // MED-4: Streaming support for large files
+  extractContentWithSizeCheck,
+  extractContentStreaming,
+  extractContentBuffered,
 };

@@ -194,10 +194,49 @@ if (typeof process !== 'undefined' && process.env.NODE_ENV === 'development') {
   logger.setLevel(LOG_LEVELS.INFO);
 }
 
+/**
+ * DUP-5: Logger factory function to reduce boilerplate
+ * Creates a logger instance with context already set
+ *
+ * Instead of:
+ *   const { logger } = require('../../shared/logger');
+ *   logger.setContext('ServiceName');
+ *
+ * Use:
+ *   const { createLogger } = require('../../shared/logger');
+ *   const logger = createLogger('ServiceName');
+ *
+ * @param {string} context - The context name for this logger
+ * @returns {Logger} Logger instance with context set
+ */
+function createLogger(context) {
+  // Create a new logger instance for this context
+  // This allows different modules to have independent log levels if needed
+  const contextLogger = new Logger();
+  contextLogger.setLevel(logger.level); // Inherit level from singleton
+  contextLogger.setContext(context);
+  return contextLogger;
+}
+
+/**
+ * Get the singleton logger with context already set
+ * Use this when you want all modules to share the same logger instance
+ *
+ * @param {string} context - The context name for this logger
+ * @returns {Logger} The singleton logger with context set
+ */
+function getLogger(context) {
+  logger.setContext(context);
+  return logger;
+}
+
 // Export both the class and singleton
 module.exports = {
   Logger,
   logger,
   LOG_LEVELS,
   LOG_LEVEL_NAMES,
+  // DUP-5: Factory functions
+  createLogger,
+  getLogger,
 };

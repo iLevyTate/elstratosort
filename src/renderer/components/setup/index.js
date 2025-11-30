@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import PropTypes from 'prop-types';
 import Button from '../ui/Button';
+// FIX: Import useSafeState to prevent state updates on unmounted components
+import { useSafeState } from '../../utils/reactEdgeCaseUtils';
 
 export default function FirstRunWizard({ onComplete }) {
   const [step, setStep] = useState(0);
-  const [hostOk, setHostOk] = useState(null);
+  // FIX: Use useSafeState for hostOk to prevent React warning when async
+  // testConnection returns after component unmounts
+  const [hostOk, setHostOk] = useSafeState(null);
   const [pulling, setPulling] = useState(false);
   const [results, setResults] = useState([]);
 

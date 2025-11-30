@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { useNotification } from '../../contexts/NotificationContext';
 import { Card, Button } from '../ui';
@@ -13,28 +13,35 @@ function BatchOrganizationSuggestions({
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [selectedStrategy, setSelectedStrategy] = useState(null);
 
+  // FIX: Memoize toggleGroup to prevent unnecessary re-renders
+  const toggleGroup = useCallback((groupIndex) => {
+    setExpandedGroups(prev => {
+      const newExpanded = new Set(prev);
+      if (newExpanded.has(groupIndex)) {
+        newExpanded.delete(groupIndex);
+      } else {
+        newExpanded.add(groupIndex);
+      }
+      return newExpanded;
+    });
+  }, []);
+
+  // Extract values before early return for use in callbacks
+  const suggestedStrategy = batchSuggestions?.suggestedStrategy;
+
+  // FIX: Memoize handleStrategyAccept
+  const handleStrategyAccept = useCallback(() => {
+    if (onAcceptStrategy) {
+      onAcceptStrategy(selectedStrategy || suggestedStrategy);
+    }
+  }, [onAcceptStrategy, selectedStrategy, suggestedStrategy]);
+
   if (!batchSuggestions || !batchSuggestions.groups) {
     return null;
   }
 
-  const { groups, patterns, recommendations, suggestedStrategy } =
+  const { groups, patterns, recommendations } =
     batchSuggestions;
-
-  const toggleGroup = (groupIndex) => {
-    const newExpanded = new Set(expandedGroups);
-    if (newExpanded.has(groupIndex)) {
-      newExpanded.delete(groupIndex);
-    } else {
-      newExpanded.add(groupIndex);
-    }
-    setExpandedGroups(newExpanded);
-  };
-
-  const handleStrategyAccept = () => {
-    if (onAcceptStrategy) {
-      onAcceptStrategy(selectedStrategy || suggestedStrategy);
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -91,8 +98,9 @@ function BatchOrganizationSuggestions({
             Recommendations
           </h3>
           <div className="space-y-3">
-            {recommendations.map((rec, index) => (
-              <div key={index} className="flex items-start gap-3">
+            {/* FIX: Use stable identifier instead of array index as key */}
+            {recommendations.map((rec) => (
+              <div key={rec.id || rec.description || rec.type} className="flex items-start gap-3">
                 <div className="mt-1">
                   {rec.confidence >= 0.8
                     ? '✅'
@@ -164,8 +172,9 @@ function BatchOrganizationSuggestions({
           Suggested File Groups ({groups.length})
         </h3>
         <div className="space-y-3">
+          {/* FIX: Use stable identifier instead of array index as key */}
           {groups.map((group, groupIndex) => (
-            <Card key={groupIndex} className="overflow-hidden">
+            <Card key={group.folder || group.id || `group-${groupIndex}`} className="overflow-hidden">
               <div
                 className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
                 onClick={() => toggleGroup(groupIndex)}
@@ -197,7 +206,9 @@ function BatchOrganizationSuggestions({
                     variant="ghost"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onCustomizeGroup(groupIndex, group);
+                      if (onCustomizeGroup) {
+                        onCustomizeGroup(groupIndex, group);
+                      }
                     }}
                     className="text-stratosort-blue"
                   >
@@ -209,9 +220,10 @@ function BatchOrganizationSuggestions({
               {expandedGroups.has(groupIndex) && (
                 <div className="border-t border-gray-200 p-4 bg-gray-50">
                   <div className="space-y-2">
-                    {group.files.map((file, fileIndex) => (
+                    {/* FIX: Use stable identifier instead of array index as key */}
+                    {group.files.map((file) => (
                       <div
-                        key={fileIndex}
+                        key={file.path || file.id || file.name}
                         className="flex items-center justify-between text-sm"
                       >
                         <div className="flex items-center gap-2">
@@ -230,18 +242,20 @@ function BatchOrganizationSuggestions({
                     ))}
                   </div>
 
-                  {group.files[0]?.alternatives &&
-                    group.files[0].alternatives.length > 0 && (
+                  {/* FIX: Use consistent optional chaining and add array length check */}
+                  {group.files?.length > 0 &&
+                    group.files[0]?.alternatives?.length > 0 && (
                       <div className="mt-3 pt-3 border-t border-gray-200">
                         <div className="text-xs text-system-gray-600 mb-2">
                           Alternative folders for this group:
                         </div>
                         <div className="flex flex-wrap gap-2">
+                          {/* FIX: Use stable identifier instead of array index as key */}
                           {group.files[0].alternatives
                             .slice(0, 3)
-                            .map((alt, altIndex) => (
+                            .map((alt) => (
                               <button
-                                key={altIndex}
+                                key={alt.folder || alt.id}
                                 className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:border-stratosort-blue transition-colors"
                                 onClick={() =>
                                   onCustomizeGroup(groupIndex, {
