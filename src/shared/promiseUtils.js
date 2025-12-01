@@ -335,6 +335,7 @@ function debounce(fn, waitMs, options = {}) {
       return trailingEdge();
     }
     timeoutId = setTimeout(timerExpired, waitMs - (time - lastCallTime));
+    return undefined;
   }
 
   function trailingEdge() {
@@ -407,46 +408,6 @@ function throttle(fn, waitMs, options = {}) {
   });
 }
 
-/**
- * Debounces a promise-returning function.
- * Only the last call within the wait period will resolve.
- *
- * @param {Function} fn - Async function to debounce
- * @param {number} waitMs - Debounce delay in milliseconds
- * @returns {Function} Debounced async function
- * @example
- * const debouncedSearch = debouncePromise(searchAPI, 300);
- * const results = await debouncedSearch(query);
- */
-function debouncePromise(fn, waitMs = 300) {
-  let timeoutId = null;
-  let pendingPromise = null;
-
-  return function (...args) {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-
-    if (!pendingPromise) {
-      pendingPromise = new Promise((resolve, reject) => {
-        timeoutId = setTimeout(async () => {
-          try {
-            const result = await fn.apply(this, args);
-            resolve(result);
-          } catch (error) {
-            reject(error);
-          } finally {
-            pendingPromise = null;
-            timeoutId = null;
-          }
-        }, waitMs);
-      });
-    }
-
-    return pendingPromise;
-  };
-}
-
 // ============================================================================
 // BATCH & CONCURRENCY UTILITIES
 // ============================================================================
@@ -509,28 +470,6 @@ async function allSettledWithErrors(promises, onError = null) {
 }
 
 /**
- * Creates a deferred promise that can be resolved/rejected externally.
- *
- * @returns {{promise: Promise, resolve: Function, reject: Function}} Deferred object
- * @example
- * const deferred = createDeferred();
- * // Later...
- * deferred.resolve(value);
- * // Or...
- * deferred.reject(error);
- */
-function createDeferred() {
-  let resolve, reject;
-
-  const promise = new Promise((_resolve, _reject) => {
-    resolve = _resolve;
-    reject = _reject;
-  });
-
-  return { promise, resolve, reject };
-}
-
-/**
  * Executes promises in batches with controlled concurrency.
  *
  * @param {Array} items - Items to process
@@ -558,54 +497,6 @@ async function batchProcess(items, fn, batchSize = 5) {
   return results;
 }
 
-/**
- * Executes a promise with an abort signal.
- *
- * @param {Function} fn - Function that accepts an AbortSignal and returns a promise
- * @param {number} [timeoutMs=null] - Optional timeout in milliseconds
- * @returns {{promise: Promise, abort: Function}} Object with promise and abort function
- * @example
- * const { promise, abort } = withAbort((signal) => fetch(url, { signal }), 5000);
- * // Later, if needed:
- * abort();
- */
-function withAbort(fn, timeoutMs = null) {
-  const abortController = new AbortController();
-  let timeoutId = null;
-
-  if (timeoutMs) {
-    timeoutId = setTimeout(() => {
-      abortController.abort(
-        new Error(`Operation aborted after ${timeoutMs}ms`),
-      );
-    }, timeoutMs);
-
-    // Allow process to exit even if timeout is pending
-    if (timeoutId.unref) {
-      timeoutId.unref();
-    }
-  }
-
-  const promise = (async () => {
-    try {
-      const result = await fn(abortController.signal);
-      if (timeoutId) clearTimeout(timeoutId);
-      return result;
-    } catch (error) {
-      if (timeoutId) clearTimeout(timeoutId);
-      throw error;
-    }
-  })();
-
-  return {
-    promise,
-    abort: () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      abortController.abort();
-    },
-  };
-}
-
 // ============================================================================
 // EXPORTS
 // ============================================================================
@@ -629,11 +520,7 @@ module.exports = {
   // Debounce / Throttle
   debounce,
   throttle,
-  debouncePromise,
 
   // Batch & Concurrency
-  allSettledWithErrors,
-  createDeferred,
   batchProcess,
-  withAbort,
 };

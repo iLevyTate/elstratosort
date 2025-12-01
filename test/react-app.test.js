@@ -90,15 +90,26 @@ describe('StratoSort React App', () => {
     });
 
     test('file analysis supports multiple file types (via DiscoverPhase)', () => {
+      // Main component imports analysis hook
       const discoverContent = fs.readFileSync(
         path.join(__dirname, '../src/renderer/phases/DiscoverPhase.jsx'),
         'utf8',
       );
-      expect(discoverContent).toContain('supportedExts');
+      expect(discoverContent).toContain('useAnalysis');
       expect(discoverContent).toContain('analyzeFiles');
-      expect(discoverContent.toLowerCase()).toContain('pdf');
-      expect(discoverContent.toLowerCase()).toContain('txt');
-      expect(discoverContent.toLowerCase()).toContain('docx');
+
+      // File type support is in the extracted useFileHandlers hook
+      const fileHandlersContent = fs.readFileSync(
+        path.join(
+          __dirname,
+          '../src/renderer/phases/discover/useFileHandlers.js',
+        ),
+        'utf8',
+      );
+      expect(fileHandlersContent).toContain('SUPPORTED_EXTENSIONS');
+      expect(fileHandlersContent.toLowerCase()).toContain('.pdf');
+      expect(fileHandlersContent.toLowerCase()).toContain('.txt');
+      expect(fileHandlersContent.toLowerCase()).toContain('.docx');
     });
   });
 

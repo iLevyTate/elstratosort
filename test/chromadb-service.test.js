@@ -147,7 +147,7 @@ describe('ChromaDBService', () => {
     electron.app.getPath.mockReturnValue(tmpDir);
 
     // Create service instance
-    const { ChromaDBService } = require('../src/main/services/ChromaDBService');
+    const { ChromaDBService } = require('../src/main/services/chromadb');
     chromaDbService = new ChromaDBService();
   });
 

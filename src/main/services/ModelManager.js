@@ -565,7 +565,7 @@ class ModelManager {
         lastUpdated: new Date().toISOString(),
       };
       // FIX: Use atomic write (temp + rename) to prevent corruption on crash
-      const tempPath = this.configPath + '.tmp.' + Date.now();
+      const tempPath = `${this.configPath}.tmp.${Date.now()}`;
       try {
         await fs.writeFile(tempPath, JSON.stringify(config, null, 2));
         await fs.rename(tempPath, this.configPath);

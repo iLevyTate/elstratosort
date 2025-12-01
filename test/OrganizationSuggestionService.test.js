@@ -4,7 +4,7 @@
  * Testing the AI-powered document organization service
  */
 
-const OrganizationSuggestionService = require('../src/main/services/OrganizationSuggestionService');
+const OrganizationSuggestionService = require('../src/main/services/organization');
 
 // Mock Ollama for LLM operations
 jest.mock('ollama', () => ({

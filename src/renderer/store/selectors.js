@@ -57,12 +57,18 @@ export const selectFilesWithAnalysis = createSelector(
       const fileState = fileStates?.[file.path];
 
       // Check if this file needs modification
-      const needsAnalysis = analysisResult && file.analysis !== analysisResult.analysis;
+      const needsAnalysis =
+        analysisResult && file.analysis !== analysisResult.analysis;
       const needsExtension = !file.extension && file.path;
       const needsState = fileState?.state && file.status !== fileState.state;
 
       // If no changes needed, return original file object
-      if (!needsAnalysis && !needsExtension && !needsState && !analysisResult?.error) {
+      if (
+        !needsAnalysis &&
+        !needsExtension &&
+        !needsState &&
+        !analysisResult?.error
+      ) {
         return file;
       }
 
@@ -73,7 +79,7 @@ export const selectFilesWithAnalysis = createSelector(
       if (!extension && file.path) {
         const fileName = file.name || file.path.split(/[\\/]/).pop() || '';
         extension = fileName.includes('.')
-          ? '.' + fileName.split('.').pop().toLowerCase()
+          ? `.${fileName.split('.').pop().toLowerCase()}`
           : '';
       }
 
@@ -84,14 +90,18 @@ export const selectFilesWithAnalysis = createSelector(
         analysis: analysisResult?.analysis || file.analysis || null,
         // Keep error info if present
         error: analysisResult?.error || file.error || null,
-        status: analysisResult?.status || file.status || fileState?.state || 'pending',
+        status:
+          analysisResult?.status ||
+          file.status ||
+          fileState?.state ||
+          'pending',
         analyzedAt: analysisResult?.analyzedAt || file.analyzedAt || null,
       };
     });
 
     // If no files changed, return original array to maintain reference
     return hasChanges ? mergedFiles : files;
-  }
+  },
 );
 
 /**
@@ -101,10 +111,8 @@ export const selectFilesWithAnalysis = createSelector(
 export const selectReadyFiles = createSelector(
   [selectFilesWithAnalysis],
   (filesWithAnalysis) => {
-    return filesWithAnalysis.filter(
-      (file) => file.analysis && !file.error
-    );
-  }
+    return filesWithAnalysis.filter((file) => file.analysis && !file.error);
+  },
 );
 
 /**
@@ -114,7 +122,7 @@ export const selectFailedFiles = createSelector(
   [selectFilesWithAnalysis],
   (filesWithAnalysis) => {
     return filesWithAnalysis.filter((file) => file.error);
-  }
+  },
 );
 
 /**
@@ -127,7 +135,7 @@ export const selectPendingFiles = createSelector(
       const state = fileStates?.[file.path]?.state;
       return state === 'pending' || (!file.analysis && !file.error);
     });
-  }
+  },
 );
 
 /**
@@ -137,12 +145,14 @@ export const selectFileStats = createSelector(
   [selectFilesWithAnalysis],
   (filesWithAnalysis) => {
     const total = filesWithAnalysis.length;
-    const ready = filesWithAnalysis.filter((f) => f.analysis && !f.error).length;
+    const ready = filesWithAnalysis.filter(
+      (f) => f.analysis && !f.error,
+    ).length;
     const failed = filesWithAnalysis.filter((f) => f.error).length;
     const pending = total - ready - failed;
 
     return { total, ready, failed, pending };
-  }
+  },
 );
 
 /**

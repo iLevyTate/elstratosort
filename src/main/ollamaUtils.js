@@ -273,7 +273,7 @@ async function saveOllamaConfig(config) {
   try {
     const filePath = getOllamaConfigPath();
     // FIX: Use atomic write (temp + rename) to prevent corruption on crash
-    const tempPath = filePath + '.tmp.' + Date.now();
+    const tempPath = `${filePath}.tmp.${Date.now()}`;
     try {
       await fs.writeFile(tempPath, JSON.stringify(config, null, 2));
       await fs.rename(tempPath, filePath);

@@ -73,7 +73,6 @@ describe('OllamaService', () => {
   let mockOllama;
   let MockOllama;
   const {
-    loadOllamaConfig,
     saveOllamaConfig,
     getOllama,
     getOllamaHost,
@@ -112,35 +111,6 @@ describe('OllamaService', () => {
     jest.clearAllMocks();
   });
 
-  describe('initialize', () => {
-    // Note: These initialization tests are affected by the module being a singleton
-    // that's created at import time. The mocks need architectural changes to work properly.
-    test.skip('should initialize successfully', async () => {
-      await OllamaServiceModule.initialize();
-
-      expect(OllamaServiceModule.initialized).toBe(true);
-      expect(loadOllamaConfig).toHaveBeenCalled();
-    });
-
-    test.skip('should not re-initialize if already initialized', async () => {
-      await OllamaServiceModule.initialize();
-      await OllamaServiceModule.initialize();
-
-      expect(loadOllamaConfig).toHaveBeenCalledTimes(1);
-    });
-
-    // Skipped: Module singleton is created at import time, so rejecting config after import
-    // won't affect the already-created instance. Would need architectural change to fix.
-    test.skip('should throw error if initialization fails', async () => {
-      loadOllamaConfig.mockRejectedValueOnce(new Error('Config load failed'));
-
-      await expect(OllamaServiceModule.initialize()).rejects.toThrow(
-        'Config load failed',
-      );
-      expect(OllamaServiceModule.initialized).toBe(false);
-    });
-  });
-
   describe('getConfig', () => {
     test('should return current configuration', async () => {
       const config = await OllamaServiceModule.getConfig();
@@ -155,16 +125,6 @@ describe('OllamaService', () => {
       expect(getOllamaModel).toHaveBeenCalled();
       expect(getOllamaVisionModel).toHaveBeenCalled();
       expect(getOllamaEmbeddingModel).toHaveBeenCalled();
-    });
-
-    // Skipped: Module singleton is created at import time with its own 'initialized' flag.
-    // Setting OllamaServiceModule.initialized = false only modifies the exports object, not the instance.
-    test.skip('should initialize before returning config', async () => {
-      OllamaServiceModule.initialized = false;
-
-      await OllamaServiceModule.getConfig();
-
-      expect(loadOllamaConfig).toHaveBeenCalled();
     });
   });
 
@@ -350,7 +310,10 @@ describe('OllamaService', () => {
     test('should pull multiple models successfully', async () => {
       mockOllama.pull.mockResolvedValue({ status: 'success' });
 
-      const result = await OllamaServiceModule.pullModels(['llama2', 'mistral']);
+      const result = await OllamaServiceModule.pullModels([
+        'llama2',
+        'mistral',
+      ]);
 
       expect(result.success).toBe(true);
       expect(result.results).toHaveLength(2);

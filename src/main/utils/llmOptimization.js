@@ -206,85 +206,6 @@ class BatchProcessor {
   }
 }
 
-class PromptCombiner {
-  /**
-   * Combine multiple analysis prompts into a single LLM call
-   * Useful for reducing sequential API calls
-   */
-  static combineAnalysisPrompts(prompts, options = {}) {
-    const { maxCombined = 3, separator = '\n---\n' } = options;
-
-    if (!Array.isArray(prompts) || prompts.length === 0) {
-      return [];
-    }
-
-    // Don't combine if only one prompt
-    if (prompts.length === 1) {
-      return prompts;
-    }
-
-    // Group prompts by type if available
-    const grouped = {};
-    prompts.forEach((prompt, index) => {
-      const type = prompt.type || 'default';
-      if (!grouped[type]) {
-        grouped[type] = [];
-      }
-      grouped[type].push({ ...prompt, originalIndex: index });
-    });
-
-    const combined = [];
-
-    // Combine prompts of the same type
-    Object.entries(grouped).forEach(([type, typePrompts]) => {
-      for (let i = 0; i < typePrompts.length; i += maxCombined) {
-        const batch = typePrompts.slice(i, i + maxCombined);
-
-        if (batch.length === 1) {
-          combined.push(batch[0]);
-        } else {
-          // Combine multiple prompts
-          const combinedPrompt = {
-            type,
-            text: batch
-              .map((p, idx) => `[Query ${idx + 1}]\n${p.text}`)
-              .join(separator),
-            components: batch,
-            isCombined: true,
-          };
-          combined.push(combinedPrompt);
-        }
-      }
-    });
-
-    return combined;
-  }
-
-  /**
-   * Split a combined response back into individual responses
-   */
-  static splitCombinedResponse(response, components) {
-    if (!components || components.length === 1) {
-      return [response];
-    }
-
-    // Attempt to split by common delimiters
-    const parts = response
-      .split(/\[(?:Query|Response) \d+\]/)
-      .filter((p) => p.trim());
-
-    if (parts.length === components.length) {
-      return parts.map((p) => p.trim());
-    }
-
-    // Fallback: return same response for all
-    logger.warn(
-      '[PROMPT-COMBINER] Could not split combined response, using same response for all',
-    );
-    return components.map(() => response);
-  }
-}
-
 // Singleton instances for global use
 const globalDeduplicator = new LLMRequestDeduplicator();
 const globalBatchProcessor = new BatchProcessor(3); // Default concurrency of 3
@@ -292,7 +213,6 @@ const globalBatchProcessor = new BatchProcessor(3); // Default concurrency of 3
 module.exports = {
   LLMRequestDeduplicator,
   BatchProcessor,
-  PromptCombiner,
   globalDeduplicator,
   globalBatchProcessor,
 };

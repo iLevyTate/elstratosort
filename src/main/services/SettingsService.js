@@ -787,6 +787,7 @@ class SettingsService {
       });
       // Invalidate cache anyway to prevent stale data
       this.invalidateCache();
+      return null;
     }
   }
 

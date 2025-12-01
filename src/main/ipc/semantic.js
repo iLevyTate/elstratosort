@@ -1,8 +1,12 @@
-const { getInstance: getChromaDB } = require('../services/ChromaDBService');
+const { getInstance: getChromaDB } = require('../services/chromadb');
 const FolderMatchingService = require('../services/FolderMatchingService');
 const path = require('path');
 const { SUPPORTED_IMAGE_EXTENSIONS } = require('../../shared/constants');
-const { BATCH, TIMEOUTS, LIMITS } = require('../../shared/performanceConstants');
+const {
+  BATCH,
+  TIMEOUTS,
+  LIMITS,
+} = require('../../shared/performanceConstants');
 const { withErrorLogging } = require('./withErrorLogging');
 
 function registerEmbeddingsIpc({
@@ -26,16 +30,19 @@ function registerEmbeddingsIpc({
    * @returns {Promise<void>}
    */
   async function ensureInitialized() {
-    if (isInitialized) return;
+    // FIX: Consistent return values - all paths return Promise<void>
+    if (isInitialized) return Promise.resolve();
     if (initializationPromise) return initializationPromise;
 
     initializationPromise = (async () => {
       const MAX_RETRIES = 5;
       const RETRY_DELAY_BASE = 2000; // 2 seconds base delay
-      
+
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-          logger.info(`[SEMANTIC] Starting initialization (attempt ${attempt}/${MAX_RETRIES})...`);
+          logger.info(
+            `[SEMANTIC] Starting initialization (attempt ${attempt}/${MAX_RETRIES})...`,
+          );
 
           // FIX: Check if ChromaDB server is available before initializing
           const isServerReady = await chromaDbService.isServerAvailable(3000);
@@ -75,15 +82,22 @@ function registerEmbeddingsIpc({
           isInitialized = true;
           return; // Success - exit retry loop
         } catch (error) {
-          logger.warn(`[SEMANTIC] Initialization attempt ${attempt} failed:`, error.message);
-          
+          logger.warn(
+            `[SEMANTIC] Initialization attempt ${attempt} failed:`,
+            error.message,
+          );
+
           if (attempt < MAX_RETRIES) {
             // Exponential backoff with jitter
-            const delay = RETRY_DELAY_BASE * Math.pow(2, attempt - 1) + Math.random() * 1000;
+            const delay =
+              RETRY_DELAY_BASE * Math.pow(2, attempt - 1) +
+              Math.random() * 1000;
             logger.info(`[SEMANTIC] Retrying in ${Math.round(delay)}ms...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
+            await new Promise((resolve) => setTimeout(resolve, delay));
           } else {
-            logger.error('[SEMANTIC] All initialization attempts failed. ChromaDB features will be unavailable.');
+            logger.error(
+              '[SEMANTIC] All initialization attempts failed. ChromaDB features will be unavailable.',
+            );
             initializationPromise = null; // Allow retry on next explicit call
             // Don't throw - allow the app to continue in degraded mode
             return;
@@ -106,7 +120,10 @@ function registerEmbeddingsIpc({
     // Use setImmediate to ensure IPC handlers are registered first
     setTimeout(() => {
       ensureInitialized().catch((error) => {
-        logger.warn('[SEMANTIC] Background pre-warm failed (non-fatal):', error.message);
+        logger.warn(
+          '[SEMANTIC] Background pre-warm failed (non-fatal):',
+          error.message,
+        );
         // Non-fatal - handlers will retry with proper backoff when called
       });
     }, 1000); // 1 second delay for pre-warming, handlers use retries if called earlier
@@ -120,12 +137,22 @@ function registerEmbeddingsIpc({
         await ensureInitialized();
       } catch (initError) {
         logger.warn('[EMBEDDINGS] ChromaDB not available:', initError.message);
-        return { success: false, error: 'ChromaDB is not available. Please ensure the ChromaDB server is running.', unavailable: true };
+        return {
+          success: false,
+          error:
+            'ChromaDB is not available. Please ensure the ChromaDB server is running.',
+          unavailable: true,
+        };
       }
 
       // FIX: Check if initialization succeeded
       if (!isInitialized) {
-        return { success: false, error: 'ChromaDB initialization pending. Please try again in a few seconds.', pending: true };
+        return {
+          success: false,
+          error:
+            'ChromaDB initialization pending. Please try again in a few seconds.',
+          pending: true,
+        };
       }
 
       try {
@@ -186,12 +213,22 @@ function registerEmbeddingsIpc({
         await ensureInitialized();
       } catch (initError) {
         logger.warn('[EMBEDDINGS] ChromaDB not available:', initError.message);
-        return { success: false, error: 'ChromaDB is not available. Please ensure the ChromaDB server is running.', unavailable: true };
+        return {
+          success: false,
+          error:
+            'ChromaDB is not available. Please ensure the ChromaDB server is running.',
+          unavailable: true,
+        };
       }
 
       // FIX: Check if initialization succeeded
       if (!isInitialized) {
-        return { success: false, error: 'ChromaDB initialization pending. Please try again in a few seconds.', pending: true };
+        return {
+          success: false,
+          error:
+            'ChromaDB initialization pending. Please try again in a few seconds.',
+          pending: true,
+        };
       }
 
       try {
@@ -213,8 +250,14 @@ function registerEmbeddingsIpc({
 
         // FIX #17: Validate allEntries is an array to prevent crash
         if (!Array.isArray(allEntries)) {
-          logger.warn('[EMBEDDINGS] getRecentAnalysis returned non-array:', typeof allEntries);
-          return { success: false, error: 'Failed to load analysis history - invalid data format' };
+          logger.warn(
+            '[EMBEDDINGS] getRecentAnalysis returned non-array:',
+            typeof allEntries,
+          );
+          return {
+            success: false,
+            error: 'Failed to load analysis history - invalid data format',
+          };
         }
 
         const smartFolders = (
@@ -337,10 +380,18 @@ function registerEmbeddingsIpc({
       try {
         await ensureInitialized();
       } catch (initError) {
-        return { success: false, error: 'ChromaDB is not available.', unavailable: true };
+        return {
+          success: false,
+          error: 'ChromaDB is not available.',
+          unavailable: true,
+        };
       }
       if (!isInitialized) {
-        return { success: false, error: 'ChromaDB initialization pending.', pending: true };
+        return {
+          success: false,
+          error: 'ChromaDB initialization pending.',
+          pending: true,
+        };
       }
 
       try {
@@ -360,10 +411,18 @@ function registerEmbeddingsIpc({
       try {
         await ensureInitialized();
       } catch (initError) {
-        return { success: false, error: 'ChromaDB is not available.', unavailable: true };
+        return {
+          success: false,
+          error: 'ChromaDB is not available.',
+          unavailable: true,
+        };
       }
       if (!isInitialized) {
-        return { success: false, error: 'ChromaDB initialization pending.', pending: true };
+        return {
+          success: false,
+          error: 'ChromaDB initialization pending.',
+          pending: true,
+        };
       }
 
       try {
@@ -383,10 +442,18 @@ function registerEmbeddingsIpc({
       try {
         await ensureInitialized();
       } catch (initError) {
-        return { success: false, error: 'ChromaDB is not available.', unavailable: true };
+        return {
+          success: false,
+          error: 'ChromaDB is not available.',
+          unavailable: true,
+        };
       }
       if (!isInitialized) {
-        return { success: false, error: 'ChromaDB initialization pending.', pending: true };
+        return {
+          success: false,
+          error: 'ChromaDB initialization pending.',
+          pending: true,
+        };
       }
 
       // HIGH PRIORITY FIX: Add timeout and validation (addresses HIGH-11)

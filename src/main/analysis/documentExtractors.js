@@ -81,9 +81,7 @@ async function checkFileSize(filePath, fileName) {
 function truncateText(text) {
   if (!text) return '';
   if (text.length <= MAX_TEXT_LENGTH) return text;
-  return (
-    text.substring(0, MAX_TEXT_LENGTH) + '\n\n[Text truncated due to length]'
-  );
+  return `${text.substring(0, MAX_TEXT_LENGTH)}\n\n[Text truncated due to length]`;
 }
 
 /**
@@ -96,7 +94,10 @@ async function extractContentWithSizeCheck(filePath) {
   const stats = await fs.stat(filePath);
 
   if (stats.size > STREAM_THRESHOLD) {
-    logger.info(`[EXTRACT] Using streaming for large file (${Math.round(stats.size / 1024 / 1024)}MB)`, { filePath });
+    logger.info(
+      `[EXTRACT] Using streaming for large file (${Math.round(stats.size / 1024 / 1024)}MB)`,
+      { filePath },
+    );
     return extractContentStreaming(filePath);
   }
 
@@ -126,7 +127,7 @@ async function extractContentStreaming(filePath) {
 
     const stream = createReadStream(filePath, {
       encoding: 'utf8',
-      highWaterMark: 64 * 1024 // 64KB chunks
+      highWaterMark: 64 * 1024, // 64KB chunks
     });
 
     stream.on('data', (chunk) => {
@@ -152,7 +153,7 @@ async function extractContentStreaming(filePath) {
       if (totalLength >= MAX_CONTENT_LENGTH) {
         logger.debug('[EXTRACT] Truncated large file content', {
           filePath,
-          maxLength: MAX_CONTENT_LENGTH
+          maxLength: MAX_CONTENT_LENGTH,
         });
       }
       resolve(chunks.join(''));
@@ -164,7 +165,10 @@ async function extractTextFromPdf(filePath, fileName) {
   const pdfModule = require('pdf-parse');
   // Handle both old (function) and new (object with PDFParse function) export formats
   // pdf-parse 2.x exports an object with PDFParse as a callable function (NOT a constructor)
-  const pdfParseFn = typeof pdfModule === 'function' ? pdfModule : (pdfModule.PDFParse || pdfModule.default);
+  const pdfParseFn =
+    typeof pdfModule === 'function'
+      ? pdfModule
+      : pdfModule.PDFParse || pdfModule.default;
   // Fixed: Check file size before loading into memory
   await checkFileSize(filePath, fileName);
 
@@ -347,7 +351,7 @@ async function extractTextFromXlsx(filePath) {
                   }
                 }
                 if (rowData.length > 0) {
-                  allText += rowData.join(' ') + '\n';
+                  allText += `${rowData.join(' ')}\n`;
                   totalRows++;
                 }
               }
@@ -382,11 +386,10 @@ async function extractTextFromXlsx(filePath) {
         for (let i = 0; i < rowsToProcess; i++) {
           const row = values[i];
           if (Array.isArray(row)) {
-            allText +=
-              row
-                .filter((cell) => cell !== null && cell !== undefined)
-                .map((cell) => String(cell))
-                .join(' ') + '\n';
+            allText += `${row
+              .filter((cell) => cell !== null && cell !== undefined)
+              .map((cell) => String(cell))
+              .join(' ')}\n`;
             totalRows++;
 
             // Fixed: Check text length periodically to prevent runaway memory
@@ -400,12 +403,12 @@ async function extractTextFromXlsx(filePath) {
               .filter((cell) => cell !== null && cell !== undefined)
               .map((cell) => String(cell));
             if (objectValues.length > 0) {
-              allText += objectValues.join(' ') + '\n';
+              allText += `${objectValues.join(' ')}\n`;
               totalRows++;
             }
           } else if (row !== null && row !== undefined) {
             // Handle scalar rows (single value)
-            allText += String(row) + '\n';
+            allText += `${String(row)}\n`;
             totalRows++;
           }
         }
@@ -525,7 +528,7 @@ async function extractTextFromPptx(filePath) {
               // Extract text from XML (simple tag stripping)
               const slideText = extractPlainTextFromHtml(xmlContent);
               if (slideText && slideText.trim()) {
-                extractedText += slideText + '\n';
+                extractedText += `${slideText}\n`;
               }
 
               // Limit processing to prevent memory issues
@@ -641,7 +644,7 @@ async function extractTextFromEpub(filePath) {
       ) {
         try {
           const html = e.getData().toString('utf8');
-          text += extractPlainTextFromHtml(html) + '\n';
+          text += `${extractPlainTextFromHtml(html)}\n`;
           processedEntries++;
 
           // Fixed: Limit number of entries and text length

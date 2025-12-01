@@ -23,7 +23,7 @@ describe('AnalysisHistoryService', () => {
   });
 
   test('initializes on missing or corrupted file and records entries', async () => {
-    const AnalysisHistoryService = require('../src/main/services/AnalysisHistoryService');
+    const AnalysisHistoryService = require('../src/main/services/analysisHistory');
     const svc = new AnalysisHistoryService();
     await svc.initialize();
     const fileInfo = {
@@ -51,7 +51,7 @@ describe('AnalysisHistoryService', () => {
   });
 
   test('search finds entries by text', async () => {
-    const AnalysisHistoryService = require('../src/main/services/AnalysisHistoryService');
+    const AnalysisHistoryService = require('../src/main/services/analysisHistory');
     const svc = new AnalysisHistoryService();
     await svc.initialize();
     await svc.recordAnalysis(
@@ -63,6 +63,8 @@ describe('AnalysisHistoryService', () => {
       { summary: 'Project Beta report' },
     );
     const searchResult = await svc.searchAnalysis('alpha');
-    expect(searchResult.results.some((r) => r.originalPath.includes('alpha'))).toBe(true);
+    expect(
+      searchResult.results.some((r) => r.originalPath.includes('alpha')),
+    ).toBe(true);
   });
 });

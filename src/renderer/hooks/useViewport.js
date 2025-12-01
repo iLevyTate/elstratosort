@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { VIEWPORT } from '../../shared/performanceConstants';
 
 /**
  * Custom hook to detect and track viewport dimensions
@@ -8,10 +9,10 @@ export function useViewport() {
   const [viewport, setViewport] = useState({
     width: window.innerWidth,
     height: window.innerHeight,
-    isDesktop: window.innerWidth >= 1280,
-    isWideDesktop: window.innerWidth >= 1600,
-    isUltraWide: window.innerWidth >= 1920,
-    is4K: window.innerWidth >= 2560,
+    isDesktop: window.innerWidth >= VIEWPORT.DESKTOP,
+    isWideDesktop: window.innerWidth >= VIEWPORT.WIDE_DESKTOP,
+    isUltraWide: window.innerWidth >= VIEWPORT.ULTRA_WIDE,
+    is4K: window.innerWidth >= VIEWPORT.FOUR_K,
   });
 
   useEffect(() => {
@@ -27,10 +28,10 @@ export function useViewport() {
         setViewport({
           width: window.innerWidth,
           height: window.innerHeight,
-          isDesktop: window.innerWidth >= 1280,
-          isWideDesktop: window.innerWidth >= 1600,
-          isUltraWide: window.innerWidth >= 1920,
-          is4K: window.innerWidth >= 2560,
+          isDesktop: window.innerWidth >= VIEWPORT.DESKTOP,
+          isWideDesktop: window.innerWidth >= VIEWPORT.WIDE_DESKTOP,
+          isUltraWide: window.innerWidth >= VIEWPORT.ULTRA_WIDE,
+          is4K: window.innerWidth >= VIEWPORT.FOUR_K,
         });
       }, 150);
     };

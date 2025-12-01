@@ -93,7 +93,7 @@ async function testOllamaPortConflict() {
         ) {
           errorDetected = true;
           log('✓ Port conflict correctly detected!', 'green');
-          log('  Error message: ' + message.trim().substring(0, 80), 'green');
+          log(`  Error message: ${message.trim().substring(0, 80)}`, 'green');
           ollamaProcess.kill();
           clearTimeout(timeout);
           resolve(true);
@@ -182,7 +182,7 @@ async function testStartupManager() {
   log('\n=== Test 4: StartupManager Integration ===', 'blue');
 
   try {
-    const { getStartupManager } = require('../../src/main/services/StartupManager');
+    const { getStartupManager } = require('../../src/main/services/startup');
     const startupManager = getStartupManager();
 
     // Set up progress callback to monitor startup

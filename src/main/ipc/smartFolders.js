@@ -579,9 +579,9 @@ function registerSmartFoldersIpc({
             deletedFolder,
             directoryRemoved,
             removalError,
-            message:
-              `Smart folder "${deletedFolder.name}" deleted successfully` +
-              (directoryRemoved ? ' and its empty directory was removed.' : ''),
+            message: `Smart folder "${deletedFolder.name}" deleted successfully${
+              directoryRemoved ? ' and its empty directory was removed.' : ''
+            }`,
           };
         } catch (saveError) {
           setCustomFolders(originalFolders);

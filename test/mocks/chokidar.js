@@ -15,7 +15,7 @@ class MockWatcher extends EventEmitter {
 
   add(paths) {
     if (Array.isArray(paths)) {
-      paths.forEach(p => this.watching.add(p));
+      paths.forEach((p) => this.watching.add(p));
     } else {
       this.watching.add(paths);
     }
@@ -24,7 +24,7 @@ class MockWatcher extends EventEmitter {
 
   unwatch(paths) {
     if (Array.isArray(paths)) {
-      paths.forEach(p => this.watching.delete(p));
+      paths.forEach((p) => this.watching.delete(p));
     } else {
       this.watching.delete(paths);
     }
@@ -76,6 +76,7 @@ class MockWatcher extends EventEmitter {
 // Store the last created watcher for testing
 let lastWatcher = null;
 
+// eslint-disable-next-line no-unused-vars
 const watch = jest.fn((paths, options) => {
   lastWatcher = new MockWatcher();
   lastWatcher.add(paths);

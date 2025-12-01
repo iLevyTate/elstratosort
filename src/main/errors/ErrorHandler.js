@@ -228,7 +228,7 @@ class ErrorHandler {
     };
 
     try {
-      const logLine = JSON.stringify(logEntry) + '\n';
+      const logLine = `${JSON.stringify(logEntry)}\n`;
       await fs.appendFile(this.currentLogFile, logLine);
     } catch (error) {
       logger.error('Failed to write to log file:', { error: error.message });

@@ -103,7 +103,7 @@ class Logger {
     if (!this.enableFile || !this.logFile) return;
     try {
       const fs = require('fs').promises;
-      await fs.appendFile(this.logFile, formattedMessage + '\n');
+      await fs.appendFile(this.logFile, `${formattedMessage}\n`);
     } catch (error) {
       console.error('Failed to write to log file:', error);
     }

@@ -104,7 +104,7 @@ describe('ChromaDBService Batch Operations', () => {
     }
     electron.app.getPath = jest.fn().mockReturnValue(tmpDir);
 
-    const { ChromaDBService } = require('../src/main/services/ChromaDBService');
+    const { ChromaDBService } = require('../src/main/services/chromadb');
     chromaDbService = new ChromaDBService();
     await chromaDbService.initialize();
   });

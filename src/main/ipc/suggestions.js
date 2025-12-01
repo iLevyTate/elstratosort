@@ -6,7 +6,7 @@
  */
 const { createHandler, createErrorResponse } = require('./ipcWrappers');
 const { schemas } = require('./validationSchemas');
-const OrganizationSuggestionService = require('../services/OrganizationSuggestionService');
+const OrganizationSuggestionService = require('../services/organization');
 const { logger } = require('../../shared/logger');
 
 logger.setContext('IPC:Suggestions');

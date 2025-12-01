@@ -12,6 +12,7 @@ const {
   WatcherError,
   FILE_SYSTEM_ERROR_CODES,
 } = require('../errors/FileSystemError');
+const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 
 logger.setContext('AsyncFileOps');
 
@@ -91,13 +92,18 @@ async function safeWriteFile(filePath, data, options = 'utf8') {
     }
 
     // FIX: Use atomic write (temp + rename) to prevent corruption on crash
-    const tempPath = filePath + '.tmp.' + Date.now();
+    const tempPath = `${filePath}.tmp.${Date.now()}`;
     try {
       await fs.writeFile(tempPath, data, options);
 
       // Verify write succeeded before renaming
       const stats = await fs.stat(tempPath);
-      const expectedSize = Buffer.isBuffer(data) ? data.length : Buffer.byteLength(data, typeof options === 'string' ? options : options.encoding || 'utf8');
+      const expectedSize = Buffer.isBuffer(data)
+        ? data.length
+        : Buffer.byteLength(
+            data,
+            typeof options === 'string' ? options : options.encoding || 'utf8',
+          );
 
       if (stats.size !== expectedSize) {
         // Clean up temp file
@@ -106,12 +112,15 @@ async function safeWriteFile(filePath, data, options = 'utf8') {
         } catch {
           // Ignore cleanup errors
         }
-        const fsError = new FileSystemError(FILE_SYSTEM_ERROR_CODES.PARTIAL_WRITE, {
-          path: filePath,
-          operation: 'write',
-          expectedSize,
-          actualSize: stats.size,
-        });
+        const fsError = new FileSystemError(
+          FILE_SYSTEM_ERROR_CODES.PARTIAL_WRITE,
+          {
+            path: filePath,
+            operation: 'write',
+            expectedSize,
+            actualSize: stats.size,
+          },
+        );
         logger.error('[ASYNC-OPS] Partial write detected:', {
           path: filePath,
           expectedSize,
@@ -309,12 +318,17 @@ async function moveFile(src, dest, overwrite = false) {
     await fs.rename(src, dest);
     return true;
   } catch (error) {
-    // If rename fails (cross-device), try copy and delete
+    // If rename fails (cross-device), use shared crossDeviceMove utility
     if (error.code === 'EXDEV') {
-      const copied = await copyFile(src, dest, overwrite);
-      if (copied) {
-        await safeDelete(src);
+      try {
+        await crossDeviceMove(src, dest, { verify: true });
         return true;
+      } catch (crossDeviceError) {
+        logger.error(
+          `Failed cross-device move ${src} to ${dest}:`,
+          crossDeviceError.message,
+        );
+        return false;
       }
     }
     logger.error(`Failed to move ${src} to ${dest}:`, error.message);
@@ -424,11 +438,7 @@ async function processBatch(files, processor, batchSize = 5) {
  * @returns {Promise<{close: Function, isActive: Function, error: FileSystemError|null}>} Watcher control object
  */
 async function watchPath(targetPath, callback, options = {}) {
-  const {
-    persistent = true,
-    recursive = false,
-    onError = null,
-  } = options;
+  const { persistent = true, recursive = false, onError = null } = options;
 
   let watcher = null;
   let isActive = false;
@@ -490,7 +500,10 @@ async function watchPath(targetPath, callback, options = {}) {
         try {
           onError(fsError);
         } catch (onErrorError) {
-          logger.error('[ASYNC-OPS] onError callback failed:', onErrorError.message);
+          logger.error(
+            '[ASYNC-OPS] onError callback failed:',
+            onErrorError.message,
+          );
         }
       }
     });
@@ -509,7 +522,10 @@ async function watchPath(targetPath, callback, options = {}) {
           try {
             watcher.close();
           } catch (closeError) {
-            logger.warn('[ASYNC-OPS] Error closing watcher:', closeError.message);
+            logger.warn(
+              '[ASYNC-OPS] Error closing watcher:',
+              closeError.message,
+            );
           }
           isActive = false;
         }

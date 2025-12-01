@@ -21,6 +21,7 @@ const {
   createSuccessResponse: createStandardSuccessResponse,
   ERROR_CODES,
 } = require('../../shared/errorHandlingUtils');
+const { logger } = require('../../shared/logger');
 
 // Try to load zod for validation
 let z;
@@ -29,7 +30,10 @@ try {
 } catch (error) {
   // FIX: Log warning instead of silently swallowing the error
   // This aids debugging when Zod fails to load (e.g., missing module)
-  console.warn('[IPC] Zod not available, skipping schema validation:', error.message);
+  logger.warn(
+    '[IPC] Zod not available, skipping schema validation:',
+    error.message,
+  );
   z = null;
 }
 
@@ -207,9 +211,7 @@ function _createServiceCheckHandler({
     const service = getService();
 
     if (!service) {
-      logger?.warn?.(
-        `[${context}] Service not available: ${serviceName}`,
-      );
+      logger?.warn?.(`[${context}] Service not available: ${serviceName}`);
 
       if (fallbackResponse !== null) {
         return fallbackResponse;

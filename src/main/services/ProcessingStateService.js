@@ -92,7 +92,7 @@ class ProcessingStateService {
     this.state.updatedAt = new Date().toISOString();
     await this.ensureParentDirectory(this.statePath);
     // FIX: Use atomic write (temp + rename) to prevent corruption on crash
-    const tempPath = this.statePath + '.tmp.' + Date.now();
+    const tempPath = `${this.statePath}.tmp.${Date.now()}`;
     try {
       await fs.writeFile(tempPath, JSON.stringify(this.state, null, 2));
       await fs.rename(tempPath, this.statePath);
@@ -143,7 +143,9 @@ class ProcessingStateService {
     try {
       return await this._saveStateInternal();
     } catch (error) {
-      logger.error('[ProcessingStateService] Save failed', { error: error?.message });
+      logger.error('[ProcessingStateService] Save failed', {
+        error: error?.message,
+      });
       throw error;
     }
   }

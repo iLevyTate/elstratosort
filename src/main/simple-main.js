@@ -1,13 +1,4 @@
-const {
-  app,
-  BrowserWindow,
-  ipcMain,
-  dialog,
-  shell,
-  Menu,
-  Tray,
-  nativeImage,
-} = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -41,7 +32,7 @@ const DownloadWatcher = require('./services/DownloadWatcher');
 const ServiceIntegration = require('./services/ServiceIntegration');
 
 // Import startup manager
-const { getStartupManager } = require('./services/StartupManager');
+const { getStartupManager } = require('./services/startup');
 
 // Import shared constants
 const { IPC_CHANNELS } = require('../shared/constants');
@@ -54,11 +45,23 @@ const { analyzeImageFile } = require('./analysis/ollamaImageAnalysis');
 const tesseract = require('node-tesseract-ocr');
 const fs = require('fs').promises;
 const path = require('path');
+const { isWindows, isMacOS } = require('../shared/platformUtils');
+
+// Extracted core modules
 const {
-  isWindows,
-  isMacOS,
-  getQuitAccelerator,
-} = require('../shared/platformUtils');
+  initializeGpuConfig,
+  handleGpuProcessGone,
+  forceSoftwareRenderer,
+} = require('./core/gpuConfig');
+const { createApplicationMenu } = require('./core/applicationMenu');
+const {
+  initializeTrayConfig,
+  createSystemTray,
+  updateTrayMenu,
+  destroyTray,
+  getTray,
+} = require('./core/systemTray');
+const { verifyIpcHandlersRegistered } = require('./core/ipcVerification');
 
 let mainWindow;
 let customFolders = []; // Initialize customFolders at module level
@@ -79,249 +82,14 @@ let globalProcessListeners = [];
 
 // Legacy functions removed: ensureChromaDbRunning, ensureOllamaRunning
 // All startup logic is now handled by StartupManager and ServiceIntegration
-
-/**
- * Verify that all critical IPC handlers are registered
- * This prevents race conditions where the renderer might try to call
- * IPC methods before handlers are fully registered
- * Uses exponential backoff retry logic with timeout protection
- * @returns {Promise<boolean>} true if all handlers are registered, false otherwise
- */
-async function verifyIpcHandlersRegistered() {
-  // Define all critical IPC channels that must be registered before window creation
-  const requiredHandlers = [
-    // Settings - critical for initial load
-    'get-settings',
-    'save-settings',
-
-    // Smart Folders - needed for UI initialization
-    'get-smart-folders',
-    'save-smart-folders',
-    'get-custom-folders',
-    'update-custom-folders',
-
-    // File operations - core functionality
-    'handle-file-selection',
-    'select-directory',
-    'get-documents-path',
-    'get-file-stats',
-    'get-files-in-directory',
-
-    // Analysis - core functionality
-    'analyze-document',
-    'analyze-image',
-
-    // Organization - core functionality
-    'auto-organize-files',
-    'batch-organize-files',
-
-    // Suggestions - needed for UI
-    'get-file-suggestions',
-    'get-batch-suggestions',
-
-    // System monitoring
-    'get-system-metrics',
-    'get-application-statistics',
-
-    // Ollama - AI features
-    'get-ollama-models',
-    'test-ollama-connection',
-
-    // Window controls (if on Windows)
-    ...(isWindows
-      ? [
-          'window-minimize',
-          'window-maximize',
-          'window-toggle-maximize',
-          'window-is-maximized',
-          'window-close',
-        ]
-      : []),
-  ];
-
-  const maxRetries = 10;
-  const maxTimeout = 2000; // Reduced to 2 seconds to prevent startup hang
-  const initialDelay = 50; // Start with 50ms
-  const maxDelay = 500; // Cap at 500ms
-  const startTime = Date.now();
-
-  /**
-   * Check if all handlers are registered
-   * @returns {{allRegistered: boolean, missing: string[]}}
-   */
-  const hasInvokeHandler = (channel) => {
-    const map = ipcMain._invokeHandlers;
-    if (!map) return false;
-    // Electron 28+ stores handlers in a Map with has()
-    if (typeof map.has === 'function') {
-      return map.has(channel);
-    }
-    // Older versions expose get() that returns handler or undefined
-    if (typeof map.get === 'function') {
-      return !!map.get(channel);
-    }
-    return false;
-  };
-
-  const checkHandlers = () => {
-    const missing = [];
-    for (const handler of requiredHandlers) {
-      const listenerCount = ipcMain.listenerCount(handler);
-      const handled = listenerCount > 0 || hasInvokeHandler(handler);
-      if (!handled) {
-        missing.push(handler);
-      } else {
-        logger.debug(
-          `[IPC-VERIFY] Handler verified: ${handler} (${listenerCount} listener${listenerCount > 1 ? 's' : ''}${
-            listenerCount === 0 ? ', invoke handler' : ''
-          })`,
-        );
-      }
-    }
-    return {
-      allRegistered: missing.length === 0,
-      missing,
-    };
-  };
-
-  // Initial check
-  let checkResult = checkHandlers();
-  if (checkResult.allRegistered) {
-    logger.info(
-      `[IPC-VERIFY] ✅ Verified ${requiredHandlers.length} critical handlers are registered`,
-    );
-    return true;
-  }
-
-  logger.warn(
-    `[IPC-VERIFY] ⚠️ Missing ${checkResult.missing.length} handlers: ${checkResult.missing.join(', ')}`,
-  );
-  logger.info(`[IPC-VERIFY] Starting retry logic with exponential backoff...`);
-
-  // Retry with exponential backoff
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    // Check timeout
-    const elapsed = Date.now() - startTime;
-    if (elapsed >= maxTimeout) {
-      logger.error(
-        `[IPC-VERIFY] ❌ Timeout after ${elapsed}ms. Still missing ${checkResult.missing.length} handlers: ${checkResult.missing.join(', ')}`,
-      );
-      return false;
-    }
-
-    // Calculate delay with exponential backoff
-    const delay = Math.min(initialDelay * Math.pow(2, attempt), maxDelay);
-
-    // Wait before retry
-    await new Promise((resolve) => setTimeout(resolve, delay));
-
-    // Re-check handlers
-    checkResult = checkHandlers();
-
-    if (checkResult.allRegistered) {
-      const totalTime = Date.now() - startTime;
-      logger.info(
-        `[IPC-VERIFY] ✅ All handlers registered after ${attempt + 1} attempt(s) in ${totalTime}ms`,
-      );
-      return true;
-    }
-
-    // Log progress every 2 attempts
-    if (attempt % 2 === 1) {
-      logger.debug(
-        `[IPC-VERIFY] Attempt ${attempt + 1}/${maxRetries}: Still missing ${checkResult.missing.length} handlers`,
-      );
-    }
-  }
-
-  // Final check after all retries
-  checkResult = checkHandlers();
-  if (checkResult.allRegistered) {
-    logger.info(`[IPC-VERIFY] ✅ All handlers registered after retries`);
-    return true;
-  }
-
-  logger.error(
-    `[IPC-VERIFY] ❌ Failed to register all handlers after ${maxRetries} attempts. Missing: ${checkResult.missing.join(', ')}`,
-  );
-  return false;
-}
+// verifyIpcHandlersRegistered is now imported from ./core/ipcVerification
 
 // ===== GPU PREFERENCES (Windows rendering stability) =====
-const forceSoftwareRenderer =
-  process.env.STRATOSORT_FORCE_SOFTWARE_GPU === '1' ||
-  process.env.ELECTRON_FORCE_SOFTWARE === '1';
-
-try {
-  if (forceSoftwareRenderer) {
-    app.disableHardwareAcceleration();
-    logger.warn(
-      '[GPU] Hardware acceleration disabled via STRATOSORT_FORCE_SOFTWARE_GPU',
-    );
-  } else {
-    // Use ANGLE with D3D11 backend for better Windows compatibility
-    const angleBackend = process.env.ANGLE_BACKEND || 'd3d11'; // d3d11 is most stable on Windows
-    app.commandLine.appendSwitch('use-angle', angleBackend);
-
-    // Only set use-gl if explicitly requested, otherwise let Electron/Chromium choose
-    const glImplementation = process.env.STRATOSORT_GL_IMPLEMENTATION;
-    if (glImplementation) {
-      app.commandLine.appendSwitch('use-gl', glImplementation);
-      logger.info(`[GPU] Custom GL implementation set: ${glImplementation}`);
-    }
-
-    // Safer GPU settings - remove conflicting switches
-    app.commandLine.appendSwitch('ignore-gpu-blocklist');
-
-    logger.info(`[GPU] Flags set: ANGLE=${angleBackend}`);
-  }
-} catch (e) {
-  logger.warn(
-    '[GPU] Failed to apply GPU flags:',
-    e?.message || 'Unknown error',
-  );
-}
-
-// MEDIUM PRIORITY FIX (MED-2): Time-based sliding window for GPU failure tracking
-let gpuFailureCount = 0;
-let lastGpuFailureTime = 0;
-const GPU_FAILURE_RESET_WINDOW = 60 * 60 * 1000; // Reset counter after 1 hour of stability
-
-const gpuProcessHandler = (event, details) => {
-  if (details?.type === 'GPU') {
-    const now = Date.now();
-
-    // Reset counter if last failure was more than 1 hour ago
-    if (now - lastGpuFailureTime > GPU_FAILURE_RESET_WINDOW) {
-      gpuFailureCount = 0;
-      logger.debug('[GPU] Failure counter reset after stability window');
-    }
-
-    gpuFailureCount += 1;
-    lastGpuFailureTime = now;
-
-    logger.error('[GPU] Process exited', {
-      reason: details?.reason,
-      exitCode: details?.exitCode,
-      crashCount: gpuFailureCount,
-      lastFailure: new Date(lastGpuFailureTime).toISOString(),
-    });
-
-    if (
-      gpuFailureCount >= 2 &&
-      process.env.STRATOSORT_FORCE_SOFTWARE_GPU !== '1'
-    ) {
-      logger.warn(
-        '[GPU] Repeated GPU failures detected. Set STRATOSORT_FORCE_SOFTWARE_GPU=1 to force software rendering.',
-      );
-    }
-  }
-};
-app.on('child-process-gone', gpuProcessHandler);
-
-// Track for cleanup
+// GPU configuration is now handled by ./core/gpuConfig
+initializeGpuConfig();
+app.on('child-process-gone', handleGpuProcessGone);
 eventListeners.push(() =>
-  app.removeListener('child-process-gone', gpuProcessHandler),
+  app.removeListener('child-process-gone', handleGpuProcessGone),
 );
 
 // Custom folders helpers
@@ -336,121 +104,8 @@ const systemAnalytics = require('./core/systemAnalytics');
 // Window creation
 const createMainWindow = require('./core/createWindow');
 
-// Create themed application menu
-function createApplicationMenu() {
-  const template = [
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'Select Files',
-          accelerator: 'CmdOrCtrl+O',
-          click: () => {
-            if (mainWindow) {
-              mainWindow.webContents.send('menu-action', 'select-files');
-            }
-          },
-        },
-        {
-          label: 'Select Folder',
-          accelerator: 'CmdOrCtrl+Shift+O',
-          click: () => {
-            if (mainWindow) {
-              mainWindow.webContents.send('menu-action', 'select-folder');
-            }
-          },
-        },
-        { type: 'separator' },
-        {
-          label: 'Settings',
-          accelerator: 'CmdOrCtrl+,',
-          click: () => {
-            if (mainWindow) {
-              mainWindow.webContents.send('menu-action', 'open-settings');
-            }
-          },
-        },
-        { type: 'separator' },
-        {
-          label: 'Exit',
-          accelerator: getQuitAccelerator(),
-          click: () => {
-            app.quit();
-          },
-        },
-      ],
-    },
-    {
-      label: 'Edit',
-      submenu: [
-        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', role: 'undo' },
-        { label: 'Redo', accelerator: 'CmdOrCtrl+Y', role: 'redo' },
-        { type: 'separator' },
-        { label: 'Cut', accelerator: 'CmdOrCtrl+X', role: 'cut' },
-        { label: 'Copy', accelerator: 'CmdOrCtrl+C', role: 'copy' },
-        { label: 'Paste', accelerator: 'CmdOrCtrl+V', role: 'paste' },
-        { label: 'Select All', accelerator: 'CmdOrCtrl+A', role: 'selectAll' },
-      ],
-    },
-    {
-      label: 'View',
-      submenu: [
-        { label: 'Reload', accelerator: 'CmdOrCtrl+R', role: 'reload' },
-        {
-          label: 'Force Reload',
-          accelerator: 'CmdOrCtrl+Shift+R',
-          role: 'forceReload',
-        },
-        { type: 'separator' },
-        {
-          label: 'Toggle Fullscreen',
-          accelerator: 'F11',
-          role: 'togglefullscreen',
-        },
-        ...(isDev
-          ? [
-              { type: 'separator' },
-              {
-                label: 'Toggle Developer Tools',
-                accelerator: 'F12',
-                role: 'toggleDevTools',
-              },
-            ]
-          : []),
-      ],
-    },
-    {
-      label: 'Window',
-      submenu: [
-        { label: 'Minimize', accelerator: 'CmdOrCtrl+M', role: 'minimize' },
-        { label: 'Close', accelerator: 'CmdOrCtrl+W', role: 'close' },
-      ],
-    },
-    {
-      label: 'Help',
-      submenu: [
-        {
-          label: 'About StratoSort',
-          click: () => {
-            if (mainWindow) {
-              mainWindow.webContents.send('menu-action', 'show-about');
-            }
-          },
-        },
-        { type: 'separator' },
-        {
-          label: 'Documentation',
-          click: () => {
-            shell.openExternal('https://github.com');
-          },
-        },
-      ],
-    },
-  ];
-
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
-}
+// Application menu is now handled by ./core/applicationMenu
+// createApplicationMenu is imported and called with getMainWindow callback
 
 function createWindow() {
   logger.debug('[DEBUG] createWindow() called');
@@ -926,7 +581,7 @@ app.whenReady().then(async () => {
         }
 
         const defaultFolder = {
-          id: 'default-uncategorized-' + Date.now(),
+          id: `default-uncategorized-${Date.now()}`,
           name: 'Uncategorized',
           path: defaultFolderPath,
           description: "Default folder for files that don't match any category",
@@ -1056,7 +711,7 @@ app.whenReady().then(async () => {
     });
 
     // Create application menu with theme
-    createApplicationMenu();
+    createApplicationMenu(() => mainWindow);
 
     // Register IPC event listeners (not handlers) for renderer-to-main communication
     // FIX: Store handler reference for proper cleanup tracking
@@ -1077,7 +732,10 @@ app.whenReady().then(async () => {
 
     // FIX: Track renderer-error-report listener for explicit cleanup
     eventListeners.push(() => {
-      ipcMain.removeListener('renderer-error-report', rendererErrorReportHandler);
+      ipcMain.removeListener(
+        'renderer-error-report',
+        rendererErrorReportHandler,
+      );
     });
 
     // HIGH PRIORITY FIX (HIGH-1): Removed unreliable setImmediate delay
@@ -1200,7 +858,7 @@ app.whenReady().then(async () => {
           // Mark setup as complete
           // FIX: Use atomic write (temp + rename) to prevent corruption
           try {
-            const tempPath = setupMarker + '.tmp.' + Date.now();
+            const tempPath = `${setupMarker}.tmp.${Date.now()}`;
             await fs.writeFile(tempPath, new Date().toISOString());
             await fs.rename(tempPath, setupMarker);
           } catch (e) {
@@ -1243,6 +901,15 @@ app.whenReady().then(async () => {
 
     // Create system tray with quick actions
     try {
+      initializeTrayConfig({
+        getDownloadWatcher: () => downloadWatcher,
+        getSettingsService: () => settingsService,
+        handleSettingsChanged,
+        createWindow,
+        setIsQuitting: (val) => {
+          isQuitting = val;
+        },
+      });
       createSystemTray();
     } catch (e) {
       logger.warn('[TRAY] Failed to initialize tray:', e.message);
@@ -1361,7 +1028,8 @@ app.whenReady().then(async () => {
         autoUpdater.autoDownload = true;
 
         // FIX: Store handler references for proper cleanup
-        const autoUpdaterErrorHandler = (err) => logger.error('[UPDATER] Error:', err);
+        const autoUpdaterErrorHandler = (err) =>
+          logger.error('[UPDATER] Error:', err);
         const autoUpdaterAvailableHandler = () => {
           logger.info('[UPDATER] Update available');
           try {
@@ -1410,9 +1078,18 @@ app.whenReady().then(async () => {
         // FIX: Track autoUpdater listeners for cleanup
         eventListeners.push(() => {
           autoUpdater.removeListener('error', autoUpdaterErrorHandler);
-          autoUpdater.removeListener('update-available', autoUpdaterAvailableHandler);
-          autoUpdater.removeListener('update-not-available', autoUpdaterNotAvailableHandler);
-          autoUpdater.removeListener('update-downloaded', autoUpdaterDownloadedHandler);
+          autoUpdater.removeListener(
+            'update-available',
+            autoUpdaterAvailableHandler,
+          );
+          autoUpdater.removeListener(
+            'update-not-available',
+            autoUpdaterNotAvailableHandler,
+          );
+          autoUpdater.removeListener(
+            'update-downloaded',
+            autoUpdaterDownloadedHandler,
+          );
         });
 
         try {
@@ -1524,15 +1201,7 @@ app.on('before-quit', async () => {
     }
 
     // Clean up tray
-    if (tray) {
-      try {
-        tray.destroy();
-        tray = null;
-        logger.info('[CLEANUP] System tray destroyed');
-      } catch (error) {
-        logger.error('[CLEANUP] Failed to destroy tray:', error);
-      }
-    }
+    destroyTray();
 
     // Use StartupManager for graceful shutdown
     try {
@@ -1546,9 +1215,9 @@ app.on('before-quit', async () => {
     // Legacy chromaDbProcess cleanup (fallback if StartupManager didn't handle it)
     if (chromaDbProcess) {
       logger.info(
-        '[ChromaDB] Stopping ChromaDB server process (PID: ' +
-          chromaDbProcess.pid +
-          ')',
+        `[ChromaDB] Stopping ChromaDB server process (PID: ${
+          chromaDbProcess.pid
+        })`,
       );
       try {
         // Remove all listeners first
@@ -1787,7 +1456,7 @@ async function verifyShutdownCleanup() {
   }
 
   // 8. Verify tray is destroyed
-  if (tray !== null) {
+  if (getTray() !== null) {
     issues.push('tray is not null');
   }
 
@@ -1856,78 +1525,9 @@ logger.debug(
 // NOTE: Audio analysis handlers removed - feature disabled for performance optimization
 
 // ===== TRAY INTEGRATION =====
-let tray = null;
-function createSystemTray() {
-  try {
-    const path = require('path');
-const {
-  isWindows,
-  isMacOS,
-} = require('../shared/platformUtils');
-    const iconPath = path.join(
-      __dirname,
-      isWindows
-        ? '../../assets/icons/icons/win/icon.ico'
-        : isMacOS
-          ? '../../assets/icons/icons/png/24x24.png'
-          : '../../assets/icons/icons/png/16x16.png',
-    );
-    const trayIcon = nativeImage.createFromPath(iconPath);
-    if (isMacOS) {
-      trayIcon.setTemplateImage(true);
-    }
-    tray = new Tray(trayIcon);
-    tray.setToolTip('StratoSort');
-    updateTrayMenu();
-  } catch (e) {
-    logger.warn('[TRAY] initialization failed', e);
-  }
-}
-
-function updateTrayMenu() {
-  if (!tray) return;
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Open StratoSort',
-      click: () => {
-        const win = BrowserWindow.getAllWindows()[0] || createWindow();
-        if (win && win.isMinimized()) win.restore();
-        if (win) {
-          win.show();
-          win.focus();
-        }
-      },
-    },
-    {
-      label: downloadWatcher ? 'Pause Auto-Sort' : 'Resume Auto-Sort',
-      click: async () => {
-        const enable = !downloadWatcher;
-        try {
-          if (settingsService) {
-            const merged = await settingsService.save({
-              autoOrganize: enable,
-            });
-            handleSettingsChanged(merged);
-          } else {
-            handleSettingsChanged({ autoOrganize: enable });
-          }
-        } catch (err) {
-          logger.warn('[TRAY] Failed to toggle auto-sort:', err.message);
-        }
-        updateTrayMenu();
-      },
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      click: () => {
-        isQuitting = true;
-        app.quit();
-      },
-    },
-  ]);
-  tray.setContextMenu(contextMenu);
-}
+// System tray is now handled by ./core/systemTray
+// Functions createSystemTray and updateTrayMenu are imported
+// tray variable is managed by the systemTray module (use getTray() to access)
 
 // Resume service
 const { resumeIncompleteBatches } = require('./services/OrganizeResumeService');

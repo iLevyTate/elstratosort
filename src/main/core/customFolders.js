@@ -57,7 +57,7 @@ async function ensureUncategorizedFolder(folders) {
     }
 
     const newFolder = {
-      id: 'default-uncategorized-' + Date.now(),
+      id: `default-uncategorized-${Date.now()}`,
       name: 'Uncategorized',
       path: uncategorizedPath,
       description: "Default folder for files that don't match any category",
@@ -106,7 +106,7 @@ async function loadCustomFolders() {
     // Users will configure their own smart folders through the UI
     const defaultFolders = [
       {
-        id: 'default-uncategorized-' + Date.now(),
+        id: `default-uncategorized-${Date.now()}`,
         name: 'Uncategorized',
         path: uncategorizedPath,
         description:
@@ -147,7 +147,7 @@ async function saveCustomFolders(folders) {
     const data = JSON.stringify(toSave, null, 2);
 
     // FIX: Use atomic write (temp file + rename) to prevent corruption on crash
-    const tempPath = filePath + '.tmp.' + Date.now();
+    const tempPath = `${filePath}.tmp.${Date.now()}`;
     try {
       await fs.writeFile(tempPath, data);
       await fs.rename(tempPath, filePath);

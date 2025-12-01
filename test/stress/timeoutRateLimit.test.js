@@ -9,13 +9,6 @@
  * - Backoff strategies
  */
 
-const {
-  createTimer,
-  delay,
-  waitForCondition,
-  createMockEventEmitter,
-} = require('../utils/testUtilities');
-
 // Mock logger
 jest.mock('../../src/shared/logger', () => ({
   logger: {
@@ -168,11 +161,14 @@ describe('Timeout and Rate Limit Tests', () => {
           if (pendingCall) {
             clearTimeout(pendingCall);
           }
-          pendingCall = setTimeout(() => {
-            lastCall = Date.now();
-            fn(...args);
-            pendingCall = null;
-          }, limitMs - (now - lastCall));
+          pendingCall = setTimeout(
+            () => {
+              lastCall = Date.now();
+              fn(...args);
+              pendingCall = null;
+            },
+            limitMs - (now - lastCall),
+          );
         }
       };
 
@@ -244,7 +240,11 @@ describe('Timeout and Rate Limit Tests', () => {
     /**
      * Create a promise with timeout
      */
-    function withTimeout(promise, timeoutMs, errorMessage = 'Operation timed out') {
+    function withTimeout(
+      promise,
+      timeoutMs,
+      errorMessage = 'Operation timed out',
+    ) {
       let timeoutId;
 
       const timeoutPromise = new Promise((_, reject) => {
@@ -277,11 +277,9 @@ describe('Timeout and Rate Limit Tests', () => {
 
       const promise = withTimeout(operation, 1000, 'Custom timeout message');
 
-      const rejectPromise = expect(promise).rejects.toThrow('Custom timeout message');
-
       jest.advanceTimersByTime(1000);
 
-      await rejectPromise;
+      await expect(promise).rejects.toThrow('Custom timeout message');
     });
 
     it('should handle multiple concurrent operations with different timeouts', async () => {
@@ -289,17 +287,17 @@ describe('Timeout and Rate Limit Tests', () => {
 
       const op1 = withTimeout(
         new Promise((resolve) => setTimeout(() => resolve('op1'), 500)),
-        1000
+        1000,
       );
 
       const op2 = withTimeout(
         new Promise((resolve) => setTimeout(() => resolve('op2'), 1500)),
-        1000
+        1000,
       );
 
       const op3 = withTimeout(
         new Promise((resolve) => setTimeout(() => resolve('op3'), 300)),
-        1000
+        1000,
       );
 
       // Advance enough for op3 and op1
@@ -440,7 +438,7 @@ describe('Timeout and Rate Limit Tests', () => {
             initialDelay: 1000,
             multiplier: 2,
             jitter: 0,
-          })
+          }),
         );
       }
 
@@ -565,9 +563,9 @@ describe('Timeout and Rate Limit Tests', () => {
       expect(semaphore.getCurrent()).toBe(2);
       expect(semaphore.getWaiting()).toBe(0);
 
-      // Try to acquire more (will queue)
-      const pending1 = semaphore.acquire();
-      const pending2 = semaphore.acquire();
+      // Try to acquire more (will queue) - purposely not awaited to test queuing
+      semaphore.acquire();
+      semaphore.acquire();
 
       expect(semaphore.getWaiting()).toBe(2);
 

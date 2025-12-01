@@ -10,16 +10,7 @@
  * - Circuit breaker patterns
  */
 
-const {
-  generateDummyFiles,
-  generateDummyFolders,
-  generateQueueItems,
-  createMockService,
-  measureMemory,
-  createTimer,
-  waitForCondition,
-  delay,
-} = require('../utils/testUtilities');
+const { generateDummyFiles } = require('../utils/testUtilities');
 
 // Mock electron
 jest.mock('electron', () => ({
@@ -52,6 +43,10 @@ describe('Service Failure Integration Tests', () => {
     beforeEach(() => {
       jest.clearAllMocks();
       jest.resetModules();
+
+      // Ensure /tmp exists in memfs after module reset
+      const { vol } = require('memfs');
+      vol.mkdirSync('/tmp', { recursive: true });
 
       // Import after mocking
       const queueModule = require('../../src/main/utils/OfflineQueue');
@@ -143,7 +138,9 @@ describe('Service Failure Integration Tests', () => {
 
       const result = await queue.flush(processor);
 
-      console.log(`[TEST] Processed: ${result.processed}, Failed: ${result.failed}, Remaining: ${result.remaining}`);
+      console.log(
+        `[TEST] Processed: ${result.processed}, Failed: ${result.failed}, Remaining: ${result.remaining}`,
+      );
 
       // Some operations should succeed, some should be retried
       expect(result.processed).toBeGreaterThan(0);
@@ -184,7 +181,9 @@ describe('Service Failure Integration Tests', () => {
 
       // Fill queue with batch operations (lower priority)
       for (let i = 0; i < 5; i++) {
-        queue.enqueue(OperationType.BATCH_UPSERT_FILES, { files: [{ id: `file:${i}` }] });
+        queue.enqueue(OperationType.BATCH_UPSERT_FILES, {
+          files: [{ id: `file:${i}` }],
+        });
       }
 
       expect(queue.size()).toBe(5);
@@ -242,7 +241,8 @@ describe('Service Failure Integration Tests', () => {
     });
 
     it('should retry on transient failures', async () => {
-      const mockApi = jest.fn()
+      const mockApi = jest
+        .fn()
         .mockRejectedValueOnce(new Error('Network error'))
         .mockResolvedValueOnce({ success: true });
 
@@ -264,29 +264,34 @@ describe('Service Failure Integration Tests', () => {
     it('should fail after max retries', async () => {
       const mockApi = jest.fn().mockRejectedValue(new Error('Network error'));
 
+      // Use try/catch to properly handle expected rejection with fake timers
+      let caughtError = null;
       const promise = withOllamaRetry(mockApi, {
         operation: 'test',
         maxRetries: 2,
         initialDelay: 100,
+      }).catch((err) => {
+        caughtError = err;
       });
 
-      const assertPromise = expect(promise).rejects.toThrow('Network error');
-
       await jest.runAllTimersAsync();
+      await promise;
 
-      await assertPromise;
-
+      expect(caughtError).not.toBeNull();
+      expect(caughtError.message).toBe('Network error');
       expect(mockApi).toHaveBeenCalledTimes(3); // Initial + 2 retries
     }, 10000);
 
     it('should not retry non-retryable errors', async () => {
-      const mockApi = jest.fn().mockRejectedValue(new Error('Validation error'));
+      const mockApi = jest
+        .fn()
+        .mockRejectedValue(new Error('Validation error'));
 
       await expect(
         withOllamaRetry(mockApi, {
           operation: 'test',
           maxRetries: 3,
-        })
+        }),
       ).rejects.toThrow('Validation error');
 
       expect(mockApi).toHaveBeenCalledTimes(1);
@@ -299,19 +304,21 @@ describe('Service Failure Integration Tests', () => {
         return Promise.reject(new Error('Network error'));
       });
 
+      // Use try/catch to properly handle expected rejection with fake timers
+      let caughtError = null;
       const promise = withOllamaRetry(mockApi, {
         operation: 'test',
         maxRetries: 3,
         initialDelay: 1000,
         maxDelay: 5000,
+      }).catch((err) => {
+        caughtError = err;
       });
 
-      const assertPromise = expect(promise).rejects.toThrow();
-
       await jest.runAllTimersAsync();
+      await promise;
 
-      await assertPromise;
-
+      expect(caughtError).not.toBeNull();
       expect(mockApi).toHaveBeenCalledTimes(4);
     }, 15000);
   });
@@ -426,7 +433,11 @@ describe('Service Failure Integration Tests', () => {
       cb.recordFailure(new Error('Failure 2'));
 
       expect(events.length).toBeGreaterThan(0);
-      expect(events.some(e => e.type === 'open' || e.currentState === CircuitState.OPEN)).toBe(true);
+      expect(
+        events.some(
+          (e) => e.type === 'open' || e.currentState === CircuitState.OPEN,
+        ),
+      ).toBe(true);
     });
 
     it('should provide accurate statistics', () => {
@@ -442,8 +453,10 @@ describe('Service Failure Integration Tests', () => {
 
       const stats = cb.getStats();
 
-      expect(stats.totalSuccesses).toBe(3);
-      expect(stats.totalFailures).toBe(1);
+      // successfulRequests/failedRequests are cumulative counts from stats object
+      // successCount/failureCount are state-specific counters (reset on state transitions)
+      expect(stats.successfulRequests).toBe(3);
+      expect(stats.failedRequests).toBe(1);
       expect(stats.state).toBe(CircuitState.CLOSED);
     });
 
@@ -458,11 +471,11 @@ describe('Service Failure Integration Tests', () => {
       // Execute successful operation
       const result = await cb.execute(successOp);
       expect(result).toBe('success');
-      expect(cb.getStats().totalSuccesses).toBe(1);
+      expect(cb.getStats().successfulRequests).toBe(1);
 
       // Execute failing operation
       await expect(cb.execute(failOp)).rejects.toThrow('fail');
-      expect(cb.getStats().totalFailures).toBe(1);
+      expect(cb.getStats().failedRequests).toBe(1);
     });
   });
 

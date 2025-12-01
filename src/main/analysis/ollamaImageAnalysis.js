@@ -13,15 +13,16 @@ const {
   AI_DEFAULTS,
   SUPPORTED_IMAGE_EXTENSIONS,
 } = require('../../shared/constants');
+const { TRUNCATION } = require('../../shared/performanceConstants');
 const { normalizeAnalysisResult } = require('./utils');
 const {
   getIntelligentCategory: getIntelligentImageCategory,
   getIntelligentKeywords: getIntelligentImageKeywords,
   safeSuggestedName,
 } = require('./fallbackUtils');
-const { getInstance: getChromaDB } = require('../services/ChromaDBService');
+const { getInstance: getChromaDB } = require('../services/chromadb');
 const FolderMatchingService = require('../services/FolderMatchingService');
-const embeddingQueue = require('./EmbeddingQueue');
+const embeddingQueue = require('./embeddingQueue');
 const { logger } = require('../../shared/logger');
 logger.setContext('OllamaImageAnalysis');
 let chromaDbSingleton = null;
@@ -73,10 +74,12 @@ async function analyzeImageWithOllama(
         .filter(
           (f) => f && typeof f.name === 'string' && f.name.trim().length > 0,
         )
-        .slice(0, 10)
+        .slice(0, TRUNCATION.FOLDERS_DISPLAY)
         .map((f) => ({
-          name: f.name.trim().slice(0, 50),
-          description: (f.description || '').trim().slice(0, 140),
+          name: f.name.trim().slice(0, TRUNCATION.NAME_MAX),
+          description: (f.description || '')
+            .trim()
+            .slice(0, TRUNCATION.DESCRIPTION_MAX),
         }));
       if (validFolders.length > 0) {
         const folderListDetailed = validFolders
@@ -116,7 +119,7 @@ Analyze this image:`;
 
     // Use deduplicator to prevent duplicate LLM calls for identical images
     const deduplicationKey = globalDeduplicator.generateKey({
-      image: imageBase64.slice(0, 1000), // Use first 1000 chars as signature
+      image: imageBase64.slice(0, TRUNCATION.CACHE_SIGNATURE), // Use first chars as signature
       model: modelToUse,
       fileName: originalFileName,
       folders: smartFolders.map((f) => f.name).join(','),
@@ -612,7 +615,7 @@ async function analyzeImageFile(filePath, smartFolders = []) {
             if (summary && summary.trim().length > 0) {
               // CRITICAL FIX: Ensure ChromaDB is initialized
               const chromaDbService =
-                require('../services/ChromaDBService').getInstance();
+                require('../services/chromadb').getInstance();
               if (chromaDbService) {
                 await chromaDbService.initialize();
               }

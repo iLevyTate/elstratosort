@@ -1,0 +1,110 @@
+# Stratosort Architecture
+
+## High-Level Information Flow
+
+This diagram illustrates the flow of data and control through the application. It emphasizes the separation between the Renderer (UI), the IPC Bridge, and the Main Process (Backend), with a focus on the file organization pipeline.
+
+```mermaid
+graph LR
+    %% --- Styling & Theme ---
+    %% Soft, modern palette
+    classDef frontend fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#0d47a1,rx:10,ry:10
+    classDef backend fill:#f1f8e9,stroke:#33691e,stroke-width:2px,color:#33691e,rx:10,ry:10
+    classDef core fill:#eceff1,stroke:#455a64,stroke-width:2px,color:#455a64,rx:10,ry:10
+    classDef data fill:#fff3e0,stroke:#e65100,stroke-width:2px,shape:cylinder,color:#e65100
+    classDef ai fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c,rx:10,ry:10
+    classDef ipc fill:#fafafa,stroke:#333,stroke-width:2px,stroke-dasharray: 5 5,color:#333,rx:15,ry:15
+    classDef process fill:#e0f2f1,stroke:#00695c,stroke-width:2px,color:#00695c,shape:hexagon
+
+    %% --- 1. FRONTEND (User Interaction) ---
+    subgraph UI_Layer ["🖥️ Renderer Process"]
+        direction TB
+        AppEntry([App Entry])
+        ReduxStore[[Redux Store]]
+        ViewMgr("Phase Renderer")
+
+        AppEntry --> ReduxStore
+        AppEntry --> ViewMgr
+    end
+
+    %% --- 2. BRIDGE (Communication) ---
+    subgraph IPC_Bridge ["⚡ IPC Communication"]
+        direction TB
+        IPC_Hub(("IPC Hub"))
+    end
+
+    %% --- 3. BACKEND (Logic & Processing) ---
+    subgraph Main_Process ["⚙️ Main Process"]
+        direction LR
+
+        %% Lifecycle Management (Top)
+        subgraph Lifecycle ["Lifecycle & DI"]
+            direction TB
+            Main([Main Entry])
+            Services{Service Container}
+            Main ==> Services
+        end
+
+        %% The Core Organization Pipeline (Middle - Horizontal Flow)
+        subgraph Pipeline ["📂 Organization Pipeline"]
+            direction LR
+            Watcher{{Download Watcher}}
+            AutoOrg{{Auto Organizer}}
+            Suggester{{Suggestion Engine}}
+            Matcher{{Folder Matcher}}
+
+            Watcher --> AutoOrg
+            AutoOrg --> Suggester
+            Suggester --> Matcher
+        end
+
+        %% Intelligence & Analysis (Bottom)
+        subgraph Intelligence ["🧠 AI & Analysis"]
+            direction TB
+            DocAnalysis("File Analysis")
+            Embeddings("Embeddings")
+            Ollama("Ollama LLM")
+
+            DocAnalysis -.-> Ollama
+            Embeddings -.-> Ollama
+        end
+
+        %% Persistence (Far Right)
+        subgraph Persistence ["💾 Data Store"]
+            direction TB
+            ChromaDB[(ChromaDB)]
+            Settings("Settings JSON")
+            ProcessingState("State Tracker")
+        end
+    end
+
+    %% --- CONNECTIONS & FLOW ---
+
+    %% Frontend <-> IPC <-> Backend
+    ReduxStore <==> IPC_Hub
+    IPC_Hub <==> Services
+
+    %% Pipeline Logic Flow
+    Services -.->|Injects| Pipeline
+    Services -.->|Injects| Intelligence
+
+    %% Detailed Data Flow
+    Matcher --> Embeddings
+    Embeddings <--> ChromaDB
+
+    %% State Updates
+    AutoOrg -.->|Update Status| ProcessingState
+    ProcessingState -.->|Emit Event| IPC_Hub
+
+    %% Settings Impact
+    Settings -.->|Configures| Pipeline
+    Settings -.->|Configures| Intelligence
+
+    %% --- CLASS ASSIGNMENTS ---
+    class AppEntry,ReduxStore,ViewMgr frontend
+    class IPC_Hub ipc
+    class Main,Services,ProcessingState core
+    class Watcher,AutoOrg,Suggester,Matcher,DocAnalysis process
+    class Ollama,Embeddings ai
+    class ChromaDB,Settings data
+```

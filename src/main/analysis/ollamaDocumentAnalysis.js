@@ -5,6 +5,7 @@ const {
   SUPPORTED_DOCUMENT_EXTENSIONS,
   SUPPORTED_ARCHIVE_EXTENSIONS,
 } = require('../../shared/constants');
+const { TRUNCATION } = require('../../shared/performanceConstants');
 const { logger } = require('../../shared/logger');
 
 // Enforce required dependency for AI-first operation
@@ -33,9 +34,9 @@ const {
   getIntelligentKeywords,
   safeSuggestedName,
 } = require('./fallbackUtils');
-const { getInstance: getChromaDB } = require('../services/ChromaDBService');
+const { getInstance: getChromaDB } = require('../services/chromadb');
 const FolderMatchingService = require('../services/FolderMatchingService');
-const embeddingQueue = require('./EmbeddingQueue');
+const embeddingQueue = require('./embeddingQueue');
 const crypto = require('crypto');
 const { globalDeduplicator } = require('../utils/llmOptimization');
 const {
@@ -373,7 +374,7 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       // Archive metadata inspection (best-effort)
       const archiveInfo = await tryExtractArchiveMetadata(filePath);
       const keywords =
-        archiveInfo.keywords?.slice(0, 7) ||
+        archiveInfo.keywords?.slice(0, TRUNCATION.KEYWORDS_MAX) ||
         getIntelligentKeywords(fileName, fileExtension);
       const category = 'archive';
       return {
@@ -433,7 +434,7 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
         extractedChars: extractedText.length,
       });
       logger.debug(`[CONTENT-PREVIEW]`, {
-        preview: extractedText.substring(0, 200),
+        preview: extractedText.substring(0, TRUNCATION.PREVIEW_MEDIUM),
       });
 
       // Backend Caching & Deduplication:
@@ -490,7 +491,7 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
             analysis.project,
             analysis.purpose,
             (analysis.keywords || []).join(' '),
-            extractedText.slice(0, 2000),
+            extractedText.slice(0, TRUNCATION.TEXT_EXTRACT_MAX),
           ]
             .filter(Boolean)
             .join('\n');
@@ -539,7 +540,10 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
 
             const top = candidates[0];
             // Use configurable threshold instead of hardcoded value
-            if (top && top.score >= FOLDER_MATCHING_CONFIG.MIN_SCORE_THRESHOLD) {
+            if (
+              top &&
+              top.score >= FOLDER_MATCHING_CONFIG.MIN_SCORE_THRESHOLD
+            ) {
               logger.info(
                 '[DocumentAnalysis] Refining category based on folder match',
                 {

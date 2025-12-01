@@ -3,7 +3,7 @@
  * TIER 1 - CRITICAL for automatic file organization
  */
 
-const AutoOrganizeService = require('../src/main/services/AutoOrganizeService');
+const AutoOrganizeService = require('../src/main/services/autoOrganize');
 const path = require('path');
 
 describe('AutoOrganizeService', () => {
@@ -602,7 +602,7 @@ describe('AutoOrganizeService', () => {
           if (callCount === 1) {
             throw new Error('First file failed');
           }
-          return '/base/Documents/' + file.name;
+          return `/base/Documents/${file.name}`;
         });
 
         const result = await service.batchOrganize(files, mockSmartFolders);

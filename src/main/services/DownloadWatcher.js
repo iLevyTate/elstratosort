@@ -3,11 +3,8 @@ const path = require('path');
 const os = require('os');
 const chokidar = require('chokidar');
 const { logger } = require('../../shared/logger');
-const {
-  FileSystemError,
-  WatcherError,
-  FILE_SYSTEM_ERROR_CODES,
-} = require('../errors/FileSystemError');
+const { FileSystemError, WatcherError } = require('../errors/FileSystemError');
+const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 logger.setContext('DownloadWatcher');
 
 // Simple utility to determine if a path is an image based on extension
@@ -233,7 +230,10 @@ class DownloadWatcher {
 
       // Check if already processing this file
       if (this.processingFiles.has(filePath)) {
-        logger.debug('[DOWNLOAD-WATCHER] File already being processed:', filePath);
+        logger.debug(
+          '[DOWNLOAD-WATCHER] File already being processed:',
+          filePath,
+        );
         return;
       }
 
@@ -241,13 +241,9 @@ class DownloadWatcher {
         this.processingFiles.add(filePath);
         await this.handleFile(filePath);
       } catch (e) {
-        const errorInfo = e.isFileSystemError
-          ? { code: e.code, message: e.getUserFriendlyMessage() }
-          : { message: e.message };
-
         logger.error('[DOWNLOAD-WATCHER] Failed processing file', {
           filePath,
-          ...errorInfo,
+          ...this._formatErrorInfo(e),
           stack: e.stack,
         });
       } finally {
@@ -264,10 +260,9 @@ class DownloadWatcher {
    * @param {Error} error - The error that occurred
    */
   _handleWatcherError(error) {
-    const fsError =
-      error.isFileSystemError
-        ? error
-        : new WatcherError(path.join(os.homedir(), 'Downloads'), error);
+    const fsError = error.isFileSystemError
+      ? error
+      : new WatcherError(path.join(os.homedir(), 'Downloads'), error);
 
     logger.error('[DOWNLOAD-WATCHER] Watcher error:', {
       message: fsError.getUserFriendlyMessage(),
@@ -278,7 +273,10 @@ class DownloadWatcher {
     this.lastError = fsError;
 
     // Attempt automatic restart if error seems recoverable
-    if (fsError.shouldRetry() && this.restartAttempts < this.maxRestartAttempts) {
+    if (
+      fsError.shouldRetry() &&
+      this.restartAttempts < this.maxRestartAttempts
+    ) {
       this.restartAttempts++;
       logger.info(
         `[DOWNLOAD-WATCHER] Attempting restart (${this.restartAttempts}/${this.maxRestartAttempts})...`,
@@ -325,6 +323,77 @@ class DownloadWatcher {
   }
 
   /**
+   * Check if a file exists and return true/false without throwing for ENOENT
+   * @param {string} filePath - Path to check
+   * @param {string} context - Context for logging
+   * @returns {Promise<boolean>} True if file exists
+   * @throws {Error} Re-throws non-ENOENT errors
+   */
+  async _ensureFileExists(filePath, context = 'processing') {
+    try {
+      await fs.access(filePath);
+      return true;
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        logger.debug(
+          `[DOWNLOAD-WATCHER] File no longer exists (${context}), skipping:`,
+          filePath,
+        );
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Format error information consistently for logging
+   * @param {Error} error - The error to format
+   * @returns {Object} Formatted error info object
+   */
+  _formatErrorInfo(error) {
+    return error.isFileSystemError
+      ? { code: error.code, message: error.getUserFriendlyMessage() }
+      : { message: error.message };
+  }
+
+  /**
+   * Ensure a directory exists, creating it if necessary
+   * @param {string} dirPath - Path to the directory
+   * @param {string} context - Context for logging
+   * @param {boolean} throwOnError - Whether to throw on error (true) or return false (false)
+   * @returns {Promise<boolean>} True if directory exists/created successfully
+   * @throws {FileSystemError} If throwOnError is true and mkdir fails
+   */
+  async _ensureDirectory(
+    dirPath,
+    context = 'destination',
+    throwOnError = true,
+  ) {
+    try {
+      await fs.mkdir(dirPath, { recursive: true });
+      return true;
+    } catch (mkdirError) {
+      const fsError = FileSystemError.forOperation(
+        'mkdir',
+        mkdirError,
+        dirPath,
+      );
+      logger.error(
+        `[DOWNLOAD-WATCHER] Failed to create ${context} directory:`,
+        {
+          path: dirPath,
+          error: fsError.getUserFriendlyMessage(),
+          code: fsError.code,
+        },
+      );
+      if (throwOnError) {
+        throw fsError;
+      }
+      return false;
+    }
+  }
+
+  /**
    * Get the current status of the watcher
    * @returns {Object} Status information
    */
@@ -351,7 +420,35 @@ class DownloadWatcher {
     this.start();
   }
 
+  /**
+   * Main file handling pipeline - orchestrates validation, auto-organize, and fallback phases.
+   * @param {string} filePath - Path to the file to process
+   */
   async handleFile(filePath) {
+    // Phase 1: Validation
+    if (!(await this._validateFile(filePath))) {
+      return;
+    }
+
+    // Phase 2: Auto-organize attempt
+    const autoResult = await this._attemptAutoOrganize(filePath);
+    if (autoResult.handled) {
+      return;
+    }
+
+    // Phase 3: Fallback processing (only if auto-organize failed with error)
+    if (autoResult.shouldFallback) {
+      await this._fallbackOrganize(filePath);
+    }
+  }
+
+  /**
+   * Phase 1: Validate that the file should be processed.
+   * Checks extension, temp file patterns, system directories, and file existence.
+   * @param {string} filePath - Path to validate
+   * @returns {Promise<boolean>} True if file is valid for processing
+   */
+  async _validateFile(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     const basename = path.basename(filePath);
 
@@ -373,7 +470,7 @@ class DownloadWatcher {
         '[DOWNLOAD-WATCHER] Skipping system/temporary file:',
         filePath,
       );
-      return;
+      return false;
     }
 
     // CRITICAL FIX: Verify file exists and is stable before processing
@@ -384,11 +481,8 @@ class DownloadWatcher {
       // Additional check: verify file has some content (not empty)
       const stats = await fs.stat(filePath);
       if (stats.size === 0) {
-        logger.debug(
-          '[DOWNLOAD-WATCHER] Skipping empty file:',
-          filePath,
-        );
-        return;
+        logger.debug('[DOWNLOAD-WATCHER] Skipping empty file:', filePath);
+        return false;
       }
     } catch (error) {
       if (error.code === 'ENOENT') {
@@ -396,7 +490,7 @@ class DownloadWatcher {
           '[DOWNLOAD-WATCHER] File no longer exists, skipping:',
           filePath,
         );
-        return;
+        return false;
       }
 
       // Convert to FileSystemError for consistent handling
@@ -416,131 +510,89 @@ class DownloadWatcher {
       if (!fsError.isRecoverable()) {
         throw fsError;
       }
-      return;
+      return false;
     }
 
+    return true;
+  }
+
+  /**
+   * Phase 2: Attempt to auto-organize the file using AutoOrganizeService.
+   * @param {string} filePath - Path to the file
+   * @returns {Promise<{handled: boolean, shouldFallback: boolean}>} Result indicating if file was handled
+   */
+  async _attemptAutoOrganize(filePath) {
     const folders = this.getCustomFolders().filter((f) => f && f.path);
 
-    // Try to use the new auto-organize service if available
-    if (this.autoOrganizeService && this.settingsService) {
-      try {
-        const settings = await this.settingsService.load();
-
-        // Use the new auto-organize service with suggestions
-        const result = await this.autoOrganizeService.processNewFile(
-          filePath,
-          folders,
-          {
-            autoOrganizeEnabled: settings.autoOrganize,
-            confidenceThreshold: settings.downloadConfidenceThreshold || 0.9,
-            defaultLocation: settings.defaultSmartFolderLocation || 'Documents',
-          },
-        );
-
-        if (result && result.destination) {
-          // CRITICAL FIX: Verify file still exists before renaming
-          try {
-            await fs.access(filePath);
-          } catch (error) {
-            if (error.code === 'ENOENT') {
-              logger.debug(
-                '[DOWNLOAD-WATCHER] File deleted before organization, skipping:',
-                filePath,
-              );
-              return;
-            }
-            throw error;
-          }
-
-          // Create destination directory with error handling
-          try {
-            await fs.mkdir(path.dirname(result.destination), { recursive: true });
-          } catch (mkdirError) {
-            const fsError = FileSystemError.forOperation('mkdir', mkdirError, result.destination);
-            logger.error('[DOWNLOAD-WATCHER] Failed to create destination directory:', {
-              destination: result.destination,
-              error: fsError.getUserFriendlyMessage(),
-              code: fsError.code,
-            });
-            throw fsError;
-          }
-
-          // Move file with cross-device handling
-          try {
-            await fs.rename(filePath, result.destination);
-          } catch (renameError) {
-            // Handle cross-device move (different drives)
-            if (renameError.code === 'EXDEV') {
-              logger.debug('[DOWNLOAD-WATCHER] Cross-device move detected, using copy+delete');
-              try {
-                await fs.copyFile(filePath, result.destination);
-                // Verify copy succeeded
-                const [srcStats, destStats] = await Promise.all([
-                  fs.stat(filePath),
-                  fs.stat(result.destination),
-                ]);
-                if (srcStats.size !== destStats.size) {
-                  await fs.unlink(result.destination).catch(() => {});
-                  throw new FileSystemError(FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH, {
-                    path: result.destination,
-                    operation: 'move',
-                    expectedSize: srcStats.size,
-                    actualSize: destStats.size,
-                  });
-                }
-                await fs.unlink(filePath);
-              } catch (copyError) {
-                const fsError = copyError.isFileSystemError
-                  ? copyError
-                  : FileSystemError.forOperation('copy', copyError, filePath);
-                logger.error('[DOWNLOAD-WATCHER] Cross-device move failed:', {
-                  source: filePath,
-                  destination: result.destination,
-                  error: fsError.getUserFriendlyMessage(),
-                });
-                throw fsError;
-              }
-            } else {
-              const fsError = FileSystemError.forOperation('move', renameError, filePath);
-              logger.error('[DOWNLOAD-WATCHER] Failed to move file:', {
-                source: filePath,
-                destination: result.destination,
-                error: fsError.getUserFriendlyMessage(),
-                code: fsError.code,
-              });
-              throw fsError;
-            }
-          }
-
-          logger.info(
-            '[DOWNLOAD-WATCHER] Auto-organized with',
-            Math.round(result.confidence * 100) + '% confidence:',
-            filePath,
-            '=>',
-            result.destination,
-          );
-          return;
-        } else {
-          logger.info(
-            '[DOWNLOAD-WATCHER] File not auto-organized (low confidence or disabled)',
-          );
-          return;
-        }
-      } catch (e) {
-        // Log with appropriate detail based on error type
-        const errorInfo = e.isFileSystemError
-          ? { code: e.code, message: e.getUserFriendlyMessage() }
-          : { message: e.message };
-
-        logger.warn(
-          '[DOWNLOAD-WATCHER] Auto-organize service failed, falling back:',
-          errorInfo,
-        );
-        // Fall through to original logic
-      }
+    // Check if auto-organize service is available
+    if (!this.autoOrganizeService || !this.settingsService) {
+      return { handled: false, shouldFallback: true };
     }
 
-    // Fallback to original logic
+    try {
+      const settings = await this.settingsService.load();
+
+      // Use the new auto-organize service with suggestions
+      const result = await this.autoOrganizeService.processNewFile(
+        filePath,
+        folders,
+        {
+          autoOrganizeEnabled: settings.autoOrganize,
+          confidenceThreshold: settings.downloadConfidenceThreshold || 0.9,
+          defaultLocation: settings.defaultSmartFolderLocation || 'Documents',
+        },
+      );
+
+      if (result && result.destination) {
+        // CRITICAL FIX: Verify file still exists before renaming
+        if (!(await this._ensureFileExists(filePath, 'before organization'))) {
+          return { handled: true, shouldFallback: false };
+        }
+
+        // Create destination directory with error handling
+        await this._ensureDirectory(
+          path.dirname(result.destination),
+          'destination',
+          true,
+        );
+
+        // Move file with cross-device handling
+        await this._moveFile(filePath, result.destination);
+
+        logger.info(
+          '[DOWNLOAD-WATCHER] Auto-organized with',
+          `${Math.round(result.confidence * 100)}% confidence:`,
+          filePath,
+          '=>',
+          result.destination,
+        );
+        return { handled: true, shouldFallback: false };
+      } else {
+        logger.info(
+          '[DOWNLOAD-WATCHER] File not auto-organized (low confidence or disabled)',
+        );
+        return { handled: true, shouldFallback: false };
+      }
+    } catch (e) {
+      // Log with appropriate detail based on error type
+      logger.warn(
+        '[DOWNLOAD-WATCHER] Auto-organize service failed, falling back:',
+        this._formatErrorInfo(e),
+      );
+      // Fall through to fallback logic
+      return { handled: false, shouldFallback: true };
+    }
+  }
+
+  /**
+   * Phase 3: Fallback organization using direct analysis.
+   * Used when auto-organize service is unavailable or fails.
+   * @param {string} filePath - Path to the file
+   */
+  async _fallbackOrganize(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    const folders = this.getCustomFolders().filter((f) => f && f.path);
+
     // CRITICAL FIX: Verify file still exists before fallback processing
     try {
       await fs.access(filePath);
@@ -586,34 +638,27 @@ class DownloadWatcher {
 
     const destFolder = this.resolveDestinationFolder(result, folders);
     if (!destFolder) {
-      logger.debug('[DOWNLOAD-WATCHER] No matching destination folder found for:', filePath);
+      logger.debug(
+        '[DOWNLOAD-WATCHER] No matching destination folder found for:',
+        filePath,
+      );
       return;
     }
 
     try {
       // CRITICAL FIX: Verify file still exists before renaming in fallback
-      try {
-        await fs.access(filePath);
-      } catch (error) {
-        if (error.code === 'ENOENT') {
-          logger.debug(
-            '[DOWNLOAD-WATCHER] File deleted before fallback rename, skipping:',
-            filePath,
-          );
-          return;
-        }
-        throw error;
+      if (!(await this._ensureFileExists(filePath, 'before fallback rename'))) {
+        return;
       }
 
       // Create destination directory
-      try {
-        await fs.mkdir(destFolder.path, { recursive: true });
-      } catch (mkdirError) {
-        const fsError = FileSystemError.forOperation('mkdir', mkdirError, destFolder.path);
-        logger.error('[DOWNLOAD-WATCHER] Failed to create destination folder:', {
-          folder: destFolder.path,
-          error: fsError.getUserFriendlyMessage(),
-        });
+      if (
+        !(await this._ensureDirectory(
+          destFolder.path,
+          'destination folder',
+          false,
+        ))
+      ) {
         return;
       }
 
@@ -624,56 +669,8 @@ class DownloadWatcher {
         : baseName;
       const destPath = path.join(destFolder.path, newName);
 
-      // Move file with cross-device handling
-      try {
-        await fs.rename(filePath, destPath);
-      } catch (renameError) {
-        if (renameError.code === 'EXDEV') {
-          // Cross-device move
-          logger.debug('[DOWNLOAD-WATCHER] Cross-device move in fallback, using copy+delete');
-          await fs.copyFile(filePath, destPath);
-          const [srcStats, destStats] = await Promise.all([
-            fs.stat(filePath),
-            fs.stat(destPath),
-          ]);
-          if (srcStats.size !== destStats.size) {
-            await fs.unlink(destPath).catch(() => {});
-            throw new FileSystemError(FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH, {
-              path: destPath,
-              operation: 'move',
-            });
-          }
-          await fs.unlink(filePath);
-        } else if (renameError.code === 'EEXIST') {
-          // Handle file exists - generate unique name
-          let counter = 1;
-          let uniquePath = destPath;
-          const nameWithoutExt = path.basename(destPath, extname);
-          const destDir = path.dirname(destPath);
-
-          while (counter < 1000) {
-            uniquePath = path.join(destDir, `${nameWithoutExt}_${counter}${extname}`);
-            try {
-              await fs.access(uniquePath);
-              counter++;
-            } catch {
-              // File doesn't exist, use this path
-              break;
-            }
-          }
-
-          await fs.rename(filePath, uniquePath);
-          logger.info(
-            '[DOWNLOAD-WATCHER] Moved (fallback, renamed due to conflict)',
-            filePath,
-            '=>',
-            uniquePath,
-          );
-          return;
-        } else {
-          throw renameError;
-        }
-      }
+      // Move file with cross-device and conflict handling
+      await this._moveFileWithConflictHandling(filePath, destPath, extname);
 
       logger.info(
         '[DOWNLOAD-WATCHER] Moved (fallback)',
@@ -682,15 +679,107 @@ class DownloadWatcher {
         destPath,
       );
     } catch (e) {
-      const errorInfo = e.isFileSystemError
-        ? { code: e.code, message: e.getUserFriendlyMessage() }
-        : { message: e.message };
-
       logger.error('[DOWNLOAD-WATCHER] Failed to move file', {
         source: filePath,
         destination: destFolder.path,
-        ...errorInfo,
+        ...this._formatErrorInfo(e),
       });
+    }
+  }
+
+  /**
+   * Move a file to destination, handling cross-device moves.
+   * @param {string} source - Source file path
+   * @param {string} destination - Destination file path
+   * @throws {FileSystemError} On move failure
+   */
+  async _moveFile(source, destination) {
+    try {
+      await fs.rename(source, destination);
+    } catch (renameError) {
+      // Handle cross-device move (different drives)
+      if (renameError.code === 'EXDEV') {
+        logger.debug(
+          '[DOWNLOAD-WATCHER] Cross-device move detected, using crossDeviceMove utility',
+        );
+        try {
+          await crossDeviceMove(source, destination, { verify: true });
+        } catch (copyError) {
+          const fsError = copyError.isFileSystemError
+            ? copyError
+            : FileSystemError.forOperation('copy', copyError, source);
+          logger.error('[DOWNLOAD-WATCHER] Cross-device move failed:', {
+            source,
+            destination,
+            error: fsError.getUserFriendlyMessage(),
+          });
+          throw fsError;
+        }
+      } else {
+        const fsError = FileSystemError.forOperation(
+          'move',
+          renameError,
+          source,
+        );
+        logger.error('[DOWNLOAD-WATCHER] Failed to move file:', {
+          source,
+          destination,
+          error: fsError.getUserFriendlyMessage(),
+          code: fsError.code,
+        });
+        throw fsError;
+      }
+    }
+  }
+
+  /**
+   * Move a file with conflict handling (generates unique name if file exists).
+   * @param {string} source - Source file path
+   * @param {string} destPath - Destination file path
+   * @param {string} extname - File extension
+   */
+  async _moveFileWithConflictHandling(source, destPath, extname) {
+    try {
+      await fs.rename(source, destPath);
+    } catch (renameError) {
+      if (renameError.code === 'EXDEV') {
+        // Cross-device move using shared utility
+        logger.debug(
+          '[DOWNLOAD-WATCHER] Cross-device move in fallback, using crossDeviceMove utility',
+        );
+        await crossDeviceMove(source, destPath, { verify: true });
+      } else if (renameError.code === 'EEXIST') {
+        // Handle file exists - generate unique name
+        let counter = 1;
+        let uniquePath = destPath;
+        const nameWithoutExt = path.basename(destPath, extname);
+        const destDir = path.dirname(destPath);
+
+        while (counter < 1000) {
+          uniquePath = path.join(
+            destDir,
+            `${nameWithoutExt}_${counter}${extname}`,
+          );
+          try {
+            await fs.access(uniquePath);
+            counter++;
+          } catch {
+            // File doesn't exist, use this path
+            break;
+          }
+        }
+
+        await fs.rename(source, uniquePath);
+        logger.info(
+          '[DOWNLOAD-WATCHER] Moved (fallback, renamed due to conflict)',
+          source,
+          '=>',
+          uniquePath,
+        );
+        return;
+      } else {
+        throw renameError;
+      }
     }
   }
 

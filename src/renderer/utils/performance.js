@@ -1,6 +1,6 @@
 /**
  * Performance optimization utilities for React components.
- * Provides debouncing, throttling, memoization, and React-specific helpers.
+ * Provides debouncing, throttling, caching, and React-specific helpers.
  *
  * Core debounce/throttle are imported from the consolidated promiseUtils module.
  *
@@ -8,39 +8,7 @@
  */
 
 // Import core utilities from consolidated module
-const {
-  debounce,
-  throttle,
-} = require('../../shared/promiseUtils');
-
-/**
- * Simple memoization function for expensive computations
- *
- * @param {Function} fn - The function to memoize
- * @param {Function} keyResolver - Function to resolve cache key from arguments
- * @returns {Function} The memoized function with clear method
- */
-function memoize(fn, keyResolver) {
-  const cache = new Map();
-
-  const memoized = function (...args) {
-    const key = keyResolver ? keyResolver.apply(this, args) : args[0];
-
-    if (cache.has(key)) {
-      return cache.get(key);
-    }
-
-    const result = fn.apply(this, args);
-    cache.set(key, result);
-    return result;
-  };
-
-  memoized.clear = () => cache.clear();
-  memoized.delete = (key) => cache.delete(key);
-  memoized.has = (key) => cache.has(key);
-
-  return memoized;
-}
+const { debounce, throttle } = require('../../shared/promiseUtils');
 
 /**
  * LRU (Least Recently Used) cache implementation
@@ -183,7 +151,6 @@ function batchProcessor(fn, wait = 0, maxBatchSize = Infinity) {
 module.exports = {
   debounce,
   throttle,
-  memoize,
   createLRUCache,
   rafThrottle,
   batchProcessor,

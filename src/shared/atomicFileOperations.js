@@ -12,7 +12,10 @@ const crypto = require('crypto');
 const { logger } = require('./logger');
 
 // Import FileSystemError - handle case where it might not exist yet in shared context
-let FileSystemError, AtomicOperationError, IntegrityError, FILE_SYSTEM_ERROR_CODES;
+let FileSystemError,
+  AtomicOperationError,
+  IntegrityError,
+  FILE_SYSTEM_ERROR_CODES;
 try {
   const fsErrors = require('../main/errors/FileSystemError');
   FileSystemError = fsErrors.FileSystemError;
@@ -78,7 +81,10 @@ class AtomicFileOperations {
 
     try {
       await fs.mkdir(this.backupDirectory, { recursive: true });
-      logger.debug('[ATOMIC-OPS] Initialized backup directory:', this.backupDirectory);
+      logger.debug(
+        '[ATOMIC-OPS] Initialized backup directory:',
+        this.backupDirectory,
+      );
       return this.backupDirectory;
     } catch (error) {
       const fsError = FileSystemError.fromNodeError(error, {
@@ -126,11 +132,15 @@ class AtomicFileOperations {
       if (sourceStats.size !== backupStats.size) {
         // Clean up failed backup
         await fs.unlink(backupPath).catch(() => {});
-        throw new IntegrityError(FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH, backupPath, {
-          expectedSize: sourceStats.size,
-          actualSize: backupStats.size,
-          operation: 'backup',
-        });
+        throw new IntegrityError(
+          FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH,
+          backupPath,
+          {
+            expectedSize: sourceStats.size,
+            actualSize: backupStats.size,
+            operation: 'backup',
+          },
+        );
       }
 
       logger.debug('[ATOMIC-OPS] Created backup:', {
@@ -278,7 +288,10 @@ class AtomicFileOperations {
       try {
         // Try rename first (atomic operation)
         await fs.rename(source, finalDestination);
-        logger.debug('[ATOMIC-OPS] Moved file:', { source, destination: finalDestination });
+        logger.debug('[ATOMIC-OPS] Moved file:', {
+          source,
+          destination: finalDestination,
+        });
         return finalDestination;
       } catch (error) {
         if (error.code === 'EEXIST') {
@@ -307,11 +320,15 @@ class AtomicFileOperations {
                   },
                 );
               });
-              throw new IntegrityError(FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH, finalDestination, {
-                expectedSize: sourceStats.size,
-                actualSize: destStats.size,
-                operation: 'move',
-              });
+              throw new IntegrityError(
+                FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH,
+                finalDestination,
+                {
+                  expectedSize: sourceStats.size,
+                  actualSize: destStats.size,
+                  operation: 'move',
+                },
+              );
             }
 
             await fs.unlink(source);
@@ -391,14 +408,21 @@ class AtomicFileOperations {
 
         if (sourceStats.size !== destStats.size) {
           await fs.unlink(finalDestination).catch(() => {});
-          throw new IntegrityError(FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH, finalDestination, {
-            expectedSize: sourceStats.size,
-            actualSize: destStats.size,
-            operation: 'copy',
-          });
+          throw new IntegrityError(
+            FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH,
+            finalDestination,
+            {
+              expectedSize: sourceStats.size,
+              actualSize: destStats.size,
+              operation: 'copy',
+            },
+          );
         }
 
-        logger.debug('[ATOMIC-OPS] Copied file:', { source, destination: finalDestination });
+        logger.debug('[ATOMIC-OPS] Copied file:', {
+          source,
+          destination: finalDestination,
+        });
         return finalDestination;
       } catch (error) {
         if (error.isFileSystemError) {
@@ -460,14 +484,20 @@ class AtomicFileOperations {
 
       // Verify write succeeded by checking size
       const tempStats = await fs.stat(tempFile);
-      const expectedSize = Buffer.isBuffer(data) ? data.length : Buffer.byteLength(data);
+      const expectedSize = Buffer.isBuffer(data)
+        ? data.length
+        : Buffer.byteLength(data);
 
       if (tempStats.size !== expectedSize) {
-        throw new IntegrityError(FILE_SYSTEM_ERROR_CODES.PARTIAL_WRITE, tempFile, {
-          expectedSize,
-          actualSize: tempStats.size,
-          operation: 'create',
-        });
+        throw new IntegrityError(
+          FILE_SYSTEM_ERROR_CODES.PARTIAL_WRITE,
+          tempFile,
+          {
+            expectedSize,
+            actualSize: tempStats.size,
+            operation: 'create',
+          },
+        );
       }
 
       // Atomic rename to final destination
@@ -658,10 +688,13 @@ class AtomicFileOperations {
           try {
             await fs.mkdir(path.dirname(source), { recursive: true });
           } catch (mkdirError) {
-            logger.warn('[ATOMIC-OPS] Failed to create directory during rollback:', {
-              path: path.dirname(source),
-              error: mkdirError.message,
-            });
+            logger.warn(
+              '[ATOMIC-OPS] Failed to create directory during rollback:',
+              {
+                path: path.dirname(source),
+                error: mkdirError.message,
+              },
+            );
             // Continue with rollback attempt anyway
           }
 
@@ -694,7 +727,10 @@ class AtomicFileOperations {
             });
           }
         } else {
-          logger.warn('[ATOMIC-OPS] Backup file not found during rollback:', backup);
+          logger.warn(
+            '[ATOMIC-OPS] Backup file not found during rollback:',
+            backup,
+          );
           rollbackErrors.push({
             source,
             error: 'Backup file not found',
@@ -818,9 +854,101 @@ class AtomicFileOperations {
 // Export singleton instance
 const atomicFileOps = new AtomicFileOperations();
 
+/**
+ * Standalone cross-device move utility function.
+ * Handles EXDEV errors by copying the file, verifying the copy, then deleting the source.
+ *
+ * @param {string} source - Source file path
+ * @param {string} dest - Destination file path
+ * @param {Object} [options={}] - Options
+ * @param {boolean} [options.verify=true] - Verify copy by comparing file sizes
+ * @param {Function} [options.checksumFn] - Optional checksum function for additional verification
+ * @returns {Promise<void>} Resolves when move is complete
+ * @throws {Error} If copy fails or verification fails
+ */
+async function crossDeviceMove(source, dest, options = {}) {
+  const { verify = true, checksumFn } = options;
+
+  try {
+    // Copy the file
+    await fs.copyFile(source, dest);
+
+    // Verify copy succeeded if requested
+    if (verify) {
+      const [sourceStats, destStats] = await Promise.all([
+        fs.stat(source),
+        fs.stat(dest),
+      ]);
+
+      if (sourceStats.size !== destStats.size) {
+        // Clean up failed copy
+        await fs.unlink(dest).catch((unlinkError) => {
+          logger.warn(
+            '[ATOMIC-OPS] Failed to cleanup file after size mismatch',
+            {
+              path: dest,
+              error: unlinkError.message,
+            },
+          );
+        });
+        throw new IntegrityError(FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH, dest, {
+          expectedSize: sourceStats.size,
+          actualSize: destStats.size,
+          operation: 'crossDeviceMove',
+        });
+      }
+
+      // Optional checksum verification
+      if (checksumFn) {
+        const [sourceChecksum, destChecksum] = await Promise.all([
+          checksumFn(source),
+          checksumFn(dest),
+        ]);
+
+        if (sourceChecksum !== destChecksum) {
+          await fs.unlink(dest).catch((unlinkError) => {
+            logger.warn(
+              '[ATOMIC-OPS] Failed to cleanup file after checksum mismatch',
+              {
+                path: dest,
+                error: unlinkError.message,
+              },
+            );
+          });
+          throw new IntegrityError(
+            FILE_SYSTEM_ERROR_CODES.CHECKSUM_MISMATCH,
+            dest,
+            {
+              operation: 'crossDeviceMove',
+            },
+          );
+        }
+      }
+    }
+
+    // Delete the source file
+    await fs.unlink(source);
+
+    logger.debug('[ATOMIC-OPS] Cross-device move completed:', {
+      source,
+      destination: dest,
+    });
+  } catch (error) {
+    if (error.isFileSystemError) {
+      throw error;
+    }
+    const fsError = FileSystemError.fromNodeError(error, {
+      path: source,
+      operation: 'crossDeviceMove',
+    });
+    throw fsError;
+  }
+}
+
 module.exports = {
   AtomicFileOperations,
   atomicFileOps,
+  crossDeviceMove,
 
   // Convenience functions
   async organizeFilesAtomically(operations) {

@@ -3,8 +3,10 @@ const crypto = require('crypto');
 const { logger } = require('../../shared/logger');
 logger.setContext('FolderMatchingService');
 const EmbeddingCache = require('./EmbeddingCache');
-const { getInstance: getParallelEmbeddingService } = require('./ParallelEmbeddingService');
-const { get: getConfig } = require('../../shared/config');
+const {
+  getInstance: getParallelEmbeddingService,
+} = require('./ParallelEmbeddingService');
+const { get: getConfig } = require('../../shared/config/index');
 
 /**
  * Embedding dimension constants for different models
@@ -16,7 +18,7 @@ const EMBEDDING_DIMENSIONS = {
   'mxbai-embed-large': 1024,
   'all-minilm': 384,
   'bge-large': 1024,
-  'default': 1024, // Fallback for unknown models
+  default: 1024, // Fallback for unknown models
 };
 
 /**
@@ -80,25 +82,31 @@ class FolderMatchingService {
    */
   constructor(chromaDbService, options = {}) {
     // Support both old signature (chromaDbService, cacheOptions) and new signature (chromaDbService, { embeddingCache, ... })
-    const cacheOptions = options.maxCacheSize || options.cacheTtl ? options : {};
+    const cacheOptions =
+      options.maxCacheSize || options.cacheTtl ? options : {};
 
     this.chromaDbService = chromaDbService;
     this.ollama = null;
     this.modelName = '';
 
     // Initialize embedding cache - use injected or create new
-    this.embeddingCache = options.embeddingCache || new EmbeddingCache(cacheOptions);
+    this.embeddingCache =
+      options.embeddingCache || new EmbeddingCache(cacheOptions);
 
     // FIX: Allow concurrency limit to be overridden via options
     // Priority: options.concurrencyLimit > config value > default (5)
-    const concurrencyLimit = options.concurrencyLimit ?? getConfig('ANALYSIS.maxConcurrency', 5);
-    const maxRetries = options.maxRetries ?? getConfig('ANALYSIS.retryAttempts', 3);
+    const concurrencyLimit =
+      options.concurrencyLimit ?? getConfig('ANALYSIS.maxConcurrency', 5);
+    const maxRetries =
+      options.maxRetries ?? getConfig('ANALYSIS.retryAttempts', 3);
 
     // Use injected parallel embedding service or get singleton with configurable values
-    this.parallelEmbeddingService = options.parallelEmbeddingService || getParallelEmbeddingService({
-      concurrencyLimit,
-      maxRetries,
-    });
+    this.parallelEmbeddingService =
+      options.parallelEmbeddingService ||
+      getParallelEmbeddingService({
+        concurrencyLimit,
+        maxRetries,
+      });
 
     // Store limits for reference/debugging
     this._concurrencyLimit = concurrencyLimit;
@@ -174,10 +182,13 @@ class FolderMatchingService {
       // instead of hardcoded 1024 which may mismatch the actual model
       const currentModel = getOllamaEmbeddingModel();
       const dimension = getEmbeddingDimension(currentModel);
-      logger.debug('[FolderMatchingService] Using fallback embedding with dimension:', {
-        model: currentModel,
-        dimension,
-      });
+      logger.debug(
+        '[FolderMatchingService] Using fallback embedding with dimension:',
+        {
+          model: currentModel,
+          dimension,
+        },
+      );
       return { vector: new Array(dimension).fill(0), model: 'fallback' };
     }
   }
@@ -292,34 +303,40 @@ class FolderMatchingService {
         }
       }
 
-      logger.debug('[FolderMatchingService] Batch folder embedding cache status', {
-        total: folders.length,
-        cached: cachedPayloads.length,
-        uncached: uncachedFolders.length,
-      });
+      logger.debug(
+        '[FolderMatchingService] Batch folder embedding cache status',
+        {
+          total: folders.length,
+          cached: cachedPayloads.length,
+          uncached: uncachedFolders.length,
+        },
+      );
 
       // Add cached payloads to results
       payloads.push(...cachedPayloads);
 
       // FIX: Use ParallelEmbeddingService for uncached folders
       if (uncachedFolders.length > 0) {
-        const { results, errors, stats } = await this.parallelEmbeddingService.batchEmbedFolders(
-          uncachedFolders.map((folder) => ({
-            id: folder.id || this.generateFolderId(folder),
-            name: folder.name,
-            description: folder.description || '',
-            path: folder.path || '',
-          })),
-          {
-            onProgress: onProgress ? (progress) => {
-              onProgress({
-                ...progress,
-                phase: 'embedding',
-                cachedCount: cachedPayloads.length,
-              });
-            } : null,
-          }
-        );
+        const { results, errors, stats } =
+          await this.parallelEmbeddingService.batchEmbedFolders(
+            uncachedFolders.map((folder) => ({
+              id: folder.id || this.generateFolderId(folder),
+              name: folder.name,
+              description: folder.description || '',
+              path: folder.path || '',
+            })),
+            {
+              onProgress: onProgress
+                ? (progress) => {
+                    onProgress({
+                      ...progress,
+                      phase: 'embedding',
+                      cachedCount: cachedPayloads.length,
+                    });
+                  }
+                : null,
+            },
+          );
 
         // Process results
         for (let i = 0; i < results.length; i++) {
@@ -347,16 +364,19 @@ class FolderMatchingService {
 
         // Track errors as skipped
         for (const error of errors) {
-          const folder = uncachedFolders.find((f) =>
-            (f.id || this.generateFolderId(f)) === error.id
+          const folder = uncachedFolders.find(
+            (f) => (f.id || this.generateFolderId(f)) === error.id,
           );
           skipped.push({ folder, error: error.error });
         }
 
-        logger.info('[FolderMatchingService] Parallel folder embedding complete', {
-          ...stats,
-          cachedCount: cachedPayloads.length,
-        });
+        logger.info(
+          '[FolderMatchingService] Parallel folder embedding complete',
+          {
+            ...stats,
+            cachedCount: cachedPayloads.length,
+          },
+        );
       }
 
       // Batch upsert to ChromaDB
@@ -468,18 +488,25 @@ class FolderMatchingService {
         }
       }
 
-      logger.debug('[FolderMatchingService] Batch file embedding cache status', {
-        total: fileSummaries.length,
-        cached: cachedResults.length,
-        uncached: uncachedFiles.length,
-      });
+      logger.debug(
+        '[FolderMatchingService] Batch file embedding cache status',
+        {
+          total: fileSummaries.length,
+          cached: cachedResults.length,
+          uncached: uncachedFiles.length,
+        },
+      );
 
       const results = [...cachedResults];
       const skipped = [];
 
       // FIX: Use ParallelEmbeddingService for uncached files
       if (uncachedFiles.length > 0) {
-        const { results: embedResults, errors, stats } = await this.parallelEmbeddingService.batchEmbedFileSummaries(
+        const {
+          results: embedResults,
+          errors,
+          stats,
+        } = await this.parallelEmbeddingService.batchEmbedFileSummaries(
           uncachedFiles.map((item) => ({
             fileId: item.fileId,
             summary: item.summary || '',
@@ -487,24 +514,32 @@ class FolderMatchingService {
             meta: item.meta || {},
           })),
           {
-            onProgress: onProgress ? (progress) => {
-              onProgress({
-                ...progress,
-                phase: 'embedding',
-                cachedCount: cachedResults.length,
-              });
-            } : null,
-          }
+            onProgress: onProgress
+              ? (progress) => {
+                  onProgress({
+                    ...progress,
+                    phase: 'embedding',
+                    cachedCount: cachedResults.length,
+                  });
+                }
+              : null,
+          },
         );
 
         // Process results and update cache
         for (const result of embedResults) {
           if (result && result.success) {
-            const originalItem = uncachedFiles.find((f) => f.fileId === result.id);
+            const originalItem = uncachedFiles.find(
+              (f) => f.fileId === result.id,
+            );
 
             // Cache the embedding for future use
             if (originalItem) {
-              this.embeddingCache.set(originalItem.summary || '', result.model, result.vector);
+              this.embeddingCache.set(
+                originalItem.summary || '',
+                result.model,
+                result.vector,
+              );
             }
 
             results.push({
@@ -522,10 +557,13 @@ class FolderMatchingService {
           skipped.push({ fileId: error.id, error: error.error });
         }
 
-        logger.info('[FolderMatchingService] Parallel file embedding complete', {
-          ...stats,
-          cachedCount: cachedResults.length,
-        });
+        logger.info(
+          '[FolderMatchingService] Parallel file embedding complete',
+          {
+            ...stats,
+            cachedCount: cachedResults.length,
+          },
+        );
       }
 
       logger.debug('[FolderMatchingService] Batch generated file embeddings', {
@@ -566,7 +604,10 @@ class FolderMatchingService {
 
       // FIX: Validate topK parameter to prevent performance issues
       const MAX_TOP_K = 100;
-      const validTopK = Math.max(1, Math.min(Number.isInteger(topK) ? topK : 5, MAX_TOP_K));
+      const validTopK = Math.max(
+        1,
+        Math.min(Number.isInteger(topK) ? topK : 5, MAX_TOP_K),
+      );
 
       // Ensure ChromaDB is initialized
       await this.chromaDbService.initialize();
@@ -576,7 +617,10 @@ class FolderMatchingService {
         topK: validTopK,
       });
 
-      const results = await this.chromaDbService.queryFolders(fileId, validTopK);
+      const results = await this.chromaDbService.queryFolders(
+        fileId,
+        validTopK,
+      );
 
       if (!Array.isArray(results)) {
         logger.warn('[FolderMatchingService] Invalid results format', {
@@ -679,7 +723,11 @@ class FolderMatchingService {
       });
 
       // FIX: Add explicit array check for embeddings
-      if (!fileResult.embeddings || !Array.isArray(fileResult.embeddings) || fileResult.embeddings.length === 0) {
+      if (
+        !fileResult.embeddings ||
+        !Array.isArray(fileResult.embeddings) ||
+        fileResult.embeddings.length === 0
+      ) {
         logger.warn(
           '[FolderMatchingService] File not found or invalid embeddings for similarity search:',
           fileId,
@@ -757,7 +805,7 @@ class FolderMatchingService {
  * @returns {FolderMatchingService} A new service instance
  */
 function createWithDefaults(options = {}) {
-  const { getInstance: getChromaDB } = require('./ChromaDBService');
+  const { getInstance: getChromaDB } = require('./chromadb');
   return new FolderMatchingService(getChromaDB(), options);
 }
 

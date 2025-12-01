@@ -12,6 +12,7 @@ const fs = require('fs');
  * Global teardown function
  * @param {Object} config - Playwright config
  */
+// eslint-disable-next-line no-unused-vars
 async function globalTeardown(config) {
   console.log('\n========================================');
   console.log('StratoSort E2E Test Suite - Teardown');
@@ -32,7 +33,9 @@ async function globalTeardown(config) {
           timeout: 5000,
         });
         if (result.includes('electron.exe')) {
-          console.log('[Teardown] Note: Electron processes found (may be from other apps)');
+          console.log(
+            '[Teardown] Note: Electron processes found (may be from other apps)',
+          );
         } else {
           console.log('[Teardown] No orphaned Electron processes found');
         }
@@ -43,8 +46,13 @@ async function globalTeardown(config) {
       // On Unix, check for electron processes
       const { execSync } = require('child_process');
       try {
-        execSync('pgrep -f "electron.*simple-main"', { encoding: 'utf8', timeout: 5000 });
-        console.log('[Teardown] Note: StratoSort processes found - tests may not have cleaned up properly');
+        execSync('pgrep -f "electron.*simple-main"', {
+          encoding: 'utf8',
+          timeout: 5000,
+        });
+        console.log(
+          '[Teardown] Note: StratoSort processes found - tests may not have cleaned up properly',
+        );
       } catch (e) {
         console.log('[Teardown] No orphaned StratoSort processes found');
       }
@@ -66,7 +74,9 @@ async function globalTeardown(config) {
   if (fs.existsSync(screenshotsDir)) {
     const screenshots = fs.readdirSync(screenshotsDir);
     if (screenshots.length > 0) {
-      console.log(`[Teardown] ${screenshots.length} screenshot(s) saved in: ${screenshotsDir}`);
+      console.log(
+        `[Teardown] ${screenshots.length} screenshot(s) saved in: ${screenshotsDir}`,
+      );
     }
   }
 

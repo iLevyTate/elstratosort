@@ -13,6 +13,7 @@ const fs = require('fs');
  * Global setup function
  * @param {Object} config - Playwright config
  */
+// eslint-disable-next-line no-unused-vars
 async function globalSetup(config) {
   console.log('\n========================================');
   console.log('StratoSort E2E Test Suite - Global Setup');
@@ -36,7 +37,9 @@ async function globalSetup(config) {
       console.log('[Setup] Build completed successfully');
     } catch (error) {
       console.error('[Setup] Build failed:', error.message);
-      console.error('[Setup] Please run "npm run build:dev" manually before running E2E tests');
+      console.error(
+        '[Setup] Please run "npm run build:dev" manually before running E2E tests',
+      );
       throw new Error('Renderer build required for E2E tests');
     }
   } else {
@@ -64,7 +67,9 @@ async function globalSetup(config) {
       process.env.OLLAMA_AVAILABLE = 'false';
     }
   } catch (e) {
-    console.log('[Setup] Ollama is not installed (AI features may be limited in tests)');
+    console.log(
+      '[Setup] Ollama is not installed (AI features may be limited in tests)',
+    );
     process.env.OLLAMA_AVAILABLE = 'false';
   }
 

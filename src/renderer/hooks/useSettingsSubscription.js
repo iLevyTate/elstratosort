@@ -27,7 +27,8 @@ export function useSettingsSubscription(onSettingsChanged, options = {}) {
   }, [onSettingsChanged]);
 
   useEffect(() => {
-    if (!enabled) return;
+    // FIX: Return empty cleanup function for consistent return
+    if (!enabled) return () => {};
 
     const handleSettingsChanged = (newSettings) => {
       try {
@@ -58,7 +59,9 @@ export function useSettingsSubscription(onSettingsChanged, options = {}) {
     // Subscribe to settings changes
     let unsubscribe = null;
     if (window.electronAPI?.events?.onSettingsChanged) {
-      unsubscribe = window.electronAPI.events.onSettingsChanged(handleSettingsChanged);
+      unsubscribe = window.electronAPI.events.onSettingsChanged(
+        handleSettingsChanged,
+      );
       logger.debug('Subscribed to settings changes');
     } else {
       logger.warn('Settings change subscription not available');
@@ -97,10 +100,13 @@ export function useSettingsSync() {
 
   useSettingsSubscription(
     async (changedSettings) => {
-      logger.info('Settings changed externally, consider refreshing:', Object.keys(changedSettings));
+      logger.info(
+        'Settings changed externally, consider refreshing:',
+        Object.keys(changedSettings),
+      );
       // Components using this hook can dispatch to store if needed
     },
-    { enabled: true }
+    { enabled: true },
   );
 
   return { fetchSettings };

@@ -9,7 +9,6 @@
  * - Mock data generation
  */
 
-const path = require('path');
 const crypto = require('crypto');
 
 /**
@@ -24,17 +23,22 @@ function generateDummyFiles(count, options = {}) {
     includeAnalysis = true,
     includeEmbedding = false,
     embeddingDimensions = 768,
-    minNameLength = 5,
-    maxNameLength = 30,
   } = options;
 
   const files = [];
-  const categories = ['Financial', 'Legal', 'Project', 'Personal', 'Technical', 'Medical', 'Marketing'];
+  const categories = [
+    'Financial',
+    'Legal',
+    'Project',
+    'Personal',
+    'Technical',
+    'Medical',
+    'Marketing',
+  ];
 
   for (let i = 0; i < count; i++) {
     const ext = extensions[i % extensions.length];
     const category = categories[i % categories.length];
-    const nameLength = minNameLength + Math.floor(Math.random() * (maxNameLength - minNameLength));
     const fileName = `test_file_${i}_${crypto.randomBytes(4).toString('hex')}${ext}`;
 
     const file = {
@@ -83,7 +87,7 @@ function generateRandomVector(dimensions = 768) {
 
   // Normalize to unit length (for cosine similarity)
   const magnitude = Math.sqrt(sumSquares);
-  return vector.map(v => v / magnitude);
+  return vector.map((v) => v / magnitude);
 }
 
 /**
@@ -93,12 +97,17 @@ function generateRandomVector(dimensions = 768) {
  * @returns {Array<Object>} Array of folder objects
  */
 function generateDummyFolders(count, options = {}) {
-  const {
-    includeEmbedding = true,
-    embeddingDimensions = 768,
-  } = options;
+  const { includeEmbedding = true, embeddingDimensions = 768 } = options;
 
-  const folderTypes = ['Documents', 'Images', 'Reports', 'Contracts', 'Invoices', 'Receipts', 'Projects'];
+  const folderTypes = [
+    'Documents',
+    'Images',
+    'Reports',
+    'Contracts',
+    'Invoices',
+    'Receipts',
+    'Projects',
+  ];
   const folders = [];
 
   for (let i = 0; i < count; i++) {
@@ -316,42 +325,6 @@ function createMockChromaDBService() {
 }
 
 /**
- * Mock Ollama service with failure simulation
- * @returns {Object} Mock Ollama service
- */
-function createMockOllamaService() {
-  return createMockService('Ollama', {
-    async generate(options) {
-      // Simulate processing delay
-      await delay(10);
-      return {
-        response: JSON.stringify({
-          category: 'Test',
-          purpose: 'Mock analysis result',
-          keywords: ['test', 'mock'],
-          confidence: 0.85,
-        }),
-      };
-    },
-
-    async embed(text) {
-      await delay(5);
-      return {
-        embedding: generateRandomVector(768),
-      };
-    },
-
-    async isConnected() {
-      return !this.isFailureActive();
-    },
-
-    async checkModel(modelName) {
-      return { available: true, modelName };
-    },
-  });
-}
-
-/**
  * Measure current memory usage
  * @returns {Object} Memory usage statistics
  */
@@ -362,9 +335,9 @@ function measureMemory() {
     heapTotal: usage.heapTotal,
     external: usage.external,
     rss: usage.rss,
-    heapUsedMB: Math.round(usage.heapUsed / 1024 / 1024 * 100) / 100,
-    heapTotalMB: Math.round(usage.heapTotal / 1024 / 1024 * 100) / 100,
-    rssMB: Math.round(usage.rss / 1024 / 1024 * 100) / 100,
+    heapUsedMB: Math.round((usage.heapUsed / 1024 / 1024) * 100) / 100,
+    heapTotalMB: Math.round((usage.heapTotal / 1024 / 1024) * 100) / 100,
+    rssMB: Math.round((usage.rss / 1024 / 1024) * 100) / 100,
   };
 }
 
@@ -380,42 +353,12 @@ function forceGC() {
 }
 
 /**
- * Wait for a condition to become true
- * @param {Function} conditionFn - Function that returns boolean or Promise<boolean>
- * @param {Object} options - Wait options
- * @returns {Promise<boolean>} True if condition met, false if timeout
- */
-async function waitForCondition(conditionFn, options = {}) {
-  const {
-    timeout = 5000,
-    interval = 50,
-    description = 'condition',
-  } = options;
-
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < timeout) {
-    try {
-      const result = await conditionFn();
-      if (result) {
-        return true;
-      }
-    } catch (e) {
-      // Condition threw an error, keep waiting
-    }
-    await delay(interval);
-  }
-
-  return false;
-}
-
-/**
  * Simple delay helper
  * @param {number} ms - Milliseconds to delay
  * @returns {Promise<void>}
  */
 function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -504,130 +447,13 @@ function generateQueueItems(count, options = {}) {
 }
 
 /**
- * Create a mock event emitter for testing event handlers
- * @returns {Object} Mock event emitter
- */
-function createMockEventEmitter() {
-  const listeners = new Map();
-  const emittedEvents = [];
-
-  return {
-    on(event, listener) {
-      if (!listeners.has(event)) {
-        listeners.set(event, []);
-      }
-      listeners.get(event).push(listener);
-      return this;
-    },
-
-    once(event, listener) {
-      const wrapper = (...args) => {
-        this.off(event, wrapper);
-        listener(...args);
-      };
-      return this.on(event, wrapper);
-    },
-
-    off(event, listener) {
-      if (listeners.has(event)) {
-        const list = listeners.get(event);
-        const index = list.indexOf(listener);
-        if (index !== -1) {
-          list.splice(index, 1);
-        }
-      }
-      return this;
-    },
-
-    emit(event, ...args) {
-      emittedEvents.push({ event, args, timestamp: Date.now() });
-      if (listeners.has(event)) {
-        for (const listener of listeners.get(event)) {
-          try {
-            listener(...args);
-          } catch (e) {
-            // Swallow errors in listeners
-          }
-        }
-      }
-      return this;
-    },
-
-    getEmittedEvents() {
-      return [...emittedEvents];
-    },
-
-    clearEmittedEvents() {
-      emittedEvents.length = 0;
-    },
-
-    removeAllListeners(event) {
-      if (event) {
-        listeners.delete(event);
-      } else {
-        listeners.clear();
-      }
-      return this;
-    },
-  };
-}
-
-/**
- * Assert that memory usage returns to baseline after operation
- * @param {Function} operation - Async operation to perform
- * @param {Object} options - Assertion options
- * @returns {Promise<Object>} Memory analysis results
- */
-async function assertNoMemoryLeak(operation, options = {}) {
-  const {
-    tolerance = 0.2, // 20% tolerance for heap growth
-    warmupIterations = 2,
-    settleTime = 100,
-  } = options;
-
-  // Warmup
-  for (let i = 0; i < warmupIterations; i++) {
-    await operation();
-  }
-
-  forceGC();
-  await delay(settleTime);
-
-  const baseline = measureMemory();
-
-  // Run operation
-  await operation();
-
-  forceGC();
-  await delay(settleTime);
-
-  const afterOperation = measureMemory();
-
-  const heapGrowth = afterOperation.heapUsed - baseline.heapUsed;
-  const growthPercent = heapGrowth / baseline.heapUsed;
-
-  return {
-    baseline,
-    afterOperation,
-    heapGrowth,
-    heapGrowthMB: Math.round(heapGrowth / 1024 / 1024 * 100) / 100,
-    growthPercent: Math.round(growthPercent * 100) / 100,
-    withinTolerance: growthPercent <= tolerance,
-  };
-}
-
-/**
  * Run operation multiple times and return performance statistics
  * @param {Function} operation - Operation to benchmark
  * @param {Object} options - Benchmark options
  * @returns {Promise<Object>} Performance statistics
  */
 async function benchmark(operation, options = {}) {
-  const {
-    iterations = 10,
-    warmupIterations = 2,
-    name = 'operation',
-  } = options;
+  const { iterations = 10, warmupIterations = 2, name = 'operation' } = options;
 
   // Warmup
   for (let i = 0; i < warmupIterations; i++) {
@@ -660,7 +486,7 @@ async function benchmark(operation, options = {}) {
     medianMs: Math.round(median * 100) / 100,
     p95Ms: Math.round(p95 * 100) / 100,
     totalMs: Math.round(sum * 100) / 100,
-    timesMs: times.map(t => Math.round(t * 100) / 100),
+    timesMs: times.map((t) => Math.round(t * 100) / 100),
   };
 }
 
@@ -674,18 +500,14 @@ module.exports = {
   // Mock services
   createMockService,
   createMockChromaDBService,
-  createMockOllamaService,
-  createMockEventEmitter,
 
   // Memory utilities
   measureMemory,
   forceGC,
-  assertNoMemoryLeak,
   createResourceTracker,
 
   // Timing utilities
   delay,
   createTimer,
-  waitForCondition,
   benchmark,
 };

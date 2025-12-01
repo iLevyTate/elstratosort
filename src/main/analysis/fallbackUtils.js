@@ -333,7 +333,7 @@ function safeSuggestedName(fileName, extension) {
 
   const upperName = nameWithoutExt.toUpperCase().trim();
   if (reservedNames.includes(upperName)) {
-    nameWithoutExt = nameWithoutExt + '_file';
+    nameWithoutExt = `${nameWithoutExt}_file`;
   }
 
   // CRITICAL FIX: Handle leading dots (hidden files on Unix-like systems)

@@ -10,8 +10,6 @@
  * @see crossPlatformUtils.js for the comprehensive cross-platform implementation
  */
 
-const path = require('path');
-
 // Import core utilities from crossPlatformUtils
 const {
   // Platform Detection
@@ -56,37 +54,6 @@ const {
 // ============================================================================
 // Legacy-Compatible APIs
 // ============================================================================
-
-/**
- * Get the appropriate Python command for the current platform
- * @returns {string[]} Array of Python commands to try in order
- * @deprecated Use getPythonCandidates() for more detailed configuration
- */
-function getPythonCommands() {
-  return getPythonCandidates().map((c) => c.command);
-}
-
-/**
- * Get Python launcher configurations for testing
- * @returns {Object[]} Array of launcher configurations
- */
-function getPythonLauncherConfigs() {
-  if (isWindows) {
-    return [
-      {
-        cmd: 'py',
-        args: ['-3', '--version'],
-        displayName: 'Python Launcher (py -3)',
-      },
-      { cmd: 'python3', args: ['--version'], displayName: 'Python 3' },
-      { cmd: 'python', args: ['--version'], displayName: 'Python' },
-    ];
-  }
-  return [
-    { cmd: 'python3', args: ['--version'], displayName: 'Python 3' },
-    { cmd: 'python', args: ['--version'], displayName: 'Python' },
-  ];
-}
 
 /**
  * Get npm executable name for the current platform
@@ -167,35 +134,6 @@ function getQuitAccelerator() {
 }
 
 /**
- * Get tray icon configuration for the current platform
- * @param {string} basePath - Base path to icons directory
- * @returns {Object} Tray icon configuration
- */
-function getTrayIconConfig(basePath) {
-  // Legacy API expects paths like basePath/icon.ico
-  // Keep backward compatible path structure
-  if (isWindows) {
-    return {
-      iconPath: path.join(basePath, 'icon.ico'),
-      isTemplate: false,
-    };
-  }
-
-  if (isMacOS) {
-    return {
-      iconPath: path.join(basePath, 'iconTemplate@2x.png'),
-      isTemplate: true,
-    };
-  }
-
-  // Linux
-  return {
-    iconPath: path.join(basePath, 'icon-16x16.png'),
-    isTemplate: false,
-  };
-}
-
-/**
  * Get home directory for the current user
  * @returns {string} Home directory path
  */
@@ -246,8 +184,6 @@ module.exports = {
   isUnix,
 
   // Command helpers (legacy API)
-  getPythonCommands,
-  getPythonLauncherConfigs,
   getNpmCommand,
   getChromaDbBinName,
   getNvidiaSmiCommand,
@@ -261,7 +197,6 @@ module.exports = {
   // UI helpers
   getShortcutModifier,
   getQuitAccelerator,
-  getTrayIconConfig,
 
   // Path helpers
   getHomeDir,

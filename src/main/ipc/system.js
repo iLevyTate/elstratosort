@@ -4,7 +4,10 @@
  * Handles system metrics, application statistics, updates, and configuration.
  */
 const { createHandler, createErrorResponse } = require('./ipcWrappers');
-const { dump: dumpConfig, validate: validateConfig } = require('../../shared/config');
+const {
+  dump: dumpConfig,
+  validate: validateConfig,
+} = require('../../shared/config/index');
 
 function registerSystemIpc({
   ipcMain,
@@ -118,7 +121,7 @@ function registerSystemIpc({
       context,
       handler: async (_event, path) => {
         try {
-          const { get: getConfig } = require('../../shared/config');
+          const { get: getConfig } = require('../../shared/config/index');
           const value = getConfig(path);
           return { success: true, path, value };
         } catch (error) {

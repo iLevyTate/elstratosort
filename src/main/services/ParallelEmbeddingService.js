@@ -1,8 +1,11 @@
 const { getOllama, getOllamaEmbeddingModel } = require('../ollamaUtils');
 const { logger } = require('../../shared/logger');
 const os = require('os');
-const { withOllamaRetry, isRetryableError } = require('../utils/ollamaApiRetry');
-const { get: getConfig } = require('../../shared/config');
+const {
+  withOllamaRetry,
+  isRetryableError,
+} = require('../utils/ollamaApiRetry');
+const { get: getConfig } = require('../../shared/config/index');
 
 logger.setContext('ParallelEmbeddingService');
 
@@ -11,8 +14,8 @@ logger.setContext('ParallelEmbeddingService');
  * FIX: Made configurable to prevent hanging promises and memory bloat
  */
 const SEMAPHORE_CONFIG = {
-  MAX_QUEUE_SIZE: 100,      // Maximum queued requests before rejecting
-  QUEUE_TIMEOUT_MS: 60000,  // 60 second timeout for queued requests
+  MAX_QUEUE_SIZE: 100, // Maximum queued requests before rejecting
+  QUEUE_TIMEOUT_MS: 60000, // 60 second timeout for queued requests
 };
 
 /**
@@ -35,7 +38,7 @@ class ParallelEmbeddingService {
     // Configurable concurrency limit
     this.concurrencyLimit = Math.min(
       options.concurrencyLimit || this._calculateOptimalConcurrency(),
-      10 // Hard cap to prevent overwhelming Ollama
+      10, // Hard cap to prevent overwhelming Ollama
     );
 
     // Semaphore state
@@ -74,7 +77,7 @@ class ParallelEmbeddingService {
     const freeMem = os.freemem();
     const totalMem = os.totalmem();
     // FIX: Prevent division by zero in edge cases (VMs, containers)
-    const memUsageRatio = totalMem > 0 ? (1 - freeMem / totalMem) : 0.5;
+    const memUsageRatio = totalMem > 0 ? 1 - freeMem / totalMem : 0.5;
 
     // Base concurrency on CPU cores (50% utilization for embedding model)
     let concurrency = Math.max(2, Math.floor(cpuCores * 0.5));
@@ -82,10 +85,13 @@ class ParallelEmbeddingService {
     // Reduce if memory pressure is high (>80% usage)
     if (memUsageRatio > 0.8) {
       concurrency = Math.max(2, Math.floor(concurrency * 0.6));
-      logger.warn('[ParallelEmbeddingService] High memory usage, reducing concurrency', {
-        memUsage: `${(memUsageRatio * 100).toFixed(1)}%`,
-        reducedConcurrency: concurrency,
-      });
+      logger.warn(
+        '[ParallelEmbeddingService] High memory usage, reducing concurrency',
+        {
+          memUsage: `${(memUsageRatio * 100).toFixed(1)}%`,
+          reducedConcurrency: concurrency,
+        },
+      );
     }
 
     // Cap at reasonable maximum
@@ -103,9 +109,9 @@ class ParallelEmbeddingService {
       this.activeRequests++;
       this.stats.peakConcurrency = Math.max(
         this.stats.peakConcurrency,
-        this.activeRequests
+        this.activeRequests,
       );
-      return;
+      return Promise.resolve();
     }
 
     // FIX: Enforce maximum queue size to prevent memory bloat
@@ -123,16 +129,21 @@ class ParallelEmbeddingService {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         // Remove this entry from waitQueue
-        const index = this.waitQueue.findIndex(entry => entry.resolve === resolve);
+        const index = this.waitQueue.findIndex(
+          (entry) => entry.resolve === resolve,
+        );
         if (index !== -1) {
           this.waitQueue.splice(index, 1);
         }
         const error = new Error('ParallelEmbeddingService: Queue timeout');
         error.code = 'QUEUE_TIMEOUT';
-        logger.warn('[ParallelEmbeddingService] Request timed out waiting for slot', {
-          timeoutMs: SEMAPHORE_CONFIG.QUEUE_TIMEOUT_MS,
-          queueLength: this.waitQueue.length,
-        });
+        logger.warn(
+          '[ParallelEmbeddingService] Request timed out waiting for slot',
+          {
+            timeoutMs: SEMAPHORE_CONFIG.QUEUE_TIMEOUT_MS,
+            queueLength: this.waitQueue.length,
+          },
+        );
         reject(error);
       }, SEMAPHORE_CONFIG.QUEUE_TIMEOUT_MS);
 
@@ -158,7 +169,7 @@ class ParallelEmbeddingService {
       this.activeRequests++;
       this.stats.peakConcurrency = Math.max(
         this.stats.peakConcurrency,
-        this.activeRequests
+        this.activeRequests,
       );
       next.resolve();
     }
@@ -215,19 +226,25 @@ class ParallelEmbeddingService {
           initialDelay: this.initialRetryDelayMs,
           maxDelay: this.maxRetryDelayMs,
           jitterFactor: 0.3, // Add jitter to prevent thundering herd
-        }
+        },
       );
 
       return result;
     } catch (error) {
-      logger.error('[ParallelEmbeddingService] Embedding failed after retries', {
-        error: error.message,
-        retryable: isRetryableError(error),
-      });
+      logger.error(
+        '[ParallelEmbeddingService] Embedding failed after retries',
+        {
+          error: error.message,
+          retryable: isRetryableError(error),
+        },
+      );
 
       // FIX: Use configurable embedding dimension instead of hardcoded 1024
       const embeddingDimension = getConfig('ANALYSIS.embeddingDimension', 1024);
-      return { vector: new Array(embeddingDimension).fill(0), model: 'fallback' };
+      return {
+        vector: new Array(embeddingDimension).fill(0),
+        model: 'fallback',
+      };
     }
   }
 
@@ -238,10 +255,7 @@ class ParallelEmbeddingService {
    * @returns {Promise<{results: Array, errors: Array, stats: Object}>}
    */
   async batchEmbedTexts(items, options = {}) {
-    const {
-      onProgress = null,
-      stopOnError = false,
-    } = options;
+    const { onProgress = null, stopOnError = false } = options;
 
     if (!Array.isArray(items) || items.length === 0) {
       return {
@@ -417,12 +431,18 @@ class ParallelEmbeddingService {
       concurrencyLimit: this.concurrencyLimit,
       activeRequests: this.activeRequests,
       queuedRequests: this.waitQueue.length,
-      avgLatencyMs: this.stats.successfulRequests > 0
-        ? Math.round(this.stats.totalLatencyMs / this.stats.successfulRequests)
-        : 0,
-      successRate: this.stats.totalRequests > 0
-        ? Math.round((this.stats.successfulRequests / this.stats.totalRequests) * 100)
-        : 100,
+      avgLatencyMs:
+        this.stats.successfulRequests > 0
+          ? Math.round(
+              this.stats.totalLatencyMs / this.stats.successfulRequests,
+            )
+          : 0,
+      successRate:
+        this.stats.totalRequests > 0
+          ? Math.round(
+              (this.stats.successfulRequests / this.stats.totalRequests) * 100,
+            )
+          : 100,
     };
   }
 
@@ -451,7 +471,9 @@ class ParallelEmbeddingService {
     });
 
     // Reject all pending queued requests and clear their timeouts
-    const shutdownError = new Error('ParallelEmbeddingService: Service shutting down');
+    const shutdownError = new Error(
+      'ParallelEmbeddingService: Service shutting down',
+    );
     shutdownError.code = 'SERVICE_SHUTDOWN';
 
     for (const entry of this.waitQueue) {
@@ -483,7 +505,10 @@ class ParallelEmbeddingService {
       await ollama.list();
       return true;
     } catch (error) {
-      logger.warn('[ParallelEmbeddingService] Health check failed:', error.message);
+      logger.warn(
+        '[ParallelEmbeddingService] Health check failed:',
+        error.message,
+      );
       return false;
     }
   }
@@ -503,10 +528,12 @@ class ParallelEmbeddingService {
       if (await this.isServiceHealthy()) {
         return true;
       }
-      await new Promise(resolve => setTimeout(resolve, checkIntervalMs));
+      await new Promise((resolve) => setTimeout(resolve, checkIntervalMs));
     }
 
-    logger.warn('[ParallelEmbeddingService] Timeout waiting for Ollama service');
+    logger.warn(
+      '[ParallelEmbeddingService] Timeout waiting for Ollama service',
+    );
     return false;
   }
 
@@ -525,22 +552,32 @@ class ParallelEmbeddingService {
       // High error rate - reduce concurrency
       const newLimit = Math.max(2, Math.floor(this.concurrencyLimit * 0.7));
       if (newLimit !== this.concurrencyLimit) {
-        logger.info('[ParallelEmbeddingService] Reducing concurrency due to high error rate', {
-          errorRate: `${(errorRate * 100).toFixed(1)}%`,
-          previousLimit: this.concurrencyLimit,
-          newLimit,
-        });
+        logger.info(
+          '[ParallelEmbeddingService] Reducing concurrency due to high error rate',
+          {
+            errorRate: `${(errorRate * 100).toFixed(1)}%`,
+            previousLimit: this.concurrencyLimit,
+            newLimit,
+          },
+        );
         this.concurrencyLimit = newLimit;
       }
-    } else if (errorRate < 0.05 && this.concurrencyLimit < 10 && totalProcessed > 50) {
+    } else if (
+      errorRate < 0.05 &&
+      this.concurrencyLimit < 10 &&
+      totalProcessed > 50
+    ) {
       // Low error rate - can increase concurrency
       const newLimit = Math.min(10, Math.ceil(this.concurrencyLimit * 1.2));
       if (newLimit !== this.concurrencyLimit) {
-        logger.debug('[ParallelEmbeddingService] Increasing concurrency due to low error rate', {
-          errorRate: `${(errorRate * 100).toFixed(1)}%`,
-          previousLimit: this.concurrencyLimit,
-          newLimit,
-        });
+        logger.debug(
+          '[ParallelEmbeddingService] Increasing concurrency due to low error rate',
+          {
+            errorRate: `${(errorRate * 100).toFixed(1)}%`,
+            previousLimit: this.concurrencyLimit,
+            newLimit,
+          },
+        );
         this.concurrencyLimit = newLimit;
       }
     }
@@ -571,7 +608,10 @@ async function resetInstance() {
     try {
       await instance.shutdown();
     } catch (error) {
-      logger.warn('[ParallelEmbeddingService] Error during shutdown in reset:', error.message);
+      logger.warn(
+        '[ParallelEmbeddingService] Error during shutdown in reset:',
+        error.message,
+      );
     }
   }
   instance = null;

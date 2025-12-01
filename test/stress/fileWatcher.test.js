@@ -11,12 +11,9 @@
 
 const path = require('path');
 const {
-  generateDummyFiles,
-  createMockService,
   measureMemory,
   forceGC,
   createTimer,
-  waitForCondition,
   delay,
 } = require('../utils/testUtilities');
 
@@ -185,7 +182,10 @@ describe('File Watcher Stress Tests', () => {
       mockAutoOrganize.processNewFile.mockImplementation(async (filePath) => {
         processedFiles.push(filePath);
         await delay(1); // Simulate minimal processing time
-        return { destination: `/organized/${path.basename(filePath)}`, confidence: 0.95 };
+        return {
+          destination: `/organized/${path.basename(filePath)}`,
+          confidence: 0.95,
+        };
       });
 
       const timer = createTimer();
@@ -202,7 +202,9 @@ describe('File Watcher Stress Tests', () => {
       const elapsed = timer();
       const throughput = fileCount / (elapsed / 1000);
 
-      console.log(`[STRESS] Processed ${fileCount} file events in ${elapsed.toFixed(2)}ms`);
+      console.log(
+        `[STRESS] Processed ${fileCount} file events in ${elapsed.toFixed(2)}ms`,
+      );
       console.log(`[STRESS] Throughput: ${throughput.toFixed(2)} files/sec`);
 
       // Should process all files
@@ -238,7 +240,10 @@ describe('File Watcher Stress Tests', () => {
 
       mockAutoOrganize.processNewFile.mockImplementation(async (filePath) => {
         processedFiles.add(filePath);
-        return { destination: `/organized/${path.basename(filePath)}`, confidence: 0.95 };
+        return {
+          destination: `/organized/${path.basename(filePath)}`,
+          confidence: 0.95,
+        };
       });
 
       // Interleaved events for 3 different files (reduced from 5 for faster test)
@@ -273,13 +278,18 @@ describe('File Watcher Stress Tests', () => {
 
       mockAutoOrganize.processNewFile.mockImplementation(async (filePath) => {
         processedFiles.push(filePath);
-        return { destination: `/organized/${path.basename(filePath)}`, confidence: 0.95 };
+        return {
+          destination: `/organized/${path.basename(filePath)}`,
+          confidence: 0.95,
+        };
       });
 
       // Create burst of file events
       const events = [];
       for (let i = 0; i < burstSize; i++) {
-        events.push(watcher.handleFile(`/home/testuser/Downloads/burst_${i}.pdf`));
+        events.push(
+          watcher.handleFile(`/home/testuser/Downloads/burst_${i}.pdf`),
+        );
       }
 
       await Promise.all(events);
@@ -294,7 +304,9 @@ describe('File Watcher Stress Tests', () => {
       const afterBurst = measureMemory();
       const memoryGrowth = afterBurst.heapUsedMB - baseline.heapUsedMB;
 
-      console.log(`[STRESS] Memory after ${burstSize} file burst: ${memoryGrowth.toFixed(2)}MB growth`);
+      console.log(
+        `[STRESS] Memory after ${burstSize} file burst: ${memoryGrowth.toFixed(2)}MB growth`,
+      );
 
       // Memory growth should be reasonable (< 50MB for 500 files)
       expect(memoryGrowth).toBeLessThan(50);
@@ -357,7 +369,7 @@ describe('File Watcher Stress Tests', () => {
 
       // Should not throw
       await expect(
-        watcher.handleFile('/home/testuser/Downloads/missing.pdf')
+        watcher.handleFile('/home/testuser/Downloads/missing.pdf'),
       ).resolves.not.toThrow();
 
       // processNewFile should not be called for missing files
@@ -374,7 +386,7 @@ describe('File Watcher Stress Tests', () => {
 
     it('should handle auto-organize service failures', async () => {
       mockAutoOrganize.processNewFile.mockRejectedValue(
-        new Error('Service unavailable')
+        new Error('Service unavailable'),
       );
 
       // Mock fallback analysis
@@ -485,7 +497,9 @@ describe('File Watcher Stress Tests', () => {
     });
 
     it('should process valid image files with image analyzer', async () => {
-      mockAutoOrganize.processNewFile.mockRejectedValue(new Error('No service'));
+      mockAutoOrganize.processNewFile.mockRejectedValue(
+        new Error('No service'),
+      );
 
       await watcher.handleFile('/home/testuser/Downloads/photo.jpg');
       await watcher.handleFile('/home/testuser/Downloads/image.png');
@@ -511,7 +525,7 @@ describe('File Watcher Stress Tests', () => {
       const operations = [];
       for (let i = 0; i < fileCount; i++) {
         operations.push(
-          watcher.handleFile(`/home/testuser/Downloads/concurrent_${i}.pdf`)
+          watcher.handleFile(`/home/testuser/Downloads/concurrent_${i}.pdf`),
         );
       }
 

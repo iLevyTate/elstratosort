@@ -1,3 +1,7 @@
+// This test needs real filesystem operations for batch organize
+jest.unmock('fs');
+jest.unmock('fs/promises');
+
 const { ipcMain, dialog, shell } = require('./mocks/electron');
 
 // Mock ChromaDBService with full interface

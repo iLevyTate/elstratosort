@@ -2,15 +2,14 @@ const path = require('path');
 const { performance } = require('perf_hooks');
 const { withErrorLogging, withValidation } = require('./withErrorLogging');
 const { safeGet, safeFilePath, ensureArray } = require('../utils/safeAccess');
+const { logger: moduleLogger } = require('../../shared/logger');
 let z;
 try {
   z = require('zod');
 } catch (error) {
   // Zod is optional - validation will fall back to manual checks
   // Log at debug level for troubleshooting module loading issues
-  if (typeof console !== 'undefined') {
-    console.debug('[IPC-ANALYSIS] Zod not available:', error.message);
-  }
+  moduleLogger.debug('[IPC-ANALYSIS] Zod not available:', error.message);
   z = null;
 }
 

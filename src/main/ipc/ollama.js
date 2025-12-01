@@ -1,7 +1,30 @@
 const { Ollama } = require('ollama');
 const { withErrorLogging, withValidation } = require('./withErrorLogging');
-const { normalizeOllamaUrl } = require('../../shared/utils');
 let z;
+
+/**
+ * Normalize a URL for Ollama server connection
+ * Handles missing protocol, extra whitespace, and double-protocol issues
+ *
+ * @param {string} [hostUrl] - The URL to normalize
+ * @param {string} [defaultUrl='http://127.0.0.1:11434'] - Default URL if none provided
+ * @returns {string} Normalized URL with protocol
+ */
+function normalizeOllamaUrl(hostUrl, defaultUrl = 'http://127.0.0.1:11434') {
+  let url = hostUrl || defaultUrl;
+
+  if (url && typeof url === 'string') {
+    url = url.trim();
+    // Remove any existing protocol to prevent double-protocol
+    url = url.replace(/^https?:\/\//i, '');
+    // Add http:// if no protocol specified
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = `http://${url}`;
+    }
+  }
+
+  return url;
+}
 try {
   z = require('zod');
 } catch {

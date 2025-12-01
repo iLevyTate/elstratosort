@@ -1,12 +1,6 @@
 {
   "permissions": {
-    "allow": [
-      "Bash(dir:*)",
-      "Bash(find:*)",
-      "WebSearch",
-      "Bash(node -e:*)",
-      "Bash(ls -la \"C:\\Users\\benja\\Documents\\GitHub\\elstratosort\\test\"\" 2>/dev/null | grep \".test.js|.spec.js \")"
-    ],
+    "allow": ["Bash(find:*)", "Bash(cat:*)", "Bash(xargs ls:*)"],
     "deny": [],
     "ask": []
   }

@@ -11,7 +11,6 @@
  */
 
 const path = require('path');
-const os = require('os');
 
 // Import the modules under test
 const {
@@ -64,10 +63,10 @@ function createWindowsPath(...segments) {
   }
 
   if (rest.length === 0) {
-    return basePath + '\\';
+    return `${basePath}\\`;
   }
 
-  return basePath + '\\' + rest.join('\\');
+  return `${basePath}\\${rest.join('\\')}`;
 }
 
 /**
@@ -77,7 +76,7 @@ function createWindowsPath(...segments) {
  */
 function createUnixPath(...segments) {
   if (segments.length === 0) return '/';
-  return '/' + segments.join('/');
+  return `/${segments.join('/')}`;
 }
 
 /**
@@ -92,7 +91,7 @@ function createUNCPath(server, share, ...segments) {
   if (segments.length === 0) {
     return base;
   }
-  return base + '\\' + segments.join('\\');
+  return `${base}\\${segments.join('\\')}`;
 }
 
 /**
@@ -127,22 +126,11 @@ function createDeepPath(depth, base = '/') {
   return createWindowsPath(base, ...segments);
 }
 
-/**
- * Helper to test path with mocked platform
- * Note: This creates a wrapper for testing path.normalize behavior
- */
-function getMockedPath(platform) {
-  return platform === 'win32' ? path.win32 : path.posix;
-}
-
 // ============================================================================
 // TEST SUITES
 // ============================================================================
 
 describe('Path Handling Utilities', () => {
-  // Track original platform for restoration
-  const originalPlatform = process.platform;
-
   describe('Test Utilities', () => {
     describe('createWindowsPath', () => {
       test('creates simple Windows path', () => {
@@ -198,26 +186,26 @@ describe('Path Handling Utilities', () => {
     describe('assertPathEquals', () => {
       test('Windows comparison is case-insensitive', () => {
         expect(
-          assertPathEquals('C:\\Users\\Test', 'c:\\users\\test', 'win32')
+          assertPathEquals('C:\\Users\\Test', 'c:\\users\\test', 'win32'),
         ).toBe(true);
       });
 
       test('Windows comparison normalizes separators', () => {
         expect(
-          assertPathEquals('C:/Users/Test', 'C:\\Users\\Test', 'win32')
+          assertPathEquals('C:/Users/Test', 'C:\\Users\\Test', 'win32'),
         ).toBe(true);
       });
 
       test('Unix comparison is case-sensitive', () => {
-        expect(
-          assertPathEquals('/home/User', '/home/user', 'linux')
-        ).toBe(false);
+        expect(assertPathEquals('/home/User', '/home/user', 'linux')).toBe(
+          false,
+        );
       });
 
       test('Unix comparison exact match', () => {
-        expect(
-          assertPathEquals('/home/user', '/home/user', 'linux')
-        ).toBe(true);
+        expect(assertPathEquals('/home/user', '/home/user', 'linux')).toBe(
+          true,
+        );
       });
     });
 
@@ -237,7 +225,12 @@ describe('Path Handling Utilities', () => {
   describe('Windows Path Handling', () => {
     describe('Drive Letter Paths', () => {
       test('accepts valid C: drive path', () => {
-        const testPath = createWindowsPath('C', 'Users', 'Documents', 'file.txt');
+        const testPath = createWindowsPath(
+          'C',
+          'Users',
+          'Documents',
+          'file.txt',
+        );
         expect(() => sanitizePath(testPath)).not.toThrow();
       });
 
@@ -349,9 +342,28 @@ describe('Path Handling Utilities', () => {
     describe('Reserved Windows Filenames', () => {
       // These tests only apply on Windows platform
       const reservedNames = [
-        'CON', 'PRN', 'AUX', 'NUL',
-        'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
-        'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+        'CON',
+        'PRN',
+        'AUX',
+        'NUL',
+        'COM1',
+        'COM2',
+        'COM3',
+        'COM4',
+        'COM5',
+        'COM6',
+        'COM7',
+        'COM8',
+        'COM9',
+        'LPT1',
+        'LPT2',
+        'LPT3',
+        'LPT4',
+        'LPT5',
+        'LPT6',
+        'LPT7',
+        'LPT8',
+        'LPT9',
       ];
 
       test('RESERVED_WINDOWS_NAMES contains all reserved names', () => {
@@ -364,7 +376,9 @@ describe('Path Handling Utilities', () => {
         test('sanitizePath rejects reserved names on Windows', () => {
           reservedNames.forEach((name) => {
             const testPath = `C:\\Users\\${name}\\file.txt`;
-            expect(() => sanitizePath(testPath)).toThrow(/reserved Windows filename/);
+            expect(() => sanitizePath(testPath)).toThrow(
+              /reserved Windows filename/,
+            );
           });
         });
 
@@ -506,7 +520,9 @@ describe('Path Handling Utilities', () => {
       test('rejects parent directory traversal', () => {
         expect(() => sanitizePath('../file.txt')).toThrow(/path traversal/);
         expect(() => sanitizePath('../../file.txt')).toThrow(/path traversal/);
-        expect(() => sanitizePath('folder/../../../file.txt')).toThrow(/path traversal/);
+        expect(() => sanitizePath('folder/../../../file.txt')).toThrow(
+          /path traversal/,
+        );
       });
 
       test('rejects hidden traversal in middle of path', () => {
@@ -547,7 +563,7 @@ describe('Path Handling Utilities', () => {
         // Create a path that exceeds depth limit but stays within length limit
         // Use single-char directory names to avoid hitting length limits first
         const segments = Array(MAX_PATH_DEPTH + 1).fill('d');
-        const tooDeep = '/' + segments.join('/');
+        const tooDeep = `/${segments.join('/')}`;
         expect(() => sanitizePath(tooDeep)).toThrow(/path depth/);
       });
     });
@@ -613,30 +629,24 @@ describe('Path Handling Utilities', () => {
 
   describe('Platform Detection', () => {
     test('platform flags are mutually consistent', () => {
-      if (isWindows) {
-        expect(isMacOS).toBe(false);
-        expect(isLinux).toBe(false);
-        expect(isUnix).toBe(false);
-      }
+      // Only one primary platform flag should be true
+      const primaryPlatforms = [isWindows, isMacOS, isLinux].filter(Boolean);
+      expect(primaryPlatforms.length).toBeLessThanOrEqual(1);
 
-      if (isMacOS) {
-        expect(isWindows).toBe(false);
-        expect(isUnix).toBe(true);
-      }
+      // If Windows, Unix flags should be false
+      expect(isWindows && isUnix).toBe(false);
+      expect(isWindows && isMacOS).toBe(false);
+      expect(isWindows && isLinux).toBe(false);
 
-      if (isLinux) {
-        expect(isWindows).toBe(false);
-        expect(isUnix).toBe(true);
-      }
+      // macOS and Linux should both be Unix
+      expect(isMacOS ? isUnix : true).toBe(true);
+      expect(isLinux ? isUnix : true).toBe(true);
     });
 
-    test('getPathSeparator returns correct separator', () => {
+    test('getPathSeparator returns correct separator for current platform', () => {
       const sep = getPathSeparator();
-      if (isWindows) {
-        expect(sep).toBe('\\');
-      } else {
-        expect(sep).toBe('/');
-      }
+      const expectedSep = isWindows ? '\\' : '/';
+      expect(sep).toBe(expectedSep);
     });
   });
 
@@ -719,11 +729,15 @@ describe('Path Handling Utilities', () => {
 
       test('normalizes Windows paths', () => {
         expect(win32.normalize('C:\\Users\\..\\Admin')).toBe('C:\\Admin');
-        expect(win32.normalize('C:\\Users\\.\\Documents')).toBe('C:\\Users\\Documents');
+        expect(win32.normalize('C:\\Users\\.\\Documents')).toBe(
+          'C:\\Users\\Documents',
+        );
       });
 
       test('joins Windows paths', () => {
-        expect(win32.join('C:\\Users', 'Documents')).toBe('C:\\Users\\Documents');
+        expect(win32.join('C:\\Users', 'Documents')).toBe(
+          'C:\\Users\\Documents',
+        );
       });
 
       test('parses Windows paths', () => {
@@ -760,11 +774,15 @@ describe('Path Handling Utilities', () => {
 
       test('normalizes Unix paths', () => {
         expect(posix.normalize('/home/user/../admin')).toBe('/home/admin');
-        expect(posix.normalize('/home/user/./documents')).toBe('/home/user/documents');
+        expect(posix.normalize('/home/user/./documents')).toBe(
+          '/home/user/documents',
+        );
       });
 
       test('joins Unix paths', () => {
-        expect(posix.join('/home', 'user', 'documents')).toBe('/home/user/documents');
+        expect(posix.join('/home', 'user', 'documents')).toBe(
+          '/home/user/documents',
+        );
       });
 
       test('parses Unix paths', () => {
@@ -832,9 +850,8 @@ describe('Path Handling Utilities', () => {
         name: 'file.txt',
       };
       const result = sanitizeMetadata(metadata);
-      if (result.path) {
-        expect(result.path).not.toContain('\0');
-      }
+      // Path should either be sanitized (no null bytes) or removed entirely
+      expect(!result.path || !result.path.includes('\0')).toBe(true);
     });
   });
 
@@ -855,12 +872,12 @@ describe('Path Handling Utilities', () => {
         '..%c1%9c',
       ];
 
-      traversalPatterns.forEach((pattern) => {
+      // Only test patterns that actually contain '..' (which triggers traversal detection)
+      const dotDotPatterns = traversalPatterns.filter((p) => p.includes('..'));
+      dotDotPatterns.forEach((pattern) => {
         test(`blocks traversal pattern: ${pattern}`, () => {
           const testPath = `/safe/path/${pattern}etc/passwd`;
-          if (pattern.includes('..')) {
-            expect(() => sanitizePath(testPath)).toThrow();
-          }
+          expect(() => sanitizePath(testPath)).toThrow();
         });
       });
     });
@@ -896,13 +913,3 @@ describe('Path Handling Utilities', () => {
     });
   });
 });
-
-// Export test utilities for use in other tests
-module.exports = {
-  createWindowsPath,
-  createUnixPath,
-  createUNCPath,
-  assertPathEquals,
-  createDeepPath,
-  getMockedPath,
-};

@@ -6,7 +6,9 @@ import { logger } from '../../../shared/logger';
 const VALID_PHASES = Object.values(PHASES);
 
 function isValidPhase(phase) {
-  return phase != null && typeof phase === 'string' && VALID_PHASES.includes(phase);
+  return (
+    phase != null && typeof phase === 'string' && VALID_PHASES.includes(phase)
+  );
 }
 
 function canTransitionTo(fromPhase, toPhase) {
@@ -107,9 +109,9 @@ const uiSlice = createSlice({
       // Validate that the new phase is a valid phase value
       if (!isValidPhase(newPhase)) {
         const error = `Invalid phase attempted: ${String(newPhase)}`;
-        logger.error('[uiSlice] ' + error, {
+        logger.error(`[uiSlice] ${error}`, {
           phase: newPhase,
-          validPhases: VALID_PHASES
+          validPhases: VALID_PHASES,
         });
         state.navigationError = error;
         // Reset to safe state instead of corrupting the store
@@ -119,12 +121,15 @@ const uiSlice = createSlice({
       }
 
       // Validate that the transition is allowed (unless it's the same phase)
-      if (state.currentPhase !== newPhase && !canTransitionTo(state.currentPhase, newPhase)) {
+      if (
+        state.currentPhase !== newPhase &&
+        !canTransitionTo(state.currentPhase, newPhase)
+      ) {
         const warning = `Invalid phase transition: ${state.currentPhase} -> ${newPhase}`;
-        logger.warn('[uiSlice] ' + warning, {
+        logger.warn(`[uiSlice] ${warning}`, {
           from: state.currentPhase,
           to: newPhase,
-          allowedTransitions: PHASE_TRANSITIONS[state.currentPhase] || []
+          allowedTransitions: PHASE_TRANSITIONS[state.currentPhase] || [],
         });
         // Still allow the transition but track the warning for debugging
         // This allows flexibility while tracking potential issues

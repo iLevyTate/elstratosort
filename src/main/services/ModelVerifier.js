@@ -55,7 +55,7 @@ class ModelVerifier {
       if (response.ok) {
         return { connected: true };
       }
-      return { connected: false, error: 'HTTP error: ' + response.status };
+      return { connected: false, error: `HTTP error: ${response.status}` };
     } catch (error) {
       logger.error(
         '[ModelVerifier] Unexpected error checking connection:',
@@ -121,7 +121,7 @@ class ModelVerifier {
       const isInstalled = installedModelNames.some(
         (installed) =>
           installed === normalizedName ||
-          installed.startsWith(normalizedName + ':') ||
+          installed.startsWith(`${normalizedName}:`) ||
           normalizedName.startsWith(installed.split(':')[0]),
       );
 

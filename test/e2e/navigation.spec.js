@@ -8,8 +8,12 @@
  */
 
 const { test, expect } = require('@playwright/test');
-const { launchApp, closeApp, waitForAppReady } = require('./helpers/electronApp');
-const { NavigationPage, WelcomePage, SetupPage } = require('./helpers/pageObjects');
+const {
+  launchApp,
+  closeApp,
+  waitForAppReady,
+} = require('./helpers/electronApp');
+const { NavigationPage } = require('./helpers/pageObjects');
 const { PHASES, PHASE_NAV_LABELS } = require('./helpers/testFixtures');
 
 test.describe('Navigation', () => {
@@ -36,17 +40,22 @@ test.describe('Navigation', () => {
   });
 
   test('should show all phase buttons in navigation', async () => {
-    const phaseButtons = window.locator('nav[aria-label="Phase navigation"] button');
+    const phaseButtons = window.locator(
+      'nav[aria-label="Phase navigation"] button',
+    );
     const count = await phaseButtons.count();
 
     // Should have buttons for all phases
     expect(count).toBeGreaterThanOrEqual(5);
 
     // Check each phase label exists
-    for (const [phase, label] of Object.entries(PHASE_NAV_LABELS)) {
+    for (const [, label] of Object.entries(PHASE_NAV_LABELS)) {
       const button = window.locator(`button:has-text("${label}")`);
       const exists = await button.count();
-      console.log(`[Test] Phase "${label}":`, exists > 0 ? 'found' : 'not found');
+      console.log(
+        `[Test] Phase "${label}":`,
+        exists > 0 ? 'found' : 'not found',
+      );
       expect(exists).toBeGreaterThan(0);
     }
   });
@@ -82,7 +91,9 @@ test.describe('Navigation', () => {
 
   test('should enforce phase transition rules', async () => {
     // From Welcome, Organize should not be directly accessible
-    const organizeButton = window.locator(`button:has-text("${PHASE_NAV_LABELS[PHASES.ORGANIZE]}")`);
+    const organizeButton = window.locator(
+      `button:has-text("${PHASE_NAV_LABELS[PHASES.ORGANIZE]}")`,
+    );
 
     // The button might be disabled or the click might not navigate
     const isDisabled = await organizeButton.isDisabled().catch(() => true);
@@ -95,7 +106,9 @@ test.describe('Navigation', () => {
       await window.waitForTimeout(500);
       const currentPhase = await nav.getCurrentPhase();
       // Should still be on Welcome or a valid transition target
-      expect([PHASES.WELCOME, PHASES.SETUP, PHASES.DISCOVER]).toContain(currentPhase);
+      expect([PHASES.WELCOME, PHASES.SETUP, PHASES.DISCOVER]).toContain(
+        currentPhase,
+      );
     }
   });
 
@@ -138,7 +151,9 @@ test.describe('Navigation', () => {
     await expect(settingsPanel).toBeVisible({ timeout: 5000 });
 
     // Close settings
-    const closeButton = window.locator('[aria-label="Close Settings"], [aria-label="Close"], button:has-text("Close")');
+    const closeButton = window.locator(
+      '[aria-label="Close Settings"], [aria-label="Close"], button:has-text("Close")',
+    );
     if (await closeButton.isVisible()) {
       await closeButton.click();
       await window.waitForTimeout(300);
@@ -243,7 +258,9 @@ test.describe('Navigation - Accessibility', () => {
   });
 
   test('should have aria labels on navigation buttons', async () => {
-    const navButtons = window.locator('nav[aria-label="Phase navigation"] button');
+    const navButtons = window.locator(
+      'nav[aria-label="Phase navigation"] button',
+    );
     const count = await navButtons.count();
 
     for (let i = 0; i < count; i++) {

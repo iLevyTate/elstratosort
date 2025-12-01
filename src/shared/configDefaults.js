@@ -3,6 +3,8 @@
  * Single source of truth for environment variables, ports, and service URLs
  */
 
+const { logger } = require('./logger');
+
 // Default service ports
 const PORTS = {
   CHROMA_DB: 8000,
@@ -140,7 +142,11 @@ function isProduction() {
  */
 function validateServiceUrl(urlString, options = {}) {
   if (!urlString || typeof urlString !== 'string') {
-    return { valid: false, url: null, error: 'URL is required and must be a string' };
+    return {
+      valid: false,
+      url: null,
+      error: 'URL is required and must be a string',
+    };
   }
 
   try {
@@ -171,7 +177,11 @@ function validateServiceUrl(urlString, options = {}) {
 
     // Validate hostname length (RFC 1123)
     if (parsed.hostname.length > 253) {
-      return { valid: false, url: null, error: 'Hostname exceeds maximum length of 253 characters.' };
+      return {
+        valid: false,
+        url: null,
+        error: 'Hostname exceeds maximum length of 253 characters.',
+      };
     }
 
     // Validate port if specified
@@ -200,10 +210,18 @@ function validateServiceUrl(urlString, options = {}) {
       url: parsed.href,
       protocol,
       hostname: parsed.hostname,
-      port: parsed.port ? parseInt(parsed.port, 10) : (protocol === 'https' ? 443 : 80),
+      port: parsed.port
+        ? parseInt(parsed.port, 10)
+        : protocol === 'https'
+          ? 443
+          : 80,
     };
   } catch (error) {
-    return { valid: false, url: null, error: `Invalid URL format: ${error.message}` };
+    return {
+      valid: false,
+      url: null,
+      error: `Invalid URL format: ${error.message}`,
+    };
   }
 }
 
@@ -228,7 +246,9 @@ function getValidatedChromaServerUrl() {
 
   if (!result.valid) {
     // Log warning but return default
-    console.warn(`[Config] Invalid CHROMA_SERVER_URL: ${result.error}. Using default.`);
+    logger.warn(
+      `[Config] Invalid CHROMA_SERVER_URL: ${result.error}. Using default.`,
+    );
     return {
       url: SERVICE_URLS.CHROMA_SERVER_URL,
       valid: false,
@@ -269,7 +289,9 @@ function getValidatedOllamaHost() {
 
   if (!result.valid) {
     // Log warning but return default
-    console.warn(`[Config] Invalid OLLAMA_BASE_URL: ${result.error}. Using default.`);
+    logger.warn(
+      `[Config] Invalid OLLAMA_BASE_URL: ${result.error}. Using default.`,
+    );
     return {
       url: SERVICE_URLS.OLLAMA_HOST,
       valid: false,
@@ -305,9 +327,13 @@ function validateEnvironment() {
   // Check NODE_ENV
   const nodeEnv = process.env.NODE_ENV;
   if (!nodeEnv) {
-    report.warnings.push('NODE_ENV is not set. Defaulting to development behavior.');
+    report.warnings.push(
+      'NODE_ENV is not set. Defaulting to development behavior.',
+    );
   } else if (!['development', 'production', 'test'].includes(nodeEnv)) {
-    report.warnings.push(`NODE_ENV="${nodeEnv}" is not a standard value. Expected: development, production, or test.`);
+    report.warnings.push(
+      `NODE_ENV="${nodeEnv}" is not a standard value. Expected: development, production, or test.`,
+    );
   }
   report.config.nodeEnv = nodeEnv || 'undefined';
 
@@ -316,7 +342,9 @@ function validateEnvironment() {
   report.config.chromaServerUrl = chromaResult.url;
   report.config.chromaIsDefault = chromaResult.isDefault;
   if (!chromaResult.valid) {
-    report.warnings.push(`ChromaDB URL validation failed: ${chromaResult.error}`);
+    report.warnings.push(
+      `ChromaDB URL validation failed: ${chromaResult.error}`,
+    );
   }
 
   // Check Ollama URL

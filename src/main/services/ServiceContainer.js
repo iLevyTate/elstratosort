@@ -224,14 +224,17 @@ class ServiceContainer {
 
     // Check for circular dependencies
     if (this._resolutionStack.has(name)) {
-      const chain = Array.from(this._resolutionStack).join(' -> ') + ' -> ' + name;
+      const chain = `${Array.from(this._resolutionStack).join(' -> ')} -> ${name}`;
       throw new Error(
         `Circular dependency detected while resolving '${name}': ${chain}`,
       );
     }
 
     // For singletons, return cached instance if available
-    if (registration.lifetime === ServiceLifetime.SINGLETON && registration.instance !== null) {
+    if (
+      registration.lifetime === ServiceLifetime.SINGLETON &&
+      registration.instance !== null
+    ) {
       return registration.instance;
     }
 
@@ -297,7 +300,7 @@ class ServiceContainer {
 
     // Check for circular dependencies
     if (this._resolutionStack.has(name)) {
-      const chain = Array.from(this._resolutionStack).join(' -> ') + ' -> ' + name;
+      const chain = `${Array.from(this._resolutionStack).join(' -> ')} -> ${name}`;
       throw new Error(
         `Circular dependency detected while resolving '${name}': ${chain}`,
       );
@@ -485,6 +488,12 @@ const ServiceIds = {
   // Core services
   CHROMA_DB: 'chromaDb',
   SETTINGS: 'settings',
+
+  // AI/Embedding services
+  OLLAMA_SERVICE: 'ollamaService',
+  OLLAMA_CLIENT: 'ollamaClient',
+  PARALLEL_EMBEDDING: 'parallelEmbedding',
+  EMBEDDING_CACHE: 'embeddingCache',
 
   // Analysis services
   FOLDER_MATCHING: 'folderMatching',

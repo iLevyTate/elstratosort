@@ -9,7 +9,7 @@
  * - Real-time status updates to renderer
  */
 
-const { getInstance: getChromaDB } = require('../services/ChromaDBService');
+const { getInstance: getChromaDB } = require('../services/chromadb');
 const { withErrorLogging } = require('./withErrorLogging');
 const { CircuitState } = require('../utils/CircuitBreaker');
 

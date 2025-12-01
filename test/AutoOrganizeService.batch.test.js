@@ -1,4 +1,4 @@
-const AutoOrganizeService = require('../src/main/services/AutoOrganizeService');
+const AutoOrganizeService = require('../src/main/services/autoOrganize');
 
 // Mock dependencies
 jest.mock('../src/shared/logger', () => ({

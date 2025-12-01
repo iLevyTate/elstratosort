@@ -12,12 +12,8 @@
 const {
   generateQueueItems,
   createMockChromaDBService,
-  createMockEventEmitter,
-  measureMemory,
   forceGC,
   createTimer,
-  waitForCondition,
-  delay,
 } = require('../utils/testUtilities');
 
 // Mock electron
@@ -57,12 +53,12 @@ describe('EmbeddingQueue Stress Tests', () => {
     mockChromaDB = createMockChromaDBService();
 
     // Mock ChromaDBService
-    jest.mock('../../src/main/services/ChromaDBService', () => ({
+    jest.mock('../../src/main/services/chromadb', () => ({
       getInstance: () => mockChromaDB,
     }));
 
     // Import after mocking
-    EmbeddingQueue = require('../../src/main/analysis/EmbeddingQueue');
+    EmbeddingQueue = require('../../src/main/analysis/embeddingQueue');
   });
 
   afterEach(() => {
@@ -117,8 +113,9 @@ describe('EmbeddingQueue Stress Tests', () => {
 
         // First item should have been dropped
         const stillHasFirstItem = EmbeddingQueue.queue.some(
-          (item) => item.id === firstItemId
+          (item) => item.id === firstItemId,
         );
+        expect(stillHasFirstItem).toBe(false);
 
         // The oldest items should be gone (dropped 5% at a time = 3 items minimum)
         expect(EmbeddingQueue.queue.length).toBeLessThanOrEqual(50);
@@ -138,10 +135,9 @@ describe('EmbeddingQueue Stress Tests', () => {
       try {
         // Fill to 75% (high watermark)
         const items = generateQueueItems(76);
-        let result;
 
         for (const item of items) {
-          result = await EmbeddingQueue.enqueue(item);
+          await EmbeddingQueue.enqueue(item);
         }
 
         expect(EmbeddingQueue.memoryWarningLogged).toBe(true);
@@ -149,7 +145,7 @@ describe('EmbeddingQueue Stress Tests', () => {
         // Fill to 90% (critical watermark)
         const moreItems = generateQueueItems(15);
         for (const item of moreItems) {
-          result = await EmbeddingQueue.enqueue(item);
+          await EmbeddingQueue.enqueue(item);
         }
 
         expect(EmbeddingQueue.criticalWarningLogged).toBe(true);
@@ -252,7 +248,10 @@ describe('EmbeddingQueue Stress Tests', () => {
       // Reduced from 1000 to 200 for memory efficiency
       const itemCount = 200;
       // Use smaller vectors (128 dims vs 768) for stress tests
-      const items = generateQueueItems(itemCount, { includeVector: true, vectorDimensions: 128 });
+      const items = generateQueueItems(itemCount, {
+        includeVector: true,
+        vectorDimensions: 128,
+      });
 
       const timer = createTimer();
 
@@ -356,7 +355,7 @@ describe('EmbeddingQueue Stress Tests', () => {
 
       // Oldest items should be gone
       const hasOldestItem = EmbeddingQueue.deadLetterQueue.some(
-        (entry) => entry.itemId === 'dlq-item-0'
+        (entry) => entry.itemId === 'dlq-item-0',
       );
       expect(hasOldestItem).toBe(false);
     });
@@ -478,7 +477,7 @@ describe('EmbeddingQueue Stress Tests', () => {
     it('should correctly identify health status at thresholds', async () => {
       EmbeddingQueue.MAX_QUEUE_SIZE = 100;
       EmbeddingQueue.HIGH_WATERMARK = 0.75;
-      EmbeddingQueue.CRITICAL_WATERMARK = 0.90;
+      EmbeddingQueue.CRITICAL_WATERMARK = 0.9;
       EmbeddingQueue.MEMORY_WARNING_THRESHOLD = 75;
       EmbeddingQueue.CRITICAL_WARNING_THRESHOLD = 90;
       EmbeddingQueue.failedItems = new Map();

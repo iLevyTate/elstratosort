@@ -106,7 +106,9 @@ function validateImportedSettings(settings, logger) {
           typeof value !== 'string' ||
           !['light', 'dark', 'auto', 'system'].includes(value)
         ) {
-          throw new Error(`Invalid ${key}: must be 'light', 'dark', 'auto', or 'system'`);
+          throw new Error(
+            `Invalid ${key}: must be 'light', 'dark', 'auto', or 'system'`,
+          );
         }
         break;
 
@@ -408,7 +410,7 @@ function registerSettingsIpc({
 
         // Write export file
         // FIX: Use atomic write (temp + rename) to prevent corruption on crash
-        const tempPath = filePath + '.tmp.' + Date.now();
+        const tempPath = `${filePath}.tmp.${Date.now()}`;
         try {
           await fs.writeFile(
             tempPath,

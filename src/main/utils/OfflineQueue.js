@@ -75,10 +75,13 @@ class OfflineQueue extends EventEmitter {
       } catch (error) {
         // FIX: Log warning instead of silently falling back
         // This aids diagnosis when app.getPath fails (e.g., app not ready)
-        logger.warn('[OfflineQueue] app.getPath failed, using process.cwd() fallback', {
-          error: error.message,
-          fallbackPath: path.join(process.cwd(), 'chromadb-queue.json'),
-        });
+        logger.warn(
+          '[OfflineQueue] app.getPath failed, using process.cwd() fallback',
+          {
+            error: error.message,
+            fallbackPath: path.join(process.cwd(), 'chromadb-queue.json'),
+          },
+        );
         this.config.persistPath = path.join(
           process.cwd(),
           'chromadb-queue.json',
@@ -409,12 +412,18 @@ class OfflineQueue extends EventEmitter {
 
       case OperationType.BATCH_UPSERT_FILES: {
         // For batches, use a hash of all IDs
-        const fileIds = (data.files || []).map((f) => f.id).sort().join(',');
+        const fileIds = (data.files || [])
+          .map((f) => f.id)
+          .sort()
+          .join(',');
         return `${type}:${this._simpleHash(fileIds)}`;
       }
 
       case OperationType.BATCH_UPSERT_FOLDERS: {
-        const folderIds = (data.folders || []).map((f) => f.id).sort().join(',');
+        const folderIds = (data.folders || [])
+          .map((f) => f.id)
+          .sort()
+          .join(',');
         return `${type}:${this._simpleHash(folderIds)}`;
       }
 
@@ -529,13 +538,9 @@ class OfflineQueue extends EventEmitter {
       };
 
       // FIX: Use atomic write (temp + rename) to prevent corruption on crash
-      const tempPath = this.config.persistPath + '.tmp.' + Date.now();
+      const tempPath = `${this.config.persistPath}.tmp.${Date.now()}`;
       try {
-        await fs.writeFile(
-          tempPath,
-          JSON.stringify(data, null, 2),
-          'utf-8',
-        );
+        await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf-8');
         await fs.rename(tempPath, this.config.persistPath);
       } catch (writeError) {
         // Clean up temp file on failure

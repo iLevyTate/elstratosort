@@ -16,7 +16,7 @@
  */
 function getEnvNumber(envVar, defaultValue, options = {}) {
   const value = process.env[envVar];
-  if (value === undefined || value === null || value === "") {
+  if (value === undefined || value === null || value === '') {
     return defaultValue;
   }
   const parsed = parseInt(value, 10);
@@ -88,7 +88,7 @@ const RETRY = {
 
 const CACHE = {
   MAX_FILE_CACHE: 500,
-  MAX_IMAGE_CACHE: getEnvNumber("MAX_IMAGE_CACHE", 300, { min: 50, max: 1000 }),
+  MAX_IMAGE_CACHE: getEnvNumber('MAX_IMAGE_CACHE', 300, { min: 50, max: 1000 }),
   MAX_EMBEDDING_CACHE: 1000,
   MAX_ANALYSIS_CACHE: 200,
   MAX_LRU_CACHE: 100,
@@ -118,7 +118,10 @@ const BATCH = {
   EMBEDDING_FLUSH_DELAY_MS: 500,
   CHROMADB_INSERT_DELAY_MS: 100,
   SEMANTIC_BATCH_SIZE: 50,
-  AUTO_ORGANIZE_BATCH_SIZE: getEnvNumber("AUTO_ORGANIZE_BATCH_SIZE", 10, { min: 1, max: 100 }),
+  AUTO_ORGANIZE_BATCH_SIZE: getEnvNumber('AUTO_ORGANIZE_BATCH_SIZE', 10, {
+    min: 1,
+    max: 100,
+  }),
 };
 
 const POLLING = {
@@ -163,7 +166,7 @@ const THRESHOLDS = {
   MIN_SIMILARITY_SCORE: 0.5,
   MIN_MATCH_CONFIDENCE: 0.6,
   QUEUE_HIGH_WATERMARK: 0.75,
-  QUEUE_CRITICAL_WATERMARK: 0.90,
+  QUEUE_CRITICAL_WATERMARK: 0.9,
 };
 
 const LIMITS = {
@@ -226,38 +229,63 @@ const GPU_TUNING = {
   MEDIUM_MEMORY_THRESHOLD: 8000,
 };
 
-function validateConfiguration() {
-  const errors = [];
-  const warnings = [];
-  for (const [key, value] of Object.entries(TIMEOUTS)) {
-    if (typeof value !== "number" || value <= 0) {
-      errors.push("TIMEOUTS." + key + " must be a positive number");
-    }
-  }
-  if (RETRY.MAX_ATTEMPTS_LOW > RETRY.MAX_ATTEMPTS_MEDIUM) {
-    warnings.push("RETRY.MAX_ATTEMPTS_LOW should not exceed MAX_ATTEMPTS_MEDIUM");
-  }
-  for (const [key, value] of Object.entries(CACHE)) {
-    if (typeof value === "number" && value <= 0) {
-      errors.push("CACHE." + key + " must be a positive number");
-    }
-  }
-  for (const [key, value] of Object.entries(BATCH)) {
-    if (typeof value === "number" && value <= 0) {
-      errors.push("BATCH." + key + " must be a positive number");
-    }
-  }
-  if (THRESHOLDS.QUEUE_HIGH_WATERMARK >= THRESHOLDS.QUEUE_CRITICAL_WATERMARK) {
-    errors.push("THRESHOLDS.QUEUE_HIGH_WATERMARK must be less than QUEUE_CRITICAL_WATERMARK");
-  }
-  if (NETWORK.OLLAMA_PORT < NETWORK.MIN_PORT || NETWORK.OLLAMA_PORT > NETWORK.MAX_PORT) {
-    errors.push("NETWORK.OLLAMA_PORT must be between " + NETWORK.MIN_PORT + " and " + NETWORK.MAX_PORT);
-  }
-  return { valid: errors.length === 0, errors, warnings };
-}
+/**
+ * Text truncation limits for display and processing
+ * Used to prevent memory issues and improve performance
+ */
+const TRUNCATION = {
+  // Display limits
+  NAME_MAX: 50,
+  DESCRIPTION_MAX: 140,
+  PREVIEW_SHORT: 100,
+  PREVIEW_MEDIUM: 200,
+  PREVIEW_LONG: 300,
+  PREVIEW_XLARGE: 500,
+
+  // Processing limits
+  TEXT_EXTRACT_MAX: 2000,
+  CACHE_SIGNATURE: 1000,
+  HASH_PREFIX: 8,
+  FOLDER_ID_HASH: 32,
+
+  // Collection limits
+  FOLDERS_DISPLAY: 10,
+  KEYWORDS_MAX: 7,
+  KEYWORDS_EXTENDED: 15,
+  TAGS_DISPLAY: 5,
+  ZIP_ENTRIES_MAX: 50,
+  XLSX_ENTRIES_MAX: 100,
+  TOP_EXTENSIONS: 3,
+};
+
+/**
+ * Viewport breakpoints for responsive design
+ * Matches common device widths
+ */
+const VIEWPORT = {
+  MOBILE: 480,
+  TABLET: 768,
+  DESKTOP: 1280,
+  WIDE_DESKTOP: 1600,
+  ULTRA_WIDE: 1920,
+  FOUR_K: 2560,
+};
 
 module.exports = {
-  TIMEOUTS, RETRY, CACHE, BATCH, POLLING, FILE_SIZE, PAGINATION, THRESHOLDS, LIMITS,
-  IMAGE, NETWORK, DEBOUNCE, CONCURRENCY, GPU_TUNING,
-  validateConfiguration, getEnvNumber,
+  TIMEOUTS,
+  RETRY,
+  CACHE,
+  BATCH,
+  POLLING,
+  FILE_SIZE,
+  PAGINATION,
+  THRESHOLDS,
+  LIMITS,
+  IMAGE,
+  NETWORK,
+  DEBOUNCE,
+  CONCURRENCY,
+  GPU_TUNING,
+  TRUNCATION,
+  VIEWPORT,
 };

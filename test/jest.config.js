@@ -11,6 +11,14 @@ module.exports = {
     '**/__tests__/**/*.+(js|ts|tsx)',
     '**/*.(test|spec).+(js|ts|tsx)',
   ],
+  // Exclude specialized test directories (they have their own configs)
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    '/stress/',
+    '/performance/',
+    '/e2e/',
+    '/manual/',
+  ],
   transform: {
     '^.+\\.(js|jsx|ts|tsx)$': [
       'babel-jest',
@@ -39,6 +47,15 @@ module.exports = {
     '^xlsx-populate$': '<rootDir>/mocks/xlsx.js',
     '^sanitize-html$': '<rootDir>/mocks/sanitize-html.js',
     '^music-metadata$': '<rootDir>/mocks/music-metadata.js',
+    // Redirect refactored service paths to new locations
+    '(.*)services/ChromaDBService$': '$1services/chromadb',
+    '(.*)services/AnalysisHistoryService$': '$1services/analysisHistory',
+    '(.*)services/AutoOrganizeService$': '$1services/autoOrganize',
+    '(.*)services/OrganizationSuggestionService$': '$1services/organization',
+    '(.*)services/StartupManager$': '$1services/startup',
+    '(.*)analysis/EmbeddingQueue$': '$1analysis/embeddingQueue',
+    '(.*)shared/config$': '$1shared/config',
+    '(.*)shared/utils$': '$1shared/edgeCaseUtils',
   },
 
   // Global setup for DOM-dependent packages

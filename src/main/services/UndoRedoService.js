@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { app } = require('electron');
 const { logger } = require('../../shared/logger');
+const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 logger.setContext('UndoRedoService');
 
 // Helper to generate secure random IDs
@@ -33,22 +34,12 @@ class UndoRedoService {
   async safeMove(sourcePath, destinationPath) {
     await this.ensureParentDirectory(destinationPath);
     try {
-      // Use copy + unlink instead of rename for more robustness, especially with memfs
-      await fs.copyFile(sourcePath, destinationPath);
-      await fs.unlink(sourcePath);
-      return;
+      // Try rename first (atomic operation)
+      await fs.rename(sourcePath, destinationPath);
     } catch (error) {
       if (error && error.code === 'EXDEV') {
-        // Cross-device move: copy then verify then remove
-        await fs.copyFile(sourcePath, destinationPath);
-        const [sourceStats, destStats] = await Promise.all([
-          fs.stat(sourcePath),
-          fs.stat(destinationPath),
-        ]);
-        if (sourceStats.size !== destStats.size) {
-          throw new Error('File copy verification failed - size mismatch');
-        }
-        await fs.unlink(sourcePath);
+        // Cross-device move: use shared utility with verification
+        await crossDeviceMove(sourcePath, destinationPath, { verify: true });
         return;
       }
       throw error;
@@ -117,7 +108,7 @@ class UndoRedoService {
     };
     await this.ensureParentDirectory(this.actionsPath);
     // FIX: Use atomic write (temp + rename) to prevent corruption on crash
-    const tempPath = this.actionsPath + '.tmp.' + Date.now();
+    const tempPath = `${this.actionsPath}.tmp.${Date.now()}`;
     try {
       await fs.writeFile(tempPath, JSON.stringify(data, null, 2));
       await fs.rename(tempPath, this.actionsPath);

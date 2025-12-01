@@ -2,28 +2,61 @@
  * Test Setup for Stratosort Document Processing Tests
  * Initializes mocks, global variables, and test utilities
  */
-const { vol } = require('memfs');
-const fs = require('fs');
+const { vol, fs: memfs } = require('memfs');
 const path = require('path');
 
+// Use platform-appropriate temp directory for memfs
+// On Windows, use /tmp as a virtual Unix-style path that memfs understands
 const MOCK_TMP_DIR = '/tmp';
 
+// Apply wrappers to memfs before mocking
+const originalWriteFile = memfs.promises.writeFile.bind(memfs.promises);
+memfs.promises.writeFile = async (filePath, data, options) => {
+  // Normalize path to Unix-style for memfs
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  await memfs.promises.mkdir(path.dirname(normalizedPath).replace(/\\/g, '/'), {
+    recursive: true,
+  });
+  return originalWriteFile(normalizedPath, data, options);
+};
+
+const originalRename = memfs.promises.rename.bind(memfs.promises);
+memfs.promises.rename = async (oldPath, newPath) => {
+  // Normalize paths to Unix-style for memfs
+  const normalizedOld = oldPath.replace(/\\/g, '/');
+  const normalizedNew = newPath.replace(/\\/g, '/');
+  await memfs.promises.mkdir(path.dirname(normalizedNew).replace(/\\/g, '/'), {
+    recursive: true,
+  });
+  return originalRename(normalizedOld, normalizedNew);
+};
+
+const originalMkdir = memfs.promises.mkdir.bind(memfs.promises);
+memfs.promises.mkdir = async (dirPath, options) => {
+  // Normalize path to Unix-style for memfs
+  const normalizedPath = dirPath.replace(/\\/g, '/');
+  return originalMkdir(normalizedPath, options);
+};
+
+const originalReadFile = memfs.promises.readFile.bind(memfs.promises);
+memfs.promises.readFile = async (filePath, options) => {
+  // Normalize path to Unix-style for memfs
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  return originalReadFile(normalizedPath, options);
+};
+
 // Polyfill mkdtemp for memfs
-if (!fs.promises.mkdtemp) {
-  fs.promises.mkdtemp = async (prefix) => {
+if (!memfs.promises.mkdtemp) {
+  memfs.promises.mkdtemp = async (prefix) => {
+    const normalizedPrefix = prefix.replace(/\\/g, '/');
     const tempDir =
-      prefix + Date.now() + Math.random().toString(36).substring(2, 8);
-    await fs.promises.mkdir(tempDir, { recursive: true });
+      normalizedPrefix +
+      Date.now() +
+      Math.random().toString(36).substring(2, 8);
+    await memfs.promises.mkdir(tempDir, { recursive: true });
     return tempDir;
   };
 }
-
-// Wrap writeFile to ensure directory exists
-const originalWriteFile = fs.promises.writeFile;
-fs.promises.writeFile = async (filePath, data, options) => {
-  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-  return originalWriteFile(filePath, data, options);
-};
 
 jest.mock('fs', () => require('memfs').fs);
 jest.mock('fs/promises', () => require('memfs').fs.promises);

@@ -1,7 +1,6 @@
 const {
   LLMRequestDeduplicator,
   BatchProcessor,
-  PromptCombiner,
   globalDeduplicator,
   globalBatchProcessor,
 } = require('../src/main/utils/llmOptimization');
@@ -207,76 +206,6 @@ describe('LLM Optimization Utilities', () => {
       expect(result.results).toEqual([]);
       expect(result.successful).toBe(0);
       expect(result.total).toBe(0);
-    });
-  });
-
-  describe('PromptCombiner', () => {
-    test('should not combine single prompt', () => {
-      const prompts = [{ text: 'prompt 1', type: 'analysis' }];
-
-      const combined = PromptCombiner.combineAnalysisPrompts(prompts);
-
-      expect(combined).toEqual(prompts);
-    });
-
-    test('should combine multiple prompts of same type', () => {
-      const prompts = [
-        { text: 'prompt 1', type: 'analysis' },
-        { text: 'prompt 2', type: 'analysis' },
-        { text: 'prompt 3', type: 'analysis' },
-      ];
-
-      const combined = PromptCombiner.combineAnalysisPrompts(prompts, {
-        maxCombined: 3,
-      });
-
-      expect(combined.length).toBe(1);
-      expect(combined[0].isCombined).toBe(true);
-      expect(combined[0].components.length).toBe(3);
-      expect(combined[0].text).toContain('[Query 1]');
-      expect(combined[0].text).toContain('[Query 2]');
-      expect(combined[0].text).toContain('[Query 3]');
-    });
-
-    test('should respect maxCombined limit', () => {
-      const prompts = [
-        { text: 'prompt 1', type: 'analysis' },
-        { text: 'prompt 2', type: 'analysis' },
-        { text: 'prompt 3', type: 'analysis' },
-        { text: 'prompt 4', type: 'analysis' },
-        { text: 'prompt 5', type: 'analysis' },
-      ];
-
-      const combined = PromptCombiner.combineAnalysisPrompts(prompts, {
-        maxCombined: 2,
-      });
-
-      // Should create 3 groups: [1,2], [3,4], [5]
-      expect(combined.length).toBe(3);
-      expect(combined[0].components.length).toBe(2);
-      expect(combined[1].components.length).toBe(2);
-      expect(combined[2].components).toBeUndefined(); // Single prompt not combined
-    });
-
-    test('should group prompts by type', () => {
-      const prompts = [
-        { text: 'analysis 1', type: 'analysis' },
-        { text: 'summary 1', type: 'summary' },
-        { text: 'analysis 2', type: 'analysis' },
-        { text: 'summary 2', type: 'summary' },
-      ];
-
-      const combined = PromptCombiner.combineAnalysisPrompts(prompts);
-
-      expect(combined.length).toBe(2);
-      // Each combined prompt should contain components of the same type
-      combined.forEach((prompt) => {
-        if (prompt.isCombined) {
-          const types = prompt.components.map((c) => c.type);
-          // eslint-disable-next-line jest/no-conditional-expect
-          expect(new Set(types).size).toBe(1); // All same type
-        }
-      });
     });
   });
 

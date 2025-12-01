@@ -1,19 +1,38 @@
+// This test needs real filesystem operations, so unmock fs and os
+jest.unmock('fs');
+jest.unmock('fs/promises');
+jest.unmock('os');
+
 const fs = require('fs').promises;
 const path = require('path');
-const os = require('os');
+const os = jest.requireActual('os');
 
 describe('ProcessingStateService', () => {
   let tmpDir;
+  let testId = 0;
 
   beforeEach(async () => {
-    tmpDir = path.join(os.tmpdir(), `stratosort-processing-${Date.now()}`);
+    // Use unique directory per test to avoid file locking issues
+    testId++;
+    tmpDir = path.join(
+      os.tmpdir(),
+      `stratosort-processing-${Date.now()}-${testId}-${Math.random().toString(36).slice(2)}`,
+    );
     await fs.mkdir(tmpDir, { recursive: true });
+
+    // Reset modules but re-apply unmocks after
     jest.resetModules();
+    jest.unmock('fs');
+    jest.unmock('fs/promises');
+    jest.unmock('os');
+
     const electron = require('./mocks/electron');
     electron.app.getPath.mockReturnValue(tmpDir);
   });
 
   afterEach(async () => {
+    // Small delay before cleanup to allow file handles to be released
+    await new Promise((resolve) => setTimeout(resolve, 100));
     try {
       await fs.rm(tmpDir, { recursive: true, force: true });
     } catch (error) {
@@ -44,13 +63,21 @@ describe('ProcessingStateService', () => {
       { source: '/from/b.txt', destination: '/to/b.txt' },
     ];
 
+    // Small delay helper to avoid Windows file locking issues during rapid successive writes
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const WRITE_DELAY = process.platform === 'win32' ? 100 : 10;
+
     const batch = await svc.createOrLoadOrganizeBatch(batchId, ops);
     expect(batch.operations.length).toBe(2);
     expect(batch.operations[0].status).toBe('pending');
 
+    await delay(WRITE_DELAY); // Allow file handles to be released
     await svc.markOrganizeOpStarted(batchId, 0);
+    await delay(WRITE_DELAY);
     await svc.markOrganizeOpDone(batchId, 0);
+    await delay(WRITE_DELAY);
     await svc.markOrganizeOpError(batchId, 1, 'Disk full');
+    await delay(WRITE_DELAY);
     await svc.completeOrganizeBatch(batchId);
 
     const incomplete = svc.getIncompleteOrganizeBatches();

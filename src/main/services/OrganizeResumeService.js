@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs').promises;
+const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 
 /**
  * Resume incomplete organize batches from a previous session.
@@ -75,20 +76,14 @@ async function resumeIncompleteBatches(
             // ignore if fs.access fails, means file doesn't exist
           }
 
-          // Move with EXDEV handling
+          // Move with EXDEV handling using shared utility
           try {
             await fs.rename(op.source, op.destination);
           } catch (renameError) {
             if (renameError.code === 'EXDEV') {
-              await fs.copyFile(op.source, op.destination);
-              const sourceStats = await fs.stat(op.source);
-              const destStats = await fs.stat(op.destination);
-              if (sourceStats.size !== destStats.size) {
-                throw new Error(
-                  'File copy verification failed - size mismatch',
-                );
-              }
-              await fs.unlink(op.source);
+              await crossDeviceMove(op.source, op.destination, {
+                verify: true,
+              });
             } else {
               throw renameError;
             }

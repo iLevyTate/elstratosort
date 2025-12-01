@@ -233,8 +233,8 @@ class EmbeddingCache {
       misses: this.metrics.misses,
       evictions: this.metrics.evictions,
       size: this.metrics.size,
-      hitRate: hitRate.toFixed(2) + '%',
-      estimatedMB: estimatedMB.toFixed(2) + ' MB',
+      hitRate: `${hitRate.toFixed(2)}%`,
+      estimatedMB: `${estimatedMB.toFixed(2)} MB`,
       maxSize: this.maxSize,
       ttlMinutes: this.ttlMs / 60000,
     };
