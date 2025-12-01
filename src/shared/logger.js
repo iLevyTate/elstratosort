@@ -115,8 +115,20 @@ class Logger {
     const formattedMessage = this.formatMessage(level, message, data);
 
     if (this.enableConsole) {
-      const consoleMethod = this.getConsoleMethod(level);
-      consoleMethod(formattedMessage);
+      try {
+        const consoleMethod = this.getConsoleMethod(level);
+        consoleMethod(formattedMessage);
+      } catch (error) {
+        // Handle EPIPE errors gracefully (broken console pipe)
+        // This can happen when stdout/stderr pipe is closed
+        if (error.code !== 'EPIPE') {
+          // Re-throw non-EPIPE errors, but disable console to prevent loops
+          this.enableConsole = false;
+          throw error;
+        }
+        // Silently ignore EPIPE - console is gone, continue with file logging
+        this.enableConsole = false;
+      }
     }
 
     if (this.enableFile) {
