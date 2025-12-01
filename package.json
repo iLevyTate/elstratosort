@@ -174,7 +174,7 @@
     "css-loader": "^7.1.2",
     "css-minimizer-webpack-plugin": "^5.0.1",
     "cssnano": "^7.1.2",
-    "daisyui": "^4.12.23",
+    "daisyui": "^5.5.5",
     "detect-port": "^2.1.0",
     "electron": "^39.2.4",
     "electron-builder": "^26.0.12",
