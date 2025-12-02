@@ -556,8 +556,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
           throw new Error('Invalid file path: must be absolute path');
         }
 
-        // 2. Check for path traversal attempts
-        if (filePath.includes('..')) {
+        // 2. Check for path traversal attempts (including encoded variants)
+        // Decode URL-encoded paths to catch %2e%2e and similar bypasses
+        let decodedPath = filePath;
+        try {
+          decodedPath = decodeURIComponent(filePath);
+        } catch {
+          // If decode fails, use original (might have invalid encoding)
+        }
+        if (decodedPath.includes('..') || filePath.includes('..')) {
           throw new Error('Invalid file path: path traversal detected');
         }
 
@@ -903,8 +910,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.IMPORT, importPath),
     createBackup: () =>
       secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.CREATE_BACKUP),
-    listBackups: () =>
-      secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.LIST_BACKUPS),
+    listBackups: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.LIST_BACKUPS),
     restoreBackup: (backupPath) =>
       secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.RESTORE_BACKUP, backupPath),
     deleteBackup: (backupPath) =>
@@ -920,8 +926,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       secureIPC.safeInvoke(IPC_CHANNELS.CHROMADB.GET_QUEUE_STATS),
     forceRecovery: () =>
       secureIPC.safeInvoke(IPC_CHANNELS.CHROMADB.FORCE_RECOVERY),
-    healthCheck: () =>
-      secureIPC.safeInvoke(IPC_CHANNELS.CHROMADB.HEALTH_CHECK),
+    healthCheck: () => secureIPC.safeInvoke(IPC_CHANNELS.CHROMADB.HEALTH_CHECK),
     // FIX: Use IPC_CHANNELS constant instead of hardcoded string
     onStatusChanged: (callback) =>
       secureIPC.safeOn(IPC_CHANNELS.CHROMADB.STATUS_CHANGED, callback),

@@ -65,7 +65,9 @@ const SystemMonitoring = React.memo(function SystemMonitoring() {
           try {
             await fetchMetrics();
           } catch (error) {
-            logger.warn('System monitoring fetch failed:', { error: error.message });
+            logger.warn('System monitoring fetch failed:', {
+              error: error.message,
+            });
           }
         }, 10000); // Increased from 5000ms to 10000ms (10 seconds)
         intervalRef.current = intervalId; // Also store in ref for external access
@@ -88,9 +90,7 @@ const SystemMonitoring = React.memo(function SystemMonitoring() {
 
     // MED-12: Enhanced cleanup function with multiple safeguards
     return () => {
-      isMountedRef.current = false;
-
-      // Clear timeout if it exists
+      // Clear timeout if it exists (before setting isMounted to false to prevent races)
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
@@ -108,7 +108,10 @@ const SystemMonitoring = React.memo(function SystemMonitoring() {
         intervalRef.current = null;
       }
 
-      setIsMonitoring(false);
+      // FIX: Set mounted ref to false last, so pending callbacks know not to update state
+      // Note: We don't call setIsMonitoring(false) here because component is unmounting
+      // and React will unmount the state anyway. Calling setState during cleanup can cause warnings.
+      isMountedRef.current = false;
     };
   }, []); // PERFORMANCE FIX: Removed fetchMetrics from deps to prevent unnecessary re-renders
   // fetchMetrics is stable (useCallback with empty deps), so it doesn't need to be in dependency array

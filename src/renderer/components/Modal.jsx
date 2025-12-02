@@ -48,9 +48,19 @@ const Modal = ({
         document.removeEventListener('keydown', handleKeyDown);
         document.body.style.overflow = 'unset';
 
-        // Restore focus to previously focused element
+        // Restore focus to previously focused element (with safety checks)
         if (previousFocusRef.current) {
-          previousFocusRef.current.focus();
+          try {
+            // Check if element is still in DOM and focusable
+            if (
+              document.body.contains(previousFocusRef.current) &&
+              typeof previousFocusRef.current.focus === 'function'
+            ) {
+              previousFocusRef.current.focus();
+            }
+          } catch {
+            // Element may have been removed from DOM, ignore
+          }
         }
       };
     }

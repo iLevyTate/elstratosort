@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useMemo } from 'react';
+import { useEffect, useCallback, useMemo, useRef } from 'react';
 import { logger } from '../../shared/logger';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { toggleSettings, setPhase } from '../store/slices/uiSlice';
@@ -16,6 +16,18 @@ export function useKeyboardShortcuts() {
   const currentPhase = useAppSelector((state) => state.ui.currentPhase);
   const showSettings = useAppSelector((state) => state.ui.showSettings);
   const { addNotification } = useNotification();
+
+  // Use refs to avoid re-attaching event listeners when these values change
+  const showSettingsRef = useRef(showSettings);
+  const currentPhaseRef = useRef(currentPhase);
+
+  // Keep refs in sync
+  useEffect(() => {
+    showSettingsRef.current = showSettings;
+  }, [showSettings]);
+  useEffect(() => {
+    currentPhaseRef.current = currentPhase;
+  }, [currentPhase]);
 
   // CRITICAL FIX: Memoize actions to prevent event listener re-attachment on every render
   const handleToggleSettings = useCallback(
@@ -79,20 +91,21 @@ export function useKeyboardShortcuts() {
         actions.toggleSettings();
       }
 
-      // Escape to close settings if open
-      if (event.key === 'Escape' && showSettings) {
+      // Escape to close settings if open (use ref for current value)
+      if (event.key === 'Escape' && showSettingsRef.current) {
         actions.toggleSettings();
       }
 
-      // Alt + Arrow keys for phase navigation
+      // Alt + Arrow keys for phase navigation (use ref for current phase)
       if (event.altKey) {
+        const phase = currentPhaseRef.current;
         if (event.key === 'ArrowLeft') {
           event.preventDefault();
           const phases = Object.values(PHASES);
-          const currentIndex = phases.indexOf(currentPhase);
+          const currentIndex = phases.indexOf(phase);
           if (currentIndex > 0) {
             const previousPhase = phases[currentIndex - 1];
-            const allowedTransitions = PHASE_TRANSITIONS[currentPhase] || [];
+            const allowedTransitions = PHASE_TRANSITIONS[phase] || [];
             if (allowedTransitions.includes(previousPhase)) {
               actions.advancePhase(previousPhase);
               addNotification(
@@ -107,10 +120,10 @@ export function useKeyboardShortcuts() {
         if (event.key === 'ArrowRight') {
           event.preventDefault();
           const phases = Object.values(PHASES);
-          const currentIndex = phases.indexOf(currentPhase);
+          const currentIndex = phases.indexOf(phase);
           if (currentIndex < phases.length - 1) {
             const nextPhase = phases[currentIndex + 1];
-            const allowedTransitions = PHASE_TRANSITIONS[currentPhase] || [];
+            const allowedTransitions = PHASE_TRANSITIONS[phase] || [];
             if (allowedTransitions.includes(nextPhase)) {
               actions.advancePhase(nextPhase);
               addNotification(
@@ -126,5 +139,6 @@ export function useKeyboardShortcuts() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [actions, currentPhase, addNotification, showSettings]);
+    // Only re-attach when actions or addNotification change (both are memoized/stable)
+  }, [actions, addNotification]);
 }

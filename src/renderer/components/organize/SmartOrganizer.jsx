@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from 'react';
 import PropTypes from 'prop-types';
 import { logger } from '../../../shared/logger';
 import { useNotification } from '../../contexts/NotificationContext';
@@ -39,6 +45,15 @@ function SmartOrganizer({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [mode, setMode] = useState('quick'); // 'quick' or 'detailed'
 
+  // FIX: Track mounted state to prevent state updates after unmount
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // FIX: Wrap analyzeFiles in useCallback to prevent stale closure issues
   const analyzeFiles = useCallback(async () => {
     if (files.length === 0) return;
@@ -52,32 +67,46 @@ function SmartOrganizer({
           files[0],
           { includeAlternatives: true },
         );
-        setSuggestions({ [files[0].path]: result });
+        // FIX: Check mounted state before updating
+        if (isMountedRef.current) {
+          setSuggestions({ [files[0].path]: result });
+        }
       } else {
         // Batch mode
         const batchResult =
           await window.electronAPI.suggestions.getBatchSuggestions(files, {
             analyzePatterns: true,
           });
-        setBatchSuggestions(batchResult);
+        // FIX: Check mounted state before updating
+        if (isMountedRef.current) {
+          setBatchSuggestions(batchResult);
+        }
       }
 
       // Get folder improvement suggestions
       const improvements =
         await window.electronAPI.suggestions.analyzeFolderStructure(files);
-      setFolderImprovements(improvements?.improvements || []);
+      // FIX: Check mounted state before updating
+      if (isMountedRef.current) {
+        setFolderImprovements(improvements?.improvements || []);
+      }
     } catch (error) {
       logger.error('Failed to analyze files', {
         error: error.message,
         stack: error.stack,
       });
       // FIX: Notify user about the failure so they're aware analysis didn't work
-      addNotification(
-        'Failed to analyze files. Please try again or check your connection.',
-        'error',
-      );
+      if (isMountedRef.current) {
+        addNotification(
+          'Failed to analyze files. Please try again or check your connection.',
+          'error',
+        );
+      }
     } finally {
-      setIsAnalyzing(false);
+      // FIX: Check mounted state before updating
+      if (isMountedRef.current) {
+        setIsAnalyzing(false);
+      }
     }
   }, [files, addNotification]);
 
@@ -135,7 +164,10 @@ function SmartOrganizer({
         filePath: file.path,
       });
       // Still update UI but notify user of the failure
-      addNotification('Feedback recording failed, but suggestion accepted locally', 'warning');
+      addNotification(
+        'Feedback recording failed, but suggestion accepted locally',
+        'warning',
+      );
       setAcceptedSuggestions((prev) => ({
         ...prev,
         [file.path]: suggestion,

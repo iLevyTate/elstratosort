@@ -194,6 +194,15 @@ export function UndoRedoProvider({ children }) {
   const [isHistoryVisible, setIsHistoryVisible] = useState(false);
   const { showSuccess, showError, showInfo } = useSimpleNotifications();
 
+  // FIX: Track mounted state to prevent listener updates after unmount
+  const isMountedRef = React.useRef(true);
+  React.useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // Local confirmation dialog state for nicer UX than window.confirm
   const [confirmState, setConfirmState] = useState({
     isOpen: false,
@@ -238,6 +247,8 @@ export function UndoRedoProvider({ children }) {
 
   // Update state when stack changes
   const updateState = useCallback(() => {
+    // FIX: Check mounted state before updating to prevent memory leak warnings
+    if (!isMountedRef.current) return;
     setCanUndo(undoStack.canUndo());
     setCanRedo(undoStack.canRedo());
   }, [undoStack]);

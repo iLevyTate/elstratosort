@@ -12,35 +12,69 @@ let cachedCapabilities = null;
 
 async function detectNvidiaGpu() {
   return new Promise((resolve) => {
+    let resolved = false;
+    let timeoutId = null;
+    let proc = null;
+
+    const cleanup = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (proc && !proc.killed) {
+        try {
+          proc.kill();
+        } catch {
+          // Process may have already exited
+        }
+      }
+    };
+
+    const safeResolve = (value) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(value);
+    };
+
     try {
       // Use cross-platform utility for nvidia-smi executable name
-      const proc = spawn(
-        getNvidiaSmiCommand(),
-        ['--query-gpu=name,memory.total', '--format=csv,noheader,nounits'],
-      );
+      proc = spawn(getNvidiaSmiCommand(), [
+        '--query-gpu=name,memory.total',
+        '--format=csv,noheader,nounits',
+      ]);
+
+      // Timeout to prevent hanging processes (5 seconds should be plenty)
+      timeoutId = setTimeout(() => {
+        safeResolve({ hasNvidiaGpu: false });
+      }, 5000);
 
       let stdout = '';
       proc.stdout.on('data', (d) => {
         stdout += d.toString();
       });
-      proc.on('error', () => resolve({ hasNvidiaGpu: false }));
+
+      // Handle stderr to prevent buffer overflow (discard output)
+      proc.stderr.on('data', () => {});
+
+      proc.on('error', () => safeResolve({ hasNvidiaGpu: false }));
       proc.on('close', (code) => {
         if (code === 0 && stdout.trim()) {
           const lines = stdout.trim().split(/\r?\n/);
           const first = lines[0] || '';
           const [name, mem] = first.split(',').map((s) => s && s.trim());
           const gpuMemoryMB = Number(mem) || null;
-          resolve({
+          safeResolve({
             hasNvidiaGpu: true,
             gpuName: name || 'NVIDIA GPU',
             gpuMemoryMB,
           });
         } else {
-          resolve({ hasNvidiaGpu: false });
+          safeResolve({ hasNvidiaGpu: false });
         }
       });
     } catch {
-      resolve({ hasNvidiaGpu: false });
+      safeResolve({ hasNvidiaGpu: false });
     }
   });
 }

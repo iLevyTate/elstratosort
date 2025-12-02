@@ -42,15 +42,21 @@ export function NotificationProvider({ children }) {
   // Bridge main-process errors into our styled UI (toast/modal), avoiding OS dialogs
   useEffect(() => {
     const api = window?.electronAPI?.events;
-    if (!api || typeof api.onAppError !== 'function') return;
+    // FIX: Return empty cleanup function for consistent return
+    if (!api || typeof api.onAppError !== 'function') return () => {};
 
     const cleanup = api.onAppError((payload) => {
       try {
         const { message, type } = payload || {};
         if (!message) return;
-        if (type === 'error') showError(message, 5000);
-        else if (type === 'warning') showWarning(message, 4000);
-        else showInfo(message, 3000);
+        // FIX: Add null checks before calling notification functions
+        if (type === 'error' && typeof showError === 'function') {
+          showError(message, 5000);
+        } else if (type === 'warning' && typeof showWarning === 'function') {
+          showWarning(message, 4000);
+        } else if (typeof showInfo === 'function') {
+          showInfo(message, 3000);
+        }
       } catch (e) {
         logger.error('Failed to display app:error', {
           error: e.message,
@@ -59,7 +65,8 @@ export function NotificationProvider({ children }) {
       }
     });
 
-    return cleanup;
+    // FIX: Ensure cleanup is a function before returning
+    return typeof cleanup === 'function' ? cleanup : () => {};
   }, [showError, showWarning, showInfo]);
 
   // Memoize the context value to prevent unnecessary re-renders

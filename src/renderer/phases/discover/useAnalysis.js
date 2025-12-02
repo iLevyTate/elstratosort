@@ -170,18 +170,17 @@ export function useAnalysis({
       actions.setPhaseData('isAnalyzing', true);
       actions.setPhaseData('analysisProgress', initialProgress);
 
-      // Progress tracking refs
-      const analysisProgressRef = { current: initialProgress };
-      const isAnalyzingRef = { current: true };
+      // Progress tracking refs (use different names to avoid shadowing outer refs)
+      const localProgressRef = { current: initialProgress };
+      const localAnalyzingRef = { current: true };
 
       // Heartbeat interval
       heartbeatIntervalRef.current = setInterval(() => {
-        if (isAnalyzingRef.current) {
+        if (localAnalyzingRef.current) {
           const currentProgress = {
-            current: analysisProgressRef.current.current,
-            total: analysisProgressRef.current.total,
-            lastActivity:
-              analysisProgressRef.current.lastActivity || Date.now(),
+            current: localProgressRef.current.current,
+            total: localProgressRef.current.total,
+            lastActivity: localProgressRef.current.lastActivity || Date.now(),
           };
 
           if (validateProgressState(currentProgress)) {
@@ -258,7 +257,7 @@ export function useAnalysis({
             };
 
             if (validateProgressState(progress)) {
-              analysisProgressRef.current = progress;
+              localProgressRef.current = progress;
               setAnalysisProgress(progress);
               setCurrentAnalysisFile(fileName);
               actions.setPhaseData('analysisProgress', progress);
@@ -456,6 +455,8 @@ export function useAnalysis({
           clearTimeout(analysisTimeoutRef.current);
           analysisTimeoutRef.current = null;
         }
+        // Update both local and outer refs to ensure proper lock synchronization
+        localAnalyzingRef.current = false;
         isAnalyzingRef.current = false;
         setIsAnalyzing(false);
         setCurrentAnalysisFile('');
