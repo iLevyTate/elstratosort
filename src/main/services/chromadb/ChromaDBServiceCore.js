@@ -347,6 +347,15 @@ class ChromaDBServiceCore extends EventEmitter {
         case OperationType.BATCH_UPSERT_FOLDERS:
           await this._directBatchUpsertFolders(operation.data.folders);
           break;
+        case OperationType.BATCH_DELETE_FILES:
+          await this._directBatchDeleteFiles(operation.data.fileIds);
+          break;
+        case OperationType.BATCH_DELETE_FOLDERS:
+          await this._directBatchDeleteFolders(operation.data.folderIds);
+          break;
+        case OperationType.DELETE_FOLDER:
+          await this._directDeleteFolder(operation.data.folderId);
+          break;
         case OperationType.UPDATE_FILE_PATHS:
           await this.updateFilePaths(operation.data.pathUpdates);
           break;
@@ -646,7 +655,7 @@ class ChromaDBServiceCore extends EventEmitter {
 
   async batchUpsertFolders(folders) {
     if (!folders || folders.length === 0) {
-      return { count: 0, skipped: [] };
+      return { queued: false, count: 0, skipped: [] };
     }
 
     if (!this.circuitBreaker.isAllowed()) {
@@ -656,13 +665,18 @@ class ChromaDBServiceCore extends EventEmitter {
       this.offlineQueue.enqueue(OperationType.BATCH_UPSERT_FOLDERS, {
         folders,
       });
+      this.emit('operationQueued', {
+        type: 'batch_upsert_folders',
+        count: folders.length,
+      });
       return { queued: true, count: folders.length, skipped: [] };
     }
 
     await this.initialize();
-    return this.circuitBreaker.execute(async () =>
+    const result = await this.circuitBreaker.execute(async () =>
       this._directBatchUpsertFolders(folders),
     );
+    return { queued: false, ...result };
   }
 
   async _directBatchUpsertFolders(folders) {
@@ -766,7 +780,7 @@ class ChromaDBServiceCore extends EventEmitter {
 
   async batchUpsertFiles(files) {
     if (!files || files.length === 0) {
-      return 0;
+      return { queued: false, count: 0 };
     }
 
     if (!this.circuitBreaker.isAllowed()) {
@@ -774,13 +788,18 @@ class ChromaDBServiceCore extends EventEmitter {
         count: files.length,
       });
       this.offlineQueue.enqueue(OperationType.BATCH_UPSERT_FILES, { files });
+      this.emit('operationQueued', {
+        type: 'batch_upsert_files',
+        count: files.length,
+      });
       return { queued: true, count: files.length };
     }
 
     await this.initialize();
-    return this.circuitBreaker.execute(async () =>
+    const count = await this.circuitBreaker.execute(async () =>
       this._directBatchUpsertFiles(files),
     );
+    return { queued: false, count };
   }
 
   async _directBatchUpsertFiles(files) {
@@ -801,12 +820,134 @@ class ChromaDBServiceCore extends EventEmitter {
   }
 
   async batchDeleteFileEmbeddings(fileIds) {
+    if (!fileIds || fileIds.length === 0) {
+      return { count: 0, queued: false };
+    }
+
+    // Check circuit breaker - queue if service unavailable
+    if (!this.circuitBreaker.isAllowed()) {
+      logger.debug('[ChromaDB] Circuit open, queueing batch file delete', {
+        count: fileIds.length,
+      });
+      this.offlineQueue.enqueue(OperationType.BATCH_DELETE_FILES, { fileIds });
+      this.emit('operationQueued', {
+        type: 'batch_delete_files',
+        count: fileIds.length,
+      });
+      return { queued: true, count: fileIds.length };
+    }
+
     await this.initialize();
+    const count = await this._directBatchDeleteFiles(fileIds);
+    return { queued: false, count };
+  }
+
+  /**
+   * Direct batch delete files (bypasses circuit breaker)
+   * @private
+   */
+  async _directBatchDeleteFiles(fileIds) {
     return batchDeleteFileEmbeddingsOp({
       fileIds,
       fileCollection: this.fileCollection,
       queryCache: this.queryCache,
     });
+  }
+
+  /**
+   * Delete a folder embedding with offline queue support
+   */
+  async deleteFolderEmbedding(folderId) {
+    if (!folderId) {
+      return { success: false, queued: false };
+    }
+
+    // Check circuit breaker - queue if service unavailable
+    if (!this.circuitBreaker.isAllowed()) {
+      logger.debug('[ChromaDB] Circuit open, queueing folder delete', {
+        folderId,
+      });
+      this.offlineQueue.enqueue(OperationType.DELETE_FOLDER, { folderId });
+      this.emit('operationQueued', { type: 'delete_folder', folderId });
+      return { queued: true, success: true };
+    }
+
+    await this.initialize();
+    await this._directDeleteFolder(folderId);
+    return { queued: false, success: true };
+  }
+
+  /**
+   * Direct delete folder (bypasses circuit breaker)
+   * @private
+   */
+  async _directDeleteFolder(folderId) {
+    try {
+      await this.folderCollection.delete({ ids: [folderId] });
+      if (this.queryCache) {
+        this.queryCache.invalidateForFile(folderId);
+      }
+    } catch (error) {
+      logger.warn('[ChromaDB] Failed to delete folder embedding', {
+        folderId,
+        error: error.message,
+      });
+    }
+  }
+
+  /**
+   * Batch delete folder embeddings with offline queue support
+   */
+  async batchDeleteFolders(folderIds) {
+    if (!folderIds || folderIds.length === 0) {
+      return { count: 0, queued: false };
+    }
+
+    // Check circuit breaker - queue if service unavailable
+    if (!this.circuitBreaker.isAllowed()) {
+      logger.debug('[ChromaDB] Circuit open, queueing batch folder delete', {
+        count: folderIds.length,
+      });
+      this.offlineQueue.enqueue(OperationType.BATCH_DELETE_FOLDERS, {
+        folderIds,
+      });
+      this.emit('operationQueued', {
+        type: 'batch_delete_folders',
+        count: folderIds.length,
+      });
+      return { queued: true, count: folderIds.length };
+    }
+
+    await this.initialize();
+    const count = await this._directBatchDeleteFolders(folderIds);
+    return { queued: false, count };
+  }
+
+  /**
+   * Direct batch delete folders (bypasses circuit breaker)
+   * @private
+   */
+  async _directBatchDeleteFolders(folderIds) {
+    if (!folderIds || folderIds.length === 0) {
+      return 0;
+    }
+
+    try {
+      await this.folderCollection.delete({ ids: folderIds });
+
+      // Invalidate cache for all deleted folders
+      if (this.queryCache) {
+        folderIds.forEach((id) => this.queryCache.invalidateForFile(id));
+      }
+
+      return folderIds.length;
+    } catch (error) {
+      logger.error('[ChromaDB] Batch folder delete failed', {
+        count: folderIds.length,
+        error: error.message,
+      });
+      throw error;
+    }
   }
 
   async updateFilePaths(pathUpdates) {

@@ -29,6 +29,8 @@ const OperationType = {
   DELETE_FOLDER: 'delete_folder',
   BATCH_UPSERT_FILES: 'batch_upsert_files',
   BATCH_UPSERT_FOLDERS: 'batch_upsert_folders',
+  BATCH_DELETE_FILES: 'batch_delete_files',
+  BATCH_DELETE_FOLDERS: 'batch_delete_folders',
   UPDATE_FILE_PATHS: 'update_file_paths',
 };
 
@@ -36,6 +38,8 @@ const OperationType = {
 const OperationPriority = {
   [OperationType.DELETE_FILE]: 1,
   [OperationType.DELETE_FOLDER]: 1,
+  [OperationType.BATCH_DELETE_FILES]: 1,
+  [OperationType.BATCH_DELETE_FOLDERS]: 1,
   [OperationType.UPSERT_FILE]: 2,
   [OperationType.UPSERT_FOLDER]: 2,
   [OperationType.BATCH_UPSERT_FILES]: 3,
@@ -424,6 +428,16 @@ class OfflineQueue extends EventEmitter {
           .map((f) => f.id)
           .sort()
           .join(',');
+        return `${type}:${this._simpleHash(folderIds)}`;
+      }
+
+      case OperationType.BATCH_DELETE_FILES: {
+        const fileIds = (data.fileIds || []).sort().join(',');
+        return `${type}:${this._simpleHash(fileIds)}`;
+      }
+
+      case OperationType.BATCH_DELETE_FOLDERS: {
+        const folderIds = (data.folderIds || []).sort().join(',');
         return `${type}:${this._simpleHash(folderIds)}`;
       }
 

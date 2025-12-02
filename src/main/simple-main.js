@@ -1125,6 +1125,18 @@ app.on('before-quit', async () => {
       logger.error('[CLEANUP] Failed to remove IPC listeners:', error);
     }
 
+    // Clean up ChromaDB event listeners
+    try {
+      const { cleanupEventListeners } = require('./ipc/chromadb');
+      cleanupEventListeners();
+      logger.info('[CLEANUP] ChromaDB event listeners cleaned up');
+    } catch (error) {
+      logger.error(
+        '[CLEANUP] Failed to clean up ChromaDB event listeners:',
+        error,
+      );
+    }
+
     // Clean up tray
     destroyTray();
 
