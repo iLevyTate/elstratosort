@@ -80,6 +80,7 @@ function registerSmartFoldersIpc({
   saveCustomFolders,
   buildOllamaOptions,
   getOllamaModel,
+  getOllamaEmbeddingModel,
   scanDirectory,
 }) {
   ipcMain.handle(
@@ -174,8 +175,11 @@ function registerSmartFoldersIpc({
         try {
           const ollama = getOllamaClient();
           const perfOptions = await buildOllamaOptions('embeddings');
+          // Use configured embedding model instead of hardcoded value
+          const embeddingModel =
+            getOllamaEmbeddingModel() || 'mxbai-embed-large';
           const queryEmbedding = await ollama.embeddings({
-            model: 'mxbai-embed-large',
+            model: embeddingModel,
             prompt: text,
             options: { ...perfOptions },
           });
@@ -185,7 +189,7 @@ function registerSmartFoldersIpc({
               .filter(Boolean)
               .join(' - ');
             const folderEmbedding = await ollama.embeddings({
-              model: 'mxbai-embed-large',
+              model: embeddingModel,
               prompt: folderText,
               options: { ...perfOptions },
             });

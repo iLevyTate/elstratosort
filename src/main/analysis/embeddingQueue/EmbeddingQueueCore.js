@@ -480,6 +480,85 @@ class EmbeddingQueue {
   }
 
   /**
+   * Remove pending items by file path
+   * Call this when a file is deleted to prevent orphaned embeddings
+   * @param {string} filePath - The file path to remove
+   * @returns {number} Number of items removed
+   */
+  removeByFilePath(filePath) {
+    if (!filePath) return 0;
+
+    const fileId = `file:${filePath}`;
+    const initialLength = this.queue.length;
+
+    // Remove from main queue
+    this.queue = this.queue.filter((item) => item.id !== fileId);
+
+    // Remove from failed items
+    if (this._failedItemHandler.failedItems.has(fileId)) {
+      this._failedItemHandler.failedItems.delete(fileId);
+    }
+
+    const removedCount = initialLength - this.queue.length;
+
+    if (removedCount > 0) {
+      logger.debug('[EmbeddingQueue] Removed pending items for deleted file', {
+        filePath,
+        removedCount,
+      });
+      // Persist the updated queue
+      this.persistQueue().catch((err) =>
+        logger.warn(
+          '[EmbeddingQueue] Failed to persist after removal:',
+          err.message,
+        ),
+      );
+    }
+
+    return removedCount;
+  }
+
+  /**
+   * Remove pending items by multiple file paths (batch operation)
+   * @param {string[]} filePaths - Array of file paths to remove
+   * @returns {number} Total number of items removed
+   */
+  removeByFilePaths(filePaths) {
+    if (!Array.isArray(filePaths) || filePaths.length === 0) return 0;
+
+    const fileIds = new Set(filePaths.map((p) => `file:${p}`));
+    const initialLength = this.queue.length;
+
+    // Remove from main queue
+    this.queue = this.queue.filter((item) => !fileIds.has(item.id));
+
+    // Remove from failed items
+    for (const fileId of fileIds) {
+      if (this._failedItemHandler.failedItems.has(fileId)) {
+        this._failedItemHandler.failedItems.delete(fileId);
+      }
+    }
+
+    const removedCount = initialLength - this.queue.length;
+
+    if (removedCount > 0) {
+      logger.debug('[EmbeddingQueue] Removed pending items for deleted files', {
+        fileCount: filePaths.length,
+        removedCount,
+      });
+      // Persist the updated queue
+      this.persistQueue().catch((err) =>
+        logger.warn(
+          '[EmbeddingQueue] Failed to persist after batch removal:',
+          err.message,
+        ),
+      );
+    }
+
+    return removedCount;
+  }
+
+  /**
    * Get queue statistics
    */
   getStats() {

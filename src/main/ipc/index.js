@@ -84,8 +84,12 @@ function registerAllIpc(servicesOrParams) {
   // Extract commonly used services for local use
   const { ipcMain, IPC_CHANNELS, logger } = container.core;
   const { dialog, shell, getMainWindow } = container.electron || {};
-  const { getCustomFolders, setCustomFolders, saveCustomFolders, scanDirectory } =
-    container.folders || {};
+  const {
+    getCustomFolders,
+    setCustomFolders,
+    saveCustomFolders,
+    scanDirectory,
+  } = container.folders || {};
   const { analyzeDocumentFile, analyzeImageFile, tesseract } =
     container.analysis || {};
   const {
@@ -123,6 +127,7 @@ function registerAllIpc(servicesOrParams) {
     saveCustomFolders,
     buildOllamaOptions,
     getOllamaModel,
+    getOllamaEmbeddingModel,
     scanDirectory,
   });
   registerUndoRedoIpc({ ipcMain, IPC_CHANNELS, logger, getServiceIntegration });

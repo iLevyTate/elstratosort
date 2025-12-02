@@ -10,16 +10,22 @@ const { extractAndParseJSON } = require('./utils/jsonRepair');
 
 /**
  * Test if Ollama is available and the model is working
+ * Also serves as a model warmup - keeps model loaded via keep_alive
  * MEDIUM PRIORITY FIX (MED-11): Added stream: false to prevent hanging
  */
 async function testOllamaConnection() {
   try {
     const ollama = getOllamaClient();
     const model = getOllamaModel();
+    // Use performance options to ensure GPU usage and keep model loaded
+    const perfOptions = await buildOllamaOptions('text');
     await ollama.generate({
       model,
       prompt: 'Hello',
-      options: { num_predict: 1 },
+      options: {
+        ...perfOptions,
+        num_predict: 1, // Minimal response for quick test
+      },
       stream: false, // Prevent waiting for stream that never completes
     });
     return { success: true, model };

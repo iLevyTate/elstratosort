@@ -48,10 +48,28 @@ async function updateDatabasePath(source, destination, log) {
 }
 
 /**
- * Delete file from database
+ * Delete file from database and clean up pending embeddings
  */
 async function deleteFromDatabase(filePath, log) {
   let dbDeleteWarning = null;
+
+  // Clean up pending embeddings from the queue to prevent orphaned embeddings
+  try {
+    const embeddingQueue = require('../../analysis/embeddingQueue');
+    const removedCount = embeddingQueue.removeByFilePath(filePath);
+    if (removedCount > 0) {
+      log.debug('[FILE-OPS] Removed pending embeddings for deleted file', {
+        filePath,
+        removedCount,
+      });
+    }
+  } catch (queueError) {
+    log.warn('[FILE-OPS] Failed to clean embedding queue', {
+      error: queueError.message,
+    });
+  }
+
+  // Delete from ChromaDB
   try {
     const { getInstance: getChromaDB } = require('../../services/chromadb');
     const chromaDbService = getChromaDB();

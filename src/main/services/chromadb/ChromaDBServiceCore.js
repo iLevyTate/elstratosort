@@ -17,6 +17,14 @@ const { get: getConfig } = require('../../../shared/config/index');
 const { CircuitBreaker, CircuitState } = require('../../utils/CircuitBreaker');
 const { OfflineQueue, OperationType } = require('../../utils/OfflineQueue');
 const { NETWORK } = require('../../../shared/performanceConstants');
+const { withTimeout } = require('../../../shared/promiseUtils');
+
+// Timeout configuration for ChromaDB operations (prevents UI freeze on slow/unresponsive server)
+const CHROMADB_OPERATION_TIMEOUT_MS = getConfig(
+  'CHROMADB.operationTimeout',
+  30000,
+);
+const CHROMADB_INIT_TIMEOUT_MS = getConfig('CHROMADB.initTimeout', 60000);
 
 // Extracted modules
 const { ChromaQueryCache } = require('./ChromaQueryCache');
@@ -94,8 +102,9 @@ class ChromaDBServiceCore extends EventEmitter {
     this.batchInsertTimer = null;
     this.batchInsertDelay = BATCH_INSERT_DELAY_MS;
 
-    // In-flight query deduplication
+    // In-flight query deduplication with bounds to prevent memory exhaustion
     this.inflightQueries = new Map();
+    this.MAX_INFLIGHT_QUERIES = getConfig('CHROMADB.maxInflightQueries', 100);
 
     // Connection health monitoring
     this.isOnline = false;
@@ -289,6 +298,30 @@ class ChromaDBServiceCore extends EventEmitter {
       clearInterval(this.healthCheckInterval);
       this.healthCheckInterval = null;
     }
+  }
+
+  /**
+   * Add to in-flight queries with LRU eviction to prevent memory exhaustion
+   * @private
+   * @param {string} key - Cache key for the query
+   * @param {Promise} promise - The query promise
+   */
+  _addInflightQuery(key, promise) {
+    // Evict oldest entries if at capacity (LRU-style eviction)
+    if (this.inflightQueries.size >= this.MAX_INFLIGHT_QUERIES) {
+      const oldestKey = this.inflightQueries.keys().next().value;
+      if (oldestKey) {
+        logger.debug(
+          '[ChromaDB] Evicting oldest in-flight query due to capacity',
+          {
+            evictedKey: oldestKey,
+            currentSize: this.inflightQueries.size,
+          },
+        );
+        this.inflightQueries.delete(oldestKey);
+      }
+    }
+    this.inflightQueries.set(key, promise);
   }
 
   /**
@@ -532,22 +565,31 @@ class ChromaDBServiceCore extends EventEmitter {
 
         this.client = new ChromaClient({ path: this.serverUrl });
 
-        this.fileCollection = await this.client.getOrCreateCollection({
-          name: 'file_embeddings',
-          metadata: {
-            description:
-              'Document and image file embeddings for semantic search',
-            hnsw_space: 'cosine',
-          },
-        });
+        // Wrap collection operations with timeout to prevent hanging on slow/unresponsive server
+        this.fileCollection = await withTimeout(
+          this.client.getOrCreateCollection({
+            name: 'file_embeddings',
+            metadata: {
+              description:
+                'Document and image file embeddings for semantic search',
+              hnsw_space: 'cosine',
+            },
+          }),
+          CHROMADB_INIT_TIMEOUT_MS,
+          'ChromaDB file collection init',
+        );
 
-        this.folderCollection = await this.client.getOrCreateCollection({
-          name: 'folder_embeddings',
-          metadata: {
-            description: 'Smart folder embeddings for categorization',
-            hnsw_space: 'cosine',
-          },
-        });
+        this.folderCollection = await withTimeout(
+          this.client.getOrCreateCollection({
+            name: 'folder_embeddings',
+            metadata: {
+              description: 'Smart folder embeddings for categorization',
+              hnsw_space: 'cosine',
+            },
+          }),
+          CHROMADB_INIT_TIMEOUT_MS,
+          'ChromaDB folder collection init',
+        );
 
         this.initialized = true;
         this.isOnline = true;
@@ -556,11 +598,25 @@ class ChromaDBServiceCore extends EventEmitter {
           this._isInitializing = false;
         });
 
+        // Count operations with timeout protection
+        const [fileCount, folderCount] = await Promise.all([
+          withTimeout(
+            this.fileCollection.count(),
+            CHROMADB_OPERATION_TIMEOUT_MS,
+            'ChromaDB file count',
+          ),
+          withTimeout(
+            this.folderCollection.count(),
+            CHROMADB_OPERATION_TIMEOUT_MS,
+            'ChromaDB folder count',
+          ),
+        ]);
+
         logger.info('[ChromaDB] Successfully initialized vector database', {
           dbPath: this.dbPath,
           serverUrl: this.serverUrl,
-          fileCount: await this.fileCollection.count(),
-          folderCount: await this.folderCollection.count(),
+          fileCount,
+          folderCount,
         });
       } catch (error) {
         this._initPromise = null;
@@ -689,11 +745,16 @@ class ChromaDBServiceCore extends EventEmitter {
 
   async queryFoldersByEmbedding(embedding, topK = 5) {
     await this.initialize();
-    return queryFoldersByEmbeddingOp({
-      embedding,
-      topK,
-      folderCollection: this.folderCollection,
-    });
+    // Wrap query with timeout to prevent UI freeze on slow server
+    return withTimeout(
+      queryFoldersByEmbeddingOp({
+        embedding,
+        topK,
+        folderCollection: this.folderCollection,
+      }),
+      CHROMADB_OPERATION_TIMEOUT_MS,
+      'ChromaDB queryFoldersByEmbedding',
+    );
   }
 
   async queryFolders(fileId, topK = 5) {
@@ -711,13 +772,19 @@ class ChromaDBServiceCore extends EventEmitter {
       return this.inflightQueries.get(cacheKey);
     }
 
-    const queryPromise = executeQueryFolders({
-      fileId,
-      topK,
-      fileCollection: this.fileCollection,
-      folderCollection: this.folderCollection,
-    });
-    this.inflightQueries.set(cacheKey, queryPromise);
+    // Wrap query with timeout to prevent UI freeze on slow server
+    const queryPromise = withTimeout(
+      executeQueryFolders({
+        fileId,
+        topK,
+        fileCollection: this.fileCollection,
+        folderCollection: this.folderCollection,
+      }),
+      CHROMADB_OPERATION_TIMEOUT_MS,
+      'ChromaDB queryFolders',
+    );
+    // Use bounded helper to prevent memory exhaustion
+    this._addInflightQuery(cacheKey, queryPromise);
 
     try {
       const results = await queryPromise;
@@ -730,13 +797,18 @@ class ChromaDBServiceCore extends EventEmitter {
 
   async batchQueryFolders(fileIds, topK = 5) {
     await this.initialize();
-    return batchQueryFoldersOp({
-      fileIds,
-      topK,
-      fileCollection: this.fileCollection,
-      folderCollection: this.folderCollection,
-      queryCache: this.queryCache,
-    });
+    // Wrap batch query with timeout (longer for batch operations)
+    return withTimeout(
+      batchQueryFoldersOp({
+        fileIds,
+        topK,
+        fileCollection: this.fileCollection,
+        folderCollection: this.folderCollection,
+        queryCache: this.queryCache,
+      }),
+      CHROMADB_OPERATION_TIMEOUT_MS * 2, // Double timeout for batch operations
+      'ChromaDB batchQueryFolders',
+    );
   }
 
   async getAllFolders() {

@@ -102,6 +102,7 @@ class OfflineQueue extends EventEmitter {
     this.isLoaded = false;
     this.lastPersistTime = null;
     this.lastFlushTime = null;
+    this._sortRequired = false; // Optimization: only sort when queue has been modified
 
     // Statistics
     this.stats = {
@@ -205,6 +206,7 @@ class OfflineQueue extends EventEmitter {
     this.queue.push(operation);
     this.operationMap.set(key, this.queue.length - 1);
     this.stats.totalEnqueued++;
+    this._sortRequired = true; // Mark queue as needing sort before next dequeue/flush
 
     logger.debug('[OfflineQueue] Operation enqueued', {
       type,
@@ -257,8 +259,11 @@ class OfflineQueue extends EventEmitter {
       return null;
     }
 
-    // Sort by priority
-    this.queue.sort((a, b) => a.priority - b.priority);
+    // Optimization: only sort when queue has been modified since last sort
+    if (this._sortRequired) {
+      this.queue.sort((a, b) => a.priority - b.priority);
+      this._sortRequired = false;
+    }
 
     // Remove and return first item
     const operation = this.queue.shift();
@@ -291,8 +296,11 @@ class OfflineQueue extends EventEmitter {
     const failedOperations = [];
 
     try {
-      // Sort queue by priority
-      this.queue.sort((a, b) => a.priority - b.priority);
+      // Optimization: only sort when queue has been modified since last sort
+      if (this._sortRequired) {
+        this.queue.sort((a, b) => a.priority - b.priority);
+        this._sortRequired = false;
+      }
 
       // Process in batches
       while (this.queue.length > 0) {

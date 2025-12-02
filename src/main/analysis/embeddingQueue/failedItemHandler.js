@@ -15,13 +15,19 @@ const { persistFailedItems, persistDeadLetterQueue } = require('./persistence');
  * @param {Object} config - Configuration
  * @param {number} config.itemMaxRetries - Max retries per item
  * @param {number} config.maxDeadLetterSize - Max dead letter queue size
+ * @param {number} [config.maxFailedItemsSize=1000] - Max failed items Map size (prevents memory exhaustion)
  * @param {string} config.failedItemsPath - Path to persist failed items
  * @param {string} config.deadLetterPath - Path to persist dead letter queue
  * @returns {Object} Failed item handler
  */
 function createFailedItemHandler(config) {
-  const { itemMaxRetries, maxDeadLetterSize, failedItemsPath, deadLetterPath } =
-    config;
+  const {
+    itemMaxRetries,
+    maxDeadLetterSize,
+    maxFailedItemsSize = 1000,
+    failedItemsPath,
+    deadLetterPath,
+  } = config;
 
   // State
   const failedItems = new Map();
@@ -40,6 +46,26 @@ function createFailedItemHandler(config) {
       addToDeadLetterQueue(item, errorMessage, retryCount);
       failedItems.delete(item.id);
       return;
+    }
+
+    // Enforce maximum size with LRU eviction to prevent memory exhaustion
+    if (!existing && failedItems.size >= maxFailedItemsSize) {
+      // Evict oldest entry (first key in Map iteration order)
+      const oldestKey = failedItems.keys().next().value;
+      if (oldestKey) {
+        const oldEntry = failedItems.get(oldestKey);
+        failedItems.delete(oldestKey);
+        // Move evicted item to dead letter queue so it's not lost
+        addToDeadLetterQueue(
+          oldEntry.item,
+          `Evicted from failed items due to capacity (was: ${oldEntry.error})`,
+          oldEntry.retryCount,
+        );
+        logger.warn(
+          `[EmbeddingQueue] Failed items at capacity (${maxFailedItemsSize}), evicted oldest to dead letter`,
+          { evictedId: oldestKey },
+        );
+      }
     }
 
     failedItems.set(item.id, {
@@ -236,6 +262,7 @@ function createFailedItemHandler(config) {
   function getStats() {
     return {
       failedItemsCount: failedItems.size,
+      maxFailedItemsSize,
       deadLetterCount: deadLetterQueue.length,
       maxDeadLetterSize,
       itemMaxRetries,

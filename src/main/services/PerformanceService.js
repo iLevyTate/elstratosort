@@ -97,43 +97,99 @@ async function detectSystemCapabilities() {
 /**
  * Build Ollama generation options tuned for performance, preferring GPU when available.
  * task: 'text' | 'vision' | 'audio' | 'embeddings'
+ *
+ * GPU Best Practices:
+ * - Uses environment variables for fine-tuning: OLLAMA_NUM_GPU, OLLAMA_NUM_THREAD, OLLAMA_KEEP_ALIVE
+ * - keep_alive prevents costly model reloading between requests
+ * - num_gpu=-1 tells Ollama to use all available GPU layers (safer than hardcoded 9999)
  */
 async function buildOllamaOptions(task = 'text') {
   const caps = await detectSystemCapabilities();
 
-  // Base threading and context
-  const numThread = Math.max(2, Math.min(caps.cpuThreads || 4, 16));
-  // Context window: keep moderate to avoid RAM spikes, tune by task
-  const numCtx = task === 'vision' ? 2048 : 2048;
+  // Environment variable overrides for fine-tuning
+  const envNumGpu = process.env.OLLAMA_NUM_GPU
+    ? parseInt(process.env.OLLAMA_NUM_GPU, 10)
+    : null;
+  const envNumThread = process.env.OLLAMA_NUM_THREAD
+    ? parseInt(process.env.OLLAMA_NUM_THREAD, 10)
+    : null;
+  const envKeepAlive = process.env.OLLAMA_KEEP_ALIVE || '10m'; // Default: keep model loaded for 10 minutes
+  const envNumBatch = process.env.OLLAMA_NUM_BATCH
+    ? parseInt(process.env.OLLAMA_NUM_BATCH, 10)
+    : null;
+
+  // Base threading - can be overridden via env var
+  const numThread =
+    envNumThread || Math.max(2, Math.min(caps.cpuThreads || 4, 16));
+
+  // Context window: larger for text models to handle longer documents
+  // Vision models need smaller context due to image token overhead
+  // Embeddings use minimal context
+  let numCtx;
+  switch (task) {
+    case 'vision':
+      numCtx = 2048; // Vision models have image token overhead
+      break;
+    case 'embeddings':
+      numCtx = 512; // Embeddings need minimal context
+      break;
+    case 'text':
+    default:
+      numCtx = 8192; // Text models benefit from larger context for document analysis
+      break;
+  }
 
   // Batch sizing - larger when GPU VRAM is available
-  let numBatch = 256;
-  if (caps.hasNvidiaGpu) {
-    if ((caps.gpuMemoryMB || 0) >= 12000) numBatch = 512;
-    else if ((caps.gpuMemoryMB || 0) >= 8000) numBatch = 384;
-    else numBatch = 256;
-  } else {
+  let numBatch = envNumBatch || 256;
+  if (!envNumBatch && caps.hasNvidiaGpu) {
+    const vram = caps.gpuMemoryMB || 0;
+    if (vram >= 16000)
+      numBatch = 1024; // 16GB+ VRAM
+    else if (vram >= 12000)
+      numBatch = 512; // 12GB VRAM
+    else if (vram >= 8000)
+      numBatch = 384; // 8GB VRAM
+    else if (vram >= 6000)
+      numBatch = 256; // 6GB VRAM
+    else numBatch = 192; // 4GB VRAM
+  } else if (!envNumBatch) {
     numBatch = 128; // CPU-only safe default
   }
 
-  // GPU offload hint - many Ollama backends accept num_gpu/num_gpu_layers; unknown keys are ignored
-  // We set an aggressive hint when GPU is present.
-  const gpuHints = caps.hasNvidiaGpu
-    ? { num_gpu: 9999, num_gpu_layers: 9999 }
-    : { num_gpu_layers: 0 };
+  // GPU offload configuration
+  // num_gpu: -1 means "use all available GPU layers" (Ollama auto-detects)
+  // This is safer than hardcoded 9999 which could exceed actual layer count
+  let gpuHints;
+  if (caps.hasNvidiaGpu) {
+    const numGpuLayers = envNumGpu !== null ? envNumGpu : -1; // -1 = auto (use all GPU layers)
+    gpuHints = {
+      num_gpu: numGpuLayers,
+      // Force GPU acceleration - Ollama will use CUDA if available
+      main_gpu: 0, // Use first GPU
+    };
+  } else {
+    gpuHints = { num_gpu: 0 }; // CPU-only mode
+  }
 
-  // mmap tends to help on desktop, mlock can cause permissions issues; leave disabled by default
-  const memoryHints = { use_mmap: true, use_mlock: false };
+  // Memory mapping helps on desktop; mlock can cause permission issues on some systems
+  // On Linux with sufficient RAM, mlock can improve performance by preventing swapping
+  const memoryHints = {
+    use_mmap: true,
+    use_mlock:
+      process.platform === 'linux' && os.totalmem() / 1024 / 1024 / 1024 > 16,
+  };
 
   return {
     // Threading + context
     num_thread: numThread,
     num_ctx: numCtx,
     num_batch: numBatch,
-    // GPU
+    // GPU configuration
     ...gpuHints,
     // Memory hints
     ...memoryHints,
+    // CRITICAL: Keep model loaded in memory to avoid reload latency (5-30 seconds per load)
+    keep_alive: envKeepAlive,
   };
 }
 
