@@ -407,43 +407,97 @@ export function useOrganization({
               // Non-fatal if state callback fails
             }
           },
-          onUndo: () => {
+          onUndo: (result) => {
             try {
+              // Use actual results from main process if available
+              const successfulUndos = result?.results
+                ? result.results
+                    .filter((r) => r.success)
+                    .map((r) => r.originalPath || r.newPath)
+                : Array.from(sourcePathsSet);
+
+              const undoPathsSet = new Set(successfulUndos);
+
               setOrganizedFiles((prev) =>
-                prev.filter((of) => !sourcePathsSet.has(of.originalPath)),
+                prev.filter((of) => !undoPathsSet.has(of.originalPath)),
               );
-              unmarkFilesAsProcessed(Array.from(sourcePathsSet));
+              unmarkFilesAsProcessed(Array.from(undoPathsSet));
               actions.setPhaseData(
                 'organizedFiles',
                 (phaseData.organizedFiles || []).filter(
-                  (of) => !sourcePathsSet.has(of.originalPath),
+                  (of) => !undoPathsSet.has(of.originalPath),
                 ),
               );
-              addNotification(
-                'Undo complete. Restored files to original locations.',
-                'info',
-              );
+
+              const successCount =
+                result?.successCount ?? successfulUndos.length;
+              const failCount = result?.failCount ?? 0;
+
+              if (failCount > 0) {
+                addNotification(
+                  `Undo partially complete: ${successCount} files restored, ${failCount} failed.`,
+                  'warning',
+                );
+              } else {
+                addNotification(
+                  `Undo complete. ${successCount} files restored to original locations.`,
+                  'info',
+                );
+              }
             } catch {
               // Non-fatal if state callback fails
             }
           },
-          onRedo: () => {
+          onRedo: (result) => {
             try {
-              const uiResults = operations.map((op) => ({
-                originalPath: op.source,
-                path: op.destination,
-                originalName: op.source.split(/[\\/]/).pop(),
-                newName: op.destination.split(/[\\/]/).pop(),
-                smartFolder: 'Organized',
-                organizedAt: new Date().toISOString(),
-              }));
-              setOrganizedFiles((prev) => [...prev, ...uiResults]);
-              markFilesAsProcessed(uiResults.map((r) => r.originalPath));
-              actions.setPhaseData('organizedFiles', [
-                ...(phaseData.organizedFiles || []),
-                ...uiResults,
-              ]);
-              addNotification('Redo complete. Files re-organized.', 'info');
+              // Use actual results from main process to only update successfully redone files
+              const successfulResults = result?.results
+                ? result.results.filter((r) => r.success)
+                : [];
+
+              // If no results from main process, fall back to original operations
+              const uiResults =
+                successfulResults.length > 0
+                  ? successfulResults.map((r) => ({
+                      originalPath: r.source,
+                      path: r.destination,
+                      originalName: r.source?.split(/[\\/]/).pop() || '',
+                      newName: r.destination?.split(/[\\/]/).pop() || '',
+                      smartFolder: 'Organized',
+                      organizedAt: new Date().toISOString(),
+                    }))
+                  : operations.map((op) => ({
+                      originalPath: op.source,
+                      path: op.destination,
+                      originalName: op.source.split(/[\\/]/).pop(),
+                      newName: op.destination.split(/[\\/]/).pop(),
+                      smartFolder: 'Organized',
+                      organizedAt: new Date().toISOString(),
+                    }));
+
+              if (uiResults.length > 0) {
+                setOrganizedFiles((prev) => [...prev, ...uiResults]);
+                markFilesAsProcessed(uiResults.map((r) => r.originalPath));
+                actions.setPhaseData('organizedFiles', [
+                  ...(phaseData.organizedFiles || []),
+                  ...uiResults,
+                ]);
+              }
+
+              const successCount = result?.successCount ?? uiResults.length;
+              const failCount = result?.failCount ?? 0;
+
+              if (failCount > 0) {
+                addNotification(
+                  `Redo partially complete: ${successCount} files re-organized, ${failCount} failed.`,
+                  'warning',
+                );
+              } else {
+                addNotification(
+                  `Redo complete. ${successCount} files re-organized.`,
+                  'info',
+                );
+              }
             } catch {
               // Non-fatal if state callback fails
             }

@@ -462,16 +462,23 @@ async function recordUndoAndUpdateDatabase(
   getServiceIntegration,
   log,
 ) {
+  // FIX: Only record successful operations for undo - failed operations have
+  // files still at their original location, not at the destination
   try {
-    const undoOps = batch.operations.map((op) => ({
-      type: 'move',
-      originalPath: op.source,
-      newPath: op.destination,
-    }));
-    await getServiceIntegration()?.undoRedo?.recordAction?.(
-      ACTION_TYPES.BATCH_OPERATION,
-      { operations: undoOps },
-    );
+    const undoOps = results
+      .filter((r) => r.success && r.source && r.destination)
+      .map((r) => ({
+        type: 'move',
+        originalPath: r.source,
+        newPath: r.destination,
+      }));
+
+    if (undoOps.length > 0) {
+      await getServiceIntegration()?.undoRedo?.recordAction?.(
+        ACTION_TYPES.BATCH_OPERATION,
+        { operations: undoOps },
+      );
+    }
   } catch {
     // Non-fatal
   }

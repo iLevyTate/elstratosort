@@ -6,6 +6,20 @@ const { logger } = require('../../shared/logger');
 const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 logger.setContext('UndoRedoService');
 
+// Lazy-load ChromaDB to avoid circular dependencies
+let chromaDbService = null;
+function getChromaDbService() {
+  if (!chromaDbService) {
+    try {
+      const { getInstance } = require('./chromadb');
+      chromaDbService = getInstance();
+    } catch {
+      // ChromaDB not available
+    }
+  }
+  return chromaDbService;
+}
+
 // Helper to generate secure random IDs
 const generateSecureId = () =>
   `${Date.now().toString(36)}-${crypto.randomBytes(6).toString('hex')}`;
@@ -291,14 +305,39 @@ class UndoRedoService {
     const action = this.actions[this.currentIndex];
 
     try {
+      // Clear any previous operation results
+      delete action._operationResults;
+
       await this.executeReverseAction(action);
       this.currentIndex--;
       await this.saveActions();
-      return {
+
+      // Build response with operation results for batch operations
+      const response = {
         success: true,
-        action: action,
+        action: {
+          id: action.id,
+          type: action.type,
+          description: action.description,
+          timestamp: action.timestamp,
+        },
         message: `Undid: ${action.description}`,
       };
+
+      // Include operation results for batch operations (for UI state updates)
+      if (action._operationResults) {
+        response.results = action._operationResults;
+        response.successCount = action._operationResults.filter(
+          (r) => r.success,
+        ).length;
+        response.failCount = action._operationResults.filter(
+          (r) => !r.success,
+        ).length;
+        // Include original operation data for state reconstruction
+        response.operations = action.data?.operations || [];
+      }
+
+      return response;
     } catch (error) {
       logger.error('[UndoRedoService] Failed to undo action', {
         error: error.message,
@@ -317,14 +356,39 @@ class UndoRedoService {
     const action = this.actions[this.currentIndex + 1];
 
     try {
+      // Clear any previous operation results
+      delete action._operationResults;
+
       await this.executeForwardAction(action);
       this.currentIndex++;
       await this.saveActions();
-      return {
+
+      // Build response with operation results for batch operations
+      const response = {
         success: true,
-        action: action,
+        action: {
+          id: action.id,
+          type: action.type,
+          description: action.description,
+          timestamp: action.timestamp,
+        },
         message: `Redid: ${action.description}`,
       };
+
+      // Include operation results for batch operations (for UI state updates)
+      if (action._operationResults) {
+        response.results = action._operationResults;
+        response.successCount = action._operationResults.filter(
+          (r) => r.success,
+        ).length;
+        response.failCount = action._operationResults.filter(
+          (r) => !r.success,
+        ).length;
+        // Include original operation data for state reconstruction
+        response.operations = action.data?.operations || [];
+      }
+
+      return response;
     } catch (error) {
       logger.error('[UndoRedoService] Failed to redo action', {
         error: error.message,
@@ -346,11 +410,21 @@ class UndoRedoService {
       case 'FILE_MOVE':
         // Move file back to original location
         await this.safeMove(action.data.newPath, action.data.originalPath);
+        // Update ChromaDB path
+        await this.updateChromaDbPath(
+          action.data.newPath,
+          action.data.originalPath,
+        );
         break;
 
       case 'FILE_RENAME':
         // Rename file back to original name
         await this.safeMove(action.data.newPath, action.data.originalPath);
+        // Update ChromaDB path
+        await this.updateChromaDbPath(
+          action.data.newPath,
+          action.data.originalPath,
+        );
         break;
 
       case 'FILE_DELETE': {
@@ -411,12 +485,51 @@ class UndoRedoService {
         break;
 
       case 'BATCH_ORGANIZE':
-      case 'BATCH_OPERATION': // Backwards/forwards compatibility with shared ACTION_TYPES
-        // Reverse each file operation in the batch
+      case 'BATCH_OPERATION': {
+        // Backwards/forwards compatibility with shared ACTION_TYPES
+        // Reverse each file operation in the batch with result tracking
+        const pathChanges = [];
+        const operationResults = [];
+
         for (const operation of [...action.data.operations].reverse()) {
-          await this.reverseFileOperation(operation);
+          try {
+            const result = await this.reverseFileOperation(operation);
+            operationResults.push({
+              ...result,
+              originalPath: operation.originalPath,
+              newPath: operation.newPath,
+              type: operation.type,
+            });
+            // Collect path changes for batch ChromaDB update
+            if (
+              result.success &&
+              (operation.type === 'move' || operation.type === 'rename')
+            ) {
+              pathChanges.push({
+                oldPath: operation.newPath,
+                newPath: operation.originalPath,
+              });
+            }
+          } catch (error) {
+            logger.warn('[UndoRedoService] Operation failed during undo', {
+              operation,
+              error: error.message,
+            });
+            operationResults.push({
+              success: false,
+              originalPath: operation.originalPath,
+              newPath: operation.newPath,
+              type: operation.type,
+              error: error.message,
+            });
+          }
         }
+        // Batch update ChromaDB paths for successful operations
+        await this.updateChromaDbPaths(pathChanges);
+        // Store results for return
+        action._operationResults = operationResults;
         break;
+      }
 
       default:
         throw new Error(`Unknown action type: ${action.type}`);
@@ -428,11 +541,21 @@ class UndoRedoService {
       case 'FILE_MOVE':
         // Move file to new location
         await this.safeMove(action.data.originalPath, action.data.newPath);
+        // Update ChromaDB path
+        await this.updateChromaDbPath(
+          action.data.originalPath,
+          action.data.newPath,
+        );
         break;
 
       case 'FILE_RENAME':
         // Rename file to new name
         await this.safeMove(action.data.originalPath, action.data.newPath);
+        // Update ChromaDB path
+        await this.updateChromaDbPath(
+          action.data.originalPath,
+          action.data.newPath,
+        );
         break;
 
       case 'FILE_DELETE':
@@ -450,12 +573,48 @@ class UndoRedoService {
         break;
 
       case 'BATCH_ORGANIZE':
-      case 'BATCH_OPERATION': // Backwards/forwards compatibility with shared ACTION_TYPES
-        // Re-execute each file operation in the batch
+      case 'BATCH_OPERATION': {
+        // Backwards/forwards compatibility with shared ACTION_TYPES
+        // Re-execute each file operation in the batch with result tracking
+        const pathChanges = [];
+        const operationResults = [];
+
         for (const operation of action.data.operations) {
-          await this.executeFileOperation(operation);
+          try {
+            await this.executeFileOperation(operation);
+            operationResults.push({
+              success: true,
+              source: operation.originalPath,
+              destination: operation.newPath,
+              type: operation.type,
+            });
+            // Collect path changes for batch ChromaDB update
+            if (operation.type === 'move' || operation.type === 'rename') {
+              pathChanges.push({
+                oldPath: operation.originalPath,
+                newPath: operation.newPath,
+              });
+            }
+          } catch (error) {
+            logger.warn('[UndoRedoService] Operation failed during redo', {
+              operation,
+              error: error.message,
+            });
+            operationResults.push({
+              success: false,
+              source: operation.originalPath,
+              destination: operation.newPath,
+              type: operation.type,
+              error: error.message,
+            });
+          }
         }
+        // Batch update ChromaDB paths for successful operations
+        await this.updateChromaDbPaths(pathChanges);
+        // Store results for return
+        action._operationResults = operationResults;
         break;
+      }
 
       default:
         throw new Error(`Unknown action type: ${action.type}`);
@@ -466,18 +625,32 @@ class UndoRedoService {
     switch (operation.type) {
       case 'move':
         await this.safeMove(operation.newPath, operation.originalPath);
-        break;
+        return {
+          success: true,
+          source: operation.newPath,
+          destination: operation.originalPath,
+        };
       case 'rename':
         await this.safeMove(operation.newPath, operation.originalPath);
-        break;
+        return {
+          success: true,
+          source: operation.newPath,
+          destination: operation.originalPath,
+        };
       case 'delete':
         if (
           operation.backupPath &&
           (await this.fileExists(operation.backupPath))
         ) {
           await this.safeMove(operation.backupPath, operation.originalPath);
+          return { success: true, restored: operation.originalPath };
         }
-        break;
+        return { success: false, error: 'Backup not found' };
+      default:
+        return {
+          success: false,
+          error: `Unknown operation type: ${operation.type}`,
+        };
     }
   }
 
@@ -505,6 +678,64 @@ class UndoRedoService {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Update ChromaDB path after file move
+   * @param {string} oldPath - Original file path
+   * @param {string} newPath - New file path
+   */
+  async updateChromaDbPath(oldPath, newPath) {
+    try {
+      const chromaDb = getChromaDbService();
+      if (chromaDb) {
+        await chromaDb.updateFilePaths([
+          {
+            oldId: `file:${oldPath}`,
+            newId: `file:${newPath}`,
+            newMeta: {
+              path: newPath,
+              name: path.basename(newPath),
+            },
+          },
+        ]);
+      }
+    } catch (error) {
+      // Non-fatal - log but don't fail the undo/redo
+      logger.warn('[UndoRedoService] Failed to update ChromaDB path', {
+        oldPath,
+        newPath,
+        error: error.message,
+      });
+    }
+  }
+
+  /**
+   * Batch update ChromaDB paths
+   * @param {Array<{oldPath: string, newPath: string}>} pathChanges
+   */
+  async updateChromaDbPaths(pathChanges) {
+    if (!pathChanges || pathChanges.length === 0) return;
+
+    try {
+      const chromaDb = getChromaDbService();
+      if (chromaDb) {
+        const updates = pathChanges.map(({ oldPath, newPath }) => ({
+          oldId: `file:${oldPath}`,
+          newId: `file:${newPath}`,
+          newMeta: {
+            path: newPath,
+            name: path.basename(newPath),
+          },
+        }));
+        await chromaDb.updateFilePaths(updates);
+      }
+    } catch (error) {
+      logger.warn('[UndoRedoService] Failed to batch update ChromaDB paths', {
+        count: pathChanges.length,
+        error: error.message,
+      });
     }
   }
 
