@@ -73,9 +73,16 @@ const AnalysisResultRow = memo(function AnalysisResultRow({
             Reveal
           </button>
           <button
+            onClick={() => handleAction('remove', file.path)}
+            className="text-system-gray-500 hover:text-system-gray-700 hover:underline text-xs font-medium ml-auto"
+            title="Remove from queue (keeps file on disk)"
+          >
+            Remove
+          </button>
+          <button
             onClick={() => handleAction('delete', file.path)}
-            className="text-red-600 hover:underline text-xs font-medium ml-auto"
-            title="Delete file"
+            className="text-red-600 hover:underline text-xs font-medium"
+            title="Delete file permanently"
           >
             Delete
           </button>
@@ -208,9 +215,16 @@ function AnalysisResultsList({
                 Reveal
               </button>
               <button
+                onClick={() => handleAction('remove', file.path)}
+                className="text-system-gray-500 hover:text-system-gray-700 hover:underline text-xs font-medium ml-auto"
+                title="Remove from queue (keeps file on disk)"
+              >
+                Remove
+              </button>
+              <button
                 onClick={() => handleAction('delete', file.path)}
-                className="text-red-600 hover:underline text-xs font-medium ml-auto"
-                title="Delete file"
+                className="text-red-600 hover:underline text-xs font-medium"
+                title="Delete file permanently"
               >
                 Delete
               </button>

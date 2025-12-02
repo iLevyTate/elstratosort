@@ -87,6 +87,28 @@ export function useFileActions({
             break;
           }
 
+          case 'remove': {
+            // Remove from queue without deleting from disk
+            const fileName = filePath.split(/[\\/]/).pop();
+            setAnalysisResults((prev) =>
+              prev.filter((f) => f.path !== filePath),
+            );
+            setSelectedFiles((prev) => prev.filter((f) => f.path !== filePath));
+            setFileStates((prev) => {
+              if (!prev) return prev;
+              const next = { ...prev };
+              delete next[filePath];
+              return next;
+            });
+            addNotification(
+              `Removed from queue: ${fileName}`,
+              'info',
+              2000,
+              'file-actions',
+            );
+            break;
+          }
+
           case 'delete': {
             const fileName = filePath.split(/[\\/]/).pop();
             const confirmDelete = await showConfirm({
