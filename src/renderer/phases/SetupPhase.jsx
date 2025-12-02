@@ -365,8 +365,9 @@ function SetupPhase() {
   const handleBrowseFolder = async () => {
     try {
       const res = await window.electronAPI.files.selectDirectory();
-      if (res?.success && res.folder) {
-        setNewFolderPath(res.folder);
+      // FIX: Handler returns 'path' not 'folder'
+      if (res?.success && res.path) {
+        setNewFolderPath(res.path);
       }
     } catch (error) {
       logger.error('Failed to browse folder', {

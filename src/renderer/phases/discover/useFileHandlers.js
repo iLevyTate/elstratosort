@@ -265,12 +265,13 @@ export function useFileHandlers({
       setIsScanning(true);
       const result = await window.electronAPI.files.selectDirectory();
 
-      if (result?.success && result?.folder) {
+      // FIX: Handler returns 'path' not 'folder'
+      if (result?.success && result?.path) {
         const SCAN_TIMEOUT = 30000;
         let scanTimeoutId;
 
         const scanResult = await Promise.race([
-          window.electronAPI.smartFolders.scanStructure(result.folder),
+          window.electronAPI.smartFolders.scanStructure(result.path),
           new Promise((_, reject) => {
             scanTimeoutId = setTimeout(
               () =>
@@ -343,7 +344,7 @@ export function useFileHandlers({
             'folder-scan',
           );
         }
-      } else if (result?.success === false && result?.folder === null) {
+      } else if (result?.success === false && result?.path === null) {
         addNotification(
           'Folder selection cancelled',
           'info',

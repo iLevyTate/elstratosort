@@ -9,10 +9,11 @@ import Input from '../ui/Input';
 function DefaultLocationsSection({ settings, setSettings }) {
   const handleBrowse = useCallback(async () => {
     const res = await window.electronAPI.files.selectDirectory();
-    if (res?.success && res.folder) {
+    // FIX: Handler returns 'path' not 'folder'
+    if (res?.success && res.path) {
       setSettings((prev) => ({
         ...prev,
-        defaultSmartFolderLocation: res.folder,
+        defaultSmartFolderLocation: res.path,
       }));
     }
   }, [setSettings]);
