@@ -1,3 +1,4 @@
+const path = require('path');
 const {
   getOllamaModel,
   loadOllamaConfig,
@@ -341,10 +342,16 @@ ${truncated}`;
             typeof parsedJson.category === 'string'
               ? parsedJson.category
               : 'document',
-          suggestedName:
-            typeof parsedJson.suggestedName === 'string'
-              ? parsedJson.suggestedName
-              : undefined,
+          suggestedName: (() => {
+            if (typeof parsedJson.suggestedName !== 'string') return undefined;
+            // Ensure the original file extension is preserved
+            const originalExt = path.extname(originalFileName);
+            const suggestedExt = path.extname(parsedJson.suggestedName);
+            if (originalExt && !suggestedExt) {
+              return parsedJson.suggestedName + originalExt;
+            }
+            return parsedJson.suggestedName;
+          })(),
           keywords: finalKeywords,
           confidence: parsedJson.confidence,
         };

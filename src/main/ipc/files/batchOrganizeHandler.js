@@ -164,16 +164,54 @@ async function handleBatchOrganize({
         const destDir = path.dirname(op.destination);
         await fs.mkdir(destDir, { recursive: true });
 
-        // Verify source exists
+        // Verify source exists and is a file (not a directory)
         try {
-          await fs.access(op.source);
-        } catch {
-          throw new Error(`Source file does not exist: ${op.source}`);
+          const sourceStat = await fs.stat(op.source);
+          if (!sourceStat.isFile()) {
+            throw new Error(
+              `Source is not a file (may be a directory): ${op.source}`,
+            );
+          }
+        } catch (statErr) {
+          if (statErr.code === 'ENOENT') {
+            throw new Error(`Source file does not exist: ${op.source}`);
+          }
+          throw statErr;
         }
 
         // Handle file move with collision handling
         const moveResult = await performFileMove(op, log, computeFileChecksum);
         op.destination = moveResult.destination;
+
+        // Post-move verification: ensure destination exists and source is gone
+        try {
+          await fs.access(op.destination);
+        } catch {
+          throw new Error(
+            `Move verification failed: destination does not exist after move: ${op.destination}`,
+          );
+        }
+
+        // Verify source is no longer at original location (unless same path edge case)
+        if (op.source !== op.destination) {
+          try {
+            await fs.access(op.source);
+            // If we get here, source still exists - move may have failed silently
+            throw new Error(
+              `Move verification failed: source file still exists at original location: ${op.source}`,
+            );
+          } catch (sourceCheckErr) {
+            // ENOENT is expected (file was moved), any other error is fine too
+            if (sourceCheckErr.code && sourceCheckErr.code !== 'ENOENT') {
+              log.warn(
+                '[FILE-OPS] Unexpected error checking source after move',
+                {
+                  error: sourceCheckErr.message,
+                },
+              );
+            }
+          }
+        }
 
         await getServiceIntegration()?.processingState?.markOrganizeOpDone(
           batchId,
@@ -306,7 +344,9 @@ async function performFileMove(op, log, checksumFn) {
   let counter = 0;
   let uniqueDestination = op.destination;
   const ext = path.extname(op.destination);
-  const baseName = op.destination.slice(0, -ext.length);
+  // When ext is empty, -ext.length is -0 which equals 0, causing slice(0,0) to return empty string
+  const baseName =
+    ext.length > 0 ? op.destination.slice(0, -ext.length) : op.destination;
   let operationComplete = false;
   const maxNumericRetries = 5000;
 

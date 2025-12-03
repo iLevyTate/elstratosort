@@ -268,9 +268,9 @@ async function analyzeImageFile(filePath, smartFolders = []) {
       category: 'unsupported',
       keywords: [],
       confidence: 0,
-      suggestedName: fileName
-        .replace(fileExtension, '')
-        .replace(/[^a-zA-Z0-9_-]/g, '_'),
+      suggestedName:
+        fileName.replace(fileExtension, '').replace(/[^a-zA-Z0-9_-]/g, '_') +
+        fileExtension,
     };
   }
 
@@ -738,13 +738,20 @@ async function analyzeImageFile(filePath, smartFolders = []) {
     }
 
     if (analysis && !analysis.error) {
+      // Ensure the original file extension is preserved in suggestedName
+      let finalSuggestedName = analysis.suggestedName;
+      if (finalSuggestedName && fileExtension) {
+        const suggestedExt = path.extname(finalSuggestedName);
+        if (!suggestedExt) {
+          finalSuggestedName = finalSuggestedName + fileExtension;
+        }
+      }
       const normalized = normalizeAnalysisResult(
         {
           ...analysis,
           content_type: analysis.content_type || 'unknown',
           suggestedName:
-            analysis.suggestedName ||
-            safeSuggestedName(fileName, fileExtension),
+            finalSuggestedName || safeSuggestedName(fileName, fileExtension),
         },
         { category: 'image', keywords: [] },
       );
