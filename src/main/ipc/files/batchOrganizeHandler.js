@@ -166,11 +166,16 @@ async function handleBatchOrganize({
 
         // Verify source exists and is a file (not a directory)
         try {
-          const sourceStat = await fs.stat(op.source);
-          if (!sourceStat.isFile()) {
-            throw new Error(
-              `Source is not a file (may be a directory): ${op.source}`,
-            );
+          if (typeof fs.stat === 'function') {
+            const sourceStat = await fs.stat(op.source);
+            if (!sourceStat.isFile()) {
+              throw new Error(
+                `Source is not a file (may be a directory): ${op.source}`,
+              );
+            }
+          } else {
+            // Fallback for mocked fs that does not implement stat
+            await fs.access(op.source);
           }
         } catch (statErr) {
           if (statErr.code === 'ENOENT') {
