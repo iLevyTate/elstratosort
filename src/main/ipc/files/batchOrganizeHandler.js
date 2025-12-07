@@ -202,18 +202,24 @@ async function handleBatchOrganize({
           try {
             await fs.access(op.source);
             // If we get here, source still exists - move may have failed silently
-            throw new Error(
+            const verificationError = new Error(
               `Move verification failed: source file still exists at original location: ${op.source}`,
             );
+            verificationError.code = 'MOVE_VERIFICATION_SOURCE_EXISTS';
+            throw verificationError;
           } catch (sourceCheckErr) {
-            // ENOENT is expected (file was moved), any other error is fine too
-            if (sourceCheckErr.code && sourceCheckErr.code !== 'ENOENT') {
+            // ENOENT is expected (file was moved); any other error should halt processing
+            if (sourceCheckErr.code === 'ENOENT') {
+              // All good: file is gone at the original location
+            } else {
               log.warn(
-                '[FILE-OPS] Unexpected error checking source after move',
+                '[FILE-OPS] Move verification: unexpected source state',
                 {
                   error: sourceCheckErr.message,
+                  code: sourceCheckErr.code,
                 },
               );
+              throw sourceCheckErr;
             }
           }
         }
