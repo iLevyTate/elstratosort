@@ -55,7 +55,13 @@ jest.mock('../src/shared/constants', () => ({
   DEFAULT_AI_MODELS: {
     TEXT_ANALYSIS: 'llama3.2:latest',
     IMAGE_ANALYSIS: 'llava:latest',
-    FALLBACK_MODELS: ['llama3.2:latest', 'gemma3:4b', 'llama3', 'mistral', 'phi3'],
+    FALLBACK_MODELS: [
+      'llama3.2:latest',
+      'gemma3:4b',
+      'llama3',
+      'mistral',
+      'phi3',
+    ],
   },
   FILE_SIZE_LIMITS: {
     MAX_TEXT_FILE_SIZE: 50 * 1024 * 1024,
@@ -76,7 +82,7 @@ jest.mock('../src/main/ollamaUtils', () => {
     generate: jest.fn(),
   };
   return {
-    getOllamaClient: jest.fn().mockResolvedValue(mockClient),
+    getOllama: jest.fn().mockResolvedValue(mockClient),
     getOllamaVisionModel: jest.fn().mockReturnValue('llava'),
     loadOllamaConfig: jest.fn().mockResolvedValue({
       selectedVisionModel: 'llava',

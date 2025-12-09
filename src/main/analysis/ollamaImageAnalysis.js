@@ -4,7 +4,7 @@ const sharp = require('sharp');
 const {
   getOllamaVisionModel,
   loadOllamaConfig,
-  getOllamaClient,
+  getOllama,
 } = require('../ollamaUtils');
 const { buildOllamaOptions } = require('../services/PerformanceService');
 const { globalDeduplicator } = require('../utils/llmOptimization');
@@ -127,7 +127,7 @@ Analyze this image:`;
       folders: smartFolders.map((f) => f.name).join(','),
     });
 
-    const client = await getOllamaClient();
+    const client = await getOllama();
     const perfOptions = await buildOllamaOptions('vision');
     const response = await globalDeduplicator.deduplicate(
       deduplicationKey,
@@ -849,7 +849,7 @@ async function extractTextFromImage(filePath) {
       getOllamaVisionModel() ||
       cfg2.selectedVisionModel ||
       AppConfig.ai.imageAnalysis.defaultModel;
-    const client2 = await getOllamaClient();
+    const client2 = await getOllama();
     const response = await generateWithRetry(
       client2,
       {

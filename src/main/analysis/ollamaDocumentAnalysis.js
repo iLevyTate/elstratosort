@@ -4,7 +4,6 @@ const {
   SUPPORTED_TEXT_EXTENSIONS,
   SUPPORTED_DOCUMENT_EXTENSIONS,
   SUPPORTED_ARCHIVE_EXTENSIONS,
-  SUPPORTED_AUDIO_EXTENSIONS,
   SUPPORTED_VIDEO_EXTENSIONS,
   AI_DEFAULTS,
 } = require('../../shared/constants');
@@ -119,24 +118,18 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
   }
 
   // FAST SEMANTIC LABELING (Short-circuit)
-  // Skip AI analysis for audio/video and use extension-based fallback immediately
-  if (
-    (SUPPORTED_AUDIO_EXTENSIONS || []).includes(fileExtension) ||
-    (SUPPORTED_VIDEO_EXTENSIONS || []).includes(fileExtension)
-  ) {
-    const type = (SUPPORTED_AUDIO_EXTENSIONS || []).includes(fileExtension)
-      ? 'audio'
-      : 'video';
+  // Skip AI analysis for video files and use extension-based fallback immediately
+  if ((SUPPORTED_VIDEO_EXTENSIONS || []).includes(fileExtension)) {
     const intelligentCategory = getIntelligentCategory(
       fileName,
       fileExtension,
       smartFolders,
     );
     const intelligentKeywords = getIntelligentKeywords(fileName, fileExtension);
-    const safeCategory = intelligentCategory || type;
+    const safeCategory = intelligentCategory || 'video';
 
     return {
-      purpose: `${type.charAt(0).toUpperCase() + type.slice(1)} file`,
+      purpose: 'Video file',
       project: fileName.replace(fileExtension, ''),
       category: safeCategory,
       date: new Date().toISOString().split('T')[0],

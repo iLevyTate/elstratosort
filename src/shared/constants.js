@@ -419,9 +419,6 @@ const SUPPORTED_IMAGE_EXTENSIONS = [
   '.svg',
 ];
 
-// Audio analysis disabled - removed for performance optimization
-const SUPPORTED_AUDIO_EXTENSIONS = [];
-
 const SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv'];
 
 const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.rar', '.7z', '.tar', '.gz'];
@@ -431,7 +428,6 @@ const ALL_SUPPORTED_EXTENSIONS = [
   ...SUPPORTED_TEXT_EXTENSIONS,
   ...SUPPORTED_DOCUMENT_EXTENSIONS,
   ...SUPPORTED_IMAGE_EXTENSIONS,
-  ...SUPPORTED_AUDIO_EXTENSIONS,
   ...SUPPORTED_VIDEO_EXTENSIONS,
   ...SUPPORTED_ARCHIVE_EXTENSIONS,
 ];
@@ -440,7 +436,6 @@ const ALL_SUPPORTED_EXTENSIONS = [
 const DEFAULT_AI_MODELS = {
   TEXT_ANALYSIS: 'llama3.2:latest', // 2.0GB - Fastest text model
   IMAGE_ANALYSIS: 'llava:latest', // 4.7GB - Vision capable model
-  // AUDIO_ANALYSIS removed while audio features are disabled
   FALLBACK_MODELS: [
     'llama3.2:latest',
     'gemma3:4b',
@@ -512,7 +507,6 @@ const exports_object = {
   SUPPORTED_TEXT_EXTENSIONS,
   SUPPORTED_DOCUMENT_EXTENSIONS,
   SUPPORTED_IMAGE_EXTENSIONS,
-  SUPPORTED_AUDIO_EXTENSIONS,
   SUPPORTED_VIDEO_EXTENSIONS,
   SUPPORTED_ARCHIVE_EXTENSIONS,
   ALL_SUPPORTED_EXTENSIONS,

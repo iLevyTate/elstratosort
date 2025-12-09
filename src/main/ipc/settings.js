@@ -1,4 +1,4 @@
-const { withErrorLogging, withValidation } = require('./withErrorLogging');
+const { withErrorLogging, withValidation } = require('./ipcWrappers');
 const { app, dialog } = require('electron');
 const { getConfigurableLimits } = require('../../shared/settingsValidation');
 const fs = require('fs').promises;

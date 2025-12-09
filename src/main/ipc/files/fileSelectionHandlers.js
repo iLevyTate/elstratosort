@@ -13,7 +13,7 @@ const {
   SUPPORTED_IMAGE_EXTENSIONS,
   SUPPORTED_ARCHIVE_EXTENSIONS,
 } = require('../../../shared/constants');
-const { withErrorLogging } = require('../withErrorLogging');
+const { withErrorLogging } = require('../ipcWrappers');
 const { logger } = require('../../../shared/logger');
 
 logger.setContext('IPC:Files:Selection');

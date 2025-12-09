@@ -1,6 +1,6 @@
 const path = require('path');
 const { performance } = require('perf_hooks');
-const { withErrorLogging, withValidation } = require('./withErrorLogging');
+const { withErrorLogging, withValidation } = require('./ipcWrappers');
 const { safeGet, safeFilePath, ensureArray } = require('../utils/safeAccess');
 const { logger: moduleLogger } = require('../../shared/logger');
 let z;

@@ -14,8 +14,8 @@ jest.mock('../src/shared/logger', () => ({
   },
 }));
 
-// Mock withErrorLogging
-jest.mock('../src/main/ipc/withErrorLogging', () => ({
+// Mock ipcWrappers
+jest.mock('../src/main/ipc/ipcWrappers', () => ({
   withErrorLogging: jest.fn((logger, handler) => handler),
 }));
 

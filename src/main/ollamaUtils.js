@@ -345,8 +345,6 @@ async function saveOllamaConfig(config) {
 
 module.exports = {
   getOllama,
-  // Backwards-compatible alias for modules expecting a client getter
-  getOllamaClient: getOllama,
   getOllamaModel,
   getOllamaVisionModel,
   getOllamaEmbeddingModel,

@@ -7,7 +7,7 @@
  */
 
 const fs = require('fs').promises;
-const { withErrorLogging } = require('../withErrorLogging');
+const { withErrorLogging } = require('../ipcWrappers');
 const { logger } = require('../../../shared/logger');
 const {
   validateFileOperationPath,

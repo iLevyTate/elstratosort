@@ -24,7 +24,7 @@ jest.mock('../src/shared/logger', () => ({
 jest.mock('../src/main/ollamaUtils', () => ({
   loadOllamaConfig: jest.fn(),
   getOllamaModel: jest.fn(),
-  getOllamaClient: jest.fn(),
+  getOllama: jest.fn(),
 }));
 
 describe('documentLlm', () => {
@@ -32,7 +32,7 @@ describe('documentLlm', () => {
   const {
     loadOllamaConfig,
     getOllamaModel,
-    getOllamaClient,
+    getOllama,
   } = require('../src/main/ollamaUtils');
 
   beforeEach(() => {
@@ -41,7 +41,7 @@ describe('documentLlm', () => {
       generate: jest.fn(),
     };
 
-    getOllamaClient.mockResolvedValue(mockOllamaClient);
+    getOllama.mockResolvedValue(mockOllamaClient);
     loadOllamaConfig.mockResolvedValue({
       selectedTextModel: 'llama2',
       selectedModel: 'llama2',

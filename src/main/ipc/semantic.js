@@ -7,7 +7,7 @@ const {
   TIMEOUTS,
   LIMITS,
 } = require('../../shared/performanceConstants');
-const { withErrorLogging } = require('./withErrorLogging');
+const { withErrorLogging } = require('./ipcWrappers');
 
 function registerEmbeddingsIpc({
   ipcMain,

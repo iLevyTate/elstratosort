@@ -1,11 +1,7 @@
 const { logger } = require('../shared/logger');
 logger.setContext('LLMService');
 const { buildOllamaOptions } = require('./services/PerformanceService');
-const {
-  getOllama: getOllamaClient,
-  getOllamaModel,
-  setOllamaModel,
-} = require('./ollamaUtils');
+const { getOllama, getOllamaModel, setOllamaModel } = require('./ollamaUtils');
 const { extractAndParseJSON } = require('./utils/jsonRepair');
 
 /**
@@ -15,7 +11,7 @@ const { extractAndParseJSON } = require('./utils/jsonRepair');
  */
 async function testOllamaConnection() {
   try {
-    const ollama = getOllamaClient();
+    const ollama = getOllama();
     const model = getOllamaModel();
     // Use performance options to ensure GPU usage and keep model loaded
     const perfOptions = await buildOllamaOptions('text');
@@ -91,7 +87,7 @@ function simplifyDirectoryStructure(structure, maxDepth = 3, currentDepth = 0) {
  * @returns {Promise<Object>} An object containing the LLM's suggestions.
  */
 async function getOrganizationSuggestions(directoryStructure) {
-  const ollama = getOllamaClient();
+  const ollama = getOllama();
   const model = getOllamaModel();
 
   if (!ollama || !model) {
@@ -235,7 +231,7 @@ function getFallbackSuggestions() {
 module.exports = {
   getOrganizationSuggestions,
   formatPromptForLLM,
-  getOllama: getOllamaClient,
+  getOllama,
   getOllamaModel,
   setOllamaModel,
   testOllamaConnection,

@@ -9,7 +9,7 @@
 const path = require('path');
 const fs = require('fs').promises;
 const { ACTION_TYPES } = require('../../../shared/constants');
-const { withErrorLogging, withValidation } = require('../withErrorLogging');
+const { withErrorLogging, withValidation } = require('../ipcWrappers');
 const { logger } = require('../../../shared/logger');
 const { handleBatchOrganize } = require('./batchOrganizeHandler');
 const { z, operationSchema } = require('./schemas');
