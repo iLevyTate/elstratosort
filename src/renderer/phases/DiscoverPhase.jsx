@@ -15,6 +15,7 @@ import React, {
   useMemo,
 } from 'react';
 import { PHASES } from '../../shared/constants';
+import { TIMEOUTS } from '../../shared/performanceConstants';
 import { logger } from '../../shared/logger';
 import { useNotification } from '../contexts/NotificationContext';
 import {
@@ -321,8 +322,7 @@ function DiscoverPhase() {
       return;
     }
 
-    const fiveMinutes = 5 * 60 * 1000;
-    if (timeSinceActivity > fiveMinutes) {
+    if (timeSinceActivity > TIMEOUTS.ANALYSIS_LOCK) {
       addNotification(
         'Detected stuck analysis state - auto-resetting',
         'warning',

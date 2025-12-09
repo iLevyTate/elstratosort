@@ -44,6 +44,17 @@ jest.mock('../src/shared/constants', () => ({
   ACTION_TYPES: {
     BATCH_OPERATION: 'BATCH_OPERATION',
   },
+  PROCESSING_LIMITS: {
+    MAX_BATCH_OPERATION_SIZE: 1000,
+    MAX_BATCH_OPERATION_TIME: 600000,
+  },
+}));
+
+// Mock performanceConstants
+jest.mock('../src/shared/performanceConstants', () => ({
+  LIMITS: {
+    MAX_NUMERIC_RETRIES: 5000,
+  },
 }));
 
 // Mock atomicFileOperations

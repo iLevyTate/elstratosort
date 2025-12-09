@@ -119,6 +119,80 @@ export function useProgressTracking() {
 }
 
 /**
+ * Process a single file for organization.
+ * Shared logic for both operations and preview building.
+ *
+ * @param {Object} params - Processing parameters
+ * @param {Object} params.file - File to process
+ * @param {Map} params.fileIndexMap - Map of file paths to their indices
+ * @param {Array} params.editingFiles - Array of file edits
+ * @param {Function} params.getFileWithEdits - Function to get file with applied edits
+ * @param {Function} params.findSmartFolderForCategory - Function to find smart folder
+ * @param {string} params.defaultLocation - Default destination location
+ * @returns {Object} Processed file info with newName and normalized destination
+ */
+function processFileForOrganization({
+  file,
+  fileIndexMap,
+  editingFiles,
+  getFileWithEdits,
+  findSmartFolderForCategory,
+  defaultLocation,
+}) {
+  const fileIndex = fileIndexMap.get(file.path) ?? -1;
+  const edits = fileIndex >= 0 ? editingFiles[fileIndex] || {} : {};
+  const fileWithEdits =
+    fileIndex >= 0 ? getFileWithEdits(file, fileIndex) : file;
+  let currentCategory = edits.category || fileWithEdits.analysis?.category;
+
+  // Filter out "document" category if it's not a smart folder
+  if (currentCategory === 'document') {
+    const documentFolder = findSmartFolderForCategory('document');
+    if (!documentFolder) {
+      currentCategory = 'Uncategorized';
+    }
+  }
+
+  const smartFolder = findSmartFolderForCategory(currentCategory);
+  const destinationDir = smartFolder
+    ? smartFolder.path || `${defaultLocation}/${smartFolder.name}`
+    : `${defaultLocation}/${currentCategory || 'Uncategorized'}`;
+  const suggestedName =
+    edits.suggestedName || fileWithEdits.analysis?.suggestedName || file.name;
+
+  // Ensure extension is present - use lastIndexOf for more robust extension detection
+  // Check for extensions up to 5 characters (e.g., .html, .jpeg, .xlsx)
+  const originalExtIdx = file.name.lastIndexOf('.');
+  const originalExt =
+    originalExtIdx > 0 ? file.name.slice(originalExtIdx) : '';
+  const suggestedExtIdx = suggestedName.lastIndexOf('.');
+  const hasExtension =
+    suggestedExtIdx > 0 && suggestedExtIdx > suggestedName.length - 6;
+  const newName =
+    hasExtension || !originalExt ? suggestedName : suggestedName + originalExt;
+
+  const dest = `${destinationDir}/${newName}`;
+  const normalized = window.electronAPI?.files?.normalizePath?.(dest) || dest;
+
+  return { newName, normalized };
+}
+
+/**
+ * Build a file index map for efficient lookups
+ * @param {Array} filesToProcess - Files to process
+ * @param {Array} unprocessedFiles - All unprocessed files
+ * @returns {Map} Map of file paths to indices
+ */
+function buildFileIndexMap(filesToProcess, unprocessedFiles) {
+  const fileIndexMap = new Map();
+  filesToProcess.forEach((file) => {
+    const index = unprocessedFiles.findIndex((f) => f.path === file.path);
+    if (index >= 0) fileIndexMap.set(file.path, index);
+  });
+  return fileIndexMap;
+}
+
+/**
  * Build file operations for organization
  * @param {Object} params - Parameters
  * @returns {Array} Operations array
@@ -131,48 +205,17 @@ function buildOperations({
   findSmartFolderForCategory,
   defaultLocation,
 }) {
-  const fileIndexMap = new Map();
-  filesToProcess.forEach((file) => {
-    const index = unprocessedFiles.findIndex((f) => f.path === file.path);
-    if (index >= 0) fileIndexMap.set(file.path, index);
-  });
+  const fileIndexMap = buildFileIndexMap(filesToProcess, unprocessedFiles);
 
   return filesToProcess.map((file) => {
-    const fileIndex = fileIndexMap.get(file.path) ?? -1;
-    const edits = fileIndex >= 0 ? editingFiles[fileIndex] || {} : {};
-    const fileWithEdits =
-      fileIndex >= 0 ? getFileWithEdits(file, fileIndex) : file;
-    let currentCategory = edits.category || fileWithEdits.analysis?.category;
-
-    // Filter out "document" category if it's not a smart folder
-    if (currentCategory === 'document') {
-      const documentFolder = findSmartFolderForCategory('document');
-      if (!documentFolder) {
-        currentCategory = 'Uncategorized';
-      }
-    }
-
-    const smartFolder = findSmartFolderForCategory(currentCategory);
-    const destinationDir = smartFolder
-      ? smartFolder.path || `${defaultLocation}/${smartFolder.name}`
-      : `${defaultLocation}/${currentCategory || 'Uncategorized'}`;
-    const suggestedName =
-      edits.suggestedName || fileWithEdits.analysis?.suggestedName || file.name;
-
-    // Ensure extension is present - use lastIndexOf for more robust extension detection
-    const originalExtIdx = file.name.lastIndexOf('.');
-    const originalExt =
-      originalExtIdx > 0 ? file.name.slice(originalExtIdx) : '';
-    const suggestedExtIdx = suggestedName.lastIndexOf('.');
-    const hasExtension =
-      suggestedExtIdx > 0 && suggestedExtIdx > suggestedName.length - 6;
-    const newName =
-      hasExtension || !originalExt
-        ? suggestedName
-        : suggestedName + originalExt;
-
-    const dest = `${destinationDir}/${newName}`;
-    const normalized = window.electronAPI?.files?.normalizePath?.(dest) || dest;
+    const { normalized } = processFileForOrganization({
+      file,
+      fileIndexMap,
+      editingFiles,
+      getFileWithEdits,
+      findSmartFolderForCategory,
+      defaultLocation,
+    });
     return { type: 'move', source: file.path, destination: normalized };
   });
 }
@@ -190,47 +233,17 @@ function buildPreview({
   findSmartFolderForCategory,
   defaultLocation,
 }) {
-  const fileIndexMap = new Map();
-  filesToProcess.forEach((file) => {
-    const index = unprocessedFiles.findIndex((f) => f.path === file.path);
-    if (index >= 0) fileIndexMap.set(file.path, index);
-  });
+  const fileIndexMap = buildFileIndexMap(filesToProcess, unprocessedFiles);
 
   return filesToProcess.map((file) => {
-    const fileIndex = fileIndexMap.get(file.path) ?? -1;
-    const edits = fileIndex >= 0 ? editingFiles[fileIndex] || {} : {};
-    const fileWithEdits =
-      fileIndex >= 0 ? getFileWithEdits(file, fileIndex) : file;
-    let currentCategory = edits.category || fileWithEdits.analysis?.category;
-
-    if (currentCategory === 'document') {
-      const documentFolder = findSmartFolderForCategory('document');
-      if (!documentFolder) {
-        currentCategory = 'Uncategorized';
-      }
-    }
-
-    const smartFolder = findSmartFolderForCategory(currentCategory);
-    const destinationDir = smartFolder
-      ? smartFolder.path || `${defaultLocation}/${smartFolder.name}`
-      : `${defaultLocation}/${currentCategory || 'Uncategorized'}`;
-    const suggestedName =
-      edits.suggestedName || fileWithEdits.analysis?.suggestedName || file.name;
-
-    // Ensure extension is present - use lastIndexOf for more robust extension detection
-    const originalExtIdx = file.name.lastIndexOf('.');
-    const originalExt =
-      originalExtIdx > 0 ? file.name.slice(originalExtIdx) : '';
-    const suggestedExtIdx = suggestedName.lastIndexOf('.');
-    const hasExtension =
-      suggestedExtIdx > 0 && suggestedExtIdx > suggestedName.length - 6;
-    const newName =
-      hasExtension || !originalExt
-        ? suggestedName
-        : suggestedName + originalExt;
-
-    const dest = `${destinationDir}/${newName}`;
-    const normalized = window.electronAPI?.files?.normalizePath?.(dest) || dest;
+    const { newName, normalized } = processFileForOrganization({
+      file,
+      fileIndexMap,
+      editingFiles,
+      getFileWithEdits,
+      findSmartFolderForCategory,
+      defaultLocation,
+    });
     return { fileName: newName, destination: normalized };
   });
 }

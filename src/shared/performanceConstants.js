@@ -64,6 +64,11 @@ const TIMEOUTS = {
   IPC_HANDLER_MAX_WAIT: 2000,
   SEMANTIC_QUERY: 30000,
   FLUSH_MAX_WAIT: 30000,
+  // Analysis lock and monitoring timeouts
+  ANALYSIS_LOCK: 5 * 60 * 1000, // 5 minutes - forces lock release if analysis hangs
+  GLOBAL_ANALYSIS: 10 * 60 * 1000, // 10 minutes - max total analysis time
+  HEARTBEAT_INTERVAL: 30000, // 30 seconds - progress heartbeat during analysis
+  STALE_ACTIVITY: 15 * 60 * 1000, // 15 minutes - activity considered stale
 };
 
 const RETRY = {
@@ -218,7 +223,14 @@ const DEBOUNCE = {
   ERROR_RETRY_INTERVAL: 5000,
 };
 
-const CONCURRENCY = { FOLDER_SCAN: 50, EMBEDDING_FLUSH: 5 };
+const CONCURRENCY = {
+  FOLDER_SCAN: 50,
+  EMBEDDING_FLUSH: 5,
+  // Analysis worker limits
+  MIN_WORKERS: 1,
+  DEFAULT_WORKERS: 3,
+  MAX_WORKERS: 8,
+};
 
 const GPU_TUNING = {
   NUM_BATCH_CPU_ONLY: 128,

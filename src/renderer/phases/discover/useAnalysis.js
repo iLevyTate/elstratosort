@@ -13,6 +13,11 @@ import {
   RENDERER_LIMITS,
   FILE_STATES,
 } from '../../../shared/constants';
+import {
+  TIMEOUTS,
+  CONCURRENCY,
+  RETRY,
+} from '../../../shared/performanceConstants';
 import { logger } from '../../../shared/logger';
 import {
   validateProgressState,
@@ -21,6 +26,131 @@ import {
 } from './namingUtils';
 
 logger.setContext('DiscoverPhase:Analysis');
+
+/**
+ * Analyze a file with retry logic for transient failures.
+ * Extracted from analyzeFiles for better testability.
+ *
+ * @param {string} filePath - Path to the file to analyze
+ * @param {number} attempt - Current attempt number (1-based)
+ * @returns {Promise<Object>} Analysis result
+ */
+async function analyzeWithRetry(filePath, attempt = 1) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      window.electronAPI.files.analyze(filePath),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error('Analysis timeout after 3 minutes')),
+          RENDERER_LIMITS.ANALYSIS_TIMEOUT_MS,
+        );
+      }),
+    ]).finally(() => {
+      if (timeoutId) clearTimeout(timeoutId);
+    });
+  } catch (error) {
+    const isTransient =
+      error.message?.includes('timeout') ||
+      error.message?.includes('network') ||
+      error.message?.includes('ECONNREFUSED');
+
+    if (attempt < RETRY.MAX_ATTEMPTS_MEDIUM && isTransient) {
+      const delay = RETRY.INITIAL_DELAY * Math.pow(2, attempt - 1);
+      await new Promise((r) => setTimeout(r, delay));
+      return analyzeWithRetry(filePath, attempt + 1);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Merge new analysis results with existing results.
+ *
+ * @param {Array} existingResults - Previous analysis results
+ * @param {Array} newResults - New results to merge
+ * @returns {Array} Merged results array
+ */
+function mergeAnalysisResults(existingResults, newResults) {
+  const resultsByPath = new Map(
+    (existingResults || []).map((r) => [r.path, r]),
+  );
+  newResults.forEach((r) => resultsByPath.set(r.path, r));
+  return Array.from(resultsByPath.values());
+}
+
+/**
+ * Merge file states with new analysis results.
+ *
+ * @param {Object} existingStates - Previous file states
+ * @param {Array} results - Analysis results to merge
+ * @returns {Object} Merged file states
+ */
+function mergeFileStates(existingStates, results) {
+  const mergedStates = { ...(existingStates || {}) };
+  results.forEach((result) => {
+    if (result.analysis && !result.error) {
+      mergedStates[result.path] = {
+        state: 'ready',
+        timestamp: new Date().toISOString(),
+        analysis: result.analysis,
+      };
+    } else if (result.error) {
+      mergedStates[result.path] = {
+        state: 'error',
+        timestamp: new Date().toISOString(),
+        error: result.error,
+      };
+    }
+  });
+  return mergedStates;
+}
+
+/**
+ * Show appropriate notification based on analysis results.
+ *
+ * @param {Object} params - Parameters
+ * @param {number} params.successCount - Number of successful analyses
+ * @param {number} params.failureCount - Number of failed analyses
+ * @param {Function} params.addNotification - Notification function
+ * @param {Object} params.actions - Phase actions
+ */
+function showAnalysisCompletionNotification({
+  successCount,
+  failureCount,
+  addNotification,
+  actions,
+}) {
+  if (successCount > 0 && failureCount === 0) {
+    addNotification(
+      `Analysis complete! ${successCount} files ready`,
+      'success',
+      4000,
+      'analysis-complete',
+    );
+    setTimeout(() => {
+      actions.advancePhase(PHASES.ORGANIZE);
+    }, 2000);
+  } else if (successCount > 0) {
+    addNotification(
+      `Analysis complete: ${successCount} successful, ${failureCount} failed`,
+      'warning',
+      4000,
+      'analysis-complete',
+    );
+    setTimeout(() => {
+      actions.advancePhase(PHASES.ORGANIZE);
+    }, 2000);
+  } else if (failureCount > 0) {
+    addNotification(
+      `Analysis failed for all ${failureCount} files.`,
+      'error',
+      8000,
+      'analysis-complete',
+    );
+    actions.setPhaseData('totalAnalysisFailure', true);
+  }
+}
 
 /**
  * Custom hook for analysis operations
@@ -212,7 +342,7 @@ export function useAnalysis({
             }
           }
         },
-        5 * 60 * 1000,
+        TIMEOUTS.ANALYSIS_LOCK,
       );
 
       setIsAnalyzing(true);
@@ -251,7 +381,7 @@ export function useAnalysis({
             resetAnalysisState('Invalid heartbeat progress');
           }
         }
-      }, 30000);
+      }, TIMEOUTS.HEARTBEAT_INTERVAL);
 
       // Global timeout
       analysisTimeoutRef.current = setTimeout(
@@ -268,11 +398,11 @@ export function useAnalysis({
             'analysis-timeout',
           );
         },
-        10 * 60 * 1000,
+        TIMEOUTS.GLOBAL_ANALYSIS,
       );
 
       const results = [];
-      let maxConcurrent = 3;
+      let maxConcurrent = CONCURRENCY.DEFAULT_WORKERS;
 
       try {
         const persistedSettings = await window.electronAPI.settings.get();
@@ -283,7 +413,10 @@ export function useAnalysis({
         // Use default
       }
 
-      const concurrency = Math.max(1, Math.min(Number(maxConcurrent) || 3, 8));
+      const concurrency = Math.max(
+        CONCURRENCY.MIN_WORKERS,
+        Math.min(Number(maxConcurrent) || CONCURRENCY.DEFAULT_WORKERS, CONCURRENCY.MAX_WORKERS),
+      );
 
       try {
         addNotification(
@@ -325,37 +458,6 @@ export function useAnalysis({
               size: file.size || 0,
               created: file.created,
               modified: file.modified,
-            };
-
-            // Retry logic
-            const analyzeWithRetry = async (filePath, attempt = 1) => {
-              let timeoutId;
-              try {
-                return await Promise.race([
-                  window.electronAPI.files.analyze(filePath),
-                  new Promise((_, reject) => {
-                    timeoutId = setTimeout(
-                      () =>
-                        reject(new Error('Analysis timeout after 3 minutes')),
-                      RENDERER_LIMITS.ANALYSIS_TIMEOUT_MS,
-                    );
-                  }),
-                ]).finally(() => {
-                  if (timeoutId) clearTimeout(timeoutId);
-                });
-              } catch (error) {
-                const isTransient =
-                  error.message?.includes('timeout') ||
-                  error.message?.includes('network') ||
-                  error.message?.includes('ECONNREFUSED');
-
-                if (attempt < 3 && isTransient) {
-                  const delay = 1000 * Math.pow(2, attempt - 1);
-                  await new Promise((r) => setTimeout(r, delay));
-                  return analyzeWithRetry(filePath, attempt + 1);
-                }
-                throw error;
-              }
             };
 
             const analysis = await analyzeWithRetry(file.path);
@@ -432,68 +534,25 @@ export function useAnalysis({
           await processBatch(batch);
         }
 
-        // Merge results
-        const resultsByPath = new Map(
-          (analysisResults || []).map((r) => [r.path, r]),
-        );
-        results.forEach((r) => resultsByPath.set(r.path, r));
-        const mergedResults = Array.from(resultsByPath.values());
+        // Merge results using extracted helper functions
+        const mergedResults = mergeAnalysisResults(analysisResults, results);
         setAnalysisResults(mergedResults);
 
-        // Merge file states
-        const mergedStates = { ...(fileStates || {}) };
-        results.forEach((result) => {
-          if (result.analysis && !result.error) {
-            mergedStates[result.path] = {
-              state: 'ready',
-              timestamp: new Date().toISOString(),
-              analysis: result.analysis,
-            };
-          } else if (result.error) {
-            mergedStates[result.path] = {
-              state: 'error',
-              timestamp: new Date().toISOString(),
-              error: result.error,
-            };
-          }
-        });
+        const mergedStates = mergeFileStates(fileStates, results);
         setFileStates(mergedStates);
 
         actions.setPhaseData('analysisResults', mergedResults);
         actions.setPhaseData('fileStates', mergedStates);
 
+        // Show completion notification
         const successCount = results.filter((r) => r.analysis).length;
         const failureCount = results.length - successCount;
-
-        if (successCount > 0 && failureCount === 0) {
-          addNotification(
-            `Analysis complete! ${successCount} files ready`,
-            'success',
-            4000,
-            'analysis-complete',
-          );
-          setTimeout(() => {
-            actions.advancePhase(PHASES.ORGANIZE);
-          }, 2000);
-        } else if (successCount > 0) {
-          addNotification(
-            `Analysis complete: ${successCount} successful, ${failureCount} failed`,
-            'warning',
-            4000,
-            'analysis-complete',
-          );
-          setTimeout(() => {
-            actions.advancePhase(PHASES.ORGANIZE);
-          }, 2000);
-        } else if (failureCount > 0) {
-          addNotification(
-            `Analysis failed for all ${failureCount} files.`,
-            'error',
-            8000,
-            'analysis-complete',
-          );
-          actions.setPhaseData('totalAnalysisFailure', true);
-        }
+        showAnalysisCompletionNotification({
+          successCount,
+          failureCount,
+          addNotification,
+          actions,
+        });
       } catch (error) {
         if (error.message !== 'Analysis cancelled by user') {
           addNotification(
