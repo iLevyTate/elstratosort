@@ -4,6 +4,7 @@
  */
 
 const { SERVICE_URLS } = require('./configDefaults');
+const { CONCURRENCY } = require('./performanceConstants');
 
 const DEFAULT_SETTINGS = {
   // UI
@@ -11,7 +12,7 @@ const DEFAULT_SETTINGS = {
   notifications: true,
   // Behavior
   defaultSmartFolderLocation: 'Documents',
-  maxConcurrentAnalysis: 3,
+  maxConcurrentAnalysis: CONCURRENCY.DEFAULT_WORKERS,
   autoOrganize: false,
   backgroundMode: false,
   // Organization Confidence Thresholds
