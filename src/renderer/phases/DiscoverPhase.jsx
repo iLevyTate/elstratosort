@@ -426,7 +426,7 @@ function DiscoverPhase() {
           {/* Middle Section - Queue & Status Actions */}
           {(selectedFiles.length > 0 || isAnalyzing) && (
             <div
-              className="surface-panel flex items-center justify-between bg-white/85 backdrop-blur-md animate-fade-in sticky top-[var(--app-nav-height)] z-10 flex-shrink-0"
+              className="surface-panel flex items-center justify-between bg-white/85 backdrop-blur-md animate-fade-in"
               style={{
                 padding: 'var(--spacing-default)',
                 gap: 'var(--spacing-default)',
