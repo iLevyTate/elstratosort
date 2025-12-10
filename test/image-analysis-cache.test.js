@@ -33,7 +33,6 @@ describe('per-file analysis cache (image)', () => {
       '../src/main/ollamaUtils',
       () => ({
         getOllama: () => mockClient,
-        getOllamaClient: async () => mockClient,
         getOllamaVisionModel: () => 'mock-vision',
         getOllamaEmbeddingModel: () => 'mock-embed',
         getOllamaHost: () => 'http://127.0.0.1:11434',

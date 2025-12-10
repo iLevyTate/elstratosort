@@ -1,11 +1,11 @@
 const path = require('path');
 const fs = require('fs').promises;
 const { app } = require('electron');
-const { getOllama: getOllamaClient } = require('../ollamaUtils');
+const { getOllama } = require('../ollamaUtils');
 const {
   enhanceSmartFolderWithLLM,
 } = require('../services/SmartFoldersLLMService');
-const { withErrorLogging } = require('./withErrorLogging');
+const { withErrorLogging } = require('./ipcWrappers');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
 
 // Import centralized security configuration
@@ -173,7 +173,7 @@ function registerSmartFoldersIpc({
         }
 
         try {
-          const ollama = getOllamaClient();
+          const ollama = getOllama();
           const perfOptions = await buildOllamaOptions('embeddings');
           // Use configured embedding model instead of hardcoded value
           const embeddingModel =
@@ -213,7 +213,7 @@ function registerSmartFoldersIpc({
           };
         } catch (e) {
           try {
-            const ollama = getOllamaClient();
+            const ollama = getOllama();
             const genPerf = await buildOllamaOptions('text');
             const prompt = `You are ranking folders for organizing a file. Given this description:\n"""${text}"""\nFolders:\n${smartFolders.map((f, i) => `${i + 1}. ${f.name} - ${f.description || ''}`).join('\n')}\nReturn JSON: { "index": <1-based best folder index>, "reason": "..." }`;
             const resp = await ollama.generate({

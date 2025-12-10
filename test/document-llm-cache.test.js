@@ -7,7 +7,7 @@ describe('documentLlm cache', () => {
   });
 
   test('returns cached result on repeated input', async () => {
-    // Mock ollamaUtils.getOllamaClient to count generate calls
+    // Mock ollamaUtils.getOllama to count generate calls
     const generateMock = jest.fn(async () => ({
       response: JSON.stringify({
         project: 'Test',
@@ -22,7 +22,7 @@ describe('documentLlm cache', () => {
     jest.doMock(
       path.join('..', 'src', 'main', 'ollamaUtils'),
       () => ({
-        getOllamaClient: async () => ({ generate: generateMock }),
+        getOllama: async () => ({ generate: generateMock }),
         getOllamaModel: () => 'mock-model',
         loadOllamaConfig: async () => ({ selectedTextModel: 'mock-model' }),
       }),

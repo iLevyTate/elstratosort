@@ -8,6 +8,7 @@
  */
 
 import React from 'react';
+import { TIMEOUTS } from '../../../shared/performanceConstants';
 
 // Inline SVG Icons
 const RefreshCwIcon = ({ className }) => (
@@ -165,7 +166,7 @@ export function validateProgressState(progress) {
 
   // Check if progress is too old (more than 15 minutes)
   const timeSinceActivity = Date.now() - progress.lastActivity;
-  if (timeSinceActivity > 15 * 60 * 1000) return false;
+  if (timeSinceActivity > TIMEOUTS.STALE_ACTIVITY) return false;
 
   return true;
 }

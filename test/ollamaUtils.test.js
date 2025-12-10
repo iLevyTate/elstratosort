@@ -56,12 +56,6 @@ describe('ollamaUtils', () => {
     });
   });
 
-  describe('getOllamaClient', () => {
-    test('is alias for getOllama', () => {
-      expect(ollamaUtils.getOllamaClient).toBe(ollamaUtils.getOllama);
-    });
-  });
-
   describe('getOllamaHost', () => {
     test('returns default host', () => {
       const host = ollamaUtils.getOllamaHost();

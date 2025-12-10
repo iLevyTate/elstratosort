@@ -14,9 +14,30 @@ jest.mock('../src/shared/logger', () => ({
   },
 }));
 
-// Mock withErrorLogging
-jest.mock('../src/main/ipc/withErrorLogging', () => ({
+// Mock ipcWrappers
+jest.mock('../src/main/ipc/ipcWrappers', () => ({
   withErrorLogging: jest.fn((logger, handler) => handler),
+}));
+
+// Mock fs.promises for path validation
+jest.mock('fs', () => ({
+  promises: {
+    access: jest.fn().mockResolvedValue(undefined),
+    lstat: jest.fn().mockResolvedValue({ isSymbolicLink: () => false }),
+  },
+}));
+
+// Mock pathSanitization - allow paths through validation
+jest.mock('../src/shared/pathSanitization', () => ({
+  validateFileOperationPath: jest.fn().mockImplementation(async (filePath) => ({
+    valid: true,
+    normalizedPath: filePath,
+  })),
+  sanitizePath: jest.fn((p) => p),
+  isPathDangerous: jest.fn(() => false),
+  checkSymlinkSafety: jest
+    .fn()
+    .mockResolvedValue({ isSymlink: false, isSafe: true }),
 }));
 
 describe('Shell Handlers', () => {
@@ -131,7 +152,9 @@ describe('Shell Handlers', () => {
       const result = await handler({}, '/path/to/file.pdf');
 
       expect(result.success).toBe(true);
-      expect(mockShell.showItemInFolder).toHaveBeenCalledWith('/path/to/file.pdf');
+      expect(mockShell.showItemInFolder).toHaveBeenCalledWith(
+        '/path/to/file.pdf',
+      );
     });
 
     test('handles reveal error', async () => {
@@ -143,6 +166,7 @@ describe('Shell Handlers', () => {
       const result = await handler({}, '/path/to/file.pdf');
 
       expect(result.success).toBe(false);
+      // Error message comes from shell operation failure
       expect(result.error).toBe('Cannot reveal file');
     });
 
@@ -151,7 +175,9 @@ describe('Shell Handlers', () => {
       const result = await handler({}, '/path/to/file with spaces.pdf');
 
       expect(result.success).toBe(true);
-      expect(mockShell.showItemInFolder).toHaveBeenCalledWith('/path/to/file with spaces.pdf');
+      expect(mockShell.showItemInFolder).toHaveBeenCalledWith(
+        '/path/to/file with spaces.pdf',
+      );
     });
   });
 });

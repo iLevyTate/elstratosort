@@ -25,8 +25,8 @@ jest.mock('fs', () => ({
   promises: mockFs,
 }));
 
-// Mock withErrorLogging
-jest.mock('../src/main/ipc/withErrorLogging', () => ({
+// Mock ipcWrappers
+jest.mock('../src/main/ipc/ipcWrappers', () => ({
   withErrorLogging: jest.fn((logger, handler) => handler),
 }));
 
@@ -144,7 +144,10 @@ describe('Folder Handlers', () => {
 
     test('handles permission denied error', async () => {
       mockFs.stat.mockRejectedValueOnce({ code: 'ENOENT' });
-      mockFs.mkdir.mockRejectedValueOnce({ code: 'EACCES', message: 'Permission denied' });
+      mockFs.mkdir.mockRejectedValueOnce({
+        code: 'EACCES',
+        message: 'Permission denied',
+      });
 
       const handler = handlers['files:create-folder-direct'];
       const result = await handler({}, '/protected/folder');
@@ -155,7 +158,10 @@ describe('Folder Handlers', () => {
 
     test('handles no space error', async () => {
       mockFs.stat.mockRejectedValueOnce({ code: 'ENOENT' });
-      mockFs.mkdir.mockRejectedValueOnce({ code: 'ENOSPC', message: 'No space' });
+      mockFs.mkdir.mockRejectedValueOnce({
+        code: 'ENOSPC',
+        message: 'No space',
+      });
 
       const handler = handlers['files:create-folder-direct'];
       const result = await handler({}, '/new/folder');
@@ -166,7 +172,10 @@ describe('Folder Handlers', () => {
 
     test('handles name too long error', async () => {
       mockFs.stat.mockRejectedValueOnce({ code: 'ENOENT' });
-      mockFs.mkdir.mockRejectedValueOnce({ code: 'ENAMETOOLONG', message: 'Name too long' });
+      mockFs.mkdir.mockRejectedValueOnce({
+        code: 'ENAMETOOLONG',
+        message: 'Name too long',
+      });
 
       const handler = handlers['files:create-folder-direct'];
       const result = await handler({}, '/very/long/path/name');
@@ -210,7 +219,10 @@ describe('Folder Handlers', () => {
     });
 
     test('handles folder not found', async () => {
-      mockFs.stat.mockRejectedValueOnce({ code: 'ENOENT', message: 'Not found' });
+      mockFs.stat.mockRejectedValueOnce({
+        code: 'ENOENT',
+        message: 'Not found',
+      });
 
       const handler = handlers['files:open-folder'];
       const result = await handler({}, '/nonexistent/folder');
@@ -310,7 +322,10 @@ describe('Folder Handlers', () => {
     test('handles permission denied error', async () => {
       mockFs.stat.mockResolvedValueOnce({ isDirectory: () => true });
       mockFs.readdir.mockResolvedValueOnce([]);
-      mockFs.rmdir.mockRejectedValueOnce({ code: 'EACCES', message: 'Permission denied' });
+      mockFs.rmdir.mockRejectedValueOnce({
+        code: 'EACCES',
+        message: 'Permission denied',
+      });
 
       const handler = handlers['files:delete-folder'];
       const result = await handler({}, '/protected/folder');
@@ -322,7 +337,10 @@ describe('Folder Handlers', () => {
     test('handles busy directory error', async () => {
       mockFs.stat.mockResolvedValueOnce({ isDirectory: () => true });
       mockFs.readdir.mockResolvedValueOnce([]);
-      mockFs.rmdir.mockRejectedValueOnce({ code: 'EBUSY', message: 'Directory busy' });
+      mockFs.rmdir.mockRejectedValueOnce({
+        code: 'EBUSY',
+        message: 'Directory busy',
+      });
 
       const handler = handlers['files:delete-folder'];
       const result = await handler({}, '/busy/folder');

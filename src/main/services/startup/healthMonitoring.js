@@ -9,6 +9,7 @@
 
 const axios = require('axios');
 const { logger } = require('../../../shared/logger');
+const { TIMEOUTS } = require('../../../shared/performanceConstants');
 const { axiosWithRetry } = require('../../utils/ollamaApiRetry');
 const { isPortAvailable } = require('./preflightChecks');
 const { checkChromaDBHealth } = require('./chromaService');
@@ -17,7 +18,8 @@ const { container, ServiceIds } = require('../ServiceContainer');
 
 logger.setContext('StartupManager:Health');
 
-const CIRCUIT_BREAKER_RECOVERY_WINDOW = 10 * 60 * 1000; // 10 minutes
+// Circuit breaker recovery window - same as global analysis timeout
+const CIRCUIT_BREAKER_RECOVERY_WINDOW = TIMEOUTS.GLOBAL_ANALYSIS;
 
 /**
  * Handle circuit breaker recovery for a service

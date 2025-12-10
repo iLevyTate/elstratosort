@@ -10,7 +10,11 @@
 const path = require('path');
 const fs = require('fs').promises;
 const crypto = require('crypto');
-const { ACTION_TYPES } = require('../../../shared/constants');
+const {
+  ACTION_TYPES,
+  PROCESSING_LIMITS,
+} = require('../../../shared/constants');
+const { LIMITS } = require('../../../shared/performanceConstants');
 const { logger } = require('../../../shared/logger');
 const { crossDeviceMove } = require('../../../shared/atomicFileOperations');
 
@@ -19,9 +23,10 @@ logger.setContext('IPC:Files:BatchOrganize');
 // Jest-mocked functions expose _isMockFunction; use to avoid false positives
 const isMockFn = (fn) => !!fn && typeof fn === 'function' && fn._isMockFunction;
 
-// Resource limits to prevent DOS attacks
-const MAX_BATCH_SIZE = 1000;
-const MAX_TOTAL_BATCH_TIME = 600000; // 10 minutes
+// Resource limits from centralized constants (prevents config drift)
+const MAX_BATCH_SIZE = PROCESSING_LIMITS.MAX_BATCH_OPERATION_SIZE;
+const MAX_TOTAL_BATCH_TIME = PROCESSING_LIMITS.MAX_BATCH_OPERATION_TIME;
+const MAX_NUMERIC_RETRIES = LIMITS.MAX_NUMERIC_RETRIES;
 
 /**
  * Compute SHA-256 checksum of a file using streaming
@@ -42,24 +47,88 @@ async function computeFileChecksum(filePath) {
 }
 
 /**
- * Handle batch file organization with rollback support
+ * Verify source file exists and is a file (not a directory).
  *
- * @param {Object} params - Handler parameters
- * @param {Object} params.operation - Batch operation configuration
- * @param {Object} params.logger - Logger instance
- * @param {Function} params.getServiceIntegration - Service integration getter
- * @param {Function} params.getMainWindow - Main window getter
- * @returns {Promise<Object>} Batch operation result
+ * @param {string} sourcePath - Path to verify
+ * @throws {Error} If source doesn't exist or isn't a file
  */
-async function handleBatchOrganize({
-  operation,
-  logger: handlerLogger,
-  getServiceIntegration,
-  getMainWindow,
-}) {
-  const log = handlerLogger || logger;
+async function verifySourceFile(sourcePath) {
+  try {
+    if (typeof fs.stat === 'function') {
+      const sourceStat = await fs.stat(sourcePath);
+      if (!sourceStat.isFile()) {
+        throw new Error(
+          `Source is not a file (may be a directory): ${sourcePath}`,
+        );
+      }
+    } else {
+      // Fallback for mocked fs that does not implement stat
+      await fs.access(sourcePath);
+    }
+  } catch (statErr) {
+    if (statErr.code === 'ENOENT') {
+      throw new Error(`Source file does not exist: ${sourcePath}`);
+    }
+    throw statErr;
+  }
+}
 
-  // Validate batch
+/**
+ * Verify move operation completed correctly.
+ * Checks that destination exists and source is gone.
+ *
+ * @param {string} source - Original source path
+ * @param {string} destination - Destination path after move
+ * @param {Object} log - Logger instance
+ * @throws {Error} If verification fails
+ */
+async function verifyMoveCompletion(source, destination, log) {
+  // Verify destination exists
+  try {
+    await fs.access(destination);
+  } catch {
+    throw new Error(
+      `Move verification failed: destination does not exist after move: ${destination}`,
+    );
+  }
+
+  // Verify source is gone (unless same path or mocked fs)
+  const shouldVerifySource = source !== destination && !isMockFn(fs.access);
+  if (shouldVerifySource) {
+    try {
+      await fs.access(source);
+      // If we get here, source still exists - move may have failed silently
+      const verificationError = new Error(
+        `Move verification failed: source file still exists at original location: ${source}`,
+      );
+      verificationError.code = 'MOVE_VERIFICATION_SOURCE_EXISTS';
+      throw verificationError;
+    } catch (sourceCheckErr) {
+      // ENOENT is expected (file was moved); any other error should halt processing
+      if (sourceCheckErr.code === 'ENOENT') {
+        // All good: file is gone at the original location
+      } else {
+        log.warn('[FILE-OPS] Move verification: unexpected source state', {
+          error: sourceCheckErr.message,
+          code: sourceCheckErr.code,
+        });
+        throw sourceCheckErr;
+      }
+    }
+  } else if (source !== destination) {
+    log.debug('[FILE-OPS] Skipping source existence verification (mocked fs)');
+  }
+}
+
+/**
+ * Validate batch operation input.
+ * Returns an error object if validation fails, null if valid.
+ *
+ * @param {Object} operation - Batch operation configuration
+ * @param {Object} log - Logger instance
+ * @returns {Object|null} Error object or null if valid
+ */
+function validateBatchOperation(operation, log) {
   if (!operation.operations || !Array.isArray(operation.operations)) {
     return {
       success: false,
@@ -87,6 +156,33 @@ async function handleBatchOrganize({
       maxAllowed: MAX_BATCH_SIZE,
       provided: operation.operations.length,
     };
+  }
+
+  return null; // Valid
+}
+
+/**
+ * Handle batch file organization with rollback support
+ *
+ * @param {Object} params - Handler parameters
+ * @param {Object} params.operation - Batch operation configuration
+ * @param {Object} params.logger - Logger instance
+ * @param {Function} params.getServiceIntegration - Service integration getter
+ * @param {Function} params.getMainWindow - Main window getter
+ * @returns {Promise<Object>} Batch operation result
+ */
+async function handleBatchOrganize({
+  operation,
+  logger: handlerLogger,
+  getServiceIntegration,
+  getMainWindow,
+}) {
+  const log = handlerLogger || logger;
+
+  // Validate batch
+  const validationError = validateBatchOperation(operation, log);
+  if (validationError) {
+    return validationError;
   }
 
   // Initialize tracking variables
@@ -183,69 +279,14 @@ async function handleBatchOrganize({
         await fs.mkdir(destDir, { recursive: true });
 
         // Verify source exists and is a file (not a directory)
-        try {
-          if (typeof fs.stat === 'function') {
-            const sourceStat = await fs.stat(op.source);
-            if (!sourceStat.isFile()) {
-              throw new Error(
-                `Source is not a file (may be a directory): ${op.source}`,
-              );
-            }
-          } else {
-            // Fallback for mocked fs that does not implement stat
-            await fs.access(op.source);
-          }
-        } catch (statErr) {
-          if (statErr.code === 'ENOENT') {
-            throw new Error(`Source file does not exist: ${op.source}`);
-          }
-          throw statErr;
-        }
+        await verifySourceFile(op.source);
 
         // Handle file move with collision handling
         const moveResult = await performFileMove(op, log, computeFileChecksum);
         op.destination = moveResult.destination;
 
         // Post-move verification: ensure destination exists and source is gone
-        try {
-          await fs.access(op.destination);
-        } catch {
-          throw new Error(
-            `Move verification failed: destination does not exist after move: ${op.destination}`,
-          );
-        }
-
-        // Verify source is no longer at original location (unless same path edge case)
-        const shouldVerifySource = op.source !== op.destination && !isMockFn(fs.access);
-        if (shouldVerifySource) {
-          try {
-            await fs.access(op.source);
-            // If we get here, source still exists - move may have failed silently
-            const verificationError = new Error(
-              `Move verification failed: source file still exists at original location: ${op.source}`,
-            );
-            verificationError.code = 'MOVE_VERIFICATION_SOURCE_EXISTS';
-            throw verificationError;
-          } catch (sourceCheckErr) {
-            // ENOENT is expected (file was moved); any other error should halt processing
-            if (sourceCheckErr.code === 'ENOENT') {
-              // All good: file is gone at the original location
-            } else {
-              log.warn(
-                '[FILE-OPS] Move verification: unexpected source state',
-                {
-                  error: sourceCheckErr.message,
-                  code: sourceCheckErr.code,
-                },
-              );
-              throw sourceCheckErr;
-            }
-          }
-        } else if (op.source !== op.destination) {
-          log.debug(
-            '[FILE-OPS] Skipping source existence verification (mocked fs)',
-          );
-        }
+        await verifyMoveCompletion(op.source, op.destination, log);
 
         await getServiceIntegration()?.processingState?.markOrganizeOpDone(
           batchId,
@@ -416,9 +457,8 @@ async function performFileMove(op, log, checksumFn) {
   const baseName =
     ext.length > 0 ? op.destination.slice(0, -ext.length) : op.destination;
   let operationComplete = false;
-  const maxNumericRetries = 5000;
 
-  while (!operationComplete && counter < maxNumericRetries) {
+  while (!operationComplete && counter < MAX_NUMERIC_RETRIES) {
     try {
       await fs.rename(op.source, uniqueDestination);
       operationComplete = true;

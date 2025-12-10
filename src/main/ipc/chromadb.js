@@ -10,7 +10,7 @@
  */
 
 const { getInstance: getChromaDB } = require('../services/chromadb');
-const { withErrorLogging } = require('./withErrorLogging');
+const { withErrorLogging } = require('./ipcWrappers');
 const { CircuitState } = require('../utils/CircuitBreaker');
 
 /**

@@ -37,8 +37,8 @@ jest.mock('../src/shared/performanceConstants', () => ({
   },
 }));
 
-// Mock withErrorLogging
-jest.mock('../src/main/ipc/withErrorLogging', () => ({
+// Mock ipcWrappers
+jest.mock('../src/main/ipc/ipcWrappers', () => ({
   withErrorLogging: jest.fn((logger, handler) => handler),
 }));
 
@@ -154,7 +154,9 @@ describe('File Selection Handlers', () => {
     });
 
     test('handles dialog error', async () => {
-      mockDialog.showOpenDialog.mockRejectedValueOnce(new Error('Dialog error'));
+      mockDialog.showOpenDialog.mockRejectedValueOnce(
+        new Error('Dialog error'),
+      );
 
       const handler = handlers['files:select-directory'];
       const result = await handler({});

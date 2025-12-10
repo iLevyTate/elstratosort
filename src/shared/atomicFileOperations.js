@@ -10,6 +10,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { logger } = require('./logger');
+const { RETRY } = require('./performanceConstants');
 
 // Normalize paths using the host platform conventions to avoid breaking
 // real filesystem paths (especially on Windows where drive letters matter).
@@ -309,7 +310,7 @@ class AtomicFileOperations {
 
     // Retry loop to handle race conditions atomically
     let attempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = RETRY.MAX_ATTEMPTS_VERY_HIGH;
 
     while (attempts < maxAttempts) {
       try {
@@ -433,7 +434,7 @@ class AtomicFileOperations {
 
     // Retry loop to handle race conditions atomically
     let attempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = RETRY.MAX_ATTEMPTS_VERY_HIGH;
 
     while (attempts < maxAttempts) {
       try {

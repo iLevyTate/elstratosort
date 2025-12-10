@@ -18,7 +18,7 @@ describe('OLLAMA pull progress IPC', () => {
 
     const logger = { info: jest.fn(), error: jest.fn(), warn: jest.fn() };
     const withErrorLogging = (_logger, fn) => fn; // pass-through for test
-    jest.doMock('../src/main/ipc/withErrorLogging', () => ({
+    jest.doMock('../src/main/ipc/ipcWrappers', () => ({
       withErrorLogging,
     }));
 

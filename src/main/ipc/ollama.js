@@ -1,5 +1,5 @@
 const { Ollama } = require('ollama');
-const { withErrorLogging, withValidation } = require('./withErrorLogging');
+const { withErrorLogging, withValidation } = require('./ipcWrappers');
 let z;
 
 function isValidOllamaUrl(url) {

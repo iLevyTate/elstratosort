@@ -2,7 +2,7 @@ const path = require('path');
 const {
   getOllamaModel,
   loadOllamaConfig,
-  getOllamaClient,
+  getOllama,
 } = require('../ollamaUtils');
 const { buildOllamaOptions } = require('../services/PerformanceService');
 const { globalDeduplicator } = require('../utils/llmOptimization');
@@ -208,7 +208,7 @@ ${truncated}`;
       folders: smartFolders.map((f) => f.name).join(','),
     });
 
-    const client = await getOllamaClient();
+    const client = await getOllama();
     const perfOptions = await buildOllamaOptions('text');
     const generatePromise = globalDeduplicator.deduplicate(
       deduplicationKey,
@@ -403,6 +403,6 @@ ${truncated}`;
 
 module.exports = {
   AppConfig,
-  getOllamaClient,
+  getOllama,
   analyzeTextWithOllama,
 };

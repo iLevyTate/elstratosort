@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { logger } = require('../../shared/logger');
+const { CACHE } = require('../../shared/performanceConstants');
 logger.setContext('EmbeddingCache');
 
 /**
@@ -15,7 +16,7 @@ class EmbeddingCache {
    */
   constructor(options = {}) {
     this.maxSize = options.maxSize || 500;
-    this.ttlMs = options.ttlMs || 5 * 60 * 1000; // 5 minutes default
+    this.ttlMs = options.ttlMs || CACHE.TTL_SHORT;
 
     // Cache storage: Map<key, {vector, model, timestamp, accessTime}>
     this.cache = new Map();

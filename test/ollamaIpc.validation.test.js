@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-jest.mock('../src/main/ipc/withErrorLogging', () => ({
+jest.mock('../src/main/ipc/ipcWrappers', () => ({
   withErrorLogging: (_logger, fn) => fn,
   withValidation: (_logger, _schema, fn) => fn,
 }));

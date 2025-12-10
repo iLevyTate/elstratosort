@@ -1,7 +1,17 @@
 /**
+ * @jest-environment node
+ */
+/**
  * Tests for UndoRedoService
  * Tests undo/redo functionality, memory management, and file operations
  */
+
+// Unmock fs to use real filesystem for these tests
+// The global test-setup mocks fs with memfs, but this causes path resolution
+// issues on Windows. These tests need the real filesystem.
+jest.unmock('fs');
+jest.unmock('fs/promises');
+jest.unmock('os');
 
 const path = require('path');
 const fs = require('fs').promises;
