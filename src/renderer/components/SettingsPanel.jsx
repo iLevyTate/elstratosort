@@ -90,14 +90,6 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   const [analysisStats, setAnalysisStats] = useState(null);
   const didAutoHealthCheckRef = useRef(false);
 
-  const sanitizeSettings = useCallback((currentSettings) => {
-    return {
-      ...currentSettings,
-      ollamaHost:
-        (currentSettings?.ollamaHost || '').trim() || 'http://127.0.0.1:11434',
-    };
-  }, []);
-
   // Memoized computed values
   const textModelOptions = useMemo(
     () =>
@@ -175,6 +167,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
           visionModel: response.selected.visionModel || prev.visionModel,
           embeddingModel:
             response.selected.embeddingModel || prev.embeddingModel,
+          ollamaHost: response.host || prev.ollamaHost,
         }));
       }
     } catch (error) {
@@ -190,7 +183,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
 
   useEffect(() => {
     // Don't run if API is not available
-    if (!isApiAvailable) return undefined;
+    if (!isApiAvailable) return;
 
     let mounted = true;
 
@@ -216,9 +209,9 @@ const SettingsPanel = React.memo(function SettingsPanel() {
 
   // After settings are loaded the first time, automatically check Ollama health
   useEffect(() => {
-    if (!isApiAvailable) return undefined;
-    if (!settingsLoaded) return undefined;
-    if (didAutoHealthCheckRef.current) return undefined;
+    if (!isApiAvailable) return;
+    if (!settingsLoaded) return;
+    if (didAutoHealthCheckRef.current) return;
     didAutoHealthCheckRef.current = true;
 
     let isMounted = true;
@@ -248,9 +241,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   const saveSettings = useCallback(async () => {
     try {
       setIsSaving(true);
-      const normalizedSettings = sanitizeSettings(settings);
-      setSettings(normalizedSettings);
-      await window.electronAPI.settings.save(normalizedSettings);
+      await window.electronAPI.settings.save(settings);
       addNotification('Settings saved successfully!', 'success');
       handleToggleSettings();
     } catch (error) {
@@ -262,15 +253,13 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     } finally {
       setIsSaving(false);
     }
-  }, [settings, addNotification, handleToggleSettings, sanitizeSettings]);
+  }, [settings, addNotification, handleToggleSettings]);
 
   // Auto-save settings on change (debounced)
   const autoSaveSettings = useDebouncedCallback(
     async () => {
       try {
-        const normalizedSettings = sanitizeSettings(settings);
-        setSettings(normalizedSettings);
-        await window.electronAPI.settings.save(normalizedSettings);
+        await window.electronAPI.settings.save(settings);
       } catch (error) {
         logger.error('Auto-save settings failed', {
           error: error.message,
@@ -279,7 +268,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       }
     },
     800,
-    [sanitizeSettings],
+    [],
   );
 
   useEffect(() => {
@@ -418,8 +407,10 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       <div className="surface-panel w-full max-w-2xl xl:max-w-4xl 2xl:max-w-5xl mx-auto max-h-[86vh] flex flex-col overflow-hidden shadow-2xl animate-modal-enter">
         <div className="p-[var(--panel-padding)] border-b border-border-soft/70 bg-white/90 backdrop-blur-sm flex-shrink-0 rounded-t-[var(--radius-panel)]">
           <div className="flex items-center justify-between">
-            <h2 className="heading-secondary">⚙️ Settings</h2>
-            <div className="flex flex-wrap items-center gap-3 md:gap-[var(--spacing-xl)]">
+            <h2 className="heading-secondary">
+              ⚙️ Settings
+            </h2>
+            <div className="flex flex-wrap items-center gap-[var(--spacing-md)]">
               <Button
                 onClick={expandAll}
                 variant="subtle"
@@ -437,7 +428,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
               <Button
                 onClick={handleToggleSettings}
                 variant="ghost"
-                className="text-system-gray-500 hover:text-system-gray-700 p-[var(--spacing-sm)] ml-2 md:ml-[var(--spacing-lg)]"
+                className="text-system-gray-500 hover:text-system-gray-700 p-[var(--spacing-sm)]"
                 aria-label="Close settings"
                 title="Close settings"
               >
@@ -549,8 +540,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
           >
             <div className="flex flex-col gap-[var(--spacing-cozy)]">
               <p className="text-sm text-system-gray-600">
-                View and manage your file analysis history, including past
-                results and statistics.
+                View and manage your file analysis history, including past results and statistics.
               </p>
               <Button
                 onClick={() => setShowAnalysisHistory(true)}
@@ -571,7 +561,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
           </Collapsible>
         </div>
 
-        <div className="p-[var(--panel-padding)] border-t border-border-soft/70 bg-white/90 backdrop-blur-sm flex flex-wrap justify-end gap-3 sm:gap-4 md:gap-[var(--spacing-xl)] flex-shrink-0 rounded-b-[var(--radius-panel)]">
+        <div className="p-[var(--panel-padding)] border-t border-border-soft/70 bg-white/90 backdrop-blur-sm flex flex-wrap justify-end gap-[var(--spacing-xl)] flex-shrink-0 rounded-b-[var(--radius-panel)]">
           <Button onClick={handleToggleSettings} variant="secondary">
             Cancel
           </Button>

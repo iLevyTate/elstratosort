@@ -1,16 +1,17 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useKeyboardShortcuts } from '../hooks';
 import { useAppSelector } from '../store/hooks';
 import PhaseErrorBoundary from './PhaseErrorBoundary';
+import { LazyLoadingSpinner, ModalLoadingOverlay } from './LoadingSkeleton';
 import { logger } from '../../shared/logger';
 
-import WelcomePhase from '../phases/WelcomePhase';
-import SetupPhase from '../phases/SetupPhase';
-import DiscoverPhase from '../phases/DiscoverPhase';
-import OrganizePhase from '../phases/OrganizePhase';
-import CompletePhase from '../phases/CompletePhase';
-import SettingsPanel from './SettingsPanel';
+const WelcomePhase = lazy(() => import('../phases/WelcomePhase'));
+const SetupPhase = lazy(() => import('../phases/SetupPhase'));
+const DiscoverPhase = lazy(() => import('../phases/DiscoverPhase'));
+const OrganizePhase = lazy(() => import('../phases/OrganizePhase'));
+const CompletePhase = lazy(() => import('../phases/CompletePhase'));
+const SettingsPanel = lazy(() => import('./SettingsPanel'));
 import { PHASES } from '../../shared/constants';
 
 // Optimized page transitions with GPU acceleration
@@ -88,29 +89,35 @@ function PhaseRenderer() {
   return (
     <>
       <div className="flex flex-col w-full min-h-full">
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={currentPhase}
-            initial="initial"
-            animate="in"
-            exit="out"
-            variants={pageVariants}
-            transition={pageTransition}
-            className="w-full flex-1 flex flex-col"
-            style={{
-              willChange: 'opacity',
-              backfaceVisibility: 'hidden',
-              transform: 'translate3d(0, 0, 0)',
-            }}
-          >
-            {renderCurrentPhase()}
-          </motion.div>
-        </AnimatePresence>
+        <Suspense fallback={<LazyLoadingSpinner message="Loading phase..." />}>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={currentPhase}
+              initial="initial"
+              animate="in"
+              exit="out"
+              variants={pageVariants}
+              transition={pageTransition}
+              className="w-full flex-1 flex flex-col"
+              style={{
+                willChange: 'opacity',
+                backfaceVisibility: 'hidden',
+                transform: 'translate3d(0, 0, 0)',
+              }}
+            >
+              {renderCurrentPhase()}
+            </motion.div>
+          </AnimatePresence>
+        </Suspense>
       </div>
       {showSettings && (
-        <PhaseErrorBoundary phaseName="Settings">
-          <SettingsPanel />
-        </PhaseErrorBoundary>
+        <Suspense
+          fallback={<ModalLoadingOverlay message="Loading Settings..." />}
+        >
+          <PhaseErrorBoundary phaseName="Settings">
+            <SettingsPanel />
+          </PhaseErrorBoundary>
+        </Suspense>
       )}
     </>
   );

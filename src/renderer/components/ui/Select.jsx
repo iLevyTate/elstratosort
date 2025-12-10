@@ -10,7 +10,6 @@ const Select = memo(
       label = '',
       required = false,
       children,
-      style,
       ...rest
     },
     ref,
@@ -28,16 +27,6 @@ const Select = memo(
       return `form-input-enhanced ${invalidClass} ${className}`.trim();
     }, [invalid, error, className]);
 
-    // Force a white background on first paint to avoid black flash before CSS loads
-    const mergedStyle = useMemo(
-      () => ({
-        backgroundColor: '#fff',
-        color: '#111827',
-        ...style,
-      }),
-      [style],
-    );
-
     // If used standalone without label/error, return simple select
     if (!label && !error) {
       return (
@@ -47,7 +36,6 @@ const Select = memo(
           role="combobox"
           aria-invalid={invalid || !!error}
           aria-required={required}
-          style={mergedStyle}
           {...rest}
         >
           {children}
@@ -83,7 +71,6 @@ const Select = memo(
           aria-describedby={error ? errorId : undefined}
           aria-required={required}
           aria-labelledby={label ? id : undefined}
-          style={mergedStyle}
           {...rest}
         >
           {children}
@@ -109,7 +96,6 @@ Select.propTypes = {
   label: PropTypes.string,
   required: PropTypes.bool,
   children: PropTypes.node,
-  style: PropTypes.object,
 };
 
 export default Select;
