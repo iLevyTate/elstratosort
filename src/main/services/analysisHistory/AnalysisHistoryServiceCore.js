@@ -30,7 +30,7 @@ const {
   saveHistory: saveHistoryFile,
   loadIndex: loadIndexFile,
   saveIndex: saveIndexFile,
-  createDefaultStructures
+  createDefaultStructures: createDefaultStructuresFiles
 } = require('./persistence');
 
 const { createEmptyIndex, generateFileHash, updateIndexes } = require('./indexManager');
@@ -85,6 +85,24 @@ class AnalysisHistoryServiceCore {
     this._statsNeedFullRecalc = true;
   }
 
+  _normalizeResults(result) {
+    if (Array.isArray(result)) {
+      return result;
+    }
+
+    if (result && Array.isArray(result.results)) {
+      const normalized = result.results.slice();
+      normalized.total = typeof result.total === 'number' ? result.total : normalized.length;
+      normalized.hasMore = typeof result.hasMore === 'boolean' ? result.hasMore : false;
+      if (typeof result.fromCache === 'boolean') {
+        normalized.fromCache = result.fromCache;
+      }
+      return normalized;
+    }
+
+    return [];
+  }
+
   getDefaultConfig() {
     return {
       schemaVersion: this.SCHEMA_VERSION,
@@ -130,7 +148,7 @@ class AnalysisHistoryServiceCore {
       logger.error('[AnalysisHistoryService] Failed to initialize', {
         error: error.message
       });
-      await this._createDefaultStructures();
+      await this.createDefaultStructures({ resetConfig: true });
     }
   }
 
@@ -160,14 +178,32 @@ class AnalysisHistoryServiceCore {
     );
   }
 
-  async _createDefaultStructures() {
-    const result = await createDefaultStructures(
+  async createDefaultStructures(options = {}) {
+    const { resetConfig = false } = options;
+
+    // Preserve existing configuration when requested to avoid wiping user prefs
+    if (!this.config && !resetConfig) {
+      try {
+        await this.loadConfig();
+      } catch (error) {
+        logger.warn('[AnalysisHistoryService] Falling back to default config during reset', {
+          error: error.message
+        });
+      }
+    }
+
+    const result = await createDefaultStructuresFiles(
       {
         configPath: this.configPath,
         historyPath: this.historyPath,
         indexPath: this.indexPath
       },
-      () => this.getDefaultConfig(),
+      resetConfig
+        ? () => this.getDefaultConfig()
+        : () => ({
+            ...(this.config || this.getDefaultConfig()),
+            updatedAt: new Date().toISOString()
+          }),
       () => this.createEmptyHistory(),
       () => createEmptyIndex(this.SCHEMA_VERSION)
     );
@@ -175,7 +211,13 @@ class AnalysisHistoryServiceCore {
     this.config = result.config;
     this.analysisHistory = result.history;
     this.analysisIndex = result.index;
+
+    // Reset caches/stat tracking so subsequent reads reflect the cleared state
+    this._cache = createCacheStore();
+    this._statsNeedFullRecalc = true;
     this.initialized = true;
+
+    return result;
   }
 
   async saveConfig() {
@@ -291,13 +333,14 @@ class AnalysisHistoryServiceCore {
 
   async searchAnalysis(query, options = {}) {
     await this.initialize();
-    return await searchAnalysisHelper(
+    const result = await searchAnalysisHelper(
       this.analysisHistory,
       this._cache,
       this.SEARCH_CACHE_TTL_MS,
       query,
       options
     );
+    return this._normalizeResults(result);
   }
 
   async getAnalysisByPath(filePath) {
@@ -307,7 +350,7 @@ class AnalysisHistoryServiceCore {
 
   async getAnalysisByCategory(category, options = {}) {
     await this.initialize();
-    return getAnalysisByCategoryHelper(
+    const result = await getAnalysisByCategoryHelper(
       this.analysisHistory,
       this.analysisIndex,
       this._cache,
@@ -315,11 +358,12 @@ class AnalysisHistoryServiceCore {
       category,
       options
     );
+    return this._normalizeResults(result);
   }
 
   async getAnalysisByTag(tag, options = {}) {
     await this.initialize();
-    return getAnalysisByTagHelper(
+    const result = await getAnalysisByTagHelper(
       this.analysisHistory,
       this.analysisIndex,
       this._cache,
@@ -327,17 +371,19 @@ class AnalysisHistoryServiceCore {
       tag,
       options
     );
+    return this._normalizeResults(result);
   }
 
   async getRecentAnalysis(limit = 50, offset = 0) {
     await this.initialize();
-    return getRecentAnalysisHelper(
+    const result = await getRecentAnalysisHelper(
       this.analysisHistory,
       this._cache,
       this.CACHE_TTL_MS,
       limit,
       offset
     );
+    return this._normalizeResults(result);
   }
 
   async getStatistics() {
@@ -358,13 +404,14 @@ class AnalysisHistoryServiceCore {
 
   async getAnalysisByDateRange(startDate, endDate, options = {}) {
     await this.initialize();
-    return getAnalysisByDateRangeHelper(
+    const result = await getAnalysisByDateRangeHelper(
       this.analysisHistory,
       this.analysisIndex,
       startDate,
       endDate,
       options
     );
+    return this._normalizeResults(result);
   }
 
   async getCategories() {

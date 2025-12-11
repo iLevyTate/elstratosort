@@ -90,13 +90,15 @@ describe('Files IPC - batch organize', () => {
     const { IPC_CHANNELS, serviceIntegration } = register();
     const handler = ipcMain._handlers.get(IPC_CHANNELS.FILES.PERFORM_OPERATION);
 
-    const tmp = require('os').tmpdir();
+    const os = require('os');
     const path = require('path');
     const fs = require('fs').promises;
-    const sourceA = path.join(tmp, `src_A_${Date.now()}.txt`);
-    const destA = path.join(tmp, `dest_A_${Date.now()}.txt`);
-    const sourceB = path.join(tmp, `src_B_${Date.now()}.txt`);
-    const destB = path.join(tmp, `dest_B_${Date.now()}.txt`);
+    // Ensure a real temp directory exists (Windows runners can have non-existent tmp paths)
+    const tmpBase = await fs.mkdtemp(path.join(os.tmpdir(), 'batch-organize-'));
+    const sourceA = path.join(tmpBase, `src_A_${Date.now()}.txt`);
+    const destA = path.join(tmpBase, `dest_A_${Date.now()}.txt`);
+    const sourceB = path.join(tmpBase, `src_B_${Date.now()}.txt`);
+    const destB = path.join(tmpBase, `dest_B_${Date.now()}.txt`);
     await fs.writeFile(sourceA, 'A');
     await fs.writeFile(sourceB, 'B');
 

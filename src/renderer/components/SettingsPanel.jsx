@@ -374,14 +374,14 @@ const SettingsPanel = React.memo(function SettingsPanel() {
               <Button
                 onClick={expandAll}
                 variant="subtle"
-                className="text-xs px-[var(--spacing-md)]"
+                className="text-xs px-[var(--spacing-md)] min-w-[110px] justify-center"
               >
                 Expand all
               </Button>
               <Button
                 onClick={collapseAll}
                 variant="subtle"
-                className="text-xs px-[var(--spacing-md)]"
+                className="text-xs px-[var(--spacing-md)] min-w-[110px] justify-center"
               >
                 Collapse all
               </Button>

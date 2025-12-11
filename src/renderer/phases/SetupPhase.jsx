@@ -416,7 +416,7 @@ function SetupPhase() {
           {/* Folder list */}
           <div className="flex-1 min-h-0">
             {isLoading ? (
-              <SmartFolderSkeleton count={3} />
+              <SmartFolderSkeleton count={3} compact={isCompactMode} />
             ) : smartFolders.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <div className="w-16 h-16 rounded-2xl bg-system-gray-100 flex items-center justify-center mb-4">

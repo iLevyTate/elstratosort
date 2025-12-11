@@ -47,9 +47,18 @@ if (!z) {
   const directoryPathSchema = z.string().min(1, 'Directory path is required');
 
   /**
-   * Optional URL validation
+   * Optional URL validation (relaxed: protocol optional, trims whitespace)
    */
-  const optionalUrlSchema = z.string().url().optional().or(z.literal(''));
+  const relaxedUrlRegex = /^(?:https?:\/\/)?(?:[\w.-]+|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/.*)?$/;
+  const optionalUrlSchema = z
+    .string()
+    .trim()
+    .optional()
+    .or(z.literal(''))
+    .refine(
+      (val) => val === '' || relaxedUrlRegex.test(val),
+      'Invalid Ollama URL format (expected host[:port] with optional http/https)'
+    );
 
   /**
    * Model name validation - alphanumeric with common separators

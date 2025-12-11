@@ -10,7 +10,9 @@
  * - Potential future support for environment-based overrides
  */
 
-const { PLATFORM } = require('./crossPlatformUtils');
+// Avoid pulling Node-only deps (e.g., child_process) into the renderer bundle.
+// We only need the platform string here, so read it directly from process.
+const PLATFORM = typeof process !== 'undefined' && process.platform ? process.platform : 'browser';
 
 /**
  * Path length limits by platform

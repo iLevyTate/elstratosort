@@ -316,10 +316,16 @@ function sanitizeSettings(settings) {
       continue;
     }
 
+    // Normalize special fields before validation
+    let normalizedValue = value;
+    if (key === 'ollamaHost' && typeof value === 'string') {
+      normalizedValue = value.trim();
+    }
+
     // Validate and sanitize
-    const fieldErrors = validateSetting(key, value, rule);
+    const fieldErrors = validateSetting(key, normalizedValue, rule);
     if (fieldErrors.length === 0) {
-      sanitized[key] = value;
+      sanitized[key] = normalizedValue;
     }
     // Invalid values are dropped (will use defaults)
   }

@@ -9,6 +9,14 @@ function AutoOrganizeSection({ settings, setSettings }) {
     }));
   };
 
+  const clamp01 = (val, fallback = 0) => {
+    if (val === null || val === undefined || Number.isNaN(val)) return fallback;
+    return Math.min(1, Math.max(0, val));
+  };
+
+  const toPercent = (val, fallback) => Math.round(clamp01(val, fallback) * 100);
+  const fromPercent = (val) => clamp01(Number(val) / 100, 0);
+
   return (
     <div className="space-y-4">
       {/* Auto-organize toggle */}
@@ -34,16 +42,17 @@ function AutoOrganizeSection({ settings, setSettings }) {
             <div className="flex items-center justify-between">
               <label className="text-sm text-system-gray-700">Auto-approve confidence</label>
               <span className="text-sm font-medium text-stratosort-blue">
-                {Math.round((settings.autoApproveThreshold || 0.8) * 100)}%
+                {toPercent(settings.autoApproveThreshold, 0.8)}%
               </span>
             </div>
             <input
               type="range"
               min="50"
               max="100"
-              value={Math.round((settings.autoApproveThreshold || 0.8) * 100)}
-              onChange={(e) => updateSetting('autoApproveThreshold', e.target.value / 100)}
-              className="w-full"
+              step="1"
+              value={toPercent(settings.autoApproveThreshold, 0.8)}
+              onChange={(e) => updateSetting('autoApproveThreshold', fromPercent(e.target.value))}
+              className="w-full accent-stratosort-blue"
             />
             <p className="text-xs text-system-gray-500">
               Files above this confidence are organized automatically
@@ -55,16 +64,19 @@ function AutoOrganizeSection({ settings, setSettings }) {
             <div className="flex items-center justify-between">
               <label className="text-sm text-system-gray-700">Downloads confidence</label>
               <span className="text-sm font-medium text-stratosort-blue">
-                {Math.round((settings.downloadConfidenceThreshold || 0.9) * 100)}%
+                {toPercent(settings.downloadConfidenceThreshold, 0.9)}%
               </span>
             </div>
             <input
               type="range"
               min="70"
               max="100"
-              value={Math.round((settings.downloadConfidenceThreshold || 0.9) * 100)}
-              onChange={(e) => updateSetting('downloadConfidenceThreshold', e.target.value / 100)}
-              className="w-full"
+              step="1"
+              value={toPercent(settings.downloadConfidenceThreshold, 0.9)}
+              onChange={(e) =>
+                updateSetting('downloadConfidenceThreshold', fromPercent(e.target.value))
+              }
+              className="w-full accent-stratosort-blue"
             />
             <p className="text-xs text-system-gray-500">
               Higher threshold for automatic download organization
@@ -76,16 +88,17 @@ function AutoOrganizeSection({ settings, setSettings }) {
             <div className="flex items-center justify-between">
               <label className="text-sm text-system-gray-700">Review threshold</label>
               <span className="text-sm font-medium text-amber-600">
-                {Math.round((settings.reviewThreshold || 0.5) * 100)}%
+                {toPercent(settings.reviewThreshold, 0.5)}%
               </span>
             </div>
             <input
               type="range"
               min="30"
               max="80"
-              value={Math.round((settings.reviewThreshold || 0.5) * 100)}
-              onChange={(e) => updateSetting('reviewThreshold', e.target.value / 100)}
-              className="w-full"
+              step="1"
+              value={toPercent(settings.reviewThreshold, 0.5)}
+              onChange={(e) => updateSetting('reviewThreshold', fromPercent(e.target.value))}
+              className="w-full accent-stratosort-blue"
             />
             <p className="text-xs text-system-gray-500">Files below this need manual review</p>
           </div>
