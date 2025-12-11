@@ -23,7 +23,7 @@ logger.setContext('Renderer');
 const eventHandlers = {
   click: null,
   visibilitychange: null,
-  beforeunload: null,
+  beforeunload: null
 };
 
 // Remove any previously registered handlers (important for HMR)
@@ -32,10 +32,7 @@ function cleanupEventHandlers() {
     document.removeEventListener('click', eventHandlers.click);
   }
   if (eventHandlers.visibilitychange) {
-    document.removeEventListener(
-      'visibilitychange',
-      eventHandlers.visibilitychange,
-    );
+    document.removeEventListener('visibilitychange', eventHandlers.visibilitychange);
   }
   if (eventHandlers.beforeunload) {
     window.removeEventListener('beforeunload', eventHandlers.beforeunload);
@@ -62,7 +59,7 @@ if (typeof window !== 'undefined') {
         target.scrollIntoView({
           behavior: 'smooth',
           block: 'start',
-          inline: 'nearest',
+          inline: 'nearest'
         });
       }
     }
@@ -104,7 +101,7 @@ function initializeApp() {
     const container = document.getElementById('root');
     if (!container) {
       throw new Error(
-        'Root container not found! Make sure there is a div with id="root" in the HTML.',
+        'Root container not found! Make sure there is a div with id="root" in the HTML.'
       );
     }
 
@@ -124,7 +121,7 @@ function initializeApp() {
             <App />
           </Provider>
         </GlobalErrorBoundary>
-      </React.StrictMode>,
+      </React.StrictMode>
     );
 
     // Remove initial loading after first paint
@@ -140,7 +137,7 @@ function initializeApp() {
   } catch (error) {
     logger.error('Failed to initialize React application', {
       error: error.message,
-      stack: error.stack,
+      stack: error.stack
     });
 
     // Show error message in the initial loading screen

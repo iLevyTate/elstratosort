@@ -5,7 +5,7 @@ function AutoOrganizeSection({ settings, setSettings }) {
   const updateSetting = (key, value) => {
     setSettings((prev) => ({
       ...prev,
-      [key]: value,
+      [key]: value
     }));
   };
 
@@ -19,9 +19,7 @@ function AutoOrganizeSection({ settings, setSettings }) {
           onChange={(e) => updateSetting('autoOrganize', e.target.checked)}
           className="form-checkbox accent-stratosort-blue"
         />
-        <span className="text-sm text-system-gray-700">
-          Automatically organize new downloads
-        </span>
+        <span className="text-sm text-system-gray-700">Automatically organize new downloads</span>
       </label>
 
       {/* Confidence thresholds */}
@@ -34,9 +32,7 @@ function AutoOrganizeSection({ settings, setSettings }) {
           {/* Auto-approve threshold */}
           <div className="space-y-1">
             <div className="flex items-center justify-between">
-              <label className="text-sm text-system-gray-700">
-                Auto-approve confidence
-              </label>
+              <label className="text-sm text-system-gray-700">Auto-approve confidence</label>
               <span className="text-sm font-medium text-stratosort-blue">
                 {Math.round((settings.autoApproveThreshold || 0.8) * 100)}%
               </span>
@@ -46,9 +42,7 @@ function AutoOrganizeSection({ settings, setSettings }) {
               min="50"
               max="100"
               value={Math.round((settings.autoApproveThreshold || 0.8) * 100)}
-              onChange={(e) =>
-                updateSetting('autoApproveThreshold', e.target.value / 100)
-              }
+              onChange={(e) => updateSetting('autoApproveThreshold', e.target.value / 100)}
               className="w-full"
             />
             <p className="text-xs text-system-gray-500">
@@ -59,29 +53,17 @@ function AutoOrganizeSection({ settings, setSettings }) {
           {/* Download confidence threshold */}
           <div className="space-y-1">
             <div className="flex items-center justify-between">
-              <label className="text-sm text-system-gray-700">
-                Downloads confidence
-              </label>
+              <label className="text-sm text-system-gray-700">Downloads confidence</label>
               <span className="text-sm font-medium text-stratosort-blue">
-                {Math.round(
-                  (settings.downloadConfidenceThreshold || 0.9) * 100,
-                )}
-                %
+                {Math.round((settings.downloadConfidenceThreshold || 0.9) * 100)}%
               </span>
             </div>
             <input
               type="range"
               min="70"
               max="100"
-              value={Math.round(
-                (settings.downloadConfidenceThreshold || 0.9) * 100,
-              )}
-              onChange={(e) =>
-                updateSetting(
-                  'downloadConfidenceThreshold',
-                  e.target.value / 100,
-                )
-              }
+              value={Math.round((settings.downloadConfidenceThreshold || 0.9) * 100)}
+              onChange={(e) => updateSetting('downloadConfidenceThreshold', e.target.value / 100)}
               className="w-full"
             />
             <p className="text-xs text-system-gray-500">
@@ -92,9 +74,7 @@ function AutoOrganizeSection({ settings, setSettings }) {
           {/* Review threshold */}
           <div className="space-y-1">
             <div className="flex items-center justify-between">
-              <label className="text-sm text-system-gray-700">
-                Review threshold
-              </label>
+              <label className="text-sm text-system-gray-700">Review threshold</label>
               <span className="text-sm font-medium text-amber-600">
                 {Math.round((settings.reviewThreshold || 0.5) * 100)}%
               </span>
@@ -104,21 +84,15 @@ function AutoOrganizeSection({ settings, setSettings }) {
               min="30"
               max="80"
               value={Math.round((settings.reviewThreshold || 0.5) * 100)}
-              onChange={(e) =>
-                updateSetting('reviewThreshold', e.target.value / 100)
-              }
+              onChange={(e) => updateSetting('reviewThreshold', e.target.value / 100)}
               className="w-full"
             />
-            <p className="text-xs text-system-gray-500">
-              Files below this need manual review
-            </p>
+            <p className="text-xs text-system-gray-500">Files below this need manual review</p>
           </div>
 
           {/* Visual confidence guide */}
           <div className="mt-3 p-2 bg-white rounded border border-system-gray-200">
-            <div className="text-xs text-system-gray-600 mb-2">
-              Confidence Guide:
-            </div>
+            <div className="text-xs text-system-gray-600 mb-2">Confidence Guide:</div>
             <div className="space-y-1 text-xs">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-green-500"></div>
@@ -142,7 +116,7 @@ function AutoOrganizeSection({ settings, setSettings }) {
 
 AutoOrganizeSection.propTypes = {
   settings: PropTypes.object.isRequired,
-  setSettings: PropTypes.func.isRequired,
+  setSettings: PropTypes.func.isRequired
 };
 
 export default AutoOrganizeSection;

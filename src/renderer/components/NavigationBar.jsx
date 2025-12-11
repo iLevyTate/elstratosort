@@ -1,18 +1,7 @@
 import React, { useState, useEffect, memo, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
-import {
-  Home,
-  Settings,
-  Search,
-  FolderOpen,
-  CheckCircle2,
-  Loader2,
-} from 'lucide-react';
-import {
-  PHASES,
-  PHASE_TRANSITIONS,
-  PHASE_METADATA,
-} from '../../shared/constants';
+import { Home, Settings, Search, FolderOpen, CheckCircle2, Loader2 } from 'lucide-react';
+import { PHASES, PHASE_TRANSITIONS, PHASE_METADATA } from '../../shared/constants';
 import { logger } from '../../shared/logger';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { setPhase, toggleSettings } from '../store/slices/uiSlice';
@@ -65,7 +54,7 @@ const PHASE_ICONS = {
   [PHASES.SETUP]: CogIcon,
   [PHASES.DISCOVER]: SearchIcon,
   [PHASES.ORGANIZE]: FolderIcon,
-  [PHASES.COMPLETE]: CheckCircleIcon,
+  [PHASES.COMPLETE]: CheckCircleIcon
 };
 
 const PHASE_ORDER = [
@@ -73,7 +62,7 @@ const PHASE_ORDER = [
   PHASES.SETUP,
   PHASES.DISCOVER,
   PHASES.ORGANIZE,
-  PHASES.COMPLETE,
+  PHASES.COMPLETE
 ];
 
 // =============================================================================
@@ -138,7 +127,7 @@ const NavTab = memo(function NavTab({
   isLoading,
   onClick,
   onHover,
-  isHovered,
+  isHovered
 }) {
   const metadata = PHASE_METADATA[phase];
   const IconComponent = PHASE_ICONS[phase];
@@ -171,11 +160,12 @@ const NavTab = memo(function NavTab({
         px-3 py-1.5 text-sm font-medium whitespace-nowrap
         transition-all duration-200 ease-out
         focus:outline-none focus-visible:ring-2 focus-visible:ring-stratosort-blue focus-visible:ring-offset-2
-        ${isActive
-          ? 'bg-white text-stratosort-blue shadow-sm border border-system-gray-200'
-          : canNavigate
-            ? 'text-system-gray-600 hover:text-system-gray-900 hover:bg-white/60 border border-transparent'
-            : 'text-system-gray-400 cursor-not-allowed border border-transparent'
+        ${
+          isActive
+            ? 'bg-white text-stratosort-blue shadow-sm border border-system-gray-200'
+            : canNavigate
+              ? 'text-system-gray-600 hover:text-system-gray-900 hover:bg-white/60 border border-transparent'
+              : 'text-system-gray-400 cursor-not-allowed border border-transparent'
         }
       `}
       aria-label={metadata?.title}
@@ -216,7 +206,7 @@ NavTab.propTypes = {
   isLoading: PropTypes.bool.isRequired,
   onClick: PropTypes.func.isRequired,
   onHover: PropTypes.func.isRequired,
-  isHovered: PropTypes.bool.isRequired,
+  isHovered: PropTypes.bool.isRequired
 };
 
 /**
@@ -224,10 +214,7 @@ NavTab.propTypes = {
  */
 const NavActions = memo(function NavActions({ onSettingsClick }) {
   return (
-    <div
-      className="flex items-center gap-2"
-      style={{ WebkitAppRegion: 'no-drag' }}
-    >
+    <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' }}>
       <UpdateIndicator />
       <button
         type="button"
@@ -268,9 +255,9 @@ function NavigationBar() {
   const actions = useMemo(
     () => ({
       advancePhase: (phase) => dispatch(setPhase(phase)),
-      toggleSettings: () => dispatch(toggleSettings()),
+      toggleSettings: () => dispatch(toggleSettings())
     }),
-    [dispatch],
+    [dispatch]
   );
 
   // Scroll effect for glass morphism
@@ -294,7 +281,7 @@ function NavigationBar() {
         actions.advancePhase(newPhase);
       }
     },
-    [currentPhase, actions],
+    [currentPhase, actions]
   );
 
   // Settings handler
@@ -311,9 +298,10 @@ function NavigationBar() {
         fixed inset-x-0 top-0 z-[100]
         border-b backdrop-blur-xl backdrop-saturate-150
         transition-all duration-300 ease-out
-        ${isScrolled
-          ? 'bg-white/95 border-system-gray-200/60 shadow-md'
-          : 'bg-white/85 border-white/60 shadow-sm'
+        ${
+          isScrolled
+            ? 'bg-white/95 border-system-gray-200/60 shadow-md'
+            : 'bg-white/85 border-white/60 shadow-sm'
         }
       `}
       style={{ WebkitAppRegion: 'drag' }}
@@ -337,8 +325,7 @@ function NavigationBar() {
             const allowedTransitions = PHASE_TRANSITIONS[currentPhase] || [];
             const isActive = phase === currentPhase;
             const canNavigate =
-              (allowedTransitions.includes(phase) || isActive) &&
-              !isBlockedByOperation;
+              (allowedTransitions.includes(phase) || isActive) && !isBlockedByOperation;
 
             return (
               <NavTab

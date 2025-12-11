@@ -29,8 +29,8 @@ jest.mock('../src/main/services/ChromaDBService', () => ({
     offlineQueue: { size: () => 0 },
     serverUrl: 'http://localhost:8000',
     checkHealth: jest.fn().mockResolvedValue(true),
-    forceRecovery: jest.fn(),
-  }),
+    forceRecovery: jest.fn()
+  })
 }));
 
 describe('Files IPC - batch organize', () => {
@@ -46,20 +46,20 @@ describe('Files IPC - batch organize', () => {
     const logger = { info: jest.fn(), error: jest.fn(), warn: jest.fn() };
     const getMainWindow = () => ({
       isDestroyed: () => false,
-      webContents: { send: jest.fn() },
+      webContents: { send: jest.fn() }
     });
     const serviceIntegration = {
       undoRedo: { recordAction: jest.fn(async () => {}) },
       processingState: {
         createOrLoadOrganizeBatch: jest.fn(async (_id, ops) => ({
           id: 'batch_test',
-          operations: ops,
+          operations: ops
         })),
         markOrganizeOpStarted: jest.fn(async () => {}),
         markOrganizeOpDone: jest.fn(async () => {}),
         markOrganizeOpError: jest.fn(async () => {}),
-        completeOrganizeBatch: jest.fn(async () => {}),
-      },
+        completeOrganizeBatch: jest.fn(async () => {})
+      }
     };
 
     registerAllIpc({
@@ -80,7 +80,7 @@ describe('Files IPC - batch organize', () => {
       getOllama: () => ({ list: async () => ({ models: [] }) }),
       getOllamaModel: () => 'llama3.2:latest',
       getOllamaVisionModel: () => null,
-      buildOllamaOptions: async () => ({}),
+      buildOllamaOptions: async () => ({})
     });
     return { IPC_CHANNELS, ACTION_TYPES, serviceIntegration };
   }
@@ -104,17 +104,15 @@ describe('Files IPC - batch organize', () => {
       type: 'batch_organize',
       operations: [
         { source: sourceA, destination: destA },
-        { source: sourceB, destination: destB },
-      ],
+        { source: sourceB, destination: destB }
+      ]
     });
 
     expect(success).toBe(true);
     expect(successCount).toBe(2);
     expect(failCount).toBe(0);
     expect(Array.isArray(results)).toBe(true);
-    expect(
-      serviceIntegration.processingState.completeOrganizeBatch,
-    ).toHaveBeenCalled();
+    expect(serviceIntegration.processingState.completeOrganizeBatch).toHaveBeenCalled();
 
     // Verify database update was called
     expect(mockUpdateFilePaths).toHaveBeenCalled();

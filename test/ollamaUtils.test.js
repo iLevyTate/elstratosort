@@ -5,15 +5,15 @@
 
 jest.mock('electron', () => ({
   app: {
-    getPath: jest.fn().mockReturnValue('/tmp/mock-electron'),
-  },
+    getPath: jest.fn().mockReturnValue('/tmp/mock-electron')
+  }
 }));
 
 // Mock ollama
 jest.mock('ollama', () => ({
   Ollama: jest.fn().mockImplementation(() => ({
-    list: jest.fn().mockResolvedValue({ models: [] }),
-  })),
+    list: jest.fn().mockResolvedValue({ models: [] })
+  }))
 }));
 
 // Mock fs
@@ -22,8 +22,8 @@ jest.mock('fs', () => ({
     readFile: jest.fn(),
     writeFile: jest.fn().mockResolvedValue(),
     rename: jest.fn().mockResolvedValue(),
-    unlink: jest.fn().mockResolvedValue(),
-  },
+    unlink: jest.fn().mockResolvedValue()
+  }
 }));
 
 describe('ollamaUtils', () => {
@@ -148,8 +148,8 @@ describe('ollamaUtils', () => {
         JSON.stringify({
           selectedTextModel: 'llama3',
           selectedVisionModel: 'llava',
-          host: 'http://localhost:11434',
-        }),
+          host: 'http://localhost:11434'
+        })
       );
 
       const config = await ollamaUtils.loadOllamaConfig();
@@ -177,8 +177,8 @@ describe('ollamaUtils', () => {
     test('supports legacy selectedModel key', async () => {
       fs.readFile.mockResolvedValue(
         JSON.stringify({
-          selectedModel: 'llama2',
-        }),
+          selectedModel: 'llama2'
+        })
       );
 
       await ollamaUtils.loadOllamaConfig();

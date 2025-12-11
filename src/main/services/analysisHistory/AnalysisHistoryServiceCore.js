@@ -20,7 +20,7 @@ const {
   invalidateCachesOnAdd,
   updateIncrementalStatsOnAdd,
   clearCaches: clearCachesHelper,
-  warmCache: warmCacheHelper,
+  warmCache: warmCacheHelper
 } = require('./cacheManager');
 
 const {
@@ -30,20 +30,16 @@ const {
   saveHistory: saveHistoryFile,
   loadIndex: loadIndexFile,
   saveIndex: saveIndexFile,
-  createDefaultStructures,
+  createDefaultStructures
 } = require('./persistence');
 
-const {
-  createEmptyIndex,
-  generateFileHash,
-  updateIndexes,
-} = require('./indexManager');
+const { createEmptyIndex, generateFileHash, updateIndexes } = require('./indexManager');
 
 const { searchAnalysis: searchAnalysisHelper } = require('./search');
 
 const {
   getStatistics: getStatisticsHelper,
-  getQuickStats: getQuickStatsHelper,
+  getQuickStats: getQuickStatsHelper
 } = require('./statistics');
 
 const {
@@ -53,7 +49,7 @@ const {
   getRecentAnalysis: getRecentAnalysisHelper,
   getAnalysisByDateRange: getAnalysisByDateRangeHelper,
   getCategories: getCategoriesHelper,
-  getTags: getTagsHelper,
+  getTags: getTagsHelper
 } = require('./queries');
 
 const { performMaintenanceIfNeeded, migrateHistory } = require('./maintenance');
@@ -101,7 +97,7 @@ class AnalysisHistoryServiceCore {
       backupFrequencyDays: 7,
       lastBackup: null,
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
   }
 
@@ -116,8 +112,8 @@ class AnalysisHistoryServiceCore {
       metadata: {
         lastCleanup: null,
         totalEntries: 0,
-        averageAnalysisTime: 0,
-      },
+        averageAnalysisTime: 0
+      }
     };
   }
 
@@ -132,7 +128,7 @@ class AnalysisHistoryServiceCore {
       logger.info('[AnalysisHistoryService] Initialized successfully');
     } catch (error) {
       logger.error('[AnalysisHistoryService] Failed to initialize', {
-        error: error.message,
+        error: error.message
       });
       await this._createDefaultStructures();
     }
@@ -142,7 +138,7 @@ class AnalysisHistoryServiceCore {
     this.config = await loadConfigFile(
       this.configPath,
       () => this.getDefaultConfig(),
-      async (cfg) => saveConfigFile(this.configPath, cfg),
+      async (cfg) => saveConfigFile(this.configPath, cfg)
     );
   }
 
@@ -152,7 +148,7 @@ class AnalysisHistoryServiceCore {
       this.SCHEMA_VERSION,
       () => this.createEmptyHistory(),
       async (hist) => saveHistoryFile(this.historyPath, hist),
-      migrateHistory,
+      migrateHistory
     );
   }
 
@@ -160,7 +156,7 @@ class AnalysisHistoryServiceCore {
     this.analysisIndex = await loadIndexFile(
       this.indexPath,
       () => createEmptyIndex(this.SCHEMA_VERSION),
-      async (idx) => saveIndexFile(this.indexPath, idx),
+      async (idx) => saveIndexFile(this.indexPath, idx)
     );
   }
 
@@ -169,11 +165,11 @@ class AnalysisHistoryServiceCore {
       {
         configPath: this.configPath,
         historyPath: this.historyPath,
-        indexPath: this.indexPath,
+        indexPath: this.indexPath
       },
       () => this.getDefaultConfig(),
       () => this.createEmptyHistory(),
-      () => createEmptyIndex(this.SCHEMA_VERSION),
+      () => createEmptyIndex(this.SCHEMA_VERSION)
     );
 
     this.config = result.config;
@@ -198,11 +194,7 @@ class AnalysisHistoryServiceCore {
     await this.initialize();
 
     const timestamp = new Date().toISOString();
-    const fileHash = generateFileHash(
-      fileInfo.path,
-      fileInfo.size,
-      fileInfo.lastModified,
-    );
+    const fileHash = generateFileHash(fileInfo.path, fileInfo.size, fileInfo.lastModified);
 
     const analysisEntry = {
       id: crypto.randomUUID(),
@@ -229,7 +221,7 @@ class AnalysisHistoryServiceCore {
         dates: analysisResults.dates || [],
         amounts: analysisResults.amounts || [],
         language: analysisResults.language || null,
-        sentiment: analysisResults.sentiment || null,
+        sentiment: analysisResults.sentiment || null
       },
 
       // Processing metadata
@@ -238,7 +230,7 @@ class AnalysisHistoryServiceCore {
         processingTimeMs: analysisResults.processingTime || 0,
         version: this.SCHEMA_VERSION,
         errorCount: analysisResults.errorCount || 0,
-        warnings: analysisResults.warnings || [],
+        warnings: analysisResults.warnings || []
       },
 
       // Organization results (if file was moved/renamed)
@@ -247,7 +239,7 @@ class AnalysisHistoryServiceCore {
         actual: analysisResults.actualPath || null,
         renamed: analysisResults.renamed || false,
         newName: analysisResults.newName || null,
-        smartFolder: analysisResults.smartFolder || null,
+        smartFolder: analysisResults.smartFolder || null
       },
 
       // Future expansion fields
@@ -256,7 +248,7 @@ class AnalysisHistoryServiceCore {
       userFeedback: null, // User corrections/ratings
       exportHistory: [], // Export/share history
       accessCount: 0,
-      lastAccessed: timestamp,
+      lastAccessed: timestamp
     };
 
     // Store the entry
@@ -276,16 +268,10 @@ class AnalysisHistoryServiceCore {
     invalidateCachesOnAdd(this._cache);
 
     // Save to disk
-    const saveResults = await Promise.allSettled([
-      this.saveHistory(),
-      this.saveIndex(),
-    ]);
+    const saveResults = await Promise.allSettled([this.saveHistory(), this.saveIndex()]);
     saveResults.forEach((result, index) => {
       if (result.status === 'rejected') {
-        logger.warn(
-          `[ANALYSIS-HISTORY] Save operation ${index} failed:`,
-          result.reason?.message,
-        );
+        logger.warn(`[ANALYSIS-HISTORY] Save operation ${index} failed:`, result.reason?.message);
       }
     });
 
@@ -297,7 +283,7 @@ class AnalysisHistoryServiceCore {
       this,
       this.config,
       () => this.saveHistory(),
-      () => this.saveIndex(),
+      () => this.saveIndex()
     );
 
     return analysisEntry.id;
@@ -310,17 +296,13 @@ class AnalysisHistoryServiceCore {
       this._cache,
       this.SEARCH_CACHE_TTL_MS,
       query,
-      options,
+      options
     );
   }
 
   async getAnalysisByPath(filePath) {
     await this.initialize();
-    return getAnalysisByPathHelper(
-      this.analysisHistory,
-      this.analysisIndex,
-      filePath,
-    );
+    return getAnalysisByPathHelper(this.analysisHistory, this.analysisIndex, filePath);
   }
 
   async getAnalysisByCategory(category, options = {}) {
@@ -331,7 +313,7 @@ class AnalysisHistoryServiceCore {
       this._cache,
       this.CACHE_TTL_MS,
       category,
-      options,
+      options
     );
   }
 
@@ -343,7 +325,7 @@ class AnalysisHistoryServiceCore {
       this._cache,
       this.CACHE_TTL_MS,
       tag,
-      options,
+      options
     );
   }
 
@@ -354,7 +336,7 @@ class AnalysisHistoryServiceCore {
       this._cache,
       this.CACHE_TTL_MS,
       limit,
-      offset,
+      offset
     );
   }
 
@@ -365,7 +347,7 @@ class AnalysisHistoryServiceCore {
       this.analysisIndex,
       this._cache,
       this,
-      this.STATS_CACHE_TTL_MS,
+      this.STATS_CACHE_TTL_MS
     );
   }
 
@@ -381,7 +363,7 @@ class AnalysisHistoryServiceCore {
       this.analysisIndex,
       startDate,
       endDate,
-      options,
+      options
     );
   }
 
@@ -401,7 +383,7 @@ class AnalysisHistoryServiceCore {
       this._cache,
       (limit) => this.getRecentAnalysis(limit),
       this.analysisHistory,
-      this,
+      this
     );
   }
 

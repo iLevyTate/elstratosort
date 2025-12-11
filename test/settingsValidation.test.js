@@ -8,7 +8,7 @@ const {
   validateSetting,
   sanitizeSettings,
   getDefaultValue,
-  getConfigurableLimits,
+  getConfigurableLimits
 } = require('../src/shared/settingsValidation');
 
 describe('settingsValidation security', () => {
@@ -18,7 +18,7 @@ describe('settingsValidation security', () => {
 
     expect(result.valid).toBe(true);
     expect(result.warnings).toEqual(
-      expect.arrayContaining([expect.stringContaining('unsafe key')]),
+      expect.arrayContaining([expect.stringContaining('unsafe key')])
     );
     expect(result.errors).toHaveLength(0);
   });
@@ -52,23 +52,13 @@ describe('Settings Validation', () => {
   describe('validateSetting', () => {
     describe('theme validation', () => {
       test('accepts valid theme values', () => {
-        expect(
-          validateSetting('theme', 'light', VALIDATION_RULES.theme),
-        ).toEqual([]);
-        expect(
-          validateSetting('theme', 'dark', VALIDATION_RULES.theme),
-        ).toEqual([]);
-        expect(
-          validateSetting('theme', 'system', VALIDATION_RULES.theme),
-        ).toEqual([]);
+        expect(validateSetting('theme', 'light', VALIDATION_RULES.theme)).toEqual([]);
+        expect(validateSetting('theme', 'dark', VALIDATION_RULES.theme)).toEqual([]);
+        expect(validateSetting('theme', 'system', VALIDATION_RULES.theme)).toEqual([]);
       });
 
       test('rejects invalid theme values', () => {
-        const errors = validateSetting(
-          'theme',
-          'invalid',
-          VALIDATION_RULES.theme,
-        );
+        const errors = validateSetting('theme', 'invalid', VALIDATION_RULES.theme);
         expect(errors).toHaveLength(1);
         expect(errors[0]).toContain('theme');
       });
@@ -77,25 +67,13 @@ describe('Settings Validation', () => {
     describe('numeric validation', () => {
       test('accepts valid numbers within range', () => {
         expect(
-          validateSetting(
-            'maxConcurrentAnalysis',
-            3,
-            VALIDATION_RULES.maxConcurrentAnalysis,
-          ),
+          validateSetting('maxConcurrentAnalysis', 3, VALIDATION_RULES.maxConcurrentAnalysis)
         ).toEqual([]);
         expect(
-          validateSetting(
-            'maxConcurrentAnalysis',
-            1,
-            VALIDATION_RULES.maxConcurrentAnalysis,
-          ),
+          validateSetting('maxConcurrentAnalysis', 1, VALIDATION_RULES.maxConcurrentAnalysis)
         ).toEqual([]);
         expect(
-          validateSetting(
-            'maxConcurrentAnalysis',
-            10,
-            VALIDATION_RULES.maxConcurrentAnalysis,
-          ),
+          validateSetting('maxConcurrentAnalysis', 10, VALIDATION_RULES.maxConcurrentAnalysis)
         ).toEqual([]);
       });
 
@@ -103,7 +81,7 @@ describe('Settings Validation', () => {
         const errors = validateSetting(
           'maxConcurrentAnalysis',
           0,
-          VALIDATION_RULES.maxConcurrentAnalysis,
+          VALIDATION_RULES.maxConcurrentAnalysis
         );
         expect(errors.length).toBeGreaterThan(0);
       });
@@ -112,7 +90,7 @@ describe('Settings Validation', () => {
         const errors = validateSetting(
           'maxConcurrentAnalysis',
           100,
-          VALIDATION_RULES.maxConcurrentAnalysis,
+          VALIDATION_RULES.maxConcurrentAnalysis
         );
         expect(errors.length).toBeGreaterThan(0);
       });
@@ -121,7 +99,7 @@ describe('Settings Validation', () => {
         const errors = validateSetting(
           'maxConcurrentAnalysis',
           'invalid',
-          VALIDATION_RULES.maxConcurrentAnalysis,
+          VALIDATION_RULES.maxConcurrentAnalysis
         );
         expect(errors.length).toBeGreaterThan(0);
       });
@@ -130,122 +108,68 @@ describe('Settings Validation', () => {
     describe('URL validation', () => {
       test('accepts valid URLs', () => {
         expect(
-          validateSetting(
-            'ollamaHost',
-            'http://localhost:11434',
-            VALIDATION_RULES.ollamaHost,
-          ),
+          validateSetting('ollamaHost', 'http://localhost:11434', VALIDATION_RULES.ollamaHost)
         ).toEqual([]);
         expect(
-          validateSetting(
-            'ollamaHost',
-            'http://127.0.0.1:8000',
-            VALIDATION_RULES.ollamaHost,
-          ),
+          validateSetting('ollamaHost', 'http://127.0.0.1:8000', VALIDATION_RULES.ollamaHost)
         ).toEqual([]);
         expect(
-          validateSetting(
-            'ollamaHost',
-            'https://api.example.com',
-            VALIDATION_RULES.ollamaHost,
-          ),
+          validateSetting('ollamaHost', 'https://api.example.com', VALIDATION_RULES.ollamaHost)
         ).toEqual([]);
       });
 
       test('rejects invalid URLs', () => {
-        const errors1 = validateSetting(
-          'ollamaHost',
-          'not a url',
-          VALIDATION_RULES.ollamaHost,
-        );
+        const errors1 = validateSetting('ollamaHost', 'not a url', VALIDATION_RULES.ollamaHost);
         expect(errors1.length).toBeGreaterThan(0);
 
-        const errors2 = validateSetting(
-          'ollamaHost',
-          'ftp://invalid',
-          VALIDATION_RULES.ollamaHost,
-        );
+        const errors2 = validateSetting('ollamaHost', 'ftp://invalid', VALIDATION_RULES.ollamaHost);
         expect(errors2.length).toBeGreaterThan(0);
       });
     });
 
     describe('boolean validation', () => {
       test('accepts boolean values', () => {
-        expect(
-          validateSetting('autoOrganize', true, VALIDATION_RULES.autoOrganize),
-        ).toEqual([]);
-        expect(
-          validateSetting('autoOrganize', false, VALIDATION_RULES.autoOrganize),
-        ).toEqual([]);
+        expect(validateSetting('autoOrganize', true, VALIDATION_RULES.autoOrganize)).toEqual([]);
+        expect(validateSetting('autoOrganize', false, VALIDATION_RULES.autoOrganize)).toEqual([]);
       });
 
       test('rejects non-boolean values', () => {
-        const errors = validateSetting(
-          'autoOrganize',
-          'yes',
-          VALIDATION_RULES.autoOrganize,
-        );
+        const errors = validateSetting('autoOrganize', 'yes', VALIDATION_RULES.autoOrganize);
         expect(errors.length).toBeGreaterThan(0);
       });
     });
 
     describe('string validation', () => {
       test('accepts valid string values', () => {
-        expect(
-          validateSetting(
-            'textModel',
-            'llama3.2:latest',
-            VALIDATION_RULES.textModel,
-          ),
-        ).toEqual([]);
-        expect(
-          validateSetting('textModel', 'gpt-4', VALIDATION_RULES.textModel),
-        ).toEqual([]);
+        expect(validateSetting('textModel', 'llama3.2:latest', VALIDATION_RULES.textModel)).toEqual(
+          []
+        );
+        expect(validateSetting('textModel', 'gpt-4', VALIDATION_RULES.textModel)).toEqual([]);
       });
 
       test('rejects non-string values', () => {
-        const errors = validateSetting(
-          'textModel',
-          123,
-          VALIDATION_RULES.textModel,
-        );
+        const errors = validateSetting('textModel', 123, VALIDATION_RULES.textModel);
         expect(errors.length).toBeGreaterThan(0);
       });
     });
 
     describe('file size validation', () => {
       test('accepts valid file sizes', () => {
+        expect(validateSetting('maxFileSize', 1024 * 1024, VALIDATION_RULES.maxFileSize)).toEqual(
+          []
+        ); // 1MB minimum
         expect(
-          validateSetting(
-            'maxFileSize',
-            1024 * 1024,
-            VALIDATION_RULES.maxFileSize,
-          ),
-        ).toEqual([]); // 1MB minimum
-        expect(
-          validateSetting(
-            'maxFileSize',
-            100 * 1024 * 1024,
-            VALIDATION_RULES.maxFileSize,
-          ),
+          validateSetting('maxFileSize', 100 * 1024 * 1024, VALIDATION_RULES.maxFileSize)
         ).toEqual([]);
       });
 
       test('rejects negative file sizes', () => {
-        const errors = validateSetting(
-          'maxFileSize',
-          -1,
-          VALIDATION_RULES.maxFileSize,
-        );
+        const errors = validateSetting('maxFileSize', -1, VALIDATION_RULES.maxFileSize);
         expect(errors.length).toBeGreaterThan(0);
       });
 
       test('rejects zero file size', () => {
-        const errors = validateSetting(
-          'maxFileSize',
-          0,
-          VALIDATION_RULES.maxFileSize,
-        );
+        const errors = validateSetting('maxFileSize', 0, VALIDATION_RULES.maxFileSize);
         expect(errors.length).toBeGreaterThan(0);
       });
 
@@ -253,7 +177,7 @@ describe('Settings Validation', () => {
         const errors = validateSetting(
           'maxFileSize',
           10 * 1024 * 1024 * 1024 * 1024,
-          VALIDATION_RULES.maxFileSize,
+          VALIDATION_RULES.maxFileSize
         );
         expect(errors.length).toBeGreaterThan(0);
       });
@@ -262,25 +186,13 @@ describe('Settings Validation', () => {
     describe('confidence threshold validation', () => {
       test('accepts valid confidence values (0-1)', () => {
         expect(
-          validateSetting(
-            'autoApproveThreshold',
-            0.8,
-            VALIDATION_RULES.autoApproveThreshold,
-          ),
+          validateSetting('autoApproveThreshold', 0.8, VALIDATION_RULES.autoApproveThreshold)
         ).toEqual([]);
         expect(
-          validateSetting(
-            'autoApproveThreshold',
-            0,
-            VALIDATION_RULES.autoApproveThreshold,
-          ),
+          validateSetting('autoApproveThreshold', 0, VALIDATION_RULES.autoApproveThreshold)
         ).toEqual([]);
         expect(
-          validateSetting(
-            'autoApproveThreshold',
-            1,
-            VALIDATION_RULES.autoApproveThreshold,
-          ),
+          validateSetting('autoApproveThreshold', 1, VALIDATION_RULES.autoApproveThreshold)
         ).toEqual([]);
       });
 
@@ -288,7 +200,7 @@ describe('Settings Validation', () => {
         const errors = validateSetting(
           'autoApproveThreshold',
           -0.1,
-          VALIDATION_RULES.autoApproveThreshold,
+          VALIDATION_RULES.autoApproveThreshold
         );
         expect(errors.length).toBeGreaterThan(0);
       });
@@ -297,7 +209,7 @@ describe('Settings Validation', () => {
         const errors = validateSetting(
           'autoApproveThreshold',
           1.5,
-          VALIDATION_RULES.autoApproveThreshold,
+          VALIDATION_RULES.autoApproveThreshold
         );
         expect(errors.length).toBeGreaterThan(0);
       });
@@ -317,7 +229,7 @@ describe('Settings Validation', () => {
           autoOrganize: false,
           maxFileSize: 100 * 1024 * 1024,
           autoApproveThreshold: 0.8,
-          reviewThreshold: 0.5,
+          reviewThreshold: 0.5
         };
 
         const result = validateSettings(settings);
@@ -328,7 +240,7 @@ describe('Settings Validation', () => {
       test('validates partial settings object', () => {
         const settings = {
           theme: 'light',
-          maxConcurrentAnalysis: 5,
+          maxConcurrentAnalysis: 5
         };
 
         const result = validateSettings(settings);
@@ -364,7 +276,7 @@ describe('Settings Validation', () => {
         const settings = {
           theme: 'invalid',
           maxConcurrentAnalysis: -1,
-          autoOrganize: 'yes',
+          autoOrganize: 'yes'
         };
 
         const result = validateSettings(settings);
@@ -375,7 +287,7 @@ describe('Settings Validation', () => {
       test('detects out-of-range numbers', () => {
         const settings = {
           maxConcurrentAnalysis: 999,
-          maxFileSize: -1,
+          maxFileSize: -1
         };
 
         const result = validateSettings(settings);
@@ -388,7 +300,7 @@ describe('Settings Validation', () => {
       test('validates autoApproveThreshold >= reviewThreshold', () => {
         const validSettings = {
           autoApproveThreshold: 0.8,
-          reviewThreshold: 0.5,
+          reviewThreshold: 0.5
         };
 
         const result = validateSettings(validSettings);
@@ -398,20 +310,18 @@ describe('Settings Validation', () => {
       test('rejects autoApproveThreshold < reviewThreshold', () => {
         const invalidSettings = {
           autoApproveThreshold: 0.4,
-          reviewThreshold: 0.5,
+          reviewThreshold: 0.5
         };
 
         const result = validateSettings(invalidSettings);
         expect(result.valid).toBe(false);
-        expect(
-          result.errors.some((e) => e.includes('autoApproveThreshold')),
-        ).toBe(true);
+        expect(result.errors.some((e) => e.includes('autoApproveThreshold'))).toBe(true);
       });
 
       test('validates downloadConfidenceThreshold >= autoApproveThreshold', () => {
         const validSettings = {
           downloadConfidenceThreshold: 0.9,
-          autoApproveThreshold: 0.8,
+          autoApproveThreshold: 0.8
         };
 
         const result = validateSettings(validSettings);
@@ -421,7 +331,7 @@ describe('Settings Validation', () => {
       test('rejects downloadConfidenceThreshold < autoApproveThreshold', () => {
         const invalidSettings = {
           downloadConfidenceThreshold: 0.7,
-          autoApproveThreshold: 0.8,
+          autoApproveThreshold: 0.8
         };
 
         const result = validateSettings(invalidSettings);
@@ -431,14 +341,13 @@ describe('Settings Validation', () => {
       test('handles null values in cross-field validation', () => {
         const settings = {
           autoApproveThreshold: null,
-          reviewThreshold: 0.5,
+          reviewThreshold: 0.5
         };
 
         const result = validateSettings(settings);
         // Should not fail cross-field validation with null
         expect(
-          result.errors.filter((e) => e.includes('autoApproveThreshold'))
-            .length,
+          result.errors.filter((e) => e.includes('autoApproveThreshold')).length
         ).toBeLessThanOrEqual(1);
       });
     });
@@ -446,7 +355,7 @@ describe('Settings Validation', () => {
     describe('warnings', () => {
       test('generates warnings for unusual values', () => {
         const settings = {
-          maxFileSize: 1000 * 1024 * 1024, // Very large
+          maxFileSize: 1000 * 1024 * 1024 // Very large
         };
 
         const result = validateSettings(settings);
@@ -462,7 +371,7 @@ describe('Settings Validation', () => {
         theme: 'dark', // valid
         invalidField: 'should be removed', // Unknown fields are kept for future compatibility
         maxConcurrentAnalysis: 3, // valid
-        anotherInvalid: 123, // Unknown fields are kept for future compatibility
+        anotherInvalid: 123 // Unknown fields are kept for future compatibility
       };
 
       const result = sanitizeSettings(settings);
@@ -478,7 +387,7 @@ describe('Settings Validation', () => {
       const settings = {
         theme: 'invalid-theme',
         maxConcurrentAnalysis: -1,
-        ollamaHost: 'http://localhost:11434', // valid
+        ollamaHost: 'http://localhost:11434' // valid
       };
 
       const result = sanitizeSettings(settings);
@@ -493,7 +402,7 @@ describe('Settings Validation', () => {
         theme: 'dark',
         notifications: true,
         maxConcurrentAnalysis: 3,
-        ollamaHost: 'http://localhost:11434',
+        ollamaHost: 'http://localhost:11434'
       };
 
       const result = sanitizeSettings(settings);
@@ -568,9 +477,7 @@ describe('Settings Validation', () => {
 
         expect(limits.fileSizeLimits.maxFileSize).toBe(100 * 1024 * 1024);
         expect(limits.fileSizeLimits.maxImageFileSize).toBe(100 * 1024 * 1024);
-        expect(limits.fileSizeLimits.maxDocumentFileSize).toBe(
-          200 * 1024 * 1024,
-        );
+        expect(limits.fileSizeLimits.maxDocumentFileSize).toBe(200 * 1024 * 1024);
         expect(limits.fileSizeLimits.maxTextFileSize).toBe(50 * 1024 * 1024);
       });
 
@@ -596,7 +503,7 @@ describe('Settings Validation', () => {
       test('uses custom file size limits', () => {
         const settings = {
           maxFileSize: 200 * 1024 * 1024,
-          maxImageFileSize: 150 * 1024 * 1024,
+          maxImageFileSize: 150 * 1024 * 1024
         };
 
         const limits = getConfigurableLimits(settings);
@@ -604,16 +511,14 @@ describe('Settings Validation', () => {
         expect(limits.fileSizeLimits.maxFileSize).toBe(200 * 1024 * 1024);
         expect(limits.fileSizeLimits.maxImageFileSize).toBe(150 * 1024 * 1024);
         // Others should be defaults
-        expect(limits.fileSizeLimits.maxDocumentFileSize).toBe(
-          200 * 1024 * 1024,
-        );
+        expect(limits.fileSizeLimits.maxDocumentFileSize).toBe(200 * 1024 * 1024);
       });
 
       test('uses custom processing limits', () => {
         const settings = {
           maxConcurrentAnalysis: 5,
           analysisTimeout: 120000,
-          maxBatchSize: 50,
+          maxBatchSize: 50
         };
 
         const limits = getConfigurableLimits(settings);
@@ -627,7 +532,7 @@ describe('Settings Validation', () => {
       test('uses custom UI limits', () => {
         const settings = {
           workflowRestoreMaxAge: 30 * 60 * 1000,
-          saveDebounceMs: 500,
+          saveDebounceMs: 500
         };
 
         const limits = getConfigurableLimits(settings);
@@ -638,7 +543,7 @@ describe('Settings Validation', () => {
 
       test('handles zero values correctly (uses custom, not default)', () => {
         const settings = {
-          maxFileSize: 0, // Explicitly set to 0
+          maxFileSize: 0 // Explicitly set to 0
         };
 
         const limits = getConfigurableLimits(settings);
@@ -649,7 +554,7 @@ describe('Settings Validation', () => {
 
       test('handles false values correctly', () => {
         const settings = {
-          saveDebounceMs: 0, // No debounce
+          saveDebounceMs: 0 // No debounce
         };
 
         const limits = getConfigurableLimits(settings);
@@ -688,7 +593,7 @@ describe('Settings Validation', () => {
         const settings = {
           maxFileSize: 200 * 1024 * 1024,
           unknownSetting: 999,
-          anotherUnknown: 'test',
+          anotherUnknown: 'test'
         };
 
         const limits = getConfigurableLimits(settings);
