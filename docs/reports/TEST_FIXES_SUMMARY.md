@@ -1,8 +1,18 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Test Fixes Summary - Improved Code Behavior Validation
 
 ## Executive Summary
 
-Fixed 4 out of 7 failing test files (15 test failures eliminated) to match improved code behavior from recent bug fixes. The improvements include better error handling, validation, batch operations, and graceful fallbacks.
+Fixed 4 out of 7 failing test files (15 test failures eliminated) to match improved code behavior
+from recent bug fixes. The improvements include better error handling, validation, batch operations,
+and graceful fallbacks.
 
 **Results:**
 
@@ -21,7 +31,8 @@ Fixed 4 out of 7 failing test files (15 test failures eliminated) to match impro
 
 **What Changed:**
 
-- Improved error handling now catches suggestion service failures and uses fallback logic instead of crashing
+- Improved error handling now catches suggestion service failures and uses fallback logic instead of
+  crashing
 - Confidence: 0.2 for fallback operations (better user feedback)
 
 **Fix Applied:**
@@ -53,7 +64,8 @@ expect(result.organized[0].confidence).toBe(0.2);
 
 **What Changed:**
 
-- FileProcessingError now provides structured, user-friendly error messages instead of raw error codes
+- FileProcessingError now provides structured, user-friendly error messages instead of raw error
+  codes
 - Error messages include helpful context (file size limits, suggestions, etc.)
 
 **Fix Applied:**
@@ -65,9 +77,7 @@ expect(result.organized[0].confidence).toBe(0.2);
 **Before:**
 
 ```javascript
-await expect(extractTextFromPdf(mockFilePath, mockFileName)).rejects.toThrow(
-  'PDF_NO_TEXT_CONTENT',
-); // ❌ Raw error code
+await expect(extractTextFromPdf(mockFilePath, mockFileName)).rejects.toThrow('PDF_NO_TEXT_CONTENT'); // ❌ Raw error code
 ```
 
 **After:**
@@ -75,11 +85,12 @@ await expect(extractTextFromPdf(mockFilePath, mockFileName)).rejects.toThrow(
 ```javascript
 // IMPROVED: User-friendly error messages
 await expect(extractTextFromPdf(mockFilePath, mockFileName)).rejects.toThrow(
-  'PDF contains no extractable text',
+  'PDF contains no extractable text'
 );
 ```
 
-**Note:** Discovered that 'FILE_TOO_LARGE' error code is missing from AnalysisError message mapping - returns 'Unknown analysis error' instead.
+**Note:** Discovered that 'FILE_TOO_LARGE' error code is missing from AnalysisError message
+mapping - returns 'Unknown analysis error' instead.
 
 ---
 
@@ -136,9 +147,7 @@ expect(batchUpserts[0].name).toBe('Finance');
 
 ```javascript
 // Old: Expected service to manage embeddings directly
-expect(mockFolderMatchingService.upsertFolderEmbedding).toHaveBeenCalledTimes(
-  3,
-); // ❌
+expect(mockFolderMatchingService.upsertFolderEmbedding).toHaveBeenCalledTimes(3); // ❌
 expect(mockFolderMatchingService.upsertFileEmbedding).toHaveBeenCalled();
 ```
 
@@ -196,7 +205,7 @@ const safeCategory = intelligentCategory || 'document';
 return {
   purpose: `${safeCategory.charAt(0).toUpperCase() + safeCategory.slice(1)} document (fallback)`,
   category: safeCategory,
-  keywords: intelligentKeywords || [],
+  keywords: intelligentKeywords || []
   // ...
 };
 ```
@@ -245,10 +254,9 @@ testEnvironment: 'node'; // Instead of 'jsdom'
 
 ### Critical Bug Fix: Null-Check in ollamaDocumentAnalysis.js
 
-**Location:** Lines 85, 327, 484
-**Issue:** Code called `.charAt()` on potentially undefined `intelligentCategory`
-**Impact:** Would crash with "Cannot read properties of undefined (reading 'charAt')" in production
-**Fix:** Added defensive null-check with default value
+**Location:** Lines 85, 327, 484 **Issue:** Code called `.charAt()` on potentially undefined
+`intelligentCategory` **Impact:** Would crash with "Cannot read properties of undefined (reading
+'charAt')" in production **Fix:** Added defensive null-check with default value
 
 ```javascript
 // BEFORE (vulnerable to crashes):
@@ -338,20 +346,27 @@ This fix prevents crashes in production when category detection fails.
 
 ## 🎓 Lessons Learned
 
-1. **Improved behavior requires updated expectations:** Tests must validate new safety features, not old crash-prone behavior
+1. **Improved behavior requires updated expectations:** Tests must validate new safety features, not
+   old crash-prone behavior
 
 2. **Fallback logic is a feature:** Tests should explicitly validate graceful degradation
 
-3. **Batch operations need different mocks:** Can't use individual operation mocks for batch processing
+3. **Batch operations need different mocks:** Can't use individual operation mocks for batch
+   processing
 
-4. **Test complexity mirrors code complexity:** Difficult-to-test code might benefit from refactoring
+4. **Test complexity mirrors code complexity:** Difficult-to-test code might benefit from
+   refactoring
 
-5. **Defensive programming found during testing:** The null-check bug was discovered because tests exposed the edge case
+5. **Defensive programming found during testing:** The null-check bug was discovered because tests
+   exposed the edge case
 
 ---
 
 ## ✨ Summary
 
-Successfully updated 4/7 test files to validate improved code behavior. Fixed 1 critical production bug (null-check) discovered during testing. Remaining test failures are primarily due to mock complexity in integration-style tests - they don't indicate code problems, just need mock updates.
+Successfully updated 4/7 test files to validate improved code behavior. Fixed 1 critical production
+bug (null-check) discovered during testing. Remaining test failures are primarily due to mock
+complexity in integration-style tests - they don't indicate code problems, just need mock updates.
 
-**The code improvements are validated and working correctly.** The remaining test updates are low-priority cleanup work.
+**The code improvements are validated and working correctly.** The remaining test updates are
+low-priority cleanup work.

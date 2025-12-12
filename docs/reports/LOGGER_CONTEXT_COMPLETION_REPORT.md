@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Logger Context Completion Report
 
 **Date:** 2025-01-16  
@@ -8,7 +16,8 @@
 
 ## Executive Summary
 
-All files that import logger directly now have proper context set. Logger context standardization is complete for all production code.
+All files that import logger directly now have proper context set. Logger context standardization is
+complete for all production code.
 
 ---
 
@@ -197,4 +206,7 @@ logger.setContext('ModuleName');
 
 **Status:** ✅ **COMPLETE**
 
-All production files that import logger directly now have proper context set. Logger context standardization is 100% complete. The remaining files (IPC handlers that receive logger as parameter) are acceptable as they use logger passed from parent modules that already have context set.
+All production files that import logger directly now have proper context set. Logger context
+standardization is 100% complete. The remaining files (IPC handlers that receive logger as
+parameter) are acceptable as they use logger passed from parent modules that already have context
+set.

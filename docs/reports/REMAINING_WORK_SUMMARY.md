@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Remaining Work Summary
 
 ## ✅ Completed Fixes
@@ -45,4 +53,5 @@
 
 ## 🎉 Achievement Summary
 
-The codebase is now production-ready with consistent patterns throughout! All identified TODOs and placeholders have been addressed.
+The codebase is now production-ready with consistent patterns throughout! All identified TODOs and
+placeholders have been addressed.

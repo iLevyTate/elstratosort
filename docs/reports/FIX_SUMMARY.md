@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Office Document Extraction Bug Fixes - Summary
 
 ## What Was Broken
@@ -13,7 +21,8 @@
 }
 ```
 
-**Root Cause:** When processing Excel files, the code didn't validate data structures returned by the XLSX library. Some rows could be:
+**Root Cause:** When processing Excel files, the code didn't validate data structures returned by
+the XLSX library. Some rows could be:
 
 - Objects instead of arrays
 - Scalar values instead of arrays
@@ -269,6 +278,7 @@ These fixes address the root causes of Office document extraction failures throu
 4. Robust error recovery and fallback paths
 5. Proper resource cleanup
 
-All changes are minimal, focused, and fully backward compatible while significantly improving reliability.
+All changes are minimal, focused, and fully backward compatible while significantly improving
+reliability.
 
 **Status: READY FOR PRODUCTION**

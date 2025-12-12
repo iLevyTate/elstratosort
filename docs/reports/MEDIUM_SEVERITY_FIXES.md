@@ -1,8 +1,17 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Medium Severity Issues - Fix Report
 
 ## Date: 2025-11-18
 
-This report documents all medium severity issues that have been addressed in the StratoSort codebase. These fixes improve performance, code quality, and maintainability.
+This report documents all medium severity issues that have been addressed in the StratoSort
+codebase. These fixes improve performance, code quality, and maintainability.
 
 ## 1. Performance Optimizations
 
@@ -273,4 +282,6 @@ All medium severity issues have been successfully addressed with a focus on:
 - Better resource management with LRU caches
 - Improved user experience with debouncing/throttling
 
-The codebase is now more performant, maintainable, and follows React best practices. These improvements provide a solid foundation for future development while maintaining backward compatibility.
+The codebase is now more performant, maintainable, and follows React best practices. These
+improvements provide a solid foundation for future development while maintaining backward
+compatibility.

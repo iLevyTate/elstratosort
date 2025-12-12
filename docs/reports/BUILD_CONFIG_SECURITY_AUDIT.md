@@ -1,16 +1,27 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Build Configuration & Deployment Security Audit Report
 
-**Project:** StratoSort 1.0.0
-**Audit Date:** 2025-11-18
-**Scope:** Build configurations, webpack, deployment scripts, and dependencies
+**Project:** StratoSort 1.0.0 **Audit Date:** 2025-11-18 **Scope:** Build configurations, webpack,
+deployment scripts, and dependencies
 
 ---
 
 ## Executive Summary
 
-**Found 2 CRITICAL issues, 5 HIGH severity issues, 7 MEDIUM severity issues, and 4 LOW severity issues.**
+**Found 2 CRITICAL issues, 5 HIGH severity issues, 7 MEDIUM severity issues, and 4 LOW severity
+issues.**
 
-The audit identified critical command injection vulnerabilities in setup scripts, dependency vulnerabilities requiring immediate patching, insecure webpack configurations, and several missing security hardening measures. While some security measures are in place (CSP in dev server, source map disabled in production), there are significant gaps that need addressing.
+The audit identified critical command injection vulnerabilities in setup scripts, dependency
+vulnerabilities requiring immediate patching, insecure webpack configurations, and several missing
+security hardening measures. While some security measures are in place (CSP in dev server, source
+map disabled in production), there are significant gaps that need addressing.
 
 ---
 
@@ -18,10 +29,12 @@ The audit identified critical command injection vulnerabilities in setup scripts
 
 ### CRITICAL-1: Command Injection Vulnerability in setup-ollama-windows.ps1
 
-**Location:** `C:\Users\benja\Downloads\StratoSort-1.0.0\StratoSort-1.0.0\scripts\setup-ollama-windows.ps1`
+**Location:**
+`C:\Users\benja\Downloads\StratoSort-1.0.0\StratoSort-1.0.0\scripts\setup-ollama-windows.ps1`
 **Lines:** 84-85, 506
 
-**Issue:** The PowerShell script downloads and executes an installer from the internet without verification:
+**Issue:** The PowerShell script downloads and executes an installer from the internet without
+verification:
 
 ```powershell
 # Line 84-85: No signature or hash verification
@@ -32,7 +45,8 @@ $webClient.DownloadFile($OLLAMA_DOWNLOAD_URL, $OLLAMA_INSTALLER)
 $installCmd = 'curl -fsSL https://ollama.com/install.sh | sh'
 ```
 
-**Severity:** CRITICAL - Allows arbitrary code execution if attacker controls DNS/network or compromises ollama.com
+**Severity:** CRITICAL - Allows arbitrary code execution if attacker controls DNS/network or
+compromises ollama.com
 
 **Attack Scenario:**
 
@@ -73,22 +87,20 @@ sh /tmp/install.sh
 **Location:** `C:\Users\benja\Downloads\StratoSort-1.0.0\StratoSort-1.0.0\setup-ollama.js`
 **Lines:** 146-150, 196-202
 
-**Issue:** HTTPS module used without certificate validation, and spawning child processes with shell:true:
+**Issue:** HTTPS module used without certificate validation, and spawning child processes with
+shell:true:
 
 ```javascript
 // Line 146-150: No TLS verification
-const request = (url.protocol === 'https:' ? https : require('http')).get(
-  url,
-  (res) => {
-    resolve(res.statusCode === 200);
-  },
-);
+const request = (url.protocol === 'https:' ? https : require('http')).get(url, (res) => {
+  resolve(res.statusCode === 200);
+});
 
 // Line 196-202: shell:true enables command injection
 const ollamaProcess = spawn('ollama', ['serve'], {
   detached: true,
   stdio: 'ignore',
-  shell: process.platform === 'win32', // DANGEROUS
+  shell: process.platform === 'win32' // DANGEROUS
 });
 ```
 
@@ -101,7 +113,7 @@ const ollamaProcess = spawn('ollama', ['serve'], {
 const https = require('https');
 const options = {
   rejectUnauthorized: true, // Enforce certificate validation
-  timeout: 2000,
+  timeout: 2000
 };
 
 https
@@ -120,7 +132,7 @@ if (!ollamaPath) {
 const ollamaProcess = spawn(ollamaPath, ['serve'], {
   detached: true,
   stdio: 'ignore',
-  shell: false, // SAFER
+  shell: false // SAFER
 });
 ```
 
@@ -130,8 +142,7 @@ const ollamaProcess = spawn(ollamaPath, ['serve'], {
 
 ### HIGH-1: npm Dependency Vulnerabilities
 
-**Location:** package.json dependencies
-**Detected by:** npm audit
+**Location:** package.json dependencies **Detected by:** npm audit
 
 **Vulnerabilities Found:**
 
@@ -175,15 +186,14 @@ devServer: isProduction
   ? undefined
   : {
       headers: {
-        'Content-Security-Policy': "default-src 'self'; ...",
-      },
+        'Content-Security-Policy': "default-src 'self'; ..."
+      }
     };
 ```
 
 **Severity:** HIGH - XSS attacks possible in production builds
 
-**Remediation:**
-Add CSP meta tag to HTML template or use HtmlWebpackPlugin to inject:
+**Remediation:** Add CSP meta tag to HTML template or use HtmlWebpackPlugin to inject:
 
 ```javascript
 new HtmlWebpackPlugin({
@@ -213,9 +223,11 @@ new HtmlWebpackPlugin({
 devtool: isProduction ? false : 'source-map',
 ```
 
-**Severity:** HIGH - While this prevents source exposure, it makes debugging production issues impossible
+**Severity:** HIGH - While this prevents source exposure, it makes debugging production issues
+impossible
 
-**Analysis:** This is actually a security-positive configuration (preventing source code leakage), but it's a double-edged sword. Consider alternatives:
+**Analysis:** This is actually a security-positive configuration (preventing source code leakage),
+but it's a double-edged sword. Consider alternatives:
 
 **Recommendation:**
 
@@ -246,7 +258,8 @@ optimization: {
 }
 ```
 
-Store source maps internally, don't ship them with the app. Upload to error tracking service (Sentry, etc.) separately.
+Store source maps internally, don't ship them with the app. Upload to error tracking service
+(Sentry, etc.) separately.
 
 ---
 
@@ -254,7 +267,8 @@ Store source maps internally, don't ship them with the app. Upload to error trac
 
 **Location:** Webpack configuration
 
-**Issue:** No SRI hashes for any bundled resources. While this is an Electron app (primarily local resources), any remote resources loaded should have integrity checks.
+**Issue:** No SRI hashes for any bundled resources. While this is an Electron app (primarily local
+resources), any remote resources loaded should have integrity checks.
 
 **Remediation:**
 
@@ -296,19 +310,15 @@ const sourceLogo = path.join(projectRoot, 'assets', 'stratosort-logo.png');
 require('./generate-nsis-assets');
 ```
 
-**Severity:** HIGH - If an attacker can control working directory or file system, arbitrary code execution is possible
+**Severity:** HIGH - If an attacker can control working directory or file system, arbitrary code
+execution is possible
 
 **Remediation:**
 
 ```javascript
 // Use __dirname instead of process.cwd()
 const projectRoot = __dirname;
-const sourceLogo = path.join(
-  projectRoot,
-  '..',
-  'assets',
-  'stratosort-logo.png',
-);
+const sourceLogo = path.join(projectRoot, '..', 'assets', 'stratosort-logo.png');
 
 // Validate path doesn't escape project directory
 const resolvedPath = path.resolve(sourceLogo);
@@ -444,7 +454,7 @@ const { execFileSync } = require('child_process');
 
 // Use execFileSync with array arguments (safer)
 execFileSync('iconutil', ['-c', 'icns', '-o', icnsPath, iconsetDir], {
-  stdio: 'inherit',
+  stdio: 'inherit'
 });
 ```
 
@@ -457,7 +467,8 @@ execFileSync('iconutil', ['-c', 'icns', '-o', icnsPath, iconsetDir], {
 **Issues:**
 
 1. **Line 66:** `allowElevation: true` - Permits UAC bypass attempts
-2. **Line 76:** `hardenedRuntime: true` but **Line 77:** `gatekeeperAssess: false` - Disables macOS security checks
+2. **Line 76:** `hardenedRuntime: true` but **Line 77:** `gatekeeperAssess: false` - Disables macOS
+   security checks
 3. **No code signing configured** - Builds will be flagged as untrusted
 
 **Remediation:**
@@ -516,9 +527,7 @@ function validateUrl(url) {
   }
 }
 
-const ollamaHost = validateUrl(
-  process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
-);
+const ollamaHost = validateUrl(process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434');
 
 // Use proper escaping
 const escapedUrl = ollamaHost.replace(/["'$`]/g, '\\$&');
@@ -530,7 +539,8 @@ const escapedUrl = ollamaHost.replace(/["'$`]/g, '\\$&');
 
 **Location:** `C:\Users\benja\Downloads\StratoSort-1.0.0\StratoSort-1.0.0\tailwind.config.js`
 
-**Issue:** Large safelist with dynamically generated class names could be exploited if user input controls class names anywhere in the app.
+**Issue:** Large safelist with dynamically generated class names could be exploited if user input
+controls class names anywhere in the app.
 
 **Severity:** MEDIUM - Potential XSS if class names come from untrusted sources
 
@@ -543,10 +553,9 @@ const escapedUrl = ollamaHost.replace(/["'$`]/g, '\\$&');
 ```javascript
 safelist: [
   {
-    pattern:
-      /^(btn|badge|alert)-(primary|secondary|success|warning|error|info)$/,
-    variants: ['hover', 'focus', 'active'],
-  },
+    pattern: /^(btn|badge|alert)-(primary|secondary|success|warning|error|info)$/,
+    variants: ['hover', 'focus', 'active']
+  }
   // Instead of listing 100+ individual classes
 ];
 ```
@@ -576,7 +585,8 @@ npm install --save-dev @types/node @types/react @types/react-dom
 
 ### LOW-2: Missing Error Handling in generate-nsis-assets.js
 
-**Location:** `C:\Users\benja\Downloads\StratoSort-1.0.0\StratoSort-1.0.0\scripts\generate-nsis-assets.js`
+**Location:**
+`C:\Users\benja\Downloads\StratoSort-1.0.0\StratoSort-1.0.0\scripts\generate-nsis-assets.js`
 **Line:** 54
 
 **Issue:**
@@ -602,11 +612,10 @@ main().catch((err) => {
 
 **Location:** .gitignore
 
-**Good:** .env files are properly ignored
-**Warning:** No .env.example file to document required environment variables
+**Good:** .env files are properly ignored **Warning:** No .env.example file to document required
+environment variables
 
-**Remediation:**
-Create `.env.example`:
+**Remediation:** Create `.env.example`:
 
 ```bash
 # Ollama Configuration
@@ -641,21 +650,21 @@ module.exports = {
       {
         targets: { node: 'current' },
         modules: 'auto',
-        bugfixes: true, // Enable latest fixes
-      },
+        bugfixes: true // Enable latest fixes
+      }
     ],
     '@babel/preset-react',
-    '@babel/preset-typescript',
+    '@babel/preset-typescript'
   ],
   plugins: [
     // Add security-focused plugins
-    ['transform-remove-console', { exclude: ['error', 'warn'] }],
+    ['transform-remove-console', { exclude: ['error', 'warn'] }]
   ],
   env: {
     production: {
-      plugins: ['transform-remove-console', 'transform-remove-debugger'],
-    },
-  },
+      plugins: ['transform-remove-console', 'transform-remove-debugger']
+    }
+  }
 };
 ```
 
@@ -807,14 +816,17 @@ The following security measures are already implemented correctly:
 
 ## Conclusion
 
-The StratoSort build configuration has a **moderate security posture** with several critical issues that need immediate attention. The most concerning findings are:
+The StratoSort build configuration has a **moderate security posture** with several critical issues
+that need immediate attention. The most concerning findings are:
 
-1. **Command injection vulnerabilities** in setup scripts that download and execute remote code without verification
+1. **Command injection vulnerabilities** in setup scripts that download and execute remote code
+   without verification
 2. **npm dependency vulnerabilities** requiring updates
 3. **Missing CSP for production builds** leaving the app vulnerable to XSS
 4. **Insecure spawn/exec calls** using shell:true
 
-**Priority:** Address CRITICAL and HIGH severity issues within 1-2 weeks. The application should not be released to production until these are resolved.
+**Priority:** Address CRITICAL and HIGH severity issues within 1-2 weeks. The application should not
+be released to production until these are resolved.
 
 **Overall Risk Level:** HIGH
 
@@ -828,7 +840,8 @@ The StratoSort build configuration has a **moderate security posture** with seve
 
 ---
 
-**Auditor Notes:** This audit focused on static analysis of configuration files and build scripts. A full security audit should also include:
+**Auditor Notes:** This audit focused on static analysis of configuration files and build scripts. A
+full security audit should also include:
 
 - Runtime analysis of the Electron app
 - Review of main/renderer process security

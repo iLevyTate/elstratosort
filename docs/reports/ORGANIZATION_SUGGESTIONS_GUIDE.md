@@ -1,8 +1,18 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Organization Suggestions Enhancement Guide
 
 ## Overview
 
-StratoSort now includes an advanced organization suggestion system that provides intelligent, multi-strategy recommendations for organizing your files. This system learns from your preferences and provides confidence-scored suggestions with explanations.
+StratoSort now includes an advanced organization suggestion system that provides intelligent,
+multi-strategy recommendations for organizing your files. This system learns from your preferences
+and provides confidence-scored suggestions with explanations.
 
 ## Smart Folders Integration
 
@@ -214,14 +224,14 @@ const batchSuggestions = await window.electronAPI.suggestions.getBatchSuggestion
 await window.electronAPI.suggestions.recordFeedback(
   file,
   acceptedSuggestion,
-  true, // accepted
+  true // accepted
 );
 
 // When user rejects a suggestion
 await window.electronAPI.suggestions.recordFeedback(
   file,
   rejectedSuggestion,
-  false, // rejected
+  false // rejected
 );
 ```
 
@@ -230,7 +240,7 @@ await window.electronAPI.suggestions.recordFeedback(
 ```javascript
 const results = await window.electronAPI.suggestions.applyStrategy(
   files,
-  'project-based', // strategy ID
+  'project-based' // strategy ID
 );
 ```
 
@@ -368,4 +378,5 @@ OrganizationSuggestionService
 
 ## Support
 
-For issues or questions about the organization suggestion system, please refer to the main StratoSort documentation or create an issue on GitHub.
+For issues or questions about the organization suggestion system, please refer to the main
+StratoSort documentation or create an issue on GitHub.

@@ -1,8 +1,17 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # ChromaDB Installation Guide
 
 ## Overview
 
-ChromaDB is required for StratoSort's semantic search and AI-powered file organization features. This guide will help you install ChromaDB on your Windows system.
+ChromaDB is required for StratoSort's semantic search and AI-powered file organization features.
+This guide will help you install ChromaDB on your Windows system.
 
 ## Error: "No module named chromadb"
 
@@ -74,7 +83,8 @@ If Python is not installed:
 
 ### "Microsoft Visual C++ 14.0 or greater is required"
 
-- Install Visual C++ Build Tools from [Microsoft](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+- Install Visual C++ Build Tools from
+  [Microsoft](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 - Or install Visual Studio Community with C++ development tools
 
 ### ChromaDB Still Not Working After Installation
@@ -108,7 +118,8 @@ If you want to run StratoSort without ChromaDB:
 - AI-powered file organization
 - Content-based file matching
 
-Without ChromaDB, StratoSort will still work but will use simpler pattern-based matching instead of semantic understanding.
+Without ChromaDB, StratoSort will still work but will use simpler pattern-based matching instead of
+semantic understanding.
 
 ## Additional Help
 

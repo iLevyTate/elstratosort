@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Code Quality Improvement Tracker
 
 **Last Updated:** 2025-01-16  
@@ -39,8 +47,10 @@
 - [x] `src/renderer/phases/OrganizePhase.jsx` (7 instances) - ✅ **COMPLETED**
 - [x] `src/renderer/index.js` (4 instances) - ✅ **COMPLETED**
 - [x] `src/renderer/components/organize/SmartOrganizer.jsx` (6 instances) - ✅ **COMPLETED**
-- [x] `src/renderer/components/organize/FolderImprovementSuggestions.jsx` (3 instances) - ✅ **COMPLETED** (comments only)
-- [x] `src/renderer/components/organize/BatchOrganizationSuggestions.jsx` (1 instance) - ✅ **COMPLETED** (comment only)
+- [x] `src/renderer/components/organize/FolderImprovementSuggestions.jsx` (3 instances) - ✅
+      **COMPLETED** (comments only)
+- [x] `src/renderer/components/organize/BatchOrganizationSuggestions.jsx` (1 instance) - ✅
+      **COMPLETED** (comment only)
 - [x] `src/renderer/components/UndoRedoSystem.jsx` (6 instances) - ✅ **COMPLETED**
 - [x] `src/renderer/components/NavigationBar.jsx` (8 instances) - ✅ **COMPLETED**
 - [x] `src/renderer/components/UpdateIndicator.jsx` (8 instances) - ✅ **COMPLETED**
@@ -49,11 +59,13 @@
 #### Lower Priority Files
 
 - [x] `src/main/services/OrganizationSuggestionService.js` (2 instances) - ✅ **COMPLETED**
-- [x] `src/main/ipc/withErrorLogging.js` (1 instance) - ✅ **ACCEPTABLE** (fallback for logger failures)
+- [x] `src/main/ipc/withErrorLogging.js` (1 instance) - ✅ **ACCEPTABLE** (fallback for logger
+      failures)
 - [x] `src/preload/preload.js` (3 instances) - ✅ **ACCEPTABLE** (log wrapper in sandboxed context)
 - [x] All remaining renderer files - ✅ **COMPLETED**
 
-**Progress:** 117/122 (96%) - Remaining are acceptable (logger implementation, fallbacks, test files)
+**Progress:** 117/122 (96%) - Remaining are acceptable (logger implementation, fallbacks, test
+files)
 
 \*Remaining instances:
 
@@ -97,7 +109,8 @@
 
 **Progress:** 4/5 (80%) - Guide complete, ESLint rule optional
 
-**Note:** All error handling utilities documented. Duplicate utilities serve different purposes (IPC vs general, retry vs timeout). Guide provides clear decision tree for when to use each.
+**Note:** All error handling utilities documented. Duplicate utilities serve different purposes (IPC
+vs general, retry vs timeout). Guide provides clear decision tree for when to use each.
 
 ---
 
@@ -115,7 +128,8 @@
 
 **Progress:** 4/5 (80%) - Documentation complete, ESLint rule optional
 
-**Note:** All import paths verified correct. Files use appropriate relative paths based on their directory depth.
+**Note:** All import paths verified correct. Files use appropriate relative paths based on their
+directory depth.
 
 ---
 
@@ -132,7 +146,9 @@
 
 **Progress:** 3/4 (75%) - All production files complete, ESLint rule optional
 
-**Note:** IPC files that receive logger as parameter don't need context set in the file (logger is passed from parent with context already set). All files that import logger directly now have context set.
+**Note:** IPC files that receive logger as parameter don't need context set in the file (logger is
+passed from parent with context already set). All files that import logger directly now have context
+set.
 
 ---
 

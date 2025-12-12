@@ -1,8 +1,17 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # 🔧 CI/CD Build Guide for StratoSort
 
 ## Overview
 
-This guide explains how StratoSort's continuous integration and deployment works, particularly for building release installers.
+This guide explains how StratoSort's continuous integration and deployment works, particularly for
+building release installers.
 
 ## GitHub Actions Workflows
 
@@ -113,11 +122,9 @@ env:
   GITHUB_ACTIONS: true
 ```
 
-2. **Verify Ollama Skip**:
-   Look for: `CI environment detected - skipping Ollama setup`
+2. **Verify Ollama Skip**: Look for: `CI environment detected - skipping Ollama setup`
 
-3. **Node Version**:
-   Ensure using Node 18+ (20 recommended)
+3. **Node Version**: Ensure using Node 18+ (20 recommended)
 
 ## Release Process
 
@@ -165,8 +172,7 @@ git push origin v1.0.0
 
 ### Build Fails on npm install
 
-**Problem**: Ollama setup runs in CI
-**Solution**: Ensure CI environment variable is set:
+**Problem**: Ollama setup runs in CI **Solution**: Ensure CI environment variable is set:
 
 ```yaml
 env:
@@ -175,8 +181,7 @@ env:
 
 ### Missing Artifacts
 
-**Problem**: Installers not uploaded
-**Solution**: Check artifact paths in workflow:
+**Problem**: Installers not uploaded **Solution**: Check artifact paths in workflow:
 
 ```yaml
 path: |
@@ -187,8 +192,7 @@ path: |
 
 ### Release Not Created
 
-**Problem**: Tag pushed but no release
-**Solution**:
+**Problem**: Tag pushed but no release **Solution**:
 
 - Verify tag format matches `v*.*.*`
 - Check GitHub Actions permissions
@@ -263,4 +267,5 @@ npm run build
 
 ---
 
-**Note**: The CI/CD system is designed to work without manual intervention. If you encounter issues, check the logs in GitHub Actions for detailed error messages.
+**Note**: The CI/CD system is designed to work without manual intervention. If you encounter issues,
+check the logs in GitHub Actions for detailed error messages.

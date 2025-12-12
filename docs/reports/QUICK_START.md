@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # 🚀 StratoSort Quick Start Guide
 
 Welcome to StratoSort! This guide will help you get started in just a few minutes.
@@ -151,7 +159,8 @@ The AI will suggest:
 
 3. Relaunch StratoSort. The app will auto-start Chroma at `http://127.0.0.1:8000`.
    - To connect to an existing server, set `CHROMA_SERVER_URL=http://host:port`.
-   - To use a custom startup command, set `CHROMA_SERVER_COMMAND="C:\Python312\python.exe -m chromadb run --path ..."`
+   - To use a custom startup command, set
+     `CHROMA_SERVER_COMMAND="C:\Python312\python.exe -m chromadb run --path ..."`
    - To bypass the feature temporarily, export `STRATOSORT_DISABLE_CHROMADB=1`.
 
 ### "GPU initialization errors" (ANGLE / GLES warnings)
@@ -159,10 +168,12 @@ The AI will suggest:
 **Fix:**
 
 1. Close StratoSort.
-2. Set `STRATOSORT_FORCE_SOFTWARE_GPU=1` in your environment (or Command Prompt before `npm run dev`).
+2. Set `STRATOSORT_FORCE_SOFTWARE_GPU=1` in your environment (or Command Prompt before
+   `npm run dev`).
 3. Relaunch the app—Electron will switch to software rendering.
 
-Optional: Use `STRATOSORT_GL_IMPLEMENTATION` and `ANGLE_BACKEND` to try specific drivers (`egl-angle`, `d3d11`, etc.) if hardware acceleration is desired.
+Optional: Use `STRATOSORT_GL_IMPLEMENTATION` and `ANGLE_BACKEND` to try specific drivers
+(`egl-angle`, `d3d11`, etc.) if hardware acceleration is desired.
 
 ---
 

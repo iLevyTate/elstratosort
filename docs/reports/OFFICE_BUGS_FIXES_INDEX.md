@@ -1,7 +1,14 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Office Document Extraction Bug Fixes - Complete Index
 
-**Last Updated:** November 18, 2025
-**Status:** COMPLETE AND VERIFIED
+**Last Updated:** November 18, 2025 **Status:** COMPLETE AND VERIFIED
 
 ---
 
@@ -43,11 +50,13 @@ Review these before deploying:
 }
 ```
 
-**What it means:** The application crashed when trying to extract text from Excel files with certain data structures.
+**What it means:** The application crashed when trying to extract text from Excel files with certain
+data structures.
 
 **Root cause:** Missing null/undefined checks and unsupported row data types
 
-**Fixed in:** `src/main/analysis/documentExtractors.js` - `extractTextFromXlsx()` function (lines 140-247)
+**Fixed in:** `src/main/analysis/documentExtractors.js` - `extractTextFromXlsx()` function (lines
+140-247)
 
 **How it was fixed:**
 
@@ -72,11 +81,14 @@ Review these before deploying:
 }
 ```
 
-**What it means:** The application failed to extract text from PowerPoint files and reported a vague error message.
+**What it means:** The application failed to extract text from PowerPoint files and reported a vague
+error message.
 
-**Root cause:** The parser library returns multiple possible formats, but the code only expected strings or objects with `.text` property
+**Root cause:** The parser library returns multiple possible formats, but the code only expected
+strings or objects with `.text` property
 
-**Fixed in:** `src/main/analysis/documentExtractors.js` - `extractTextFromPptx()` function (lines 249-312)
+**Fixed in:** `src/main/analysis/documentExtractors.js` - `extractTextFromPptx()` function (lines
+249-312)
 
 **How it was fixed:**
 
@@ -166,9 +178,11 @@ Time:        1.321 s
 
 ### Detailed Technical Reports
 
-- **[OFFICE_EXTRACTION_BUG_FIXES.md](OFFICE_EXTRACTION_BUG_FIXES.md)** - Detailed analysis with code examples
+- **[OFFICE_EXTRACTION_BUG_FIXES.md](OFFICE_EXTRACTION_BUG_FIXES.md)** - Detailed analysis with code
+  examples
 - **[TECHNICAL_DETAILS.txt](TECHNICAL_DETAILS.txt)** - Implementation specifics and patterns used
-- **[BUG_FIX_COMPLETION_REPORT.md](BUG_FIX_COMPLETION_REPORT.md)** - Comprehensive report with verification
+- **[BUG_FIX_COMPLETION_REPORT.md](BUG_FIX_COMPLETION_REPORT.md)** - Comprehensive report with
+  verification
 
 ---
 
@@ -381,8 +395,7 @@ OFFICE_BUGS_FIXES_INDEX.md (this file)
 
 ---
 
-**Status: COMPLETE AND VERIFIED**
-**Ready for Production Deployment**
+**Status: COMPLETE AND VERIFIED** **Ready for Production Deployment**
 
 ---
 

@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # HIGH Stability Bugs - Fixed
 
 This document details the 5 HIGH-severity stability bugs that have been fixed in this codebase.
@@ -8,8 +16,9 @@ This document details the 5 HIGH-severity stability bugs that have been fixed in
 
 **File:** `src/main/services/ChromaDBService.js` (Lines 172-283)
 
-**Issue:**
-Concurrent initialization calls could resolve before service was actually ready, causing crashes and inconsistent state. The atomic flag and promise reference were not properly synchronized.
+**Issue:** Concurrent initialization calls could resolve before service was actually ready, causing
+crashes and inconsistent state. The atomic flag and promise reference were not properly
+synchronized.
 
 **Root Cause:**
 
@@ -21,7 +30,8 @@ Concurrent initialization calls could resolve before service was actually ready,
 
 1. **Atomic State Checks**: Return existing `_initPromise` immediately if `_isInitializing` is true
 2. **Edge Case Handling**: Added fallback polling mechanism if promise is null but flag is set
-3. **Consistent State Updates**: Set both `initialized` and `_isInitializing` atomically in try/catch
+3. **Consistent State Updates**: Set both `initialized` and `_isInitializing` atomically in
+   try/catch
 4. **Failure Recovery**: Clear both promise and flag on error to allow retries
 5. **Enhanced Logging**: Added detailed logging for initialization state transitions
 
@@ -69,8 +79,9 @@ this._initPromise = (async () => {
 
 **File:** `src/main/services/UndoRedoService.js` (Lines 153-225)
 
-**Issue:**
-Single large action exceeding memory limit caused infinite loop in pruning logic. The while loop condition `this.actions.length > 1` meant if only 1 oversized action remained, the loop would never exit.
+**Issue:** Single large action exceeding memory limit caused infinite loop in pruning logic. The
+while loop condition `this.actions.length > 1` meant if only 1 oversized action remained, the loop
+would never exit.
 
 **Root Cause:**
 
@@ -138,8 +149,9 @@ if (this.currentMemoryEstimate > maxMemoryBytes && this.actions.length === 1) {
 
 **File:** `src/main/analysis/ollamaImageAnalysis.js` (Lines 438-551)
 
-**Issue:**
-`folderMatcher` could be an object with undefined methods, causing crashes when calling methods like `upsertFolderEmbedding()`. Simple truthy check wasn't sufficient - needed duck typing validation.
+**Issue:** `folderMatcher` could be an object with undefined methods, causing crashes when calling
+methods like `upsertFolderEmbedding()`. Simple truthy check wasn't sufficient - needed duck typing
+validation.
 
 **Root Cause:**
 
@@ -151,7 +163,8 @@ if (this.currentMemoryEstimate > maxMemoryBytes && this.actions.length === 1) {
 **Fix Implemented:**
 
 1. **Duck Typing Validation**: Check that all required methods exist as functions
-2. **Method Existence Checks**: Validate `initialize`, `upsertFolderEmbedding`, `upsertFileEmbedding`, `matchFileToFolders`
+2. **Method Existence Checks**: Validate `initialize`, `upsertFolderEmbedding`,
+   `upsertFileEmbedding`, `matchFileToFolders`
 3. **Detailed Error Logging**: Log which specific methods are missing for debugging
 4. **Smart Folder Validation**: Filter folders to ensure they have required properties
 5. **Summary Validation**: Check summary is non-empty before upserting
@@ -177,25 +190,20 @@ if (!hasRequiredMethods) {
     hasInitialize: typeof folderMatcher?.initialize === 'function',
     hasUpsertFolder: typeof folderMatcher?.upsertFolderEmbedding === 'function',
     hasUpsertFile: typeof folderMatcher?.upsertFileEmbedding === 'function',
-    hasMatchFile: typeof folderMatcher?.matchFileToFolders === 'function',
+    hasMatchFile: typeof folderMatcher?.matchFileToFolders === 'function'
   });
   return; // Don't continue with invalid object
 }
 
 // Validate folders before upserting
 const validFolders = smartFolders.filter(
-  (f) => f && typeof f === 'object' && (f.name || f.id || f.path),
+  (f) => f && typeof f === 'object' && (f.name || f.id || f.path)
 );
 
 // Validate candidates structure before accessing
 if (Array.isArray(candidates) && candidates.length > 0) {
   const top = candidates[0];
-  if (
-    top &&
-    typeof top === 'object' &&
-    typeof top.score === 'number' &&
-    top.name
-  ) {
+  if (top && typeof top === 'object' && typeof top.score === 'number' && top.name) {
     // Safe to use
   }
 }
@@ -214,8 +222,8 @@ if (Array.isArray(candidates) && candidates.length > 0) {
 
 **File:** `src/main/ipc/files.js` (Lines 459-687)
 
-**Issue:**
-When encountering 1000+ file collisions, operation would throw error and fail entire batch organization. No fallback mechanism for extreme collision scenarios.
+**Issue:** When encountering 1000+ file collisions, operation would throw error and fail entire
+batch organization. No fallback mechanism for extreme collision scenarios.
 
 **Root Cause:**
 
@@ -245,16 +253,10 @@ while (!operationComplete && counter < maxNumericRetries) {
 
 // BUG FIX #9: UUID fallback if numeric counter exhausted
 if (!operationComplete) {
-  logger.warn(
-    `[FILE-OPS] Exhausted ${maxNumericRetries} numeric attempts, falling back to UUID`,
-  );
+  logger.warn(`[FILE-OPS] Exhausted ${maxNumericRetries} numeric attempts, falling back to UUID`);
 
   const uuidAttempts = 3;
-  for (
-    let uuidTry = 0;
-    uuidTry < uuidAttempts && !operationComplete;
-    uuidTry++
-  ) {
+  for (let uuidTry = 0; uuidTry < uuidAttempts && !operationComplete; uuidTry++) {
     const uuid = require('crypto').randomUUID();
     const uuidShort = uuid.split('-')[0]; // First 8 chars
     uniqueDestination = `${baseName}_${uuidShort}${ext}`;
@@ -271,9 +273,7 @@ if (!operationComplete) {
   }
 
   if (!operationComplete) {
-    throw new Error(
-      `Failed after ${maxNumericRetries} numeric and ${uuidAttempts} UUID attempts`,
-    );
+    throw new Error(`Failed after ${maxNumericRetries} numeric and ${uuidAttempts} UUID attempts`);
   }
 }
 ```
@@ -291,8 +291,8 @@ if (!operationComplete) {
 
 **File:** `src/main/services/OrganizationSuggestionService.js` (Lines 975-1103)
 
-**Issue:**
-User pattern map could grow unbounded if only updating existing patterns. Feedback history also grew without time-based expiration. Only had count-based limit which could be bypassed.
+**Issue:** User pattern map could grow unbounded if only updating existing patterns. Feedback
+history also grew without time-based expiration. Only had count-based limit which could be bypassed.
 
 **Root Cause:**
 
@@ -322,9 +322,7 @@ const FEEDBACK_RETENTION_MS = FEEDBACK_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 // Prune old feedback before adding new entry
 if (this.feedbackHistory.length > 0) {
   const cutoffTime = now - FEEDBACK_RETENTION_MS;
-  this.feedbackHistory = this.feedbackHistory.filter(
-    (entry) => entry.timestamp > cutoffTime,
-  );
+  this.feedbackHistory = this.feedbackHistory.filter((entry) => entry.timestamp > cutoffTime);
 }
 
 // BUG FIX #10: Enhanced pruning strategy with time-based expiration
@@ -334,9 +332,7 @@ if (this.userPatterns.size >= this.maxUserPatterns) {
   const staleThreshold = now - PATTERN_STALE_MS;
 
   // First, remove stale patterns (not used in 6 months)
-  const stalePatterns = patternsArray.filter(
-    ([, data]) => data.lastUsed < staleThreshold,
-  );
+  const stalePatterns = patternsArray.filter(([, data]) => data.lastUsed < staleThreshold);
 
   for (const [key] of stalePatterns) {
     this.userPatterns.delete(key);

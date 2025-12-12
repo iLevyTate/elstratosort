@@ -1,21 +1,31 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Critical Runtime Error Fix: Null Reference in TooltipManager
 
 ## Issue Summary
 
-**Error:** `Uncaught TypeError: Cannot read properties of null (reading 'get')`
-**Location:** `dist/renderer.js` (lines 52051, 52070 in bundled code)
-**Component:** `TooltipManager.jsx`
+**Error:** `Uncaught TypeError: Cannot read properties of null (reading 'get')` **Location:**
+`dist/renderer.js` (lines 52051, 52070 in bundled code) **Component:** `TooltipManager.jsx`
 **Severity:** CRITICAL - Blocking user interaction with the application
 
 ## Root Cause Analysis
 
 The error was caused by a race condition in the `TooltipManager` component where:
 
-1. **WeakMap Nullification During Cleanup**: The component's cleanup function was setting `titleCacheRef.current` to `null` (line 191 in original code)
+1. **WeakMap Nullification During Cleanup**: The component's cleanup function was setting
+   `titleCacheRef.current` to `null` (line 191 in original code)
 
-2. **Event Handlers Still Active**: JavaScript event handlers could still fire after the cleanup process started but before the component was fully unmounted
+2. **Event Handlers Still Active**: JavaScript event handlers could still fire after the cleanup
+   process started but before the component was fully unmounted
 
-3. **Unchecked Access**: The code was calling `.get()` and `.set()` methods on the WeakMap without checking if it was null first
+3. **Unchecked Access**: The code was calling `.get()` and `.set()` methods on the WeakMap without
+   checking if it was null first
 
 ### Specific Problem Areas
 
@@ -154,4 +164,5 @@ The fix successfully addresses the root cause of the null reference error by:
 - Ensuring all event handlers validate refs before use
 - Following defensive programming principles
 
-The application should now be stable and free from the critical runtime error that was blocking user interaction.
+The application should now be stable and free from the critical runtime error that was blocking user
+interaction.

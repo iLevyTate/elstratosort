@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # ChromaDB Startup Hang Fix Report
 
 ## Root Cause Analysis
@@ -142,11 +150,14 @@ The TIME_WAIT connections you're seeing are normal TCP behavior:
 
 ## Summary
 
-The startup hang was caused by a circular dependency between `StartupManager.js` and `simple-main.js`. By extracting shared utilities to a separate module and adding proper timeout handling, the app now:
+The startup hang was caused by a circular dependency between `StartupManager.js` and
+`simple-main.js`. By extracting shared utilities to a separate module and adding proper timeout
+handling, the app now:
 
 1. Starts reliably without hanging
 2. Continues in degraded mode if services fail
 3. Provides clear logging of startup progress
 4. Has a 30-second safety timeout
 
-The TIME_WAIT connections are normal and not the cause of the hang. They indicate previous connection attempts that are in the TCP cleanup phase.
+The TIME_WAIT connections are normal and not the cause of the hang. They indicate previous
+connection attempts that are in the TCP cleanup phase.

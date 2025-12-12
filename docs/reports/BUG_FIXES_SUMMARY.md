@@ -1,8 +1,17 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # OrganizationSuggestionService Bug Fixes Summary
 
 ## Overview
 
-Successfully fixed 5 critical bugs in the OrganizationSuggestionService, the core business logic of StratoSort's document organization system. All fixes have been implemented and tested.
+Successfully fixed 5 critical bugs in the OrganizationSuggestionService, the core business logic of
+StratoSort's document organization system. All fixes have been implemented and tested.
 
 ## Files Modified
 
@@ -12,7 +21,8 @@ Successfully fixed 5 critical bugs in the OrganizationSuggestionService, the cor
 
 ### Bug #1: User Pattern Persistence (CRITICAL - SHOWSTOPPER) ✅
 
-**Problem**: User learning patterns were stored in-memory only, losing all AI learning on app restart.
+**Problem**: User learning patterns were stored in-memory only, losing all AI learning on app
+restart.
 
 **Solution Implemented**:
 
@@ -47,10 +57,7 @@ this.saveThrottleMs = 5000; // Throttle saves
 
 // Load persisted patterns on initialization
 this.loadUserPatterns().catch((error) => {
-  logger.warn(
-    '[OrganizationSuggestionService] Failed to load user patterns:',
-    error,
-  );
+  logger.warn('[OrganizationSuggestionService] Failed to load user patterns:', error);
 });
 ```
 
@@ -85,7 +92,8 @@ async getSuggestionsForFile(file, smartFolders = [], _options = {}) {
 
 ### Bug #3: LLM JSON Parsing Crashes (HIGH) ✅
 
-**Problem**: When Ollama returns malformed JSON, `JSON.parse()` throws and crashes the entire suggestion flow.
+**Problem**: When Ollama returns malformed JSON, `JSON.parse()` throws and crashes the entire
+suggestion flow.
 
 **Solution Implemented**:
 
@@ -290,4 +298,5 @@ All 5 critical bugs have been successfully fixed:
 4. ✅ Input validation added to prevent crashes
 5. ✅ Hardcoded thresholds replaced with configurable values
 
-The service is now more robust, maintainable, and production-ready with improved error handling, persistence, and configurability.
+The service is now more robust, maintainable, and production-ready with improved error handling,
+persistence, and configurability.

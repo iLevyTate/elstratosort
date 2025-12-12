@@ -1,8 +1,17 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Organization Suggestions - User Experience Flow
 
 ## Overview
 
-This document outlines the intuitive user flow for the organization suggestion system, ensuring users can easily understand and act on recommendations.
+This document outlines the intuitive user flow for the organization suggestion system, ensuring
+users can easily understand and act on recommendations.
 
 ## User Journey
 
@@ -229,8 +238,7 @@ For improving future suggestions:
 
 ### Scenario 1: Downloads Folder Cleanup
 
-**User Need:** Organize 100+ files in Downloads
-**Solution Flow:**
+**User Need:** Organize 100+ files in Downloads **Solution Flow:**
 
 1. Select Downloads folder
 2. System analyzes and groups files
@@ -241,8 +249,7 @@ For improving future suggestions:
 
 ### Scenario 2: Project File Organization
 
-**User Need:** Organize files for specific project
-**Solution Flow:**
+**User Need:** Organize files for specific project **Solution Flow:**
 
 1. Select project files
 2. System detects project pattern
@@ -252,8 +259,7 @@ For improving future suggestions:
 
 ### Scenario 3: Archive Old Files
 
-**User Need:** Clean up old files by year
-**Solution Flow:**
+**User Need:** Clean up old files by year **Solution Flow:**
 
 1. Select old files
 2. System detects dates

@@ -1,10 +1,19 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # ChromaDB Connection Fixes - Complete Report
 
 ## Date: 2025-11-17
 
 ## Executive Summary
 
-Successfully identified and fixed **multiple root causes** of the application hanging/freezing issue. TIME_WAIT connections reduced by **80%** (from 15+ to 3).
+Successfully identified and fixed **multiple root causes** of the application hanging/freezing
+issue. TIME_WAIT connections reduced by **80%** (from 15+ to 3).
 
 ---
 
@@ -13,14 +22,16 @@ Successfully identified and fixed **multiple root causes** of the application ha
 ### 1. **Circular Dependency Causing Deadlock** ⭐ CRITICAL
 
 - **Agent:** backend-debugger
-- **Problem:** `StartupManager.js` required `simple-main.js` to get `buildChromaSpawnPlan`, but `simple-main.js` was already requiring `StartupManager`
+- **Problem:** `StartupManager.js` required `simple-main.js` to get `buildChromaSpawnPlan`, but
+  `simple-main.js` was already requiring `StartupManager`
 - **Impact:** Node.js module loading deadlock, app hung at "Running pre-flight checks..."
 - **Fix:** Created `src/main/utils/chromaSpawnUtils.js` to break the circular dependency
 
 ### 2. **ChromaClient Memory Leak** ⭐ CRITICAL
 
 - **Agent:** guru
-- **Problem:** `ChromaDBService.isServerAvailable()` created disposable `ChromaClient` instances on every call without cleanup
+- **Problem:** `ChromaDBService.isServerAvailable()` created disposable `ChromaClient` instances on
+  every call without cleanup
 - **Impact:** 30+ leaked connections during startup alone
 - **Fix:** Reuse existing `this.client` instead of creating new instances
 
@@ -34,7 +45,8 @@ Successfully identified and fixed **multiple root causes** of the application ha
 ### 4. **Health Monitor Creating New Connections** ⭐ MEDIUM
 
 - **Agent:** guru
-- **Problem:** Health monitor used `axios.get()` instead of reusing ChromaDB service's existing client
+- **Problem:** Health monitor used `axios.get()` instead of reusing ChromaDB service's existing
+  client
 - **Impact:** 3 new connections every 30 seconds
 - **Fix:** Use `chromaDbService.checkHealth()` which reuses the existing client
 
@@ -52,7 +64,8 @@ Successfully identified and fixed **multiple root causes** of the application ha
 
 **File Created:** `src/main/utils/chromaSpawnUtils.js`
 
-- Extracted `buildChromaSpawnPlan()`, `resolveChromaCliExecutable()`, and `findPythonLauncher()` from `simple-main.js`
+- Extracted `buildChromaSpawnPlan()`, `resolveChromaCliExecutable()`, and `findPythonLauncher()`
+  from `simple-main.js`
 - `StartupManager.js` line 556 now requires chromaSpawnUtils instead of simple-main
 
 ### Fix #2: Reuse ChromaClient ✅
@@ -144,8 +157,7 @@ TCP    127.0.0.1:60464        127.0.0.1:8000         TIME_WAIT       0
 
 ## Remaining Issue: ChromaDB Startup Command
 
-**New Root Cause Discovered:**
-The app is trying to start ChromaDB with:
+**New Root Cause Discovered:** The app is trying to start ChromaDB with:
 
 ```bash
 py -3 -m chromadb run
@@ -163,11 +175,11 @@ python.exe: No module named chromadb.__main__; 'chromadb' is a package and canno
 chroma run --path <path> --host 127.0.0.1 --port 8000
 ```
 
-**Why It's Failing:**
-`buildChromaSpawnPlan()` in `chromaSpawnUtils.js` should detect the system `chroma` executable first, but it's not finding it and falling back to Python module execution (which doesn't work).
+**Why It's Failing:** `buildChromaSpawnPlan()` in `chromaSpawnUtils.js` should detect the system
+`chroma` executable first, but it's not finding it and falling back to Python module execution
+(which doesn't work).
 
-**Solution:**
-The `chroma.exe` is installed at:
+**Solution:** The `chroma.exe` is installed at:
 
 ```
 C:\Users\benja\AppData\Roaming\Python\Python313\Scripts\chroma.exe
@@ -175,8 +187,7 @@ C:\Users\benja\AppData\Roaming\Python\Python313\Scripts\chroma.exe
 
 This path is probably not in the system PATH, so `spawnSync('chroma', ['--help'])` fails to find it.
 
-**Recommended Fix:**
-Add explicit check for the user Python Scripts directory:
+**Recommended Fix:** Add explicit check for the user Python Scripts directory:
 
 ```javascript
 // In chromaSpawnUtils.js, add after line 113:
@@ -185,23 +196,15 @@ const userPythonScripts = path.join(
   'Python',
   'Python313',
   'Scripts',
-  'chroma.exe',
+  'chroma.exe'
 );
 try {
   await fs.access(userPythonScripts);
   return {
     command: userPythonScripts,
-    args: [
-      'run',
-      '--path',
-      config.dbPath,
-      '--host',
-      config.host,
-      '--port',
-      String(config.port),
-    ],
+    args: ['run', '--path', config.dbPath, '--host', config.host, '--port', String(config.port)],
     source: 'user-python-scripts',
-    options: { windowsHide: true },
+    options: { windowsHide: true }
   };
 } catch {
   // Continue to next method
@@ -245,7 +248,8 @@ try {
 
 ## Next Steps
 
-1. **Fix ChromaDB startup command** - Implement the recommended fix above to detect `chroma.exe` in user Python Scripts directory
+1. **Fix ChromaDB startup command** - Implement the recommended fix above to detect `chroma.exe` in
+   user Python Scripts directory
 2. **Test full startup flow** - Verify ChromaDB starts and responds correctly
 3. **Verify AI features** - Test semantic search, smart folders, file organization
 4. **Monitor long-term** - Watch TIME_WAIT connections during extended use
@@ -269,10 +273,12 @@ All have been fixed, resulting in:
 - **Smooth startup flow**
 - **Reduced connection storm**
 
-The remaining ChromaDB startup issue is a separate problem (wrong command syntax for ChromaDB 1.0.20) and has a clear fix path.
+The remaining ChromaDB startup issue is a separate problem (wrong command syntax for ChromaDB
+1.0.20) and has a clear fix path.
 
 ---
 
 **Status: MOSTLY RESOLVED** ✅
 
-The hanging/freezing issue is **completely fixed**. TIME_WAIT connections are now minimal. ChromaDB startup needs one more fix (command detection) to work fully.
+The hanging/freezing issue is **completely fixed**. TIME_WAIT connections are now minimal. ChromaDB
+startup needs one more fix (command detection) to work fully.

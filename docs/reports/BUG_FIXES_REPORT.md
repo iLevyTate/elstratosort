@@ -1,8 +1,18 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # StratoSort Bug Fixes Report
 
 ## Executive Summary
 
-Comprehensive bug hunting completed on StratoSort codebase. **3 critical bugs identified and fixed**. All fixes verified with successful builds. Application architecture reviewed and found to be generally solid with proper error handling, IPC communication, and state management.
+Comprehensive bug hunting completed on StratoSort codebase. **3 critical bugs identified and
+fixed**. All fixes verified with successful builds. Application architecture reviewed and found to
+be generally solid with proper error handling, IPC communication, and state management.
 
 ---
 
@@ -22,7 +32,9 @@ import SettingsPanel from './SettingsPanel';
 const { PHASES } = require('../../shared/constants'); // ❌ CommonJS in ES6 context
 ```
 
-**Problem:** The renderer process uses ES6 modules throughout, but this file was using CommonJS `require()` to import constants. This creates inconsistency and can cause module resolution issues with webpack.
+**Problem:** The renderer process uses ES6 modules throughout, but this file was using CommonJS
+`require()` to import constants. This creates inconsistency and can cause module resolution issues
+with webpack.
 
 **Fix:**
 
@@ -32,7 +44,8 @@ import SettingsPanel from './SettingsPanel';
 import { PHASES } from '../../shared/constants'; // ✅ Consistent ES6
 ```
 
-**Impact:** Ensures consistent module system throughout renderer process, preventing potential webpack bundling issues.
+**Impact:** Ensures consistent module system throughout renderer process, preventing potential
+webpack bundling issues.
 
 ---
 
@@ -42,10 +55,11 @@ import { PHASES } from '../../shared/constants'; // ✅ Consistent ES6
 **File:** `src/shared/constants.js`  
 **Lines:** 418-446 (original), 418-480 (fixed)
 
-**Issue:**
-The shared constants file only exported using CommonJS (`module.exports`), but was being imported with ES6 `import` statements in the renderer process.
+**Issue:** The shared constants file only exported using CommonJS (`module.exports`), but was being
+imported with ES6 `import` statements in the renderer process.
 
-**Problem:** While webpack can handle this with interop, it's not ideal and can cause tree-shaking issues and confusion about which module system to use.
+**Problem:** While webpack can handle this with interop, it's not ideal and can cause tree-shaking
+issues and confusion about which module system to use.
 
 **Fix:**
 
@@ -53,7 +67,7 @@ The shared constants file only exported using CommonJS (`module.exports`), but w
 // BEFORE - CommonJS only
 module.exports = {
   PHASES,
-  PHASE_TRANSITIONS,
+  PHASE_TRANSITIONS
   // ... all exports
 };
 ```
@@ -62,7 +76,7 @@ module.exports = {
 // AFTER - Dual exports (CommonJS + ES6)
 const exports_object = {
   PHASES,
-  PHASE_TRANSITIONS,
+  PHASE_TRANSITIONS
   // ... all exports
 };
 
@@ -73,7 +87,7 @@ module.exports = exports_object;
 export {
   PHASES,
   PHASE_TRANSITIONS,
-  PHASE_METADATA,
+  PHASE_METADATA
   // ... all exports
 };
 ```
@@ -92,8 +106,9 @@ export {
 **File:** `package.json`  
 **Line:** Added line 116
 
-**Issue:**
-`prop-types` package was being imported and used in 19 renderer components, but was not declared as a direct dependency in `package.json`. It was only available as a transitive dependency through `@mui/material`.
+**Issue:** `prop-types` package was being imported and used in 19 renderer components, but was not
+declared as a direct dependency in `package.json`. It was only available as a transitive dependency
+through `@mui/material`.
 
 **Files Using prop-types:**
 

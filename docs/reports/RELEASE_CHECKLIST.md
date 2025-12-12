@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # 📋 StratoSort Release Checklist
 
 Use this checklist when preparing a new release of StratoSort.
@@ -105,9 +113,9 @@ npm run dist:linux
 
 ### 📦 Installation
 
-**Windows**: Download `StratoSort-Setup-1.0.0.exe` and run the installer
-**macOS**: Download `StratoSort-1.0.0.dmg` and drag to Applications
-**Linux**: Download `StratoSort-1.0.0.AppImage`, make executable, and run
+**Windows**: Download `StratoSort-Setup-1.0.0.exe` and run the installer **macOS**: Download
+`StratoSort-1.0.0.dmg` and drag to Applications **Linux**: Download `StratoSort-1.0.0.AppImage`,
+make executable, and run
 
 ### 🚀 First Time Setup
 

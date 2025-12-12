@@ -1,8 +1,18 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # StratoSort Auto-Organization Flow
 
 ## Overview
 
-StratoSort maintains its original **automatic organization** capability while using the suggestion system behind the scenes for improved accuracy. Files are organized automatically without requiring user intervention for high-confidence matches.
+StratoSort maintains its original **automatic organization** capability while using the suggestion
+system behind the scenes for improved accuracy. Files are organized automatically without requiring
+user intervention for high-confidence matches.
 
 ## How It Works
 
@@ -22,7 +32,8 @@ Files → Analysis → Suggestions (Behind the Scenes) → Auto-Organization
 
 ### 2. The Auto-Organize Service
 
-The `AutoOrganizeService` bridges the gap between the original automatic flow and the new suggestion system:
+The `AutoOrganizeService` bridges the gap between the original automatic flow and the new suggestion
+system:
 
 1. **Analyzes files** using existing analysis pipeline
 2. **Gets suggestions** silently in the background
@@ -75,8 +86,8 @@ const result = await window.electronAPI.organize.auto({
   options: {
     defaultLocation,
     confidenceThreshold: 0.7, // Medium confidence for manual trigger
-    preserveNames: false,
-  },
+    preserveNames: false
+  }
 });
 ```
 
@@ -89,8 +100,8 @@ const result = await window.electronAPI.organize.batch({
   smartFolders,
   options: {
     autoApproveThreshold: 0.8,
-    groupByStrategy: true,
-  },
+    groupByStrategy: true
+  }
 });
 ```
 
@@ -102,8 +113,8 @@ const result = await window.electronAPI.organize.processNew({
   filePath: downloadedFile,
   options: {
     autoOrganizeEnabled: settings.autoOrganize,
-    confidenceThreshold: 0.9,
-  },
+    confidenceThreshold: 0.9
+  }
 });
 ```
 
@@ -182,11 +193,13 @@ The system automatically:
 
 ## Summary
 
-The auto-organize system maintains StratoSort's original vision of **automatic file organization** while enhancing it with:
+The auto-organize system maintains StratoSort's original vision of **automatic file organization**
+while enhancing it with:
 
 1. **Intelligent suggestions** working silently in the background
 2. **Confidence-based automation** that reduces manual work
 3. **Learning capabilities** that improve accuracy over time
 4. **Fallback logic** ensuring files are always organized
 
-Users get the best of both worlds: **automatic organization that just works**, with the option to review and customize when desired.
+Users get the best of both worlds: **automatic organization that just works**, with the option to
+review and customize when desired.

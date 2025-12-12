@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Bug Fix Report - ChromaDB Startup Failure and React Warning
 
 ## Date: 2025-11-17
@@ -10,10 +18,14 @@
 
 The ChromaDB service was failing to start because:
 
-- **Missing Python Module**: The `chromadb` Python package was not installed in the user's Python environment
-- **Python Path**: The application was correctly finding Python at `C:\Users\benja\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\python.exe`
-- **Command Execution**: The app was trying to run `py -3 -m chromadb run` but the module wasn't available
-- **Retry Logic**: The startup manager was correctly attempting 3 retries, but all failed due to the missing module
+- **Missing Python Module**: The `chromadb` Python package was not installed in the user's Python
+  environment
+- **Python Path**: The application was correctly finding Python at
+  `C:\Users\benja\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\python.exe`
+- **Command Execution**: The app was trying to run `py -3 -m chromadb run` but the module wasn't
+  available
+- **Retry Logic**: The startup manager was correctly attempting 3 retries, but all failed due to the
+  missing module
 
 #### Solution Implemented
 
@@ -126,8 +138,10 @@ Fixed in `src/renderer/components/setup/SmartFolderItem.jsx`:
 ## Recommendations
 
 1. **For End Users**: Run the installation script to enable full functionality
-2. **For Developers**: Consider bundling ChromaDB or providing an installer that includes all dependencies
-3. **For Distribution**: Add a pre-flight check on first launch to guide users through ChromaDB installation
+2. **For Developers**: Consider bundling ChromaDB or providing an installer that includes all
+   dependencies
+3. **For Distribution**: Add a pre-flight check on first launch to guide users through ChromaDB
+   installation
 
 ## Testing Checklist
 
@@ -146,4 +160,5 @@ Both issues have been successfully addressed:
 1. ChromaDB can now be installed and will start correctly
 2. React warning about null value prop has been fixed
 
-The application should now function properly with all AI-powered features enabled after ChromaDB installation.
+The application should now function properly with all AI-powered features enabled after ChromaDB
+installation.

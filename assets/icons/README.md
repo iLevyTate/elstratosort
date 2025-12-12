@@ -15,25 +15,30 @@ This directory should contain platform-specific application icons for building t
 
 ## Icon Generation
 
-You can generate these from the existing `stratosort-logo.png` using:
+Icons are automatically generated from the source logo (`assets/stratosort-logo.png`) using the built-in generation scripts:
 
 ```bash
-# Install electron-icon-builder if not already installed
-npm install -g electron-icon-builder
+# Generate all icons for all platforms
+npm run generate:icons
 
-# Generate all platform icons from source
-eib -i ../stratosort-logo.png -o .
+# Or generate all assets (icons + installer graphics)
+npm run generate:assets
 ```
+
+The generation script (`scripts/generate-icons.js`) creates:
+- Windows ICO file (multi-resolution: 16px to 256px)
+- macOS ICNS file (all required sizes including Retina @2x variants)
+- Linux PNG files (16px to 1024px)
+- Favicon files for web usage
 
 ## Current Status
 
-⚠️ **MISSING**: Platform-specific icons need to be generated for distribution builds.
+Icons are auto-generated during `npm install` (postinstall hook) and before production builds.
 
-The app will run in development mode without these icons, but they're required for:
-- Production builds
-- App store distribution  
-- Proper OS integration
+## Manual Regeneration
 
-## Fallback
+If you update the source logo (`assets/stratosort-logo.png`), regenerate icons by running:
 
-Currently using the main `stratosort-logo.png` as fallback for development. 
+```bash
+npm run generate:icons
+``` 

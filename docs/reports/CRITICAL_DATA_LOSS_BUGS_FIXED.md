@@ -1,12 +1,21 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Critical Data Loss and Security Bug Fixes
 
 ## Executive Summary
 
-Fixed 5 CRITICAL bugs that could cause silent data corruption, permanent data loss, security vulnerabilities, and application crashes. All fixes include comprehensive error handling, detailed logging, and edge case protection.
+Fixed 5 CRITICAL bugs that could cause silent data corruption, permanent data loss, security
+vulnerabilities, and application crashes. All fixes include comprehensive error handling, detailed
+logging, and edge case protection.
 
-**Severity**: CRITICAL
-**Impact**: Data Integrity, Data Loss Prevention, Security, Application Stability
-**Status**: ✅ ALL FIXED
+**Severity**: CRITICAL **Impact**: Data Integrity, Data Loss Prevention, Security, Application
+Stability **Status**: ✅ ALL FIXED
 
 ---
 
@@ -44,7 +53,7 @@ let sourceChecksum, destChecksum;
 try {
   [sourceChecksum, destChecksum] = await Promise.all([
     computeFileChecksum(op.source),
-    computeFileChecksum(uniqueDestination),
+    computeFileChecksum(uniqueDestination)
   ]);
 } catch (checksumError) {
   // Clean up destination if checksum computation fails
@@ -59,12 +68,12 @@ if (sourceChecksum !== destChecksum) {
     source: op.source,
     destination: uniqueDestination,
     sourceChecksum,
-    destChecksum,
+    destChecksum
   });
   throw new Error(
     `File copy verification failed - checksum mismatch ` +
       `(source: ${sourceChecksum.substring(0, 8)}..., ` +
-      `dest: ${destChecksum.substring(0, 8)}...)`,
+      `dest: ${destChecksum.substring(0, 8)}...)`
   );
 }
 ```
@@ -276,14 +285,12 @@ if (shouldRollback && completedOperations.length > 0) {
     try {
       await fs.rename(completedOp.destination, completedOp.source);
       rollbackSuccessCount++;
-      logger.info(
-        `[FILE-OPS] Rolled back: ${completedOp.destination} -> ${completedOp.source}`,
-      );
+      logger.info(`[FILE-OPS] Rolled back: ${completedOp.destination} -> ${completedOp.source}`);
     } catch (rollbackError) {
       rollbackFailCount++;
       logger.error(
         `[FILE-OPS] Failed to rollback ${completedOp.destination}:`,
-        rollbackError.message,
+        rollbackError.message
       );
     }
   }
@@ -298,7 +305,7 @@ if (shouldRollback && completedOperations.length > 0) {
       `Batch operation failed and was rolled back. Reason: ${rollbackReason}. ` +
       `Rolled back ${rollbackSuccessCount}/${completedOperations.length} operations. ` +
       `${rollbackFailCount > 0 ? `WARNING: ${rollbackFailCount} files could not be rolled back!` : ''}`,
-    criticalError: true,
+    criticalError: true
   };
 }
 ```
@@ -334,7 +341,7 @@ const isUNCPath = (p) => {
 if (isUNCPath(documentsDir)) {
   throw new Error(
     `Security violation: UNC paths not allowed in documents directory. ` +
-      `Detected UNC path: ${documentsDir}`,
+      `Detected UNC path: ${documentsDir}`
   );
 }
 
@@ -343,32 +350,24 @@ const sanitizedBaseName = 'StratoSort'.replace(/[^a-zA-Z0-9_-]/g, '_');
 const sanitizedFolderName = 'Uncategorized'.replace(/[^a-zA-Z0-9_-]/g, '_');
 
 // Step 3: Resolve path
-const defaultFolderPath = path.resolve(
-  documentsDir,
-  sanitizedBaseName,
-  sanitizedFolderName,
-);
+const defaultFolderPath = path.resolve(documentsDir, sanitizedBaseName, sanitizedFolderName);
 
 // Step 4: Check resolved path for UNC
 if (isUNCPath(defaultFolderPath)) {
   throw new Error(
     `Security violation: UNC path detected after resolution. ` +
-      `Path ${defaultFolderPath} is a UNC path which is not allowed`,
+      `Path ${defaultFolderPath} is a UNC path which is not allowed`
   );
 }
 
 // Step 5: Verify path is inside documents directory
-const normalizedDefaultPath = defaultFolderPath
-  .replace(/\\\\/g, '/')
-  .toLowerCase();
-const normalizedDocumentsDir = resolvedDocumentsDir
-  .replace(/\\\\/g, '/')
-  .toLowerCase();
+const normalizedDefaultPath = defaultFolderPath.replace(/\\\\/g, '/').toLowerCase();
+const normalizedDocumentsDir = resolvedDocumentsDir.replace(/\\\\/g, '/').toLowerCase();
 
 if (!normalizedDefaultPath.startsWith(normalizedDocumentsDir)) {
   throw new Error(
     `Security violation: Attempted path traversal detected. ` +
-      `Path ${defaultFolderPath} is outside documents directory ${resolvedDocumentsDir}`,
+      `Path ${defaultFolderPath} is outside documents directory ${resolvedDocumentsDir}`
   );
 }
 
@@ -379,14 +378,14 @@ const suspiciousPatterns = [
   /[\\\\/]\\.\\./, // Separator with parent
   /^[a-zA-Z]:/, // Different drive letter
   /\\0/, // Null bytes
-  /[<>:"|?*]/, // Invalid Windows filename chars
+  /[<>:"|?*]/ // Invalid Windows filename chars
 ];
 
 for (const pattern of suspiciousPatterns) {
   if (pattern.test(defaultFolderPath.substring(resolvedDocumentsDir.length))) {
     throw new Error(
       `Security violation: Suspicious path pattern detected. ` +
-        `Path contains potentially dangerous characters or sequences`,
+        `Path contains potentially dangerous characters or sequences`
     );
   }
 }

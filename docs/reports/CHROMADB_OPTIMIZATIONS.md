@@ -1,8 +1,17 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # ChromaDB Query Optimization Summary
 
 ## Overview
 
-Implemented comprehensive optimizations to reduce ChromaDB query frequency and improve database operation efficiency across the application.
+Implemented comprehensive optimizations to reduce ChromaDB query frequency and improve database
+operation efficiency across the application.
 
 ## Optimizations Implemented
 
@@ -58,7 +67,7 @@ if (cached) return cached; // < 1ms response
 Promise.all([
   queryFolders(fileId, 5),
   queryFolders(fileId, 5), // Duplicate DB query
-  queryFolders(fileId, 5), // Duplicate DB query
+  queryFolders(fileId, 5) // Duplicate DB query
 ]);
 
 // After: 3 concurrent requests = 1 database call
@@ -259,7 +268,8 @@ const BATCH_SIZE = 50; // Files per batch (configurable)
 
 ## Migration Notes
 
-No migration required. All changes are transparent to existing code. The optimizations activate automatically when:
+No migration required. All changes are transparent to existing code. The optimizations activate
+automatically when:
 
 - Queries are repeated within the TTL window
 - Multiple concurrent requests target the same data
