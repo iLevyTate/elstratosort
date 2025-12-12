@@ -1,0 +1,70 @@
+const path = require('path');
+const webpack = require('webpack');
+const TerserPlugin = require('terser-webpack-plugin');
+
+module.exports = (env, argv) => {
+  const isProduction = argv.mode === 'production';
+
+  return {
+    mode: argv.mode || 'development',
+    entry: {
+      main: './src/main/simple-main.js',
+      preload: './src/preload/preload.js'
+    },
+    output: {
+      path: path.resolve(__dirname, 'dist'),
+      filename: '[name].js',
+      // Important: Do not clean dist here as it might wipe renderer build
+      clean: false
+    },
+    target: 'electron-main',
+    node: {
+      __dirname: false,
+      __filename: false
+    },
+    module: {
+      rules: [
+        {
+          test: /\.js$/,
+          exclude: /node_modules/,
+          use: {
+            loader: 'babel-loader',
+            options: {
+              presets: [['@babel/preset-env', { targets: { node: 'current' } }]]
+            }
+          }
+        }
+      ]
+    },
+    resolve: {
+      extensions: ['.js', '.json']
+    },
+    externals: {
+      electron: 'commonjs electron',
+      sharp: 'commonjs sharp',
+      'node-tesseract-ocr': 'commonjs node-tesseract-ocr',
+      chromadb: 'commonjs chromadb',
+      'electron-updater': 'commonjs electron-updater'
+    },
+    optimization: {
+      minimize: isProduction,
+      minimizer: [
+        new TerserPlugin({
+          parallel: true,
+          extractComments: false,
+          terserOptions: {
+            compress: {
+              drop_console: isProduction
+            }
+          }
+        })
+      ]
+    },
+    plugins: [
+      new webpack.DefinePlugin({
+        'process.env.NODE_ENV': JSON.stringify(isProduction ? 'production' : 'development')
+      })
+    ],
+    devtool: isProduction ? false : 'source-map'
+  };
+};

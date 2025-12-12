@@ -4,9 +4,11 @@ const webpack = require('webpack');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const ReactRefreshWebpackPlugin = require('@pmmmwh/react-refresh-webpack-plugin');
 const TerserPlugin = require('terser-webpack-plugin');
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 
 module.exports = (env, argv) => {
   const isProduction = argv.mode === 'production';
+  const isAnalyze = process.env.ANALYZE === 'true';
 
   return {
     mode: argv.mode || 'development',
@@ -15,7 +17,7 @@ module.exports = (env, argv) => {
       path: path.resolve(__dirname, 'dist'),
       filename: 'renderer.js',
       chunkFilename: '[id].renderer.js',
-      clean: true,
+      clean: false,
       publicPath: '',
       globalObject: 'globalThis'
     },
@@ -103,7 +105,8 @@ module.exports = (env, argv) => {
           ]
         : process.env.WEBPACK_DEV_SERVER === 'true'
           ? [new ReactRefreshWebpackPlugin({ overlay: false })]
-          : [])
+          : []),
+      ...(isAnalyze ? [new BundleAnalyzerPlugin({ analyzerMode: 'static' })] : [])
     ],
     // Use secure devtool options
     devtool: isProduction ? false : 'source-map',

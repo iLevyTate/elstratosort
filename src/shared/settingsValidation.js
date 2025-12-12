@@ -91,6 +91,31 @@ const VALIDATION_RULES = {
     // Lock to the vetted embedding model to keep vector dimensions consistent
     enum: ['mxbai-embed-large']
   },
+  autoUpdateOllama: {
+    type: 'boolean',
+    required: false
+  },
+  autoUpdateChromaDb: {
+    type: 'boolean',
+    required: false
+  },
+  dependencyWizardShown: {
+    type: 'boolean',
+    required: false
+  },
+  dependencyWizardLastPromptAt: {
+    // ISO string (or null) — keep validation loose to avoid breaking old settings.
+    type: 'string',
+    maxLength: 100,
+    required: false
+  },
+  dependencyWizardPromptIntervalDays: {
+    type: 'number',
+    min: 1,
+    max: 365,
+    integer: true,
+    required: false
+  },
   maxFileSize: {
     type: 'number',
     min: 1024 * 1024, // 1MB minimum

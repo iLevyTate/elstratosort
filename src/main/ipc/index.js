@@ -11,6 +11,7 @@ const registerWindowIpc = require('./window');
 const { registerSuggestionsIpc } = require('./suggestions');
 const { registerOrganizeIpc } = require('./organize');
 const { registerChromaDBIpc } = require('./chromadb');
+const { registerDependenciesIpc } = require('./dependencies');
 const { ServiceContainer, createFromLegacyParams } = require('./ServiceContainer');
 
 // Export IPC utilities for handler creation
@@ -177,6 +178,12 @@ function registerAllIpc(servicesOrParams) {
   });
   registerWindowIpc({ ipcMain, IPC_CHANNELS, logger, getMainWindow });
   registerChromaDBIpc({
+    ipcMain,
+    IPC_CHANNELS,
+    logger,
+    getMainWindow
+  });
+  registerDependenciesIpc({
     ipcMain,
     IPC_CHANNELS,
     logger,

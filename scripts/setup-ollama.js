@@ -42,6 +42,55 @@ const ESSENTIAL_MODELS = {
   embedding: ['mxbai-embed-large:latest', 'nomic-embed-text:latest']
 };
 
+function normalizeOllamaModelName(name) {
+  if (!name || typeof name !== 'string') return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  return trimmed.includes(':') ? trimmed : `${trimmed}:latest`;
+}
+
+function getConfiguredModels() {
+  // Prefer environment overrides (matches config schema env vars)
+  const fromEnv = {
+    text: normalizeOllamaModelName(process.env.OLLAMA_TEXT_MODEL),
+    vision: normalizeOllamaModelName(
+      process.env.OLLAMA_VISION_MODEL || process.env.OLLAMA_MULTIMODAL_MODEL
+    ),
+    embedding: normalizeOllamaModelName(process.env.OLLAMA_EMBEDDING_MODEL)
+  };
+
+  // Fall back to app defaults
+  let defaults = null;
+  try {
+    // eslint-disable-next-line global-require
+    defaults = require('../src/shared/defaultSettings').DEFAULT_SETTINGS;
+  } catch {
+    defaults = null;
+  }
+
+  const fromDefaults = {
+    text: normalizeOllamaModelName(defaults?.textModel),
+    vision: normalizeOllamaModelName(defaults?.visionModel),
+    embedding: normalizeOllamaModelName(defaults?.embeddingModel)
+  };
+
+  return {
+    text: fromEnv.text || fromDefaults.text,
+    vision: fromEnv.vision || fromDefaults.vision,
+    embedding: fromEnv.embedding || fromDefaults.embedding
+  };
+}
+
+function hasModelInstalled(installedModels, modelName) {
+  if (!modelName) return false;
+  const base = modelName.split(':')[0].toLowerCase();
+  return (installedModels || []).some((m) =>
+    String(m || '')
+      .toLowerCase()
+      .startsWith(base)
+  );
+}
+
 // Minimum required: at least one text model AND one vision model
 const MINIMUM_REQUIREMENT = {
   text: 1,
@@ -266,6 +315,37 @@ async function installEssentialModels() {
 
   if (!needsText && !needsVision && !needsEmbedding) {
     console.log(chalk.green('\n✓ All minimum model requirements are met!'));
+    // Still report configured model status (developer expectations)
+    const configured = getConfiguredModels();
+    const cfgTextOk = hasModelInstalled(installedModels, configured.text);
+    const cfgVisionOk = hasModelInstalled(installedModels, configured.vision);
+    const cfgEmbedOk = hasModelInstalled(installedModels, configured.embedding);
+
+    if (configured.text || configured.vision || configured.embedding) {
+      console.log(chalk.gray('\nConfigured models:'));
+      if (configured.text) {
+        console.log(
+          cfgTextOk
+            ? chalk.green(`  ✓ text: ${configured.text}`)
+            : chalk.yellow(`  ⚠ text missing: ${configured.text}`)
+        );
+      }
+      if (configured.vision) {
+        console.log(
+          cfgVisionOk
+            ? chalk.green(`  ✓ vision: ${configured.vision}`)
+            : chalk.yellow(`  ⚠ vision missing: ${configured.vision}`)
+        );
+      }
+      if (configured.embedding && !process.env.MINIMAL_SETUP) {
+        console.log(
+          cfgEmbedOk
+            ? chalk.green(`  ✓ embedding: ${configured.embedding}`)
+            : chalk.yellow(`  ⚠ embedding missing: ${configured.embedding}`)
+        );
+      }
+    }
+
     return true;
   }
 
@@ -339,6 +419,31 @@ async function installEssentialModels() {
       `  Embedding models: ${modelStatus.embedding.length}${modelStatus.embedding.length > 0 ? ' ✓' : ' (optional)'}`
     )
   );
+
+  // Ensure configured defaults are installed too (developer ergonomics)
+  const configured = getConfiguredModels();
+  const after = await getInstalledModels();
+  const missingConfigured = [];
+  if (configured.text && !hasModelInstalled(after, configured.text))
+    missingConfigured.push(configured.text);
+  if (configured.vision && !hasModelInstalled(after, configured.vision))
+    missingConfigured.push(configured.vision);
+  if (
+    configured.embedding &&
+    !process.env.MINIMAL_SETUP &&
+    !hasModelInstalled(after, configured.embedding)
+  ) {
+    missingConfigured.push(configured.embedding);
+  }
+
+  if (missingConfigured.length > 0) {
+    console.log(chalk.cyan('\nInstalling configured StratoSort models...'));
+    for (const m of missingConfigured) {
+      // Best-effort; continue even if one fails
+      // eslint-disable-next-line no-await-in-loop
+      await pullModel(m);
+    }
+  }
 
   return true;
 }
@@ -418,6 +523,10 @@ async function main() {
     const installed = await isOllamaInstalled();
     const running = await isOllamaRunning();
     const models = await getInstalledModels();
+    const configured = getConfiguredModels();
+    const cfgTextOk = hasModelInstalled(models, configured.text);
+    const cfgVisionOk = hasModelInstalled(models, configured.vision);
+    const cfgEmbedOk = hasModelInstalled(models, configured.embedding);
 
     console.log(
       installed ? chalk.green('✓ Ollama is installed') : chalk.red('✗ Ollama is not installed')
@@ -435,7 +544,34 @@ async function main() {
         : chalk.yellow('⚠ No models installed')
     );
 
-    process.exit(installed && models.length > 0 ? 0 : 1);
+    if (configured.text || configured.vision || configured.embedding) {
+      console.log(chalk.gray('\nConfigured models:'));
+      if (configured.text) {
+        console.log(
+          cfgTextOk
+            ? chalk.green(`  ✓ text: ${configured.text}`)
+            : chalk.red(`  ✗ text missing: ${configured.text}`)
+        );
+      }
+      if (configured.vision) {
+        console.log(
+          cfgVisionOk
+            ? chalk.green(`  ✓ vision: ${configured.vision}`)
+            : chalk.red(`  ✗ vision missing: ${configured.vision}`)
+        );
+      }
+      if (configured.embedding && !isMinimal) {
+        console.log(
+          cfgEmbedOk
+            ? chalk.green(`  ✓ embedding: ${configured.embedding}`)
+            : chalk.yellow(`  ⚠ embedding missing: ${configured.embedding}`)
+        );
+      }
+    }
+
+    // Exit non-zero if required configured models are missing (text + vision)
+    const ok = installed && cfgTextOk && cfgVisionOk;
+    process.exit(ok ? 0 : 1);
   }
 
   // Step 1: Check if Ollama is installed

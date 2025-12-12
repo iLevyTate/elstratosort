@@ -11,6 +11,7 @@ dist/
 release/
 build/*
 !build/installer.nsh
+!build/installer-themed.nsh
 out/
 
 # Development
@@ -93,6 +94,10 @@ docs/.doctrees/
 # Project data and local artifacts
 Documents/
 tmpUserData/
+
+# Cursor/IDE workspace image artifacts (occasionally end up under assets/ via copy/paste)
+assets/c__Users_*_workspaceStorage_*_images_*.png
+assets/**/workspaceStorage_*/*
 
 # Internal planning documents
 .internal/

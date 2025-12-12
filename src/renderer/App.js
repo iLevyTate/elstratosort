@@ -5,6 +5,7 @@ import NavigationBar from './components/NavigationBar';
 import TooltipManager from './components/TooltipManager';
 // FIX: ChromaDB status subscription - keeps Redux store in sync with service status
 import ChromaDBStatusManager from './components/ChromaDBStatusManager';
+import AiDependenciesModalManager from './components/AiDependenciesModalManager';
 
 import AppProviders from './components/AppProviders';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -15,6 +16,7 @@ function App() {
       <AppProviders>
         {/* FIX: Subscribe to ChromaDB status changes and update Redux store */}
         <ChromaDBStatusManager />
+        <AiDependenciesModalManager />
         <a href="#main-content" className="skip-link">
           Skip to main content
         </a>

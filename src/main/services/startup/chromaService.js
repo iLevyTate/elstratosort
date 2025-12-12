@@ -167,6 +167,33 @@ async function startChromaDB({
     return { success: false, disabled: true, reason: 'missing_dependency' };
   }
 
+  // External ChromaDB mode (e.g. running in Docker): if CHROMA_SERVER_URL is provided,
+  // we do NOT require the local Python module or local spawn.
+  if (process.env.CHROMA_SERVER_URL) {
+    const reachable = await isChromaDBRunning();
+    if (reachable) {
+      serviceStatus.chromadb.status = 'running';
+      serviceStatus.chromadb.health = 'healthy';
+      serviceStatus.chromadb.external = true;
+      logger.info('[STARTUP] Using external ChromaDB server', {
+        url: process.env.CHROMA_SERVER_URL
+      });
+      return { success: true, external: true };
+    }
+
+    serviceStatus.chromadb.status = 'failed';
+    serviceStatus.chromadb.health = 'unhealthy';
+    errors.push({
+      service: 'chromadb',
+      error: `ChromaDB server not reachable at ${process.env.CHROMA_SERVER_URL}`,
+      critical: false
+    });
+    logger.warn('[STARTUP] External ChromaDB server not reachable', {
+      url: process.env.CHROMA_SERVER_URL
+    });
+    return { success: false, external: true, reason: 'unreachable' };
+  }
+
   const moduleAvailable = await hasPythonModuleAsync('chromadb');
   if (!moduleAvailable) {
     serviceStatus.chromadb.status = 'disabled';
@@ -183,6 +210,16 @@ async function startChromaDB({
       reason: 'missing_dependency',
       setDependencyMissing: true
     };
+  }
+
+  // If a ChromaDB server is already reachable, don't try to spawn a second instance.
+  // This avoids noisy failures when a previous run (or another service) already started ChromaDB.
+  if (await isChromaDBRunning()) {
+    serviceStatus.chromadb.status = 'running';
+    serviceStatus.chromadb.health = 'healthy';
+    serviceStatus.chromadb.external = false;
+    logger.info('[STARTUP] ChromaDB is already running; skipping spawn');
+    return { success: true, alreadyRunning: true };
   }
 
   // Use cached spawn plan if available

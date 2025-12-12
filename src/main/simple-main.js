@@ -55,8 +55,18 @@ const { initializeTrayConfig, createSystemTray, updateTrayMenu } = require('./co
 const { verifyIpcHandlersRegistered } = require('./core/ipcVerification');
 const { initializeLifecycle, registerLifecycleHandlers } = require('./core/lifecycle');
 const { initializeAutoUpdater } = require('./core/autoUpdater');
-const { initializeJumpList } = require('./core/jumpList');
+const { initializeJumpList, handleCommandLineTasks } = require('./core/jumpList');
 const { runBackgroundSetup } = require('./core/backgroundSetup');
+
+// Windows integrations (Jump List, notifications, taskbar grouping) require AppUserModelId.
+// Set it as early as possible so it applies even before any windows are created.
+if (process.platform === 'win32') {
+  try {
+    app.setAppUserModelId('com.stratosort.app');
+  } catch (error) {
+    logger.debug('Failed to set AppUserModelId', { error: error?.message });
+  }
+}
 
 let mainWindow;
 let customFolders = []; // Initialize customFolders at module level
@@ -253,10 +263,20 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
-  const secondInstanceHandler = () => {
+  const secondInstanceHandler = (_event, argv) => {
     // Someone tried to run a second instance, restore and focus our window
     // HIGH-2 FIX: Use event-driven window state manager
     const { restoreWindow } = require('./core/windowState');
+
+    // Windows: Jump List tasks are passed via argv when the app is already running.
+    // Process them here so tasks work reliably in the single-instance scenario.
+    try {
+      if (Array.isArray(argv)) {
+        handleCommandLineTasks(argv);
+      }
+    } catch (error) {
+      logger.warn('[SECOND-INSTANCE] Failed to handle command-line tasks:', error?.message);
+    }
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       logger.debug('[SECOND-INSTANCE] Restoring window for second instance attempt');
