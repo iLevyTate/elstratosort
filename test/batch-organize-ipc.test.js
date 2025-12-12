@@ -94,33 +94,48 @@ describe('Files IPC - batch organize', () => {
     const path = require('path');
     const fs = require('fs').promises;
     // Ensure a real temp directory exists (Windows runners can have non-existent tmp paths)
-    const tmpBase = await fs.mkdtemp(path.join(os.tmpdir(), 'batch-organize-'));
-    const sourceA = path.join(tmpBase, `src_A_${Date.now()}.txt`);
-    const destA = path.join(tmpBase, `dest_A_${Date.now()}.txt`);
-    const sourceB = path.join(tmpBase, `src_B_${Date.now()}.txt`);
-    const destB = path.join(tmpBase, `dest_B_${Date.now()}.txt`);
-    await fs.writeFile(sourceA, 'A');
-    await fs.writeFile(sourceB, 'B');
+    let tmpBase;
+    try {
+      const osTmp = os.tmpdir();
+      // mkdtemp() does not create parent directories.
+      await fs.mkdir(osTmp, { recursive: true });
+      tmpBase = await fs.mkdtemp(path.join(osTmp, 'batch-organize-'));
+    } catch {
+      // Fallback: use a repo-local temp directory (always exists / creatable in CI)
+      const fallbackRoot = path.join(process.cwd(), 'tmpUserData', 'tmp');
+      await fs.mkdir(fallbackRoot, { recursive: true });
+      tmpBase = await fs.mkdtemp(path.join(fallbackRoot, 'batch-organize-'));
+    }
+    try {
+      const sourceA = path.join(tmpBase, `src_A_${Date.now()}.txt`);
+      const destA = path.join(tmpBase, `dest_A_${Date.now()}.txt`);
+      const sourceB = path.join(tmpBase, `src_B_${Date.now()}.txt`);
+      const destB = path.join(tmpBase, `dest_B_${Date.now()}.txt`);
+      await fs.writeFile(sourceA, 'A');
+      await fs.writeFile(sourceB, 'B');
 
-    const { success, results, successCount, failCount } = await handler(null, {
-      type: 'batch_organize',
-      operations: [
-        { source: sourceA, destination: destA },
-        { source: sourceB, destination: destB }
-      ]
-    });
+      const { success, results, successCount, failCount } = await handler(null, {
+        type: 'batch_organize',
+        operations: [
+          { source: sourceA, destination: destA },
+          { source: sourceB, destination: destB }
+        ]
+      });
 
-    expect(success).toBe(true);
-    expect(successCount).toBe(2);
-    expect(failCount).toBe(0);
-    expect(Array.isArray(results)).toBe(true);
-    expect(serviceIntegration.processingState.completeOrganizeBatch).toHaveBeenCalled();
+      expect(success).toBe(true);
+      expect(successCount).toBe(2);
+      expect(failCount).toBe(0);
+      expect(Array.isArray(results)).toBe(true);
+      expect(serviceIntegration.processingState.completeOrganizeBatch).toHaveBeenCalled();
 
-    // Verify database update was called
-    expect(mockUpdateFilePaths).toHaveBeenCalled();
-    const updateCalls = mockUpdateFilePaths.mock.calls[0][0];
-    expect(updateCalls).toHaveLength(2);
-    expect(updateCalls[0].oldId).toContain('src_A');
-    expect(updateCalls[0].newId).toContain('dest_A');
-  });
+      // Verify database update was called
+      expect(mockUpdateFilePaths).toHaveBeenCalled();
+      const updateCalls = mockUpdateFilePaths.mock.calls[0][0];
+      expect(updateCalls).toHaveLength(2);
+      expect(updateCalls[0].oldId).toContain('src_A');
+      expect(updateCalls[0].newId).toContain('dest_A');
+    } finally {
+      if (tmpBase) await fs.rm(tmpBase, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
