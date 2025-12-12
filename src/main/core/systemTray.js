@@ -14,6 +14,13 @@ const { logger } = require('../../shared/logger');
 
 logger.setContext('Tray');
 
+const getAssetPath = (...paths) => {
+  const RESOURCES_PATH = app.isPackaged
+    ? path.join(process.resourcesPath, 'assets')
+    : path.join(__dirname, '../../../assets');
+  return path.join(RESOURCES_PATH, ...paths);
+};
+
 let tray = null;
 let trayConfig = {
   getDownloadWatcher: null,
@@ -36,13 +43,12 @@ function initializeTrayConfig(config) {
  */
 function createSystemTray() {
   try {
-    const iconPath = path.join(
-      __dirname,
+    const iconPath = getAssetPath(
       isWindows
-        ? '../../../assets/icons/icons/win/icon.ico'
+        ? 'icons/icons/win/icon.ico'
         : isMacOS
-          ? '../../../assets/icons/icons/png/24x24.png'
-          : '../../../assets/icons/icons/png/16x16.png'
+          ? 'icons/icons/png/24x24.png'
+          : 'icons/icons/png/16x16.png'
     );
 
     const trayIcon = nativeImage.createFromPath(iconPath);

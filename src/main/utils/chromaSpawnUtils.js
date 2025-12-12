@@ -2,7 +2,11 @@ const path = require('path');
 const fs = require('fs').promises;
 const { logger } = require('../../shared/logger');
 logger.setContext('ChromaSpawnUtils');
-const { findPythonLauncherAsync, checkChromaExecutableAsync } = require('./asyncSpawnUtils');
+const {
+  findPythonLauncherAsync,
+  checkChromaExecutableAsync,
+  asyncSpawn
+} = require('./asyncSpawnUtils');
 const { getChromaDbBinName, shouldUseShell } = require('../../shared/platformUtils');
 
 /**
@@ -35,6 +39,76 @@ async function resolveChromaCliExecutable() {
   } catch (error) {
     logger.warn('[ChromaDB] Failed to resolve local CLI executable:', error?.message || error);
   }
+  return null;
+}
+
+async function resolveChromaFromPythonUserScripts() {
+  const pythonLauncher = await findPythonLauncherAsync();
+  if (!pythonLauncher) return null;
+
+  // Ask Python for likely script directories. For pip --user installs on Windows,
+  // chroma.exe commonly ends up in the user base Scripts directory (which may differ
+  // from sysconfig's "scripts" path, especially with Microsoft Store Python).
+  const result = await asyncSpawn(
+    pythonLauncher.command,
+    [
+      ...pythonLauncher.args,
+      '-c',
+      [
+        'import os, sysconfig, site',
+        'paths = []',
+        'def add(p):',
+        '  p = (p or "").strip()',
+        '  if p and p not in paths: paths.append(p)',
+        'add(sysconfig.get_path("scripts"))',
+        'try:',
+        '  ub = site.getuserbase()',
+        'except Exception:',
+        '  ub = ""',
+        'add(os.path.join(ub, "Scripts"))',
+        'add(os.path.join(ub, "bin"))',
+        'print("\\n".join(paths))'
+      ].join('; ')
+    ],
+    {
+      timeout: 3000,
+      windowsHide: true,
+      shell: shouldUseShell()
+    }
+  );
+
+  const output = (result.stdout || result.stderr || '').toString().trim();
+  if (!output) return null;
+
+  const scriptsDirs = output
+    .split(/\r?\n/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const exeName = process.platform === 'win32' ? 'chroma.exe' : 'chroma';
+
+  for (const scriptsDir of scriptsDirs) {
+    const candidate = path.join(scriptsDir, exeName);
+
+    // Validate path traversal safety (must remain under scripts dir).
+    const normalizedCandidate = path.normalize(candidate);
+    const normalizedScriptsDir = path.normalize(scriptsDir);
+    if (!normalizedCandidate.startsWith(normalizedScriptsDir)) {
+      logger.warn('[ChromaDB] Potential path traversal in python scripts resolution', {
+        scriptsDir,
+        candidate
+      });
+      continue;
+    }
+
+    try {
+      await fs.access(normalizedCandidate);
+      return normalizedCandidate;
+    } catch {
+      // try next directory
+    }
+  }
+
   return null;
 }
 
@@ -72,6 +146,19 @@ async function buildChromaSpawnPlan(config) {
     };
   }
 
+  // If chroma was installed via pip --user, it might not be on PATH.
+  // Resolve it from the Python user scripts directory.
+  const pythonScriptsChroma = await resolveChromaFromPythonUserScripts();
+  if (pythonScriptsChroma) {
+    logger.info('[ChromaDB] Found chroma executable in Python scripts directory');
+    return {
+      command: pythonScriptsChroma,
+      args: ['run', '--path', config.dbPath, '--host', config.host, '--port', String(config.port)],
+      source: 'python-scripts-chroma',
+      options: { windowsHide: true, shell: shouldUseShell() }
+    };
+  }
+
   // Check for system-installed chroma executable (ChromaDB 1.0.x+)
   // This is the preferred method for newer ChromaDB versions
   // System-installed chroma binary is just 'chroma' on all platforms
@@ -89,32 +176,6 @@ async function buildChromaSpawnPlan(config) {
         // Use cross-platform shell detection
         shell: shouldUseShell()
       }
-    };
-  }
-
-  // Fallback to Python module execution (deprecated in ChromaDB 1.0.x+)
-  // This won't work with ChromaDB 1.0.x but kept for backward compatibility
-  const pythonLauncher = await findPythonLauncher();
-  if (pythonLauncher) {
-    logger.warn(
-      '[ChromaDB] Attempting to use Python -m chromadb (may not work with ChromaDB 1.0.x+)'
-    );
-    return {
-      command: pythonLauncher.command,
-      args: [
-        ...pythonLauncher.args,
-        '-m',
-        'chromadb',
-        'run',
-        '--path',
-        config.dbPath,
-        '--host',
-        config.host,
-        '--port',
-        String(config.port)
-      ],
-      source: 'python',
-      options: { windowsHide: true }
     };
   }
 

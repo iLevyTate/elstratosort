@@ -248,6 +248,27 @@ describe('chromaService', () => {
       expect(result.reason).toBe('missing_dependency');
     });
 
+    test('uses external CHROMA_SERVER_URL without requiring local python module', async () => {
+      process.env.CHROMA_SERVER_URL = 'http://custom:9000';
+      // Reachable heartbeat
+      axiosWithRetry.mockResolvedValue({ status: 200, data: {} });
+      hasPythonModuleAsync.mockResolvedValue(false);
+
+      const result = await chromaService.startChromaDB({
+        serviceStatus,
+        errors,
+        chromadbDependencyMissing: false,
+        cachedChromaSpawnPlan: null,
+        setCachedSpawnPlan: jest.fn()
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.external).toBe(true);
+      expect(serviceStatus.chromadb.status).toBe('running');
+      expect(hasPythonModuleAsync).not.toHaveBeenCalled();
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
     test('checks for chromadb Python module', async () => {
       hasPythonModuleAsync.mockResolvedValue(false);
 

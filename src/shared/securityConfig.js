@@ -130,6 +130,12 @@ const SETTINGS_VALIDATION = {
     'textModel',
     'visionModel',
     'embeddingModel',
+    // Dependency lifecycle consent + UX cadence
+    'autoUpdateOllama',
+    'autoUpdateChromaDb',
+    'dependencyWizardShown',
+    'dependencyWizardLastPromptAt',
+    'dependencyWizardPromptIntervalDays',
     'launchOnStartup',
     'autoOrganize',
     'backgroundMode',

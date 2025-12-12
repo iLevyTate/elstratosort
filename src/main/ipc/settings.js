@@ -177,9 +177,21 @@ function registerSettingsIpc({
           textModel: z.string().optional(),
           visionModel: z.string().optional(),
           embeddingModel: z.string().optional(),
+          autoUpdateOllama: z.boolean().optional(),
+          autoUpdateChromaDb: z.boolean().optional(),
+          dependencyWizardShown: z.boolean().optional(),
+          dependencyWizardLastPromptAt: z.string().nullable().optional(),
+          dependencyWizardPromptIntervalDays: z.number().int().min(1).max(365).optional(),
           launchOnStartup: z.boolean().optional(),
           autoOrganize: z.boolean().optional(),
-          backgroundMode: z.boolean().optional()
+          backgroundMode: z.boolean().optional(),
+          theme: z.string().optional(),
+          language: z.string().optional(),
+          loggingLevel: z.string().optional(),
+          cacheSize: z.number().int().min(0).max(100000).optional(),
+          maxBatchSize: z.number().int().min(1).max(100000).optional(),
+          autoUpdateCheck: z.boolean().optional(),
+          telemetryEnabled: z.boolean().optional()
         })
         .partial()
     : null;

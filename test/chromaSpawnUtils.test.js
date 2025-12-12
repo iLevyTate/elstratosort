@@ -24,6 +24,7 @@ jest.mock('fs', () => ({
 
 // Mock asyncSpawnUtils
 jest.mock('../src/main/utils/asyncSpawnUtils', () => ({
+  asyncSpawn: jest.fn(),
   findPythonLauncherAsync: jest.fn(),
   checkChromaExecutableAsync: jest.fn()
 }));
@@ -55,6 +56,13 @@ describe('chromaSpawnUtils', () => {
     asyncSpawnUtils = require('../src/main/utils/asyncSpawnUtils');
     platformUtils = require('../src/shared/platformUtils');
     chromaSpawnUtils = require('../src/main/utils/chromaSpawnUtils');
+
+    // Default: python scripts dir resolution returns empty, so existing tests behave the same
+    asyncSpawnUtils.asyncSpawn.mockResolvedValue({
+      status: 0,
+      stdout: '',
+      stderr: ''
+    });
   });
 
   describe('resolveChromaCliExecutable', () => {
@@ -132,6 +140,71 @@ describe('chromaSpawnUtils', () => {
       expect(result.command).toBe('chroma');
     });
 
+    test('uses chroma from Python scripts directory when pip --user is used (Windows)', async () => {
+      // Force Windows exe naming
+      const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+
+      // Local CLI not found
+      mockFs.access.mockImplementation(async (p) => {
+        // Succeed only for the python-scripts chroma exe
+        const s = String(p);
+        if (s.toLowerCase().includes('python') && s.toLowerCase().endsWith('chroma.exe'))
+          return undefined;
+        throw new Error('ENOENT');
+      });
+
+      asyncSpawnUtils.findPythonLauncherAsync.mockResolvedValue({ command: 'py', args: ['-3'] });
+      asyncSpawnUtils.asyncSpawn.mockResolvedValue({
+        status: 0,
+        stdout: '/python/scripts\n',
+        stderr: ''
+      });
+
+      asyncSpawnUtils.checkChromaExecutableAsync.mockResolvedValue(false);
+
+      const result = await chromaSpawnUtils.buildChromaSpawnPlan(defaultConfig);
+
+      expect(result.source).toBe('python-scripts-chroma');
+      expect(result.command.toLowerCase()).toContain('chroma.exe');
+
+      // Restore process.platform
+      if (originalPlatform) {
+        Object.defineProperty(process, 'platform', originalPlatform);
+      }
+    });
+
+    test('tries multiple Python script directories (sysconfig + userbase) when resolving chroma (Windows)', async () => {
+      const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+
+      // Local CLI not found, and chroma not on PATH
+      mockFs.access.mockImplementation(async (p) => {
+        const s = String(p).toLowerCase();
+        // Only userbase path contains chroma.exe
+        if (s.includes('userbase') && s.endsWith('chroma.exe')) return undefined;
+        throw new Error('ENOENT');
+      });
+
+      asyncSpawnUtils.findPythonLauncherAsync.mockResolvedValue({ command: 'py', args: ['-3'] });
+      asyncSpawnUtils.asyncSpawn.mockResolvedValue({
+        status: 0,
+        stdout: 'C:\\WindowsApps\\Scripts\r\nC:\\UserBase\\Scripts\r\n',
+        stderr: ''
+      });
+      asyncSpawnUtils.checkChromaExecutableAsync.mockResolvedValue(false);
+
+      const result = await chromaSpawnUtils.buildChromaSpawnPlan(defaultConfig);
+
+      expect(result.source).toBe('python-scripts-chroma');
+      expect(result.command.toLowerCase()).toContain('userbase');
+      expect(result.command.toLowerCase()).toContain('chroma.exe');
+
+      if (originalPlatform) {
+        Object.defineProperty(process, 'platform', originalPlatform);
+      }
+    });
+
     test('uses shell option for system chroma on Windows', async () => {
       mockFs.access.mockRejectedValue(new Error('ENOENT'));
       asyncSpawnUtils.checkChromaExecutableAsync.mockResolvedValue(true);
@@ -140,22 +213,6 @@ describe('chromaSpawnUtils', () => {
       const result = await chromaSpawnUtils.buildChromaSpawnPlan(defaultConfig);
 
       expect(result.options.shell).toBe(true);
-    });
-
-    test('falls back to Python module when no chroma executable', async () => {
-      mockFs.access.mockRejectedValue(new Error('ENOENT'));
-      asyncSpawnUtils.checkChromaExecutableAsync.mockResolvedValue(false);
-      asyncSpawnUtils.findPythonLauncherAsync.mockResolvedValue({
-        command: 'python3',
-        args: []
-      });
-
-      const result = await chromaSpawnUtils.buildChromaSpawnPlan(defaultConfig);
-
-      expect(result.source).toBe('python');
-      expect(result.command).toBe('python3');
-      expect(result.args).toContain('-m');
-      expect(result.args).toContain('chromadb');
     });
 
     test('returns null when no launch method available', async () => {

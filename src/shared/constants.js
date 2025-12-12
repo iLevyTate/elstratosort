@@ -205,6 +205,15 @@ const IPC_CHANNELS = {
     HEALTH_CHECK: 'chromadb-health-check',
     // Events (sent from main to renderer)
     STATUS_CHANGED: 'chromadb-status-changed'
+  },
+
+  // Dependency Management (Ollama + ChromaDB)
+  DEPENDENCIES: {
+    GET_STATUS: 'dependencies-get-status',
+    INSTALL_OLLAMA: 'dependencies-install-ollama',
+    INSTALL_CHROMADB: 'dependencies-install-chromadb',
+    UPDATE_OLLAMA: 'dependencies-update-ollama',
+    UPDATE_CHROMADB: 'dependencies-update-chromadb'
   }
 };
 

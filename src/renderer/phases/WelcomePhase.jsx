@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import PropTypes from 'prop-types';
 import { PHASES } from '../../shared/constants';
 import { useAppDispatch } from '../store/hooks';
-import { setPhase } from '../store/slices/uiSlice';
+import { setActiveModal, setPhase } from '../store/slices/uiSlice';
 import Button from '../components/ui/Button';
 import Modal from '../components/Modal';
 
@@ -146,6 +146,24 @@ function WelcomePhase() {
                 </Button>
                 <p id="organize-help" className="text-xs text-system-gray-500 text-center">
                   Start scanning with smart defaults
+                </p>
+              </div>
+
+              <div className="border-t border-border-soft/50" />
+
+              {/* Tertiary Action - AI setup */}
+              <div className="flex flex-col" style={{ gap: 'var(--spacing-cozy)' }}>
+                <Button
+                  onClick={() => dispatch(setActiveModal('ai-deps'))}
+                  variant="secondary"
+                  className="w-full justify-center"
+                  aria-describedby="ai-setup-help"
+                >
+                  <SparklesIcon className="w-4 h-4 mr-2" />
+                  Set up AI components (Ollama + ChromaDB)
+                </Button>
+                <p id="ai-setup-help" className="text-xs text-system-gray-500 text-center">
+                  Optional, runs in the background
                 </p>
               </div>
 

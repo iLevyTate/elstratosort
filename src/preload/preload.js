@@ -51,7 +51,8 @@ const ALLOWED_CHANNELS = {
   WINDOW: Object.values(IPC_CHANNELS.WINDOW || {}),
   SUGGESTIONS: Object.values(IPC_CHANNELS.SUGGESTIONS || {}),
   ORGANIZE: Object.values(IPC_CHANNELS.ORGANIZE || {}),
-  CHROMADB: Object.values(IPC_CHANNELS.CHROMADB || {})
+  CHROMADB: Object.values(IPC_CHANNELS.CHROMADB || {}),
+  DEPENDENCIES: Object.values(IPC_CHANNELS.DEPENDENCIES || {})
 };
 
 // FIX: Use centralized security config to prevent drift between preload and main process
@@ -797,6 +798,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     healthCheck: () => secureIPC.safeInvoke(IPC_CHANNELS.CHROMADB.HEALTH_CHECK),
     // FIX: Use IPC_CHANNELS constant instead of hardcoded string
     onStatusChanged: (callback) => secureIPC.safeOn(IPC_CHANNELS.CHROMADB.STATUS_CHANGED, callback)
+  },
+
+  // Dependency Management (Ollama + ChromaDB)
+  dependencies: {
+    getStatus: () => secureIPC.safeInvoke(IPC_CHANNELS.DEPENDENCIES.GET_STATUS),
+    installOllama: () => secureIPC.safeInvoke(IPC_CHANNELS.DEPENDENCIES.INSTALL_OLLAMA),
+    installChromaDb: () => secureIPC.safeInvoke(IPC_CHANNELS.DEPENDENCIES.INSTALL_CHROMADB),
+    updateOllama: () => secureIPC.safeInvoke(IPC_CHANNELS.DEPENDENCIES.UPDATE_OLLAMA),
+    updateChromaDb: () => secureIPC.safeInvoke(IPC_CHANNELS.DEPENDENCIES.UPDATE_CHROMADB)
   }
 });
 

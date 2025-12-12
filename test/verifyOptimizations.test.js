@@ -176,7 +176,6 @@ class MockOrganizationSuggestionService {
 }
 
 // Import services - use the mocks
-const BatchAnalysisService = require('../src/main/services/BatchAnalysisService');
 const ChromaDBService = MockChromaDBService;
 const OrganizationSuggestionService = MockOrganizationSuggestionService;
 
@@ -528,45 +527,64 @@ describe('Performance Optimizations Verification', () => {
   });
 
   describe('6. Integration Test - File Analysis Workflow', () => {
-    let batchService;
-
-    beforeAll(() => {
-      batchService = new BatchAnalysisService({ concurrency: 3 });
-    });
-
     test('should analyze files with proper concurrency', async () => {
       // Mock file paths
       const filePaths = ['C:\\test\\file1.pdf', 'C:\\test\\file2.jpg', 'C:\\test\\file3.docx'];
 
-      // Mock the analysis functions
-      jest.mock('../src/main/analysis/ollamaDocumentAnalysis', () => ({
-        analyzeDocumentFile: jest.fn(async () => {
-          await new Promise((r) => setTimeout(r, 50));
-          return { success: true, type: 'document' };
-        })
-      }));
+      // IMPORTANT: BatchAnalysisService imports analyzeDocumentFile/analyzeImageFile at module-load time.
+      // Using jest.mock() *inside* this test is too late and leads to real analysis modules being used,
+      // which makes this test flaky and timing-dependent. Instead, mock first, then require in isolation.
+      let maxInFlight = 0;
+      let inFlight = 0;
+      const recordStart = () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+      };
+      const recordEnd = () => {
+        inFlight -= 1;
+      };
 
-      jest.mock('../src/main/analysis/ollamaImageAnalysis', () => ({
-        analyzeImageFile: jest.fn(async () => {
-          await new Promise((r) => setTimeout(r, 50));
-          return { success: true, type: 'image' };
-        })
-      }));
+      // Re-require BatchAnalysisService with correct mocks applied.
+      jest.resetModules();
+      let BatchAnalysisServiceIsolated;
+      jest.isolateModules(() => {
+        jest.doMock('../src/main/analysis/ollamaDocumentAnalysis', () => ({
+          analyzeDocumentFile: jest.fn(async () => {
+            recordStart();
+            try {
+              await new Promise((r) => setTimeout(r, 50));
+              return { success: true, type: 'document' };
+            } finally {
+              recordEnd();
+            }
+          })
+        }));
 
-      const startTime = Date.now();
-      const result = await batchService.analyzeFiles(filePaths, [], {
-        concurrency: 2
+        jest.doMock('../src/main/analysis/ollamaImageAnalysis', () => ({
+          analyzeImageFile: jest.fn(async () => {
+            recordStart();
+            try {
+              await new Promise((r) => setTimeout(r, 50));
+              return { success: true, type: 'image' };
+            } finally {
+              recordEnd();
+            }
+          })
+        }));
+
+        BatchAnalysisServiceIsolated = require('../src/main/services/BatchAnalysisService');
       });
-      const duration = Date.now() - startTime;
+
+      const batchService = new BatchAnalysisServiceIsolated({ concurrency: 3 });
+      const result = await batchService.analyzeFiles(filePaths, [], { concurrency: 2 });
 
       expect(result.success).toBe(true);
       expect(result.total).toBe(3);
-      // Adjusted threshold to account for CI/Test environment overhead
-      // Sequential would be ~600ms (3 * 200ms mock delay) + overhead
-      // Parallel should be ~200ms + overhead, but allow extra margin for slow systems
-      expect(duration).toBeLessThan(2000);
+      // Concurrency assertion (non-flaky): we should have observed at least 2 tasks in-flight
+      // given concurrency: 2 and 3 files.
+      expect(maxInFlight).toBeGreaterThanOrEqual(2);
 
-      logger.info(`✓ Batch analysis completed in ${duration}ms`);
+      logger.info(`✓ Batch analysis max in-flight concurrency observed: ${maxInFlight}`);
       logger.info(`  Stats: ${JSON.stringify(result.stats)}`);
     }, 15000);
   });

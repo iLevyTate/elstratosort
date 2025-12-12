@@ -24,6 +24,14 @@ const DEFAULT_SETTINGS = {
   textModel: 'llama3.2:latest',
   visionModel: 'llava:latest',
   embeddingModel: 'mxbai-embed-large',
+  // Dependency lifecycle management (user consent required)
+  autoUpdateOllama: false,
+  autoUpdateChromaDb: false,
+  // First-run UX
+  dependencyWizardShown: false,
+  // Re-prompt cadence (only used when dependencies are still missing)
+  dependencyWizardLastPromptAt: null, // ISO string
+  dependencyWizardPromptIntervalDays: 7,
   // File Size Limits (in bytes)
   maxFileSize: 100 * 1024 * 1024, // 100MB default
   maxImageFileSize: 100 * 1024 * 1024, // 100MB

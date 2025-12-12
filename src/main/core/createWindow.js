@@ -8,6 +8,35 @@ const { isDevelopment, getEnvBool } = require('../../shared/configDefaults');
 const isDev = isDevelopment();
 const isMac = process.platform === 'darwin';
 
+function getAppRootPath() {
+  // Works in both dev (repo root) and packaged (app.asar)
+  try {
+    return app.getAppPath();
+  } catch {
+    return process.cwd();
+  }
+}
+
+const getAssetPath = (...paths) => {
+  const base = app.isPackaged
+    ? path.join(process.resourcesPath, 'assets')
+    : path.join(getAppRootPath(), 'assets');
+  return path.join(base, ...paths);
+};
+
+function getPreloadPath() {
+  // In dev and in packaged builds, main/preload are emitted to `dist/`
+  // We avoid using `__dirname` because webpack outputs `dist/main.js` and the old
+  // relative traversal can accidentally resolve outside the repo (as seen in logs).
+  const root = getAppRootPath();
+  return path.join(root, 'dist', 'preload.js');
+}
+
+function getRendererIndexPath() {
+  const root = getAppRootPath();
+  return path.join(root, 'dist', 'index.html');
+}
+
 function createMainWindow() {
   logger.debug('Creating new window');
 
@@ -42,7 +71,7 @@ function createMainWindow() {
       contextIsolation: true,
       sandbox: false,
       enableRemoteModule: false,
-      preload: path.join(__dirname, '../../preload/preload.js'),
+      preload: getPreloadPath(),
       webSecurity: true,
       allowRunningInsecureContent: false,
       experimentalFeatures: false,
@@ -58,7 +87,7 @@ function createMainWindow() {
       nodeIntegrationInWorker: false,
       nodeIntegrationInSubFrames: false
     },
-    icon: path.join(__dirname, '../../../assets/stratosort-logo.png'),
+    icon: getAssetPath('stratosort-logo.png'),
     show: false,
     autoHideMenuBar: true // Keep menu accessible via Alt while preserving a clean chrome
   });
@@ -85,20 +114,20 @@ function createMainWindow() {
       win.loadURL('http://localhost:3000').catch((error) => {
         logger.info('Development server not available:', error.message);
         logger.info('Loading from built files instead...');
-        const distPath = path.join(__dirname, '../../../dist/index.html');
+        const distPath = getRendererIndexPath();
         win.loadFile(distPath).catch((fileError) => {
           logger.error('Failed to load from built files, trying original:', fileError);
-          win.loadFile(path.join(__dirname, '../../renderer/index.html'));
+          win.loadFile(path.join(getAppRootPath(), 'src', 'renderer', 'index.html'));
         });
       });
       if (getEnvBool('FORCE_DEV_TOOLS')) {
         win.webContents.openDevTools();
       }
     } else {
-      const distPath = path.join(__dirname, '../../../dist/index.html');
+      const distPath = getRendererIndexPath();
       win.loadFile(distPath).catch((error) => {
         logger.error('Failed to load from dist, falling back:', error);
-        win.loadFile(path.join(__dirname, '../../renderer/index.html'));
+        win.loadFile(path.join(getAppRootPath(), 'src', 'renderer', 'index.html'));
       });
     }
   };

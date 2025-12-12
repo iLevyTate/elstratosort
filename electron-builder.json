@@ -13,8 +13,6 @@
   "asarUnpack": "**\\*.{node,dll}",
   "files": [
     "dist/**/*",
-    "src/main/**/*",
-    "src/preload/**/*",
     "src/shared/**/*",
     "package.json",
     "scripts/setup-ollama.js",
@@ -25,7 +23,7 @@
     "!**/__tests__/**"
   ],
   "extraMetadata": {
-    "main": "src/main/simple-main.js",
+    "main": "dist/main.js",
     "version": "1.0.0"
   },
   "directories": {
@@ -37,7 +35,7 @@
     "target": [
       {
         "target": "nsis",
-        "arch": ["x64", "ia32"]
+        "arch": ["x64"]
       },
       {
         "target": "portable",
@@ -52,8 +50,7 @@
       { "ext": "pptx" },
       { "ext": "txt" },
       { "ext": "md" }
-    ],
-    "publisherName": "StratoSort Team"
+    ]
   },
   "nsis": {
     "oneClick": false,
@@ -67,7 +64,7 @@
     "installerIcon": "assets/icons/icons/win/icon.ico",
     "uninstallerIcon": "assets/icons/icons/win/icon.ico",
     "installerHeaderIcon": "assets/icons/icons/win/icon.ico",
-    "include": "build/installer.nsh",
+    "include": "build/installer-themed.nsh",
     "artifactName": "StratoSort-Setup-${version}.exe"
   },
   "mac": {
@@ -123,7 +120,12 @@
     {
       "from": "assets/",
       "to": "assets/",
-      "filter": ["icons/**", "stratosort-logo.png"]
+      "filter": [
+        "stratosort-logo.png",
+        "icons/icons/win/icon.ico",
+        "icons/icons/png/16x16.png",
+        "icons/icons/png/24x24.png"
+      ]
     }
   ]
 }

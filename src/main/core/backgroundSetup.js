@@ -1,8 +1,13 @@
 /**
  * Background Setup Module
  *
- * Handles first-run Ollama setup in the background.
- * Extracted from simple-main.js for better maintainability.
+ * Fully automated first-run dependency setup in the background:
+ * - Install Ollama (Windows) if missing
+ * - Install ChromaDB Python module if missing
+ * - Start services (Ollama + ChromaDB) best-effort
+ * - Pull configured default models in the background
+ *
+ * This runs asynchronously and does not block startup.
  *
  * @module core/backgroundSetup
  */
@@ -11,6 +16,10 @@ const { app, BrowserWindow } = require('electron');
 const fs = require('fs').promises;
 const path = require('path');
 const { logger } = require('../../shared/logger');
+const { DependencyManagerService } = require('../services/DependencyManagerService');
+const { getStartupManager } = require('../services/startup');
+const { getOllama } = require('../ollamaUtils');
+const { getService: getSettingsService } = require('../services/SettingsService');
 
 logger.setContext('BackgroundSetup');
 
@@ -35,14 +44,14 @@ function getBackgroundSetupStatus() {
  * @param {string} type - Message type ('info', 'success', 'error')
  * @param {string} message - Message to display
  */
-function notifyRenderer(type, message) {
+function emitDependencyProgress(payload) {
   try {
     const win = BrowserWindow.getAllWindows()[0];
     if (win && !win.isDestroyed()) {
-      win.webContents.send('operation-progress', { type, message });
+      win.webContents.send('operation-progress', { type: 'dependency', ...(payload || {}) });
     }
   } catch (error) {
-    logger.debug('[BACKGROUND] Could not notify renderer:', error.message);
+    logger.debug('[BACKGROUND] Could not emit dependency progress:', error.message);
   }
 }
 
@@ -51,7 +60,7 @@ function notifyRenderer(type, message) {
  * @returns {Promise<boolean>}
  */
 async function checkFirstRun() {
-  const setupMarker = path.join(app.getPath('userData'), 'ollama-setup-complete.marker');
+  const setupMarker = path.join(app.getPath('userData'), 'dependency-setup-complete.marker');
 
   try {
     await fs.access(setupMarker);
@@ -65,7 +74,7 @@ async function checkFirstRun() {
  * Mark setup as complete by writing marker file
  */
 async function markSetupComplete() {
-  const setupMarker = path.join(app.getPath('userData'), 'ollama-setup-complete.marker');
+  const setupMarker = path.join(app.getPath('userData'), 'dependency-setup-complete.marker');
 
   // Use atomic write (temp + rename) to prevent corruption
   try {
@@ -99,42 +108,135 @@ async function cleanupInstallerMarker() {
 /**
  * Run Ollama setup check and install models if needed
  */
-async function runOllamaSetup() {
-  const setupScript = path.join(__dirname, '../../../scripts/setup-ollama.js');
+function normalizeOllamaModelName(name) {
+  if (!name || typeof name !== 'string') return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  return trimmed.includes(':') ? trimmed : `${trimmed}:latest`;
+}
 
-  try {
-    await fs.access(setupScript);
-  } catch {
-    logger.warn('[BACKGROUND] Setup script not found:', setupScript);
-    return;
+async function pullModelsInBackground(models) {
+  const unique = Array.from(new Set((Array.isArray(models) ? models : []).filter(Boolean)));
+  if (unique.length === 0) return;
+
+  const ollama = getOllama();
+  for (const model of unique) {
+    emitDependencyProgress({
+      message: `Downloading model: ${model}…`,
+      dependency: 'ollama',
+      stage: 'model-download',
+      model
+    });
+    try {
+      await ollama.pull({
+        model,
+        stream: (progress) => {
+          try {
+            const win = BrowserWindow.getAllWindows()[0];
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('operation-progress', {
+                type: 'ollama-pull',
+                model,
+                progress
+              });
+            }
+          } catch {
+            // ignore
+          }
+        }
+      });
+    } catch (e) {
+      emitDependencyProgress({
+        message: `Model download failed: ${model} (${e.message})`,
+        dependency: 'ollama',
+        stage: 'error',
+        model
+      });
+    }
+  }
+}
+
+async function runAutomatedDependencySetup() {
+  const settingsService = getSettingsService();
+  const settings = await settingsService.load();
+
+  const manager = new DependencyManagerService({
+    onProgress: (data) => emitDependencyProgress(data)
+  });
+
+  emitDependencyProgress({ message: 'Checking AI dependencies…', stage: 'check' });
+  const status = await manager.getStatus();
+
+  // 1) Install Ollama if missing (Windows only)
+  if (!status.ollama.installed) {
+    emitDependencyProgress({ message: 'Ollama missing. Installing…', dependency: 'ollama' });
+    await manager.installOllama();
+  } else {
+    emitDependencyProgress({ message: 'Ollama is installed.', dependency: 'ollama' });
   }
 
-  const { isOllamaInstalled, getInstalledModels, installEssentialModels } = require(setupScript);
-
-  // Check if Ollama is installed and has models
-  if (await isOllamaInstalled()) {
-    const models = await getInstalledModels();
-    if (models.length === 0) {
-      logger.info('[BACKGROUND] No AI models found, installing essential models...');
-      notifyRenderer('info', 'Installing AI models in background...');
-
-      try {
-        await installEssentialModels();
-        logger.info('[BACKGROUND] AI models installed successfully');
-        notifyRenderer('success', 'AI models installed successfully');
-      } catch (e) {
-        logger.warn('[BACKGROUND] Could not install AI models automatically:', e.message);
-      }
-    } else {
-      logger.info('[BACKGROUND] AI models already installed:', models.length);
-    }
+  // 2) Install ChromaDB python module if missing
+  if (!status.chromadb.pythonModuleInstalled && !process.env.CHROMA_SERVER_URL) {
+    emitDependencyProgress({ message: 'ChromaDB missing. Installing…', dependency: 'chromadb' });
+    await manager.installChromaDb({ upgrade: false, userInstall: true });
+  } else if (process.env.CHROMA_SERVER_URL) {
+    emitDependencyProgress({
+      message: `Using external ChromaDB server: ${process.env.CHROMA_SERVER_URL}`,
+      dependency: 'chromadb'
+    });
   } else {
-    logger.warn('[BACKGROUND] Ollama not installed - AI features will be limited');
+    emitDependencyProgress({ message: 'ChromaDB module is installed.', dependency: 'chromadb' });
+  }
+
+  // 3) Best-effort start services (StartupManager already has robust logic)
+  const startupManager = getStartupManager();
+  try {
+    emitDependencyProgress({ message: 'Starting Ollama…', dependency: 'ollama', stage: 'start' });
+    await startupManager.startOllama();
+  } catch (e) {
+    logger.warn('[BACKGROUND] Failed to start Ollama', { error: e?.message });
+  }
+  try {
+    emitDependencyProgress({
+      message: 'Starting ChromaDB…',
+      dependency: 'chromadb',
+      stage: 'start'
+    });
+    await startupManager.startChromaDB();
+  } catch (e) {
+    logger.warn('[BACKGROUND] Failed to start ChromaDB', { error: e?.message });
+  }
+
+  // 4) Pull configured default models (non-blocking for UI)
+  const modelsToPull = [
+    normalizeOllamaModelName(settings?.textModel),
+    normalizeOllamaModelName(settings?.visionModel),
+    normalizeOllamaModelName(settings?.embeddingModel)
+  ].filter(Boolean);
+  await pullModelsInBackground(modelsToPull);
+
+  // 5) Optional: auto-update dependencies if consent is enabled (best-effort)
+  // Note: we do not run this on every launch—only on first-run automation.
+  if (settings?.autoUpdateOllama) {
+    emitDependencyProgress({
+      message: 'Auto-updating Ollama…',
+      dependency: 'ollama',
+      stage: 'update'
+    });
+    await manager.updateOllama().catch(() => {});
+  }
+  if (settings?.autoUpdateChromaDb) {
+    emitDependencyProgress({
+      message: 'Auto-updating ChromaDB…',
+      dependency: 'chromadb',
+      stage: 'update'
+    });
+    await manager.updateChromaDb().catch(() => {});
   }
 }
 
 /**
- * Run background setup (first-run Ollama setup)
+ * Run background setup (fully automated dependency setup on first run).
  * This runs asynchronously and does not block startup.
  * @returns {Promise<void>}
  */
@@ -145,19 +247,19 @@ async function runBackgroundSetup() {
     const isFirstRun = await checkFirstRun();
 
     if (isFirstRun) {
-      logger.info('[BACKGROUND] First run detected - will check Ollama setup');
+      logger.info('[BACKGROUND] First run detected - will run automated dependency setup');
 
       await cleanupInstallerMarker();
 
       try {
-        await runOllamaSetup();
+        await runAutomatedDependencySetup();
       } catch (err) {
         logger.warn('[BACKGROUND] Setup script error:', err.message);
       }
 
       await markSetupComplete();
     } else {
-      logger.debug('[BACKGROUND] Not first run, skipping Ollama setup');
+      logger.debug('[BACKGROUND] Not first run, skipping automated dependency setup');
     }
 
     // Mark background setup as complete
