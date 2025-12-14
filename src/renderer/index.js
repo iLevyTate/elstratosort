@@ -27,7 +27,9 @@ logger.setContext('Renderer');
 const eventHandlers = {
   click: null,
   visibilitychange: null,
-  beforeunload: null
+  beforeunload: null,
+  unhandledrejection: null,
+  error: null
 };
 
 // Remove any previously registered handlers (important for HMR)
@@ -41,6 +43,61 @@ function cleanupEventHandlers() {
   if (eventHandlers.beforeunload) {
     window.removeEventListener('beforeunload', eventHandlers.beforeunload);
   }
+  if (eventHandlers.unhandledrejection) {
+    window.removeEventListener('unhandledrejection', eventHandlers.unhandledrejection);
+  }
+  if (eventHandlers.error) {
+    window.removeEventListener('error', eventHandlers.error);
+  }
+}
+
+function isChunkLoadFailure(err) {
+  const name = String(err?.name || '');
+  const message = String(err?.message || '');
+  // Common signatures across webpack + browsers
+  return (
+    name === 'ChunkLoadError' ||
+    /Loading chunk \d+ failed/i.test(message) ||
+    /ChunkLoadError/i.test(message) ||
+    /Failed to fetch dynamically imported module/i.test(message)
+  );
+}
+
+function maybeRecoverFromChunkLoadFailure(err) {
+  if (!isChunkLoadFailure(err)) return false;
+
+  // Avoid infinite reload loops. Allow at most 1 auto-reload per minute.
+  const key = 'stratosort:chunk-reload-at';
+  let last = 0;
+  try {
+    last = Number(sessionStorage.getItem(key) || 0);
+  } catch {
+    last = 0;
+  }
+
+  const now = Date.now();
+  if (Number.isFinite(last) && now - last < 60_000) {
+    logger.warn('[ChunkLoadRecovery] Chunk load failed again within 60s; not auto-reloading', {
+      message: err?.message,
+      name: err?.name
+    });
+    return true; // handled (we intentionally didn't reload)
+  }
+
+  try {
+    sessionStorage.setItem(key, String(now));
+  } catch {
+    // ignore
+  }
+
+  logger.warn('[ChunkLoadRecovery] Chunk load failed; reloading window to resync assets', {
+    message: err?.message,
+    name: err?.name
+  });
+
+  // A hard reload typically resolves mismatched dist chunks after rebuild/update.
+  window.location.reload();
+  return true;
 }
 
 // Enable smooth scrolling globally
@@ -84,6 +141,27 @@ if (typeof window !== 'undefined') {
     cleanupEventHandlers();
   };
   window.addEventListener('beforeunload', eventHandlers.beforeunload);
+
+  // Recover from webpack chunk load errors (often caused by stale/mismatched dist assets)
+  eventHandlers.unhandledrejection = function handleUnhandledRejection(e) {
+    const reason = e?.reason;
+    if (maybeRecoverFromChunkLoadFailure(reason)) {
+      try {
+        e.preventDefault?.();
+      } catch {
+        // ignore
+      }
+    }
+  };
+  window.addEventListener('unhandledrejection', eventHandlers.unhandledrejection);
+
+  eventHandlers.error = function handleWindowError(e) {
+    // Some chunk load failures surface as generic error events.
+    // Prefer the Error instance if present.
+    const err = e?.error || e;
+    void maybeRecoverFromChunkLoadFailure(err);
+  };
+  window.addEventListener('error', eventHandlers.error);
 
   // Support HMR cleanup if module.hot is available
   if (typeof module !== 'undefined' && module.hot) {
@@ -183,7 +261,10 @@ function initializeApp() {
       section.appendChild(description);
       section.appendChild(details);
 
-      initialLoading.innerHTML = '';
+      // FIX: Use safer DOM manipulation instead of innerHTML
+      while (initialLoading.firstChild) {
+        initialLoading.removeChild(initialLoading.firstChild);
+      }
       initialLoading.appendChild(section);
     }
   }

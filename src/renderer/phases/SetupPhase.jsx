@@ -156,7 +156,9 @@ function SetupPhase() {
     return () => {
       isMountedRef.current = false;
     };
-  }, [loadSmartFolders, loadDefaultLocation, showError]);
+    // NOTE: do not depend on notification functions directly; they may be unstable and cause
+    // infinite effect re-runs (maximum update depth). We use notifyRef for stability.
+  }, [loadSmartFolders, loadDefaultLocation]);
 
   // Keep skeleton visible until content has had a frame to paint to avoid flash
   useEffect(() => {

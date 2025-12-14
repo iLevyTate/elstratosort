@@ -52,7 +52,13 @@ class PhaseErrorBoundaryClass extends React.Component {
   }
 
   handleNavigateHome() {
-    this.setState({ hasError: false, error: null, errorInfo: null });
+    // FIX: Increment resetKey to force child component remount, same as handleReset
+    this.setState((prevState) => ({
+      hasError: false,
+      error: null,
+      errorInfo: null,
+      resetKey: prevState.resetKey + 1
+    }));
     if (this.props.onNavigateHome) {
       this.props.onNavigateHome();
     }
@@ -60,6 +66,15 @@ class PhaseErrorBoundaryClass extends React.Component {
 
   render() {
     if (this.state.hasError) {
+      const err = this.state.error;
+      const errName = String(err?.name || '');
+      const errMsg = String(err?.message || '');
+      const isChunkLoadError =
+        errName === 'ChunkLoadError' ||
+        /Loading chunk \d+ failed/i.test(errMsg) ||
+        /ChunkLoadError/i.test(errMsg) ||
+        /Failed to fetch dynamically imported module/i.test(errMsg);
+
       return (
         <div className="container-responsive py-12">
           <div className="max-w-2xl mx-auto">
@@ -91,6 +106,12 @@ class PhaseErrorBoundaryClass extends React.Component {
                     An error occurred in the {this.props.phaseName.toLowerCase()} phase. Your
                     progress in other phases is safe.
                   </p>
+                  {isChunkLoadError && (
+                    <p className="text-system-gray-600 mt-2">
+                      This looks like an app asset mismatch (a code-split chunk failed to load).
+                      Reloading usually fixes it after an update/rebuild.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -112,9 +133,18 @@ class PhaseErrorBoundaryClass extends React.Component {
               </div>
 
               <div className="flex gap-3">
+                {isChunkLoadError && (
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="flex-1 btn-primary"
+                    aria-label="Reload application"
+                  >
+                    Reload App
+                  </button>
+                )}
                 <button
                   onClick={this.handleReset}
-                  className="flex-1 btn-primary"
+                  className={`flex-1 ${isChunkLoadError ? 'btn-secondary' : 'btn-primary'}`}
                   aria-label="Try again"
                 >
                   Try Again
