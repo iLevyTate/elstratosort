@@ -51,6 +51,29 @@ const {
 
 logger.setContext('ChromaDBService');
 
+/**
+ * Embedding function placeholder.
+ *
+ * We always provide embeddings explicitly (Ollama + our own embedding pipeline),
+ * so we must NOT rely on the Chroma JS SDK auto-embedding behavior.
+ *
+ * Passing a non-null embeddingFunction prevents the SDK from trying to instantiate
+ * DefaultEmbeddingFunction (which requires the optional @chroma-core/default-embed package).
+ */
+const explicitEmbeddingsOnlyEmbeddingFunction = {
+  generate: async () => {
+    throw new Error(
+      'ChromaDB embeddingFunction was invoked unexpectedly. StratoSort should always pass embeddings/queryEmbeddings explicitly.'
+    );
+  },
+  // Some SDK paths prefer generateForQueries; keep the message identical.
+  generateForQueries: async () => {
+    throw new Error(
+      'ChromaDB embeddingFunction was invoked unexpectedly. StratoSort should always pass embeddings/queryEmbeddings explicitly.'
+    );
+  }
+};
+
 // Configuration constants
 const QUERY_CACHE_TTL_MS = getConfig('PERFORMANCE.cacheTtlShort', 120000);
 const MAX_CACHE_SIZE = getConfig('PERFORMANCE.queryCacheSize', 200);
@@ -598,12 +621,18 @@ class ChromaDBServiceCore extends EventEmitter {
         await this.ensureDbDirectory();
         await this.offlineQueue.initialize();
 
-        this.client = new ChromaClient({ path: this.serverUrl });
+        // The Chroma JS SDK deprecated { path }. Use { ssl, host, port } to avoid console noise.
+        this.client = new ChromaClient({
+          ssl: this.serverProtocol === 'https',
+          host: this.serverHost,
+          port: this.serverPort
+        });
 
         // Wrap collection operations with timeout to prevent hanging on slow/unresponsive server
         this.fileCollection = await withTimeout(
           this.client.getOrCreateCollection({
             name: 'file_embeddings',
+            embeddingFunction: explicitEmbeddingsOnlyEmbeddingFunction,
             metadata: {
               description: 'Document and image file embeddings for semantic search',
               'hnsw:space': 'cosine'
@@ -616,6 +645,7 @@ class ChromaDBServiceCore extends EventEmitter {
         this.folderCollection = await withTimeout(
           this.client.getOrCreateCollection({
             name: 'folder_embeddings',
+            embeddingFunction: explicitEmbeddingsOnlyEmbeddingFunction,
             metadata: {
               description: 'Smart folder embeddings for categorization',
               'hnsw:space': 'cosine'
