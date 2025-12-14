@@ -229,12 +229,22 @@ async function startChromaDB({
     const { buildChromaSpawnPlan } = require('../../utils/chromaSpawnUtils');
     // Chroma service might not be registered yet during early startup.
     // Prefer registered service config when available; otherwise fall back to env/defaults.
-    const hasServiceResolver =
-      container && typeof container.has === 'function' && typeof container.resolve === 'function';
-    const serverConfig =
-      hasServiceResolver && container.has(ServiceIds.CHROMA_DB)
-        ? container.resolve(ServiceIds.CHROMA_DB).getServerConfig()
-        : buildDefaultChromaConfig();
+    let serverConfig;
+    try {
+      const hasServiceResolver =
+        container && typeof container.has === 'function' && typeof container.resolve === 'function';
+      if (hasServiceResolver && container.has(ServiceIds.CHROMA_DB)) {
+        // FIX: Wrap container resolution in try-catch to handle startup failures gracefully
+        serverConfig = container.resolve(ServiceIds.CHROMA_DB).getServerConfig();
+      } else {
+        serverConfig = buildDefaultChromaConfig();
+      }
+    } catch (resolveError) {
+      logger.debug('[STARTUP] Failed to resolve ChromaDB service, using default config', {
+        error: resolveError?.message
+      });
+      serverConfig = buildDefaultChromaConfig();
+    }
 
     plan = await buildChromaSpawnPlan(serverConfig);
 

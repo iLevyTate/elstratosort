@@ -85,7 +85,7 @@ Seamlessly integrated into the existing codebase with:
 
 After successful startup, the system continuously monitors service health:
 
-- **Check Interval**: Every 30 seconds (configurable)
+- **Check Interval**: Every 120 seconds / 2 minutes (configurable)
 - **Failure Threshold**: 3 consecutive failures trigger auto-restart
 - **Monitored Services**: ChromaDB, Ollama
 - **Recovery**: Automatic service restart on persistent failures
@@ -123,7 +123,7 @@ The StartupManager can be configured by modifying `src/main/services/StartupMana
 ```javascript
 this.config = {
   startupTimeout: 60000, // Overall startup timeout (ms)
-  healthCheckInterval: 30000, // Health check interval (ms)
+  healthCheckInterval: 120000, // Health check interval (2 minutes)
   maxRetries: 3, // Max service start attempts
   baseRetryDelay: 1000 // Base delay for exponential backoff (ms)
 };

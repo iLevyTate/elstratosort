@@ -225,7 +225,27 @@ class StartupManager {
   }
 
   async startChromaDB() {
-    const result = await startChromaDB({
+    // If we previously marked ChromaDB as "missing dependency", re-check periodically.
+    // Users can install chromadb from the dependency wizard without restarting the whole app,
+    // so we must allow the service to recover automatically.
+    if (this.chromadbDependencyMissing) {
+      try {
+        const moduleNowAvailable = await hasPythonModuleAsync('chromadb');
+        if (moduleNowAvailable) {
+          logger.info(
+            '[STARTUP] ChromaDB dependency was previously missing but is now installed. Re-enabling startup.'
+          );
+          this.chromadbDependencyMissing = false;
+        }
+      } catch (e) {
+        logger.debug('[STARTUP] Failed to re-check chromadb module availability', {
+          error: e?.message
+        });
+      }
+    }
+
+    // Check if disabled before attempting retries
+    const initialResult = await startChromaDB({
       serviceStatus: this.serviceStatus,
       errors: this.errors,
       chromadbDependencyMissing: this.chromadbDependencyMissing,
@@ -235,18 +255,35 @@ class StartupManager {
       }
     });
 
-    if (result.setDependencyMissing) {
+    if (initialResult.setDependencyMissing) {
       this.chromadbDependencyMissing = true;
     }
 
-    if (result.disabled) {
-      return result;
+    if (initialResult.disabled) {
+      return initialResult;
     }
 
-    return await this.startServiceWithRetry('chromadb', async () => result, isChromaDBRunning, {
-      required: false,
-      verifyTimeout: 12000
-    });
+    // FIX: Pass a function that actually re-executes startChromaDB on each retry
+    // instead of returning a stale cached result
+    return await this.startServiceWithRetry(
+      'chromadb',
+      async () => {
+        return startChromaDB({
+          serviceStatus: this.serviceStatus,
+          errors: this.errors,
+          chromadbDependencyMissing: this.chromadbDependencyMissing,
+          cachedChromaSpawnPlan: this.cachedChromaSpawnPlan,
+          setCachedSpawnPlan: (plan) => {
+            this.cachedChromaSpawnPlan = plan;
+          }
+        });
+      },
+      isChromaDBRunning,
+      {
+        required: false,
+        verifyTimeout: 12000
+      }
+    );
   }
 
   async startOllama() {

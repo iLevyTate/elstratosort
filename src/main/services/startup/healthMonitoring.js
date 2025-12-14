@@ -133,7 +133,8 @@ async function checkServiceHealthWithRecovery(
           chromaDbService = null;
         }
       }
-      isHealthy = await chromaDbService?.checkHealth?.();
+      // FIX: Ensure Boolean result to avoid undefined being treated ambiguously
+      isHealthy = Boolean(await chromaDbService?.checkHealth?.());
     } else if (serviceName === 'ollama') {
       const baseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
       const response = await axiosWithRetry(
