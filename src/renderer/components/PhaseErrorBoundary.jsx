@@ -34,6 +34,55 @@ class PhaseErrorBoundaryClass extends React.Component {
 
     this.setState({ errorInfo });
 
+    // If this is a webpack chunk load failure (usually a dist asset mismatch after rebuild/update),
+    // attempt a one-time auto-reload to self-heal instead of leaving the user stuck.
+    try {
+      const errName = String(error?.name || '');
+      const errMsg = String(error?.message || '');
+      const isChunkLoadError =
+        errName === 'ChunkLoadError' ||
+        /Loading chunk \d+ failed/i.test(errMsg) ||
+        /ChunkLoadError/i.test(errMsg) ||
+        /Failed to fetch dynamically imported module/i.test(errMsg);
+
+      if (isChunkLoadError) {
+        const key = 'stratosort:chunk-reload-at';
+        const now = Date.now();
+        let last = 0;
+        try {
+          last = Number(sessionStorage.getItem(key) || 0);
+        } catch {
+          last = 0;
+        }
+
+        // Avoid infinite loops: allow at most 1 auto-reload per minute.
+        if (!Number.isFinite(last) || now - last >= 60_000) {
+          try {
+            sessionStorage.setItem(key, String(now));
+          } catch {
+            // ignore
+          }
+          logger.warn(
+            '[ChunkLoadRecovery] Phase boundary caught chunk load failure; reloading window',
+            {
+              phase: this.props.phaseName,
+              message: errMsg,
+              name: errName
+            }
+          );
+          // Defer reload to let React paint the fallback UI briefly (helps debugging).
+          setTimeout(() => window.location.reload(), 0);
+        } else {
+          logger.warn(
+            '[ChunkLoadRecovery] Chunk load failure caught again within 60s; not auto-reloading',
+            { phase: this.props.phaseName, message: errMsg, name: errName }
+          );
+        }
+      }
+    } catch {
+      // ignore
+    }
+
     // Report error to any configured error tracking service
     if (this.props.onError) {
       this.props.onError(error, errorInfo, this.props.phaseName);
