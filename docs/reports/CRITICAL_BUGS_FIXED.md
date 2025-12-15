@@ -1,10 +1,20 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Critical Bug Fixes - Final 5 Issues
 
-This document details the fixes for the remaining 5 CRITICAL bugs identified in the comprehensive security and stability scan.
+This document details the fixes for the remaining 5 CRITICAL bugs identified in the comprehensive
+security and stability scan.
 
 ## Summary
 
-All 5 critical bugs have been successfully fixed with comprehensive error handling, logging, and backwards compatibility:
+All 5 critical bugs have been successfully fixed with comprehensive error handling, logging, and
+backwards compatibility:
 
 - **Bug #4**: Unsafe File Path Handling in AutoOrganizeService ✅ FIXED
 - **Bug #5**: Memory Leak in Settings Service Mutex ✅ FIXED
@@ -54,11 +64,7 @@ Emergency default folder creation lacked proper validation:
 ```javascript
 // BEFORE: Unsafe path handling
 const documentsDir = app.getPath('documents');
-const defaultFolderPath = path.join(
-  documentsDir,
-  'StratoSort',
-  'Uncategorized',
-);
+const defaultFolderPath = path.join(documentsDir, 'StratoSort', 'Uncategorized');
 await fs.mkdir(defaultFolderPath, { recursive: true });
 
 // AFTER: Secure path handling with validation
@@ -69,11 +75,7 @@ if (!documentsDir || typeof documentsDir !== 'string') {
 
 const sanitizedBaseName = 'StratoSort'.replace(/[^a-zA-Z0-9_-]/g, '_');
 const sanitizedFolderName = 'Uncategorized'.replace(/[^a-zA-Z0-9_-]/g, '_');
-const defaultFolderPath = path.resolve(
-  documentsDir,
-  sanitizedBaseName,
-  sanitizedFolderName,
-);
+const defaultFolderPath = path.resolve(documentsDir, sanitizedBaseName, sanitizedFolderName);
 
 // Verify path is inside documents directory
 const resolvedDocumentsDir = path.resolve(documentsDir);
@@ -143,9 +145,7 @@ resolveMutex();
 // AFTER: Robust mutex with deadlock detection
 const timeoutPromise = new Promise((_, reject) => {
   setTimeout(() => {
-    reject(
-      new Error(`Mutex deadlock detected after ${this._mutexTimeoutMs}ms`),
-    );
+    reject(new Error(`Mutex deadlock detected after ${this._mutexTimeoutMs}ms`));
   }, this._mutexTimeoutMs);
 });
 
@@ -154,10 +154,7 @@ this._mutexAcquiredAt = Date.now();
 
 try {
   const operationTimeout = new Promise((_, reject) => {
-    setTimeout(
-      () => reject(new Error('Operation timeout')),
-      this._mutexTimeoutMs,
-    );
+    setTimeout(() => reject(new Error('Operation timeout')), this._mutexTimeoutMs);
   });
   const result = await Promise.race([fn(), operationTimeout]);
   return result;
@@ -326,7 +323,7 @@ const analyzeFiles = useCallback(
   },
   [
     /* incomplete dependencies */
-  ],
+  ]
 );
 
 // AFTER: Complete dependency array
@@ -355,8 +352,8 @@ const analyzeFiles = useCallback(
     analysisProgress, // CRITICAL: Used in progress tracking
     phaseData, // CRITICAL: Used for persistence
     analysisResults, // CRITICAL: Used for merging
-    fileStates, // CRITICAL: Used for merging
-  ],
+    fileStates // CRITICAL: Used for merging
+  ]
 );
 ```
 
@@ -408,7 +405,7 @@ if (file.suggestion) {
   } catch (feedbackError) {
     logger.warn('[AutoOrganize] Failed to record feedback for file:', {
       file: file.path,
-      error: feedbackError.message,
+      error: feedbackError.message
     });
     // Continue with file operation even if feedback fails
   }

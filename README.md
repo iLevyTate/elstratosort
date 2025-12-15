@@ -24,35 +24,32 @@ retaining the same logo and identity while targeting this branch’s priorities.
 
 ### Windows
 
-1. Go to [Releases](https://github.com/stratosort/stratosort/releases/latest) and download
-   `StratoSort-Setup-1.0.0.exe` (produced at `release/build/StratoSort-Setup-1.0.0.exe` after
-   building).
+1. Go to [Releases](https://github.com/iLevyTate/elstratosort/releases/latest) and download the
+   latest `.exe` installer (produced at `release/build/` after building).
 2. Run the installer and follow the wizard.
-3. On first launch, the app will verify AI components and guide you through any required Ollama
-   setup (one-time, ~6GB).
+3. On first launch, the app will verify AI components (Ollama, ChromaDB) and guide you through any
+   required setup (one-time, ~6GB for models).
 
 ### macOS
 
-- Download `StratoSort-1.0.0.dmg` from
-  [Releases](https://github.com/stratosort/stratosort/releases/latest).
+- Download the latest `.dmg` from
+  [Releases](https://github.com/iLevyTate/elstratosort/releases/latest).
 - Open the DMG, drag StratoSort to Applications, then launch to complete AI setup.
 
 ### Linux
 
-- Download `StratoSort-1.0.0.AppImage` from
-  [Releases](https://github.com/stratosort/stratosort/releases/latest).
-- Make it executable: `chmod +x StratoSort-1.0.0.AppImage`
-- Run it: `./StratoSort-1.0.0.AppImage`
+- Download the latest `.AppImage` from
+  [Releases](https://github.com/iLevyTate/elstratosort/releases/latest).
+- Make it executable: `chmod +x StratoSort-*.AppImage`
+- Run it: `./StratoSort-*.AppImage`
 
 ## Getting Started
 
-New to StratoSort? See the [Quick Start Guide](QUICK_START.md) for a five-minute walkthrough.
-
-1. Launch StratoSort to check AI readiness.
+1. Launch StratoSort — the app will run a preflight check for AI readiness (Ollama and ChromaDB).
 2. Select files or folders to organize.
-3. Analyze for AI-driven suggestions.
-4. Review suggestions.
-5. Organize with one click.
+3. Click **Analyze** for AI-driven suggestions.
+4. Review suggestions and confidence scores.
+5. Click **Organize** to move files, or adjust and re-analyze.
 6. Use undo/redo as needed.
 
 ## Use Cases
@@ -126,10 +123,83 @@ New to StratoSort? See the [Quick Start Guide](QUICK_START.md) for a five-minute
 #### Setup
 
 ```bash
-git clone https://github.com/stratosort/stratosort.git
-cd stratosort
-npm install  # Automatically sets up Ollama and AI models
-npm run dev  # Start development mode
+git clone https://github.com/iLevyTate/elstratosort.git
+cd elstratosort
+npm install       # Automatically sets up Ollama, ChromaDB, and AI models
+npm run dev       # Start development mode
+```
+
+> **⚠️ Beta Notice**: The automatic dependency installation feature is currently in beta and may not
+> work as expected on all systems. If you encounter issues during `npm install` or the app fails to
+> detect Ollama/ChromaDB, please use the manual installation instructions below.
+
+**Automatic Setup Commands** (Beta):
+
+```bash
+npm run setup:deps         # Install both Ollama and ChromaDB
+npm run setup:ollama       # Install Ollama + pull models
+npm run setup:chromadb     # Install ChromaDB Python module
+npm run setup:ollama:check # Verify Ollama installation
+npm run setup:chromadb:check # Verify ChromaDB installation
+```
+
+#### Manual Dependency Installation (Recommended for Full Functionality)
+
+If the automatic setup doesn't work, install dependencies manually via CLI:
+
+**1. Install Ollama**
+
+```bash
+# Windows (PowerShell as Administrator)
+winget install Ollama.Ollama
+# Or download from: https://ollama.ai/download
+
+# macOS
+brew install ollama
+# Or download from: https://ollama.ai/download
+
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+```
+
+**2. Pull Required AI Models**
+
+After installing Ollama, pull the required models:
+
+```bash
+# Start Ollama service (if not running)
+ollama serve
+
+# In a new terminal, pull the models (~6GB total)
+ollama pull llama3.2:latest      # Text analysis model
+ollama pull llava:latest         # Vision/image analysis model
+ollama pull mxbai-embed-large    # Embedding model for similarity search
+```
+
+**3. Install ChromaDB**
+
+ChromaDB requires Python 3.8+ to be installed on your system.
+
+```bash
+# Windows (PowerShell)
+pip install --user chromadb
+
+# macOS/Linux
+pip3 install --user chromadb
+# Or with pipx for isolated installation:
+pipx install chromadb
+```
+
+**4. Verify Installation**
+
+```bash
+# Verify Ollama is running
+curl http://127.0.0.1:11434/api/tags
+# Or on Windows: Invoke-RestMethod http://127.0.0.1:11434/api/tags
+
+# Verify ChromaDB module is installed
+python -c "import chromadb; print('ChromaDB OK')"
+# Or: python3 -c "import chromadb; print('ChromaDB OK')"
 ```
 
 #### Build Commands
@@ -148,26 +218,36 @@ npm run dist:linux   # Create Linux packages
 
 #### Installer Location
 
-- Windows: `release/build/StratoSort-Setup-1.0.0.exe`
-- macOS: `release/build/StratoSort-1.0.0.dmg`
-- Linux: `release/build/StratoSort-1.0.0.AppImage`
+After running `npm run dist` or `npm run dist:win`, installers are created in:
+
+- Windows: `release/build/StratoSort-Setup-<version>.exe` (NSIS installer with custom branding)
+- macOS: `release/build/StratoSort-<version>.dmg`
+- Linux: `release/build/StratoSort-<version>.AppImage`
 
 ### Testing
 
 ```bash
-npm test                    # Run all tests
-npm run lint                # Check code style
-npm run setup:ollama        # Set up Ollama and models
-npm run setup:ollama:check  # Verify Ollama installation
+npm test                     # Run all Jest tests (unit + integration)
+npm run test:coverage        # Run tests with coverage report
+npm run test:e2e             # Run Playwright E2E tests
+npm run lint                 # Check code style (ESLint)
+npm run format:check         # Check code formatting (Prettier)
+npm run ci                   # Full CI pipeline: format, lint, test, build
 ```
 
 ### Architecture Overview
 
-- Electron multi-process: sandboxed React renderer communicating with the Node.js main process via
-  IPC.
-- Data plane: ChromaDB stores embeddings; backend services orchestrate analysis and organization.
-- State: Redux Toolkit with persistence middleware in the renderer.
-- Security: Context isolation with a constrained preload bridge (`window.electronAPI`).
+- **Electron multi-process**: Sandboxed React renderer communicating with the Node.js main process
+  via IPC.
+- **Data plane**: ChromaDB stores embeddings; backend services orchestrate analysis and
+  organization.
+- **AI**: Ollama provides local LLM inference (text + vision models); ChromaDB handles vector
+  search.
+- **State**: Redux Toolkit with persistence middleware in the renderer.
+- **Security**: Context isolation with a constrained preload bridge (`window.electronAPI`), IPC
+  channel allowlisting, and rate limiting.
+- **Dependency Management**: Automated Ollama + ChromaDB installation and startup via preflight
+  checks.
 - Further detail: see `docs/ARCHITECTURE.md` and `docs/DI_PATTERNS.md`.
 
 ### Contributing
@@ -182,34 +262,44 @@ npm run setup:ollama:check  # Verify Ollama installation
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Dependency Injection Patterns](docs/DI_PATTERNS.md)
-- [Learning Guide](docs/LEARNING_GUIDE.md)
-- [Reference & Glossary](docs/REFERENCE_AND_GLOSSARY.md)
-- [Code Examples](docs/CODE_EXAMPLES.md)
-- [Organization Guide](ORGANIZATION_SUGGESTIONS_GUIDE.md)
-- [Ollama Setup Guide](OLLAMA_SETUP_GUIDE.md)
-- [API Documentation](docs/API.md)
+- [Architecture](docs/ARCHITECTURE.md) — System design and data flow
+- [Configuration Reference](docs/CONFIG.md) — Environment variables and settings
+- [Dependency Injection Patterns](docs/DI_PATTERNS.md) — Service container usage
+- [Learning Guide](docs/LEARNING_GUIDE.md) — Onboarding for new developers
+- [Reference & Glossary](docs/REFERENCE_AND_GLOSSARY.md) — Terminology and concepts
+- [Code Examples](docs/CODE_EXAMPLES.md) — Common patterns and examples
+- [Testing Strategy](docs/TESTING_STRATEGY.md) — Test organization and coverage
+- [Code Quality Standards](docs/CODE_QUALITY_STANDARDS.md) — Style guide and best practices
 
 ## Troubleshooting
 
 ### AI Models Not Working
 
-- Run `npm run setup:ollama:check` to verify installation.
-- Ensure Ollama is running: `ollama serve`.
-- Check Settings → AI Configuration.
+- Run `npm run setup:ollama:check` to verify Ollama installation.
+- Ensure Ollama is running: `ollama serve` or let the app auto-start it.
+- Check Settings → AI Configuration for model status.
+- Re-run setup: `npm run setup:ollama` to pull missing models.
+
+### ChromaDB Connection Issues
+
+- The app auto-starts ChromaDB on first run (Python-based local server).
+- To use an external/Dockerized ChromaDB: set `CHROMA_SERVER_URL` (e.g.,
+  `http://192.168.1.100:8000`).
+- Verify ChromaDB: `curl http://127.0.0.1:8000/api/v1/heartbeat`
+- Re-run setup: `npm run setup:chromadb`
 
 ### Files Not Moving
 
-- Check file permissions.
+- Check file permissions (Windows: ensure files aren't locked by another app).
 - Ensure destination folders exist.
-- Review the operation log.
+- Review the operation log in the app.
 
 ### Performance Issues
 
-- Close other applications.
-- Check available disk space.
-- Consider using smaller AI models.
+- Close other applications to free RAM/CPU.
+- Check available disk space (models require ~6GB).
+- Consider using smaller AI models (e.g., `qwen2.5:3b` instead of `7b`).
+- Check `docs/CONFIG.md` for performance tuning variables.
 
 ## License
 
@@ -217,10 +307,10 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ## Links
 
-- Homepage: [stratosort.com](https://stratosort.com)
-- GitHub: [github.com/stratosort/stratosort](https://github.com/stratosort/stratosort)
-- Issues: [Report a bug](https://github.com/stratosort/stratosort/issues)
+- GitHub: [github.com/iLevyTate/elstratosort](https://github.com/iLevyTate/elstratosort)
+- Issues: [Report a bug](https://github.com/iLevyTate/elstratosort/issues)
 - Ollama: [ollama.ai](https://ollama.ai)
+- ChromaDB: [trychroma.com](https://www.trychroma.com)
 
 ## Acknowledgments
 

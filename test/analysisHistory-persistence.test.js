@@ -9,6 +9,7 @@ jest.mock('fs', () => ({
     readFile: jest.fn(),
     writeFile: jest.fn(),
     rename: jest.fn(),
+    copyFile: jest.fn(),
     unlink: jest.fn(),
     mkdir: jest.fn()
   }
@@ -77,6 +78,21 @@ describe('persistence', () => {
       await expect(persistence.atomicWriteFile('/path/to/file.json', '{}')).rejects.toThrow(
         'Rename failed'
       );
+    });
+
+    test('retries EPERM rename and falls back to copyFile', async () => {
+      fs.writeFile.mockResolvedValue();
+      const eperm = Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+      fs.rename.mockRejectedValue(eperm);
+      fs.copyFile.mockResolvedValue();
+      fs.unlink.mockResolvedValue();
+
+      await expect(
+        persistence.atomicWriteFile('/path/to/file.json', '{}')
+      ).resolves.toBeUndefined();
+
+      expect(fs.rename).toHaveBeenCalled();
+      expect(fs.copyFile).toHaveBeenCalled();
     });
   });
 

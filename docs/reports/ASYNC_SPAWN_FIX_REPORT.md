@@ -1,8 +1,17 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Async Spawn Fix Report
 
 ## Problem Addressed
 
-The application was using `spawnSync` calls during startup which blocked the entire process, causing UI freezes. This was particularly noticeable during:
+The application was using `spawnSync` calls during startup which blocked the entire process, causing
+UI freezes. This was particularly noticeable during:
 
 - Python module checks
 - ChromaDB executable detection
@@ -11,7 +20,8 @@ The application was using `spawnSync` calls during startup which blocked the ent
 
 ## Solution Implemented
 
-Replaced all blocking `spawnSync` calls with async alternatives using Promises and the `spawn` function.
+Replaced all blocking `spawnSync` calls with async alternatives using Promises and the `spawn`
+function.
 
 ## Files Created
 
@@ -114,4 +124,6 @@ All changes are backwards compatible:
 
 ## Summary
 
-Successfully replaced all blocking `spawnSync` calls with async alternatives, eliminating UI freezing during startup. The application now maintains full responsiveness while performing system checks and process management operations.
+Successfully replaced all blocking `spawnSync` calls with async alternatives, eliminating UI
+freezing during startup. The application now maintains full responsiveness while performing system
+checks and process management operations.

@@ -6,7 +6,11 @@ const { buildOllamaOptions } = require('../services/PerformanceService');
 const { globalDeduplicator } = require('../utils/llmOptimization');
 const { generateWithRetry } = require('../utils/ollamaApiRetry');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
-const { AI_DEFAULTS, SUPPORTED_IMAGE_EXTENSIONS } = require('../../shared/constants');
+const {
+  AI_DEFAULTS,
+  SUPPORTED_IMAGE_EXTENSIONS,
+  PROCESSING_LIMITS
+} = require('../../shared/constants');
 const { TRUNCATION, THRESHOLDS } = require('../../shared/performanceConstants');
 const { normalizeAnalysisResult } = require('./utils');
 const {
@@ -41,7 +45,9 @@ const AppConfig = {
     imageAnalysis: {
       defaultModel: AI_DEFAULTS.IMAGE.MODEL,
       defaultHost: AI_DEFAULTS.IMAGE.HOST,
-      timeout: 120000,
+      // Keep image analysis aligned with global processing timeouts so the renderer lock
+      // doesn't get "stuck" for minutes when vision calls hang.
+      timeout: PROCESSING_LIMITS.ANALYSIS_TIMEOUT,
       temperature: AI_DEFAULTS.IMAGE.TEMPERATURE,
       maxTokens: AI_DEFAULTS.IMAGE.MAX_TOKENS
     }
@@ -96,37 +102,78 @@ Analyze this image:`;
       getOllamaVisionModel() || cfg.selectedVisionModel || AppConfig.ai.imageAnalysis.defaultModel;
 
     // Use deduplicator to prevent duplicate LLM calls for identical images
+    // FIX: Handle case where smartFolders is explicitly passed as undefined
+    const safeFolders = Array.isArray(smartFolders) ? smartFolders : [];
     const deduplicationKey = globalDeduplicator.generateKey({
       image: imageBase64.slice(0, TRUNCATION.CACHE_SIGNATURE), // Use first chars as signature
       model: modelToUse,
       fileName: originalFileName,
-      folders: smartFolders.map((f) => f.name).join(',')
+      folders: safeFolders.map((f) => f.name).join(',')
     });
 
     const client = await getOllama();
     const perfOptions = await buildOllamaOptions('vision');
-    const response = await globalDeduplicator.deduplicate(deduplicationKey, () =>
-      generateWithRetry(
-        client,
-        {
-          model: modelToUse,
-          prompt,
-          images: [imageBase64],
-          options: {
-            temperature: AppConfig.ai.imageAnalysis.temperature,
-            num_predict: AppConfig.ai.imageAnalysis.maxTokens,
-            ...perfOptions
-          },
-          format: 'json'
-        },
-        {
-          operation: `Image analysis for ${originalFileName}`,
-          maxRetries: 3,
-          initialDelay: 1000,
-          maxDelay: 4000
+
+    // IMPORTANT: Vision model calls can hang indefinitely if the model/server gets stuck.
+    // Enforce a hard timeout and abort the underlying request (supported by Ollama client).
+    const abortController = new AbortController();
+    let timeoutId = null;
+    const timeoutMs = Number(AppConfig.ai.imageAnalysis.timeout) || 60000;
+    const startedAt = Date.now();
+
+    const response = await (async () => {
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          try {
+            abortController.abort();
+          } catch {
+            // ignore
+          }
+          reject(new Error(`Image analysis timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        // Ensure timers don't keep the process alive
+        if (timeoutId && typeof timeoutId.unref === 'function') {
+          timeoutId.unref();
         }
-      )
-    );
+      });
+
+      const generatePromise = globalDeduplicator.deduplicate(deduplicationKey, () =>
+        generateWithRetry(
+          client,
+          {
+            model: modelToUse,
+            prompt,
+            images: [imageBase64],
+            options: {
+              temperature: AppConfig.ai.imageAnalysis.temperature,
+              num_predict: AppConfig.ai.imageAnalysis.maxTokens,
+              ...perfOptions
+            },
+            format: 'json',
+            signal: abortController.signal
+          },
+          {
+            operation: `Image analysis for ${originalFileName}`,
+            maxRetries: 3,
+            initialDelay: 1000,
+            maxDelay: 4000
+          }
+        )
+      );
+
+      try {
+        return await Promise.race([generatePromise, timeoutPromise]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    })();
+
+    logger.info('[IMAGE-ANALYSIS] Ollama vision request completed', {
+      fileName: originalFileName,
+      model: modelToUse,
+      elapsedMs: Date.now() - startedAt
+    });
 
     if (response.response) {
       try {
@@ -189,6 +236,20 @@ Analyze this image:`;
     logger.error('Error calling Ollama API for image', {
       error: error.message
     });
+
+    if (
+      error?.name === 'AbortError' ||
+      String(error?.message || '')
+        .toLowerCase()
+        .includes('aborted')
+    ) {
+      return {
+        error:
+          'Image analysis was aborted (timeout or cancellation). Try again or switch to a smaller/faster vision model.',
+        keywords: [],
+        confidence: 0
+      };
+    }
 
     // Specific handling for zero-length image error
     if (error.message.includes('zero length image')) {

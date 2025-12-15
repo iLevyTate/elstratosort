@@ -2,6 +2,68 @@
 
 This document lists all environment variables and configuration options available in StratoSort.
 
+## Dependency Installation (Beta)
+
+> **⚠️ Beta Notice**: The automatic dependency installation feature (`npm run setup:deps`) is
+> currently in beta and may not work reliably on all systems. For full functionality, we recommend
+> installing dependencies manually via CLI as described below.
+
+### Manual Installation via CLI
+
+If the automatic setup scripts fail or you prefer manual installation, follow these steps:
+
+#### 1. Install Ollama
+
+| Platform | Command                                                   |
+| -------- | --------------------------------------------------------- |
+| Windows  | `winget install Ollama.Ollama` or download from ollama.ai |
+| macOS    | `brew install ollama` or download from ollama.ai          |
+| Linux    | `curl -fsSL https://ollama.ai/install.sh \| sh`           |
+
+#### 2. Pull Required AI Models
+
+```bash
+# Ensure Ollama is running
+ollama serve
+
+# Pull models (~6GB total download)
+ollama pull llama3.2:latest      # Text analysis
+ollama pull llava:latest         # Vision/image analysis
+ollama pull mxbai-embed-large    # Embedding model
+```
+
+#### 3. Install ChromaDB (Requires Python 3.8+)
+
+```bash
+# Windows
+pip install --user chromadb
+
+# macOS/Linux
+pip3 install --user chromadb
+```
+
+#### 4. Verify Installation
+
+```bash
+# Test Ollama
+curl http://127.0.0.1:11434/api/tags
+
+# Test ChromaDB
+python -c "import chromadb; print('ChromaDB OK')"
+```
+
+### Automatic Setup Commands (Beta)
+
+These commands attempt to auto-detect and install dependencies but may not work on all systems:
+
+```bash
+npm run setup:deps           # Install both Ollama and ChromaDB
+npm run setup:ollama         # Install Ollama + pull models
+npm run setup:chromadb       # Install ChromaDB Python module
+npm run setup:ollama:check   # Verify Ollama installation
+npm run setup:chromadb:check # Verify ChromaDB installation
+```
+
 ## Environment Variables
 
 ### Ollama Configuration
@@ -17,14 +79,21 @@ This document lists all environment variables and configuration options availabl
 
 ### ChromaDB Configuration
 
-| Variable                      | Default                 | Description                                                    |
-| ----------------------------- | ----------------------- | -------------------------------------------------------------- |
-| `CHROMA_SERVER_URL`           | `http://127.0.0.1:8000` | Full URL for ChromaDB server (overrides individual components) |
-| `CHROMA_SERVER_PROTOCOL`      | `http`                  | Protocol for ChromaDB connection                               |
-| `CHROMA_SERVER_HOST`          | `127.0.0.1`             | ChromaDB server hostname                                       |
-| `CHROMA_SERVER_PORT`          | `8000`                  | ChromaDB server port                                           |
-| `CHROMA_SERVER_COMMAND`       | -                       | Custom command to spawn ChromaDB server                        |
-| `STRATOSORT_DISABLE_CHROMADB` | `0`                     | Set to `1` to disable ChromaDB integration                     |
+| Variable                      | Default                 | Description                                                                            |
+| ----------------------------- | ----------------------- | -------------------------------------------------------------------------------------- |
+| `CHROMA_SERVER_URL`           | `http://127.0.0.1:8000` | Full URL for ChromaDB server. If set and reachable, skips local installation/spawning. |
+| `CHROMA_SERVER_PROTOCOL`      | `http`                  | Protocol for ChromaDB connection (used if `CHROMA_SERVER_URL` is not set)              |
+| `CHROMA_SERVER_HOST`          | `127.0.0.1`             | ChromaDB server hostname (used if `CHROMA_SERVER_URL` is not set)                      |
+| `CHROMA_SERVER_PORT`          | `8000`                  | ChromaDB server port (used if `CHROMA_SERVER_URL` is not set)                          |
+| `CHROMA_SERVER_COMMAND`       | -                       | Custom command to spawn ChromaDB server (advanced use only)                            |
+| `STRATOSORT_DISABLE_CHROMADB` | `0`                     | Set to `1` to disable ChromaDB integration entirely                                    |
+
+**External ChromaDB (Docker/Remote)**:
+
+- Set `CHROMA_SERVER_URL` to point to an external ChromaDB instance (e.g.,
+  `http://192.168.1.100:8000`).
+- The app will verify the server is reachable and skip local Python/pip installation.
+- Useful for Docker deployments or shared ChromaDB instances.
 
 ### ChromaDB Cache Tuning
 
@@ -60,7 +129,8 @@ This document lists all environment variables and configuration options availabl
 
 ## Performance Constants
 
-All timing and tuning constants are centralized in `src/shared/performanceConstants.js`. These are organized into categories:
+All timing and tuning constants are centralized in `src/shared/performanceConstants.js`. These are
+organized into categories:
 
 ### TIMEOUTS (milliseconds)
 
@@ -144,7 +214,8 @@ User settings are persisted in the application's data directory:
 
 ### Configuration Schema
 
-Configuration validation is defined in `src/shared/config/configSchema.js`. The schema ensures type safety and provides default values for all settings.
+Configuration validation is defined in `src/shared/config/configSchema.js`. The schema ensures type
+safety and provides default values for all settings.
 
 ## Modifying Configuration
 
@@ -180,17 +251,23 @@ export STRATOSORT_FORCE_SOFTWARE_GPU=1
 
 ### ChromaDB Connection Issues
 
-Verify ChromaDB is accessible:
+**Local ChromaDB (default)**:
 
-```bash
-curl http://127.0.0.1:8000/api/v1/heartbeat
-```
+- The app auto-installs ChromaDB via `pip install --user chromadb` on first run.
+- Spawns `chroma run --path <data-dir>` automatically when needed.
+- Verify installation: `npm run setup:chromadb:check`
 
-Override the connection URL if needed:
+**External ChromaDB (Docker/remote)**:
 
-```bash
-export CHROMA_SERVER_URL=http://custom-host:8000
-```
+- Set `CHROMA_SERVER_URL` to your external server:
+  ```bash
+  export CHROMA_SERVER_URL=http://192.168.1.100:8000  # Linux/macOS
+  $env:CHROMA_SERVER_URL = "http://192.168.1.100:8000"  # Windows PowerShell
+  ```
+- Verify it's reachable:
+  ```bash
+  curl http://192.168.1.100:8000/api/v1/heartbeat
+  ```
 
 ### Ollama Connection Issues
 

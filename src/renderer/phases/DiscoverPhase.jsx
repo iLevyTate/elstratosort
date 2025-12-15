@@ -22,6 +22,7 @@ import {
   AnalysisResultsList,
   AnalysisProgress
 } from '../components/discover';
+import { FileListSkeleton } from '../components/LoadingSkeleton';
 
 // Extracted hooks and utilities
 import {
@@ -61,7 +62,8 @@ function DiscoverPhase() {
     updateFileState,
     resetAnalysisState,
     actions,
-    readySelectedFilesCount
+    readySelectedFilesCount,
+    getCurrentPhase
   } = useDiscoverState();
 
   const { addNotification } = useNotification();
@@ -128,7 +130,7 @@ function DiscoverPhase() {
   );
 
   // Analysis hook
-  const { analyzeFiles, analyzeFilesRef, cancelAnalysis, clearAnalysisQueue } = useAnalysis({
+  const { analyzeFiles, cancelAnalysis, clearAnalysisQueue } = useAnalysis({
     selectedFiles,
     fileStates,
     analysisResults,
@@ -144,7 +146,8 @@ function DiscoverPhase() {
     },
     updateFileState,
     addNotification,
-    actions: extendedActions
+    actions: extendedActions,
+    getCurrentPhase
   });
 
   // File handlers hook
@@ -224,45 +227,8 @@ function DiscoverPhase() {
   }, [isAnalyzing, analysisProgress, resetAnalysisState]);
 
   // Resume analysis on mount if needed
-  useEffect(() => {
-    if (
-      !hasResumedRef.current &&
-      isAnalyzing &&
-      Array.isArray(selectedFiles) &&
-      selectedFiles.length > 0
-    ) {
-      const remaining = selectedFiles.filter((f) => {
-        const state = fileStates[f.path]?.state;
-        return state !== 'ready' && state !== 'error';
-      });
-
-      hasResumedRef.current = true;
-
-      if (remaining.length > 0) {
-        addNotification(
-          `Resuming analysis of ${remaining.length} files...`,
-          'info',
-          3000,
-          'analysis-resume'
-        );
-        const runAnalysis = analyzeFilesRef.current;
-        if (runAnalysis) {
-          runAnalysis(remaining);
-        } else {
-          logger.warn('analyzeFiles not ready during resume');
-        }
-      } else {
-        resetAnalysisState('No remaining files to analyze');
-      }
-    }
-  }, [
-    isAnalyzing,
-    selectedFiles,
-    fileStates,
-    addNotification,
-    resetAnalysisState,
-    analyzeFilesRef
-  ]);
+  // Note: Actual resume logic is handled in useAnalysis hook to prevent duplication
+  /* useEffect(() => { ... } removed to fix duplicate notifications */
 
   // Auto-reset stuck/stalled analysis
   useEffect(() => {
@@ -368,13 +334,6 @@ function DiscoverPhase() {
                 isScanning={isScanning}
                 className="w-full max-w-sm justify-center"
               />
-
-              {isScanning && (
-                <div className="flex items-center text-xs font-medium text-stratosort-blue bg-stratosort-blue/5 mt-relaxed px-cozy py-compact rounded-full">
-                  <span className="animate-spin h-3 w-3 border-2 border-current border-t-transparent rounded-full mr-compact" />
-                  Scanning files...
-                </div>
-              )}
             </div>
           </section>
 
@@ -429,23 +388,31 @@ function DiscoverPhase() {
             </div>
           )}
 
-          {/* Bottom Section - Results */}
-          {visibleAnalysisResults.length > 0 && (
-            <div className="flex-1 min-h-content-md max-h-viewport-lg surface-panel flex flex-col overflow-hidden animate-slide-up">
+          {/* Bottom Section - Results (or skeleton while analyzing) */}
+          {(visibleAnalysisResults.length > 0 || (isAnalyzing && selectedFiles.length > 0)) && (
+            <div className="flex-1 min-h-content-md surface-panel flex flex-col overflow-hidden animate-slide-up">
               <div className="border-b border-border-soft/70 bg-white/70 flex items-center justify-between p-default">
                 <h3 className="heading-tertiary m-0 text-sm uppercase tracking-wider text-system-gray-500">
                   Analysis Results
                 </h3>
                 <div className="text-xs text-system-gray-500">
-                  {visibleReadyCount} successful, {visibleFailedCount} failed
+                  {isAnalyzing && visibleAnalysisResults.length === 0
+                    ? 'Analyzing files...'
+                    : `${visibleReadyCount} successful, ${visibleFailedCount} failed`}
                 </div>
               </div>
               <div className="flex-1 min-h-0 p-0 bg-white/10 overflow-y-auto modern-scrollbar pb-default">
-                <AnalysisResultsList
-                  results={visibleAnalysisResults}
-                  onFileAction={handleFileAction}
-                  getFileStateDisplay={getFileStateDisplay}
-                />
+                {visibleAnalysisResults.length > 0 ? (
+                  <AnalysisResultsList
+                    results={visibleAnalysisResults}
+                    onFileAction={handleFileAction}
+                    getFileStateDisplay={getFileStateDisplay}
+                  />
+                ) : (
+                  <div className="p-4">
+                    <FileListSkeleton count={Math.min(selectedFiles.length, 5)} />
+                  </div>
+                )}
               </div>
             </div>
           )}

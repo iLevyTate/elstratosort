@@ -1,4 +1,4 @@
-const { app, ipcMain } = require('electron');
+const { app } = require('electron');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
@@ -753,11 +753,11 @@ class SettingsService {
       this.invalidateCache();
 
       // Reload settings from disk
-      await this.load();
+      const latestSettings = await this.load();
       logger.debug('[SettingsService] Settings reloaded from external change');
 
       // Notify renderer process of settings change
-      this._notifySettingsChanged();
+      await this._notifySettingsChanged(latestSettings);
     } catch (error) {
       logger.error('[SettingsService] Failed to handle external file change', {
         error: error.message
@@ -771,25 +771,24 @@ class SettingsService {
    * Notify renderer process of settings changes via IPC
    * @private
    */
-  _notifySettingsChanged() {
+  async _notifySettingsChanged(payload = null) {
     try {
-      // Emit IPC event to notify renderer
-      if (ipcMain && ipcMain.emit) {
-        // Get all BrowserWindows and send event
-        const { BrowserWindow } = require('electron');
-        const windows = BrowserWindow.getAllWindows();
-        windows.forEach((win) => {
-          if (win && !win.isDestroyed() && win.webContents) {
-            try {
-              win.webContents.send('settings-changed-external');
-            } catch (error) {
-              logger.warn(
-                `[SettingsService] Failed to send settings-changed event: ${error.message}`
-              );
-            }
+      const data = payload || (await this.load());
+
+      // Get all BrowserWindows and send event
+      const { BrowserWindow } = require('electron');
+      const windows = BrowserWindow.getAllWindows();
+      windows.forEach((win) => {
+        if (win && !win.isDestroyed() && win.webContents) {
+          try {
+            win.webContents.send('settings-changed-external', data);
+          } catch (error) {
+            logger.warn(
+              `[SettingsService] Failed to send settings-changed event: ${error.message}`
+            );
           }
-        });
-      }
+        }
+      });
     } catch (error) {
       logger.warn(`[SettingsService] Failed to notify settings change: ${error.message}`);
     }

@@ -1,8 +1,18 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Critical and High Severity Bug Fixes Report
 
 ## Executive Summary
 
-This report documents the comprehensive fixes applied to address critical and high severity bugs in the StratoSort codebase. All fixes focus on preventing crashes, data loss, and security vulnerabilities.
+This report documents the comprehensive fixes applied to address critical and high severity bugs in
+the StratoSort codebase. All fixes focus on preventing crashes, data loss, and security
+vulnerabilities.
 
 ## Critical Issues Fixed (Priority 1)
 
@@ -340,4 +350,6 @@ All critical and high severity bugs have been addressed with comprehensive fixes
 - Ensure data integrity
 - Improve overall stability
 
-The fixes follow industry best practices and implement defensive programming patterns throughout the codebase. Regular testing and monitoring should be conducted to ensure the fixes remain effective as the application evolves.
+The fixes follow industry best practices and implement defensive programming patterns throughout the
+codebase. Regular testing and monitoring should be conducted to ensure the fixes remain effective as
+the application evolves.

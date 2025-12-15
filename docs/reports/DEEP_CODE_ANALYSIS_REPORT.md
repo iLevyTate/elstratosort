@@ -1,6 +1,15 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Deep Code Analysis Report - Additional Inconsistencies
 
-This document identifies additional inconsistencies and code quality issues found through deeper analysis of the StratoSort codebase.
+This document identifies additional inconsistencies and code quality issues found through deeper
+analysis of the StratoSort codebase.
 
 ## Critical Issues Found
 
@@ -98,7 +107,7 @@ await fs.unlink(uniqueDestination).catch(() => {});
 await fs.unlink(uniqueDestination).catch((error) => {
   logger.warn('Failed to cleanup temporary file', {
     path: uniqueDestination,
-    error: error.message,
+    error: error.message
   });
 });
 ```

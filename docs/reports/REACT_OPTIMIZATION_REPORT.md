@@ -1,10 +1,20 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # React Component Performance Optimization Report
 
 ## Date: November 18, 2025
 
 ## Summary
 
-Successfully optimized React component re-renders by adding useMemo, useCallback, and React.memo where beneficial. The optimizations focused on the hot paths during file analysis and organization operations.
+Successfully optimized React component re-renders by adding useMemo, useCallback, and React.memo
+where beneficial. The optimizations focused on the hot paths during file analysis and organization
+operations.
 
 ## Optimizations Applied
 
@@ -31,7 +41,8 @@ Successfully optimized React component re-renders by adding useMemo, useCallback
 - Wrapped `getFileState` with `useCallback` to memoize file state lookups
 - Wrapped `getFileStateDisplay` with `useCallback` to cache file display calculations
 - Memoized `handleEditFile` and `getFileWithEdits` functions
-- Added `useCallback` to action functions: `markFilesAsProcessed`, `unmarkFilesAsProcessed`, `toggleFileSelection`, `selectAllFiles`
+- Added `useCallback` to action functions: `markFilesAsProcessed`, `unmarkFilesAsProcessed`,
+  `toggleFileSelection`, `selectAllFiles`
 - Wrapped bulk operations: `applyBulkCategoryChange`, `approveSelectedFiles`
 
 **Impact:**
@@ -47,7 +58,8 @@ Successfully optimized React component re-renders by adding useMemo, useCallback
 - Wrapped entire component with `React.memo` for pure component optimization
 - Added `useMemo` import for future optimizations
 - Memoized `handleToggleSettings` callback to prevent parent re-renders
-- Wrapped all async operations with `useCallback`: `saveSettings`, `autoSaveSettings`, `testOllamaConnection`, `addOllamaModel`, `deleteOllamaModel`, `runAPITests`
+- Wrapped all async operations with `useCallback`: `saveSettings`, `autoSaveSettings`,
+  `testOllamaConnection`, `addOllamaModel`, `deleteOllamaModel`, `runAPITests`
 - Fixed dependency arrays to ensure callbacks update when needed
 
 **Impact:**
@@ -87,13 +99,17 @@ The following child components were already using React.memo and useCallback app
 
 ## Key Optimization Strategies Applied
 
-1. **useCallback for Event Handlers**: All functions passed as props to child components are now memoized with proper dependencies.
+1. **useCallback for Event Handlers**: All functions passed as props to child components are now
+   memoized with proper dependencies.
 
-2. **React.memo for Pure Components**: Applied to SettingsPanel which doesn't need to re-render on parent state changes.
+2. **React.memo for Pure Components**: Applied to SettingsPanel which doesn't need to re-render on
+   parent state changes.
 
-3. **Proper Dependency Arrays**: Fixed all dependency arrays to prevent stale closures while avoiding unnecessary recreations.
+3. **Proper Dependency Arrays**: Fixed all dependency arrays to prevent stale closures while
+   avoiding unnecessary recreations.
 
-4. **Strategic Application**: Only applied optimizations where they provide real benefit - avoided over-optimization.
+4. **Strategic Application**: Only applied optimizations where they provide real benefit - avoided
+   over-optimization.
 
 ## Testing Results
 
@@ -119,4 +135,7 @@ The following child components were already using React.memo and useCallback app
 
 ## Conclusion
 
-The optimization effort successfully reduced unnecessary re-renders in the three main hot-path components. The changes focus on real performance bottlenecks during file analysis and organization operations. The code remains clean and maintainable while providing measurable performance improvements for users working with large numbers of files.
+The optimization effort successfully reduced unnecessary re-renders in the three main hot-path
+components. The changes focus on real performance bottlenecks during file analysis and organization
+operations. The code remains clean and maintainable while providing measurable performance
+improvements for users working with large numbers of files.

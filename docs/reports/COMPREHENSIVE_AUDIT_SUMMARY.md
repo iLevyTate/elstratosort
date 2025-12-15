@@ -1,9 +1,15 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # StratoSort Comprehensive Code Audit - FINAL SUMMARY
 
-**Generated**: 2025-01-18
-**Auditor**: Claude (Sonnet 4.5)
-**Audit Completion**: 95% (60+ backend files fully reviewed)
-**Total Lines Reviewed**: 30,000+ lines of backend code
+**Generated**: 2025-01-18 **Auditor**: Claude (Sonnet 4.5) **Audit Completion**: 95% (60+ backend
+files fully reviewed) **Total Lines Reviewed**: 30,000+ lines of backend code
 
 ---
 
@@ -11,11 +17,14 @@
 
 **Overall Assessment**: **GOOD WITH CRITICAL ISSUES** ✅⚠️
 
-StratoSort demonstrates excellent architectural patterns, comprehensive error handling, and professional code quality. However, **multiple critical and high-priority issues require immediate attention** before production deployment.
+StratoSort demonstrates excellent architectural patterns, comprehensive error handling, and
+professional code quality. However, **multiple critical and high-priority issues require immediate
+attention** before production deployment.
 
 ### Key Findings
 
-- ✅ **Strengths**: Excellent architecture, comprehensive error handling, professional code organization
+- ✅ **Strengths**: Excellent architecture, comprehensive error handling, professional code
+  organization
 - ⚠️ **Critical Issues**: 3 critical bugs requiring immediate fixes
 - 🔴 **High Priority**: 13 high-priority issues needing attention
 - 🟡 **Medium Priority**: 12 medium-priority improvements
@@ -40,11 +49,11 @@ StratoSort demonstrates excellent architectural patterns, comprehensive error ha
 
 ### CRITICAL #1: IPC Race Condition in Startup (HIGH #1)
 
-**File**: `src/main/services/StartupManager.js:91-107`
-**Severity**: CRITICAL
-**Impact**: App crashes on startup ~10% of the time
+**File**: `src/main/services/StartupManager.js:91-107` **Severity**: CRITICAL **Impact**: App
+crashes on startup ~10% of the time
 
-**Issue**: IPC handlers registered AFTER `webContents.send('app-ready')`, causing race condition where renderer makes IPC calls before handlers are ready.
+**Issue**: IPC handlers registered AFTER `webContents.send('app-ready')`, causing race condition
+where renderer makes IPC calls before handlers are ready.
 
 **Fix**:
 
@@ -64,9 +73,8 @@ webContents.send('app-ready'); // Now safe!
 
 ### CRITICAL #2: SQL Injection Vulnerability in ChromaDB Queries
 
-**File**: `src/main/services/ChromaDBService.js:285-310`
-**Severity**: CRITICAL - SECURITY VULNERABILITY
-**Impact**: SQL injection vulnerability allows arbitrary code execution
+**File**: `src/main/services/ChromaDBService.js:285-310` **Severity**: CRITICAL - SECURITY
+VULNERABILITY **Impact**: SQL injection vulnerability allows arbitrary code execution
 
 **Issue**: Direct string concatenation in SQL queries without parameterization.
 
@@ -87,8 +95,7 @@ const results = await db.all(query, [collectionName]);
 
 ### CRITICAL #3: Unvalidated File Paths Allow Directory Traversal
 
-**File**: `src/main/ipc/files.js:742-798`
-**Severity**: CRITICAL - SECURITY VULNERABILITY
+**File**: `src/main/ipc/files.js:742-798` **Severity**: CRITICAL - SECURITY VULNERABILITY
 **Impact**: Attackers can read/write arbitrary files outside intended directories
 
 **Issue**: File paths from renderer not validated before file operations.
@@ -113,9 +120,8 @@ if (!safePath.startsWith(expectedBaseDirectory)) {
 
 ### HIGH #2: Memory Leak in Progress Tracker
 
-**File**: `src/main/services/BatchAnalysisService.js:155-198`
-**Severity**: HIGH
-**Impact**: Memory grows unbounded during long batch operations
+**File**: `src/main/services/BatchAnalysisService.js:155-198` **Severity**: HIGH **Impact**: Memory
+grows unbounded during long batch operations
 
 **Issue**: Progress trackers not cleaned up after completion, `webContents` references prevent GC.
 
@@ -125,9 +131,8 @@ if (!safePath.startsWith(expectedBaseDirectory)) {
 
 ### HIGH #3: File Operation Rollback Incomplete
 
-**File**: `src/main/ipc/files.js:742-798`
-**Severity**: HIGH
-**Impact**: Failed batch operations don't fully rollback, leaving filesystem inconsistent
+**File**: `src/main/ipc/files.js:742-798` **Severity**: HIGH **Impact**: Failed batch operations
+don't fully rollback, leaving filesystem inconsistent
 
 **Issue**: Rollback only undoes moves, not creates/deletes.
 
@@ -137,9 +142,8 @@ if (!safePath.startsWith(expectedBaseDirectory)) {
 
 ### HIGH #4: ChromaDB Process Not Terminated on App Exit
 
-**File**: `src/main/simple-main.js:1523-1542`
-**Severity**: HIGH
-**Impact**: Orphaned ChromaDB processes consume system resources after app closes
+**File**: `src/main/simple-main.js:1523-1542` **Severity**: HIGH **Impact**: Orphaned ChromaDB
+processes consume system resources after app closes
 
 **Issue**: `chromaProcess.kill()` doesn't wait for confirmation, process may survive.
 
@@ -157,9 +161,8 @@ await new Promise((resolve) => {
 
 ### HIGH #5: Null Safety in Category Detection
 
-**Files**: Multiple AI analysis files
-**Severity**: HIGH
-**Impact**: Analysis crashes when `getIntelligentCategory` returns null
+**Files**: Multiple AI analysis files **Severity**: HIGH **Impact**: Analysis crashes when
+`getIntelligentCategory` returns null
 
 **Issue**: Inconsistent null handling across multiple files.
 
@@ -169,11 +172,11 @@ await new Promise((resolve) => {
 
 ### HIGH #6: Connection Test Doesn't Use Specified Host
 
-**File**: `src/main/services/OllamaService.js:74-104`
-**Severity**: HIGH
-**Impact**: UI "Test Connection" button tests wrong server
+**File**: `src/main/services/OllamaService.js:74-104` **Severity**: HIGH **Impact**: UI "Test
+Connection" button tests wrong server
 
-**Issue**: `testConnection(hostUrl)` ignores the `hostUrl` parameter and tests current configured host instead.
+**Issue**: `testConnection(hostUrl)` ignores the `hostUrl` parameter and tests current configured
+host instead.
 
 **Fix**: Create temporary Ollama instance with provided host for validation.
 
@@ -181,9 +184,8 @@ await new Promise((resolve) => {
 
 ### HIGH #7: Host Change Doesn't Invalidate Ollama Instance
 
-**File**: `src/main/ollamaUtils.js:24-51`
-**Severity**: HIGH
-**Impact**: Requests go to old host until app restarts
+**File**: `src/main/ollamaUtils.js:24-51` **Severity**: HIGH **Impact**: Requests go to old host
+until app restarts
 
 **Issue**: Cached `ollamaInstance` not invalidated when `ollamaHost` changes.
 
@@ -193,9 +195,8 @@ await new Promise((resolve) => {
 
 ### HIGH #8: Cache Key Hash Collision Risk
 
-**File**: `src/main/analysis/documentLlm.js:33-57`
-**Severity**: HIGH
-**Impact**: Two files with identical first 50KB get same cache key, wrong results returned
+**File**: `src/main/analysis/documentLlm.js:33-57` **Severity**: HIGH **Impact**: Two files with
+identical first 50KB get same cache key, wrong results returned
 
 **Issue**: Cache key truncates text before hashing but doesn't include original length.
 
@@ -212,8 +213,7 @@ hasher.update(truncatedText || '');
 
 ### MEDIUM #1: Missing Timeout Protection in Multiple Services
 
-**Files**: `OllamaService.js`, `llmService.js`, multiple analysis files
-**Severity**: MEDIUM
+**Files**: `OllamaService.js`, `llmService.js`, multiple analysis files **Severity**: MEDIUM
 **Impact**: Operations can hang indefinitely
 
 **Recommendation**: Add timeout wrapper like `documentLlm.js` uses (lines 210-223).
@@ -222,9 +222,8 @@ hasher.update(truncatedText || '');
 
 ### MEDIUM #2: Dual Logger Import Confusion
 
-**File**: `src/main/analysis/ollamaDocumentAnalysis.js:66, 139`
-**Severity**: MEDIUM
-**Impact**: Inconsistent logging, potential confusion
+**File**: `src/main/analysis/ollamaDocumentAnalysis.js:66, 139` **Severity**: MEDIUM **Impact**:
+Inconsistent logging, potential confusion
 
 **Issue**: Two different logger instances imported in same file.
 
@@ -234,9 +233,8 @@ hasher.update(truncatedText || '');
 
 ### MEDIUM #3: Aggressive Directory Structure Truncation
 
-**File**: `src/main/llmService.js:55-76`
-**Severity**: MEDIUM
-**Impact**: LLM gets incomplete folder structure (truncated at depth 3)
+**File**: `src/main/llmService.js:55-76` **Severity**: MEDIUM **Impact**: LLM gets incomplete folder
+structure (truncated at depth 3)
 
 **Recommendation**: Make depth configurable or increase default to 4-5.
 
@@ -244,9 +242,8 @@ hasher.update(truncatedText || '');
 
 ### MEDIUM #4: Inconsistent Agent Usage in loadConfig
 
-**File**: `src/main/ollamaUtils.js:213`
-**Severity**: MEDIUM
-**Impact**: Config load doesn't benefit from connection pooling
+**File**: `src/main/ollamaUtils.js:213` **Severity**: MEDIUM **Impact**: Config load doesn't benefit
+from connection pooling
 
 **Fix**: Use same agent creation pattern as `getOllama()`.
 
@@ -454,7 +451,8 @@ hasher.update(truncatedText || '');
 
 ## 🏁 CONCLUSION
 
-**StratoSort is a well-architected application with excellent code quality**, but it requires **immediate attention to critical security and reliability issues** before production deployment.
+**StratoSort is a well-architected application with excellent code quality**, but it requires
+**immediate attention to critical security and reliability issues** before production deployment.
 
 ### Readiness Assessment
 
@@ -471,7 +469,10 @@ hasher.update(truncatedText || '');
 
 ### Final Verdict
 
-> **With the critical and high-priority issues addressed, StratoSort will be an excellent, production-quality application.** The architecture is sound, the code is professional, and the feature set is comprehensive. The issues found are typical of pre-release software and are well within normal bounds for a project of this complexity.
+> **With the critical and high-priority issues addressed, StratoSort will be an excellent,
+> production-quality application.** The architecture is sound, the code is professional, and the
+> feature set is comprehensive. The issues found are typical of pre-release software and are well
+> within normal bounds for a project of this complexity.
 
 **Recommended Next Steps**:
 
@@ -567,6 +568,5 @@ hasher.update(truncatedText || '');
 
 ---
 
-**End of Audit Report**
-**Total Review Time**: ~4 hours
-**Next Review Recommended**: After critical fixes implemented
+**End of Audit Report** **Total Review Time**: ~4 hours **Next Review Recommended**: After critical
+fixes implemented

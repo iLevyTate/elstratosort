@@ -52,7 +52,7 @@
     "generate:channels:check": "node scripts/generate-preload-channels.js --check",
     "generate:channels:update": "node scripts/generate-preload-channels.js --update",
     "generate:assets": "npm run generate:icons && npm run generate:nsis",
-    "postinstall": "electron-builder install-app-deps && node scripts/setup-ollama.js --auto --ci-skip && node scripts/setup-chromadb.js --auto --ci-skip",
+    "postinstall": "node scripts/postinstall.js",
     "setup:ollama": "node scripts/setup-ollama.js",
     "setup:ollama:check": "node scripts/setup-ollama.js --check",
     "setup:chromadb": "node scripts/setup-chromadb.js --auto",

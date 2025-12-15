@@ -126,8 +126,22 @@ export function useProgressTracking() {
  * @param {Function} params.getFileWithEdits - Function to get file with applied edits
  * @param {Function} params.findSmartFolderForCategory - Function to find smart folder
  * @param {string} params.defaultLocation - Default destination location
- * @returns {Object} Processed file info with newName and normalized destination
+ * @returns {Object} Processed file info with newName, normalized destination, and categoryChanged flag
  */
+// Helper to normalize paths for comparison (handles mixed / and \)
+const normalizeForComparison = (path) => (path || '').replace(/[\\/]+/g, '/').toLowerCase();
+
+/**
+ * Helper to join paths using the correct separator based on the root
+ */
+const joinPath = (root, ...parts) => {
+  const isWindows = root.includes('\\');
+  const separator = isWindows ? '\\' : '/';
+  const cleanRoot = root.endsWith(separator) ? root.slice(0, -1) : root;
+  const cleanParts = parts.map((p) => (p.startsWith(separator) ? p.slice(1) : p));
+  return [cleanRoot, ...cleanParts].join(separator);
+};
+
 function processFileForOrganization({
   file,
   fileIndexMap,
@@ -140,19 +154,25 @@ function processFileForOrganization({
   const edits = fileIndex >= 0 ? editingFiles[fileIndex] || {} : {};
   const fileWithEdits = fileIndex >= 0 ? getFileWithEdits(file, fileIndex) : file;
   let currentCategory = edits.category || fileWithEdits.analysis?.category;
+  const originalCategory = currentCategory;
+  let categoryChanged = false;
 
   // Filter out "document" category if it's not a smart folder
-  if (currentCategory === 'document') {
-    const documentFolder = findSmartFolderForCategory('document');
-    if (!documentFolder) {
+  if (currentCategory === 'document' || currentCategory === 'image') {
+    const matchingFolder = findSmartFolderForCategory(currentCategory);
+    if (!matchingFolder) {
       currentCategory = 'Uncategorized';
+      categoryChanged = true;
     }
   }
 
   const smartFolder = findSmartFolderForCategory(currentCategory);
+
+  // FIX: Use platform-aware path joining instead of hardcoded slashes
   const destinationDir = smartFolder
-    ? smartFolder.path || `${defaultLocation}/${smartFolder.name}`
-    : `${defaultLocation}/${currentCategory || 'Uncategorized'}`;
+    ? smartFolder.path || joinPath(defaultLocation, smartFolder.name)
+    : joinPath(defaultLocation, currentCategory || 'Uncategorized');
+
   const suggestedName = edits.suggestedName || fileWithEdits.analysis?.suggestedName || file.name;
 
   // Ensure extension is present - use lastIndexOf for more robust extension detection
@@ -163,10 +183,10 @@ function processFileForOrganization({
   const hasExtension = suggestedExtIdx > 0 && suggestedExtIdx > suggestedName.length - 6;
   const newName = hasExtension || !originalExt ? suggestedName : suggestedName + originalExt;
 
-  const dest = `${destinationDir}/${newName}`;
+  const dest = joinPath(destinationDir, newName);
   const normalized = window.electronAPI?.files?.normalizePath?.(dest) || dest;
 
-  return { newName, normalized };
+  return { newName, normalized, categoryChanged, originalCategory, finalCategory: currentCategory };
 }
 
 /**
@@ -187,7 +207,7 @@ function buildFileIndexMap(filesToProcess, unprocessedFiles) {
 /**
  * Build file operations for organization
  * @param {Object} params - Parameters
- * @returns {Array} Operations array
+ * @returns {Object} Object with operations array and categoryChanges array
  */
 function buildOperations({
   filesToProcess,
@@ -198,18 +218,31 @@ function buildOperations({
   defaultLocation
 }) {
   const fileIndexMap = buildFileIndexMap(filesToProcess, unprocessedFiles);
+  const categoryChanges = [];
 
-  return filesToProcess.map((file) => {
-    const { normalized } = processFileForOrganization({
-      file,
-      fileIndexMap,
-      editingFiles,
-      getFileWithEdits,
-      findSmartFolderForCategory,
-      defaultLocation
-    });
+  const operations = filesToProcess.map((file) => {
+    const { normalized, categoryChanged, originalCategory, finalCategory } =
+      processFileForOrganization({
+        file,
+        fileIndexMap,
+        editingFiles,
+        getFileWithEdits,
+        findSmartFolderForCategory,
+        defaultLocation
+      });
+
+    if (categoryChanged) {
+      categoryChanges.push({
+        fileName: file.name,
+        originalCategory,
+        finalCategory
+      });
+    }
+
     return { type: 'move', source: file.path, destination: normalized };
   });
+
+  return { operations, categoryChanges };
 }
 
 /**
@@ -251,7 +284,6 @@ export function useOrganization({
   getFileWithEdits,
   findSmartFolderForCategory,
   defaultLocation,
-  smartFolders,
   analysisResults,
   markFilesAsProcessed,
   unmarkFilesAsProcessed,
@@ -270,6 +302,10 @@ export function useOrganization({
     isOrganizing,
     setIsOrganizing
   } = useProgressTracking();
+
+  // FIX: Use ref to track latest organizedFiles to avoid stale closure in async callbacks
+  const organizedFilesRef = useRef(phaseData?.organizedFiles || []);
+  organizedFilesRef.current = phaseData?.organizedFiles || [];
 
   const handleOrganizeFiles = useCallback(
     async (filesToOrganize = null) => {
@@ -309,85 +345,44 @@ export function useOrganization({
         });
 
         // Check if auto-organize with suggestions is available
-        const useAutoOrganize = window.electronAPI?.organize?.auto;
-        logger.info('[ORGANIZE] Auto-organize API available:', !!useAutoOrganize);
+        const autoOrganizeAvailable = !!window.electronAPI?.organize?.auto;
+        logger.info('[ORGANIZE] Auto-organize API available:', autoOrganizeAvailable);
 
-        let operations;
-        if (useAutoOrganize) {
-          logger.info('[ORGANIZE] Calling auto-organize API...');
-          const result = await window.electronAPI.organize.auto({
-            files: filesToProcess,
-            smartFolders,
-            options: {
-              defaultLocation,
-              confidenceThreshold: 0.7,
-              preserveNames: false
-            }
-          });
-          logger.info('[ORGANIZE] Auto-organize result:', {
-            success: result?.success,
-            operationsCount: result?.operations?.length ?? result?.organized?.length ?? 0,
-            error: result?.error
-          });
+        // IMPORTANT: For the Organize phase, the user has already reviewed/edited
+        // the category + name in the UI. Calling auto-organize here can re-run a
+        // separate suggestion pipeline and produce a *different* folder than what
+        // the UI displays (e.g., UI shows "How To" but auto-organize moves to "3D Print").
+        // To prevent that "disconnect", we always build operations locally from:
+        // - file.analysis.category/suggestedName
+        // - any user edits in editingFiles
+        const { operations, categoryChanges } = buildOperations({
+          filesToProcess,
+          unprocessedFiles,
+          editingFiles,
+          getFileWithEdits,
+          findSmartFolderForCategory,
+          defaultLocation
+        });
 
-          if (result && result.success === false) {
+        // FIX: Notify user when categories were changed due to missing smart folders
+        if (categoryChanges && categoryChanges.length > 0) {
+          const changedCount = categoryChanges.length;
+          if (changedCount === 1) {
             addNotification(
-              result.error || 'Auto-organize service is not available',
-              'error',
-              5000,
-              'organize-service-error'
-            );
-            logger.error('[ORGANIZE] Auto-organize failed:', result.error);
-            setIsOrganizing(false);
-            setOrganizingState(false);
-            setBatchProgress({ current: 0, total: 0, currentFile: '' });
-            return;
-          }
-
-          // Prefer operations array (correct format), fall back to organized but convert format
-          if (result?.operations && result.operations.length > 0) {
-            operations = result.operations;
-          } else if (result?.organized && result.organized.length > 0) {
-            logger.warn('[ORGANIZE] Using organized array as fallback - converting format');
-            // Convert organized format {file, destination, confidence} to operations format {type, source, destination}
-            operations = result.organized
-              .map((item) => ({
-                type: 'move',
-                source: item.file?.path || item.source || item.path,
-                destination: item.destination
-              }))
-              .filter((op) => op.source && op.destination);
-          } else {
-            operations = [];
-          }
-
-          if (result?.needsReview && result.needsReview.length > 0) {
-            addNotification(
-              `${result.needsReview.length} files need manual review due to low confidence`,
-              'info',
-              4000,
-              'organize-needs-review'
-            );
-          }
-
-          if (result?.failed && result.failed.length > 0) {
-            addNotification(
-              `${result.failed.length} files could not be organized`,
+              `"${categoryChanges[0].fileName}" category changed from "${categoryChanges[0].originalCategory}" to "${categoryChanges[0].finalCategory}" (no matching smart folder)`,
               'warning',
-              4000,
-              'organize-failed-files'
+              5000,
+              'category-changed'
+            );
+          } else {
+            addNotification(
+              `${changedCount} files had categories changed to "Uncategorized" (no matching smart folders)`,
+              'warning',
+              5000,
+              'category-changed'
             );
           }
-        } else {
-          // Fallback to original logic
-          operations = buildOperations({
-            filesToProcess,
-            unprocessedFiles,
-            editingFiles,
-            getFileWithEdits,
-            findSmartFolderForCategory,
-            defaultLocation
-          });
+          logger.info('[ORGANIZE] Category changes applied:', categoryChanges);
         }
 
         if (!operations || operations.length === 0) {
@@ -441,8 +436,9 @@ export function useOrganization({
               if (uiResults.length > 0) {
                 setOrganizedFiles((prev) => [...prev, ...uiResults]);
                 markFilesAsProcessed(uiResults.map((r) => r.originalPath));
+                // FIX: Use ref to get latest organizedFiles (avoids stale closure)
                 actions.setPhaseData('organizedFiles', [
-                  ...(phaseData.organizedFiles || []),
+                  ...organizedFilesRef.current,
                   ...uiResults
                 ]);
                 addNotification(`Organized ${uiResults.length} files`, 'success');
@@ -465,13 +461,19 @@ export function useOrganization({
                 ? result.results.filter((r) => r.success).map((r) => r.originalPath || r.newPath)
                 : Array.from(sourcePathsSet);
 
-              const undoPathsSet = new Set(successfulUndos);
+              const undoPathsSet = new Set(successfulUndos.map(normalizeForComparison));
 
-              setOrganizedFiles((prev) => prev.filter((of) => !undoPathsSet.has(of.originalPath)));
-              unmarkFilesAsProcessed(Array.from(undoPathsSet));
+              setOrganizedFiles((prev) =>
+                prev.filter((of) => !undoPathsSet.has(normalizeForComparison(of.originalPath)))
+              );
+              unmarkFilesAsProcessed(successfulUndos);
+
+              // FIX: Use ref to get latest organizedFiles (avoids stale closure)
               actions.setPhaseData(
                 'organizedFiles',
-                (phaseData.organizedFiles || []).filter((of) => !undoPathsSet.has(of.originalPath))
+                organizedFilesRef.current.filter(
+                  (of) => !undoPathsSet.has(normalizeForComparison(of.originalPath))
+                )
               );
 
               const successCount = result?.successCount ?? successfulUndos.length;
@@ -520,12 +522,23 @@ export function useOrganization({
                     }));
 
               if (uiResults.length > 0) {
-                setOrganizedFiles((prev) => [...prev, ...uiResults]);
-                markFilesAsProcessed(uiResults.map((r) => r.originalPath));
-                actions.setPhaseData('organizedFiles', [
-                  ...(phaseData.organizedFiles || []),
-                  ...uiResults
-                ]);
+                // FIX: Filter out duplicates before adding to state
+                const existingPaths = new Set(
+                  organizedFilesRef.current.map((f) => normalizeForComparison(f.originalPath))
+                );
+                const uniqueResults = uiResults.filter(
+                  (r) => !existingPaths.has(normalizeForComparison(r.originalPath))
+                );
+
+                if (uniqueResults.length > 0) {
+                  setOrganizedFiles((prev) => [...prev, ...uniqueResults]);
+                  markFilesAsProcessed(uniqueResults.map((r) => r.originalPath));
+                  // FIX: Use ref to get latest organizedFiles (avoids stale closure)
+                  actions.setPhaseData('organizedFiles', [
+                    ...organizedFilesRef.current,
+                    ...uniqueResults
+                  ]);
+                }
               }
 
               const successCount = result?.successCount ?? uiResults.length;
@@ -599,12 +612,11 @@ export function useOrganization({
       getFileWithEdits,
       findSmartFolderForCategory,
       defaultLocation,
-      smartFolders,
       analysisResults,
       markFilesAsProcessed,
       unmarkFilesAsProcessed,
       actions,
-      phaseData,
+      // FIX: Removed phaseData from deps - using organizedFilesRef instead to avoid stale closure
       addNotification,
       executeAction,
       setOrganizedFiles,

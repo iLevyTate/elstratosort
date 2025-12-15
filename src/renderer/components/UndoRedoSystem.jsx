@@ -149,6 +149,17 @@ class UndoStack {
     return action;
   }
 
+  /**
+   * Revert a redo operation when the actual action execution fails
+   * This safely moves the pointer back without modifying the stack
+   */
+  revertRedo() {
+    if (this.pointer >= 0) {
+      this.pointer--;
+      this.notifyListeners();
+    }
+  }
+
   peek() {
     return this.canUndo() ? this.stack[this.pointer] : null;
   }
@@ -333,9 +344,8 @@ export function UndoRedoProvider({ children }) {
       await action.redo();
       showInfo('Action Redone', `Redid: ${action.description}`);
     } catch (error) {
-      // If redo fails, move pointer back
-      undoStack.pointer--;
-      undoStack.notifyListeners();
+      // If redo fails, safely revert the pointer using the class method
+      undoStack.revertRedo();
       showError('Redo Failed', `Failed to redo ${action.description}: ${error.message}`);
     }
   };

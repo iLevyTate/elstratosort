@@ -114,6 +114,7 @@ jest.mock('../src/main/analysis/utils', () => ({
 
 jest.mock('../src/main/analysis/documentLlm', () => ({
   analyzeTextWithOllama: jest.fn(),
+  normalizeCategoryToSmartFolders: jest.fn((cat) => cat), // Mock implementation returns category as-is
   AppConfig: {
     ai: {
       textAnalysis: {

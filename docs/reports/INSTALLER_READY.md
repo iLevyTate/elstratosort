@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # 🎉 StratoSort Installer Ready!
 
 ## ✅ Build Successful
@@ -134,9 +142,9 @@ The installer packages:
 
 Include these in your distribution:
 
-- Documentation: Link to [README.md](README.md)
-- Quick Start: Link to [QUICK_START.md](QUICK_START.md)
-- Issues: `https://github.com/yourusername/stratosort/issues`
+- Documentation: Link to [README.md](../../README.md)
+- Quick Start: Link to [QUICK_START.md](./QUICK_START.md)
+- Issues: `https://github.com/iLevyTate/elstratosort/issues`
 
 ---
 

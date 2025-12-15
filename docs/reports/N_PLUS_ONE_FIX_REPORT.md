@@ -1,8 +1,18 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # N+1 Pattern Fix Report - AutoOrganizeService
 
 ## Problem Statement
 
-The `AutoOrganizeService.organizeFiles()` method was making individual suggestion calls for each file in a loop, causing an N+1 query pattern. This resulted in poor performance when organizing large file sets.
+The `AutoOrganizeService.organizeFiles()` method was making individual suggestion calls for each
+file in a loop, causing an N+1 query pattern. This resulted in poor performance when organizing
+large file sets.
 
 **Original Code Issue:**
 
@@ -47,10 +57,7 @@ Refactored `organizeFiles()` to use batch processing:
 ```javascript
 // Old approach - individual calls
 for (const file of files) {
-  const suggestion = await this.suggestionService.getSuggestionsForFile(
-    file,
-    smartFolders,
-  );
+  const suggestion = await this.suggestionService.getSuggestionsForFile(file, smartFolders);
   // Process suggestion...
 }
 ```
@@ -59,10 +66,7 @@ for (const file of files) {
 
 ```javascript
 // New approach - batch processing
-const batchSuggestions = await this.suggestionService.getBatchSuggestions(
-  batch,
-  smartFolders,
-);
+const batchSuggestions = await this.suggestionService.getBatchSuggestions(batch, smartFolders);
 // Process all results at once
 ```
 
@@ -103,7 +107,7 @@ await autoOrganizeService.organizeFiles(files, smartFolders, {
   batchSize: 10, // Number of files per batch (default: 10)
   confidenceThreshold: 0.8, // Existing parameter
   defaultLocation: 'Documents', // Existing parameter
-  preserveNames: false, // Existing parameter
+  preserveNames: false // Existing parameter
 });
 ```
 
@@ -134,4 +138,7 @@ await autoOrganizeService.organizeFiles(files, smartFolders, {
 
 ## Conclusion
 
-The N+1 pattern fix successfully eliminates the performance bottleneck in file organization. The implementation maintains all existing functionality while providing significant performance improvements (70-95% faster) for bulk file operations. The solution is production-ready with comprehensive error handling and test coverage.
+The N+1 pattern fix successfully eliminates the performance bottleneck in file organization. The
+implementation maintains all existing functionality while providing significant performance
+improvements (70-95% faster) for bulk file operations. The solution is production-ready with
+comprehensive error handling and test coverage.

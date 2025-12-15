@@ -50,6 +50,13 @@ async function processBatchResults(
       const suggestion = fileWithSuggestion.suggestion;
       const confidence = group.confidence || 0;
 
+      // Ensure we have a valid source path
+      const sourcePath = file.path || fileWithSuggestion.path;
+      if (!sourcePath) {
+        logger.warn('[AutoOrganize] Skipping file with no path', { file: file.name || 'unknown' });
+        continue;
+      }
+
       if (!suggestion) {
         // Use fallback if no suggestion
         const fallbackDestination = getFallbackDestination(file, [], defaultLocation);
@@ -63,7 +70,7 @@ async function processBatchResults(
 
         results.operations.push({
           type: 'move',
-          source: file.path,
+          source: sourcePath,
           destination: fallbackDestination
         });
         continue;
@@ -101,14 +108,14 @@ async function processBatchResults(
 
         results.operations.push({
           type: 'move',
-          source: file.path,
+          source: sourcePath,
           destination
         });
 
         // Record feedback for learning (non-blocking with error handling)
         void suggestionService.recordFeedback(file, suggestion, true).catch((err) => {
           logger.warn('[AutoOrganize] Failed to record feedback (non-critical):', {
-            file: file.path,
+            file: sourcePath,
             error: err.message
           });
         });
@@ -134,7 +141,7 @@ async function processBatchResults(
 
         results.operations.push({
           type: 'move',
-          source: file.path,
+          source: sourcePath,
           destination: fallbackDestination
         });
       }

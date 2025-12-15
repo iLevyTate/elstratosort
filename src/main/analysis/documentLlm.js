@@ -30,6 +30,73 @@ const ANALYSIS_CACHE_MAX_ENTRIES = 200;
 const ANALYSIS_CACHE_TTL_MS = 3600000; // 1 hour TTL
 const analysisCache = new Map(); // key -> { value, timestamp }
 
+function normalizeCategoryToSmartFolders(category, smartFolders) {
+  const folders = Array.isArray(smartFolders) ? smartFolders : [];
+  if (folders.length === 0) return category;
+
+  const raw = String(category || '').trim();
+  const normalizedRaw = raw.toLowerCase();
+
+  // Prefer Uncategorized if model returns generic buckets
+  const uncategorized = folders.find(
+    (f) => String(f?.name || '').toLowerCase() === 'uncategorized'
+  );
+  if (
+    normalizedRaw === 'document' ||
+    normalizedRaw === 'documents' ||
+    normalizedRaw === 'image' ||
+    normalizedRaw === 'images'
+  ) {
+    return uncategorized?.name || folders[0].name;
+  }
+
+  // Exact match (case-insensitive)
+  const exact = folders.find(
+    (f) =>
+      String(f?.name || '')
+        .trim()
+        .toLowerCase() === normalizedRaw
+  );
+  if (exact) return exact.name;
+
+  // Normalize punctuation/whitespace for near-exact matches
+  const canon = (s) =>
+    String(s || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  const rawCanon = canon(raw);
+  if (rawCanon) {
+    const canonMatch = folders.find((f) => canon(f?.name) === rawCanon);
+    if (canonMatch) return canonMatch.name;
+  }
+
+  // Token overlap scoring (simple, deterministic)
+  const tokens = new Set(rawCanon.split(' ').filter(Boolean));
+  let best = null;
+  let bestScore = 0;
+  for (const f of folders) {
+    const name = String(f?.name || '').trim();
+    if (!name) continue;
+    const nameCanon = canon(name);
+    const nameTokens = nameCanon.split(' ').filter(Boolean);
+    if (nameTokens.length === 0) continue;
+    let score = 0;
+    nameTokens.forEach((t) => {
+      if (tokens.has(t)) score += 1;
+    });
+    // Small bias for shorter names to avoid always matching long "Financial Documents" when raw is "Financial"
+    score -= Math.min(0.25, nameTokens.length * 0.01);
+    if (score > bestScore) {
+      bestScore = score;
+      best = name;
+    }
+  }
+
+  if (bestScore > 0.5 && best) return best;
+  return uncategorized?.name || folders[0].name;
+}
+
 function getCacheKey(textContent, model, smartFolders) {
   // FIXED Bug #44: Limit input size to prevent excessive hash computation
   const MAX_TEXT_LENGTH = 50000; // 50KB max for hash key
@@ -209,147 +276,159 @@ ${truncated}`;
         }
       )
     );
-    const response = await Promise.race([
-      generatePromise,
-      new Promise((_, reject) => {
-        const t = setTimeout(
-          () => reject(new Error('LLM request timed out')),
-          AppConfig.ai.textAnalysis.timeout
-        );
-        try {
-          t.unref();
-        } catch {
-          // Expected: unref() may fail on non-Node timers or if already cleared
-        }
-      })
-    ]);
-
-    if (response.response) {
-      try {
-        // CRITICAL FIX: Use robust JSON extraction with repair for malformed LLM responses
-        const parsedJson = extractAndParseJSON(response.response, null);
-
-        if (!parsedJson) {
-          logger.warn('[documentLlm] JSON extraction failed', {
-            responseLength: response.response.length,
-            responsePreview: response.response.substring(0, 500),
-            responseEnd: response.response.substring(Math.max(0, response.response.length - 200))
-          });
-          return {
-            error: 'Failed to parse document analysis JSON from Ollama.',
-            keywords: [],
-            confidence: 65
-          };
-        }
-
-        // CRITICAL FIX: Validate schema to prevent crashes from malformed responses
-        if (typeof parsedJson !== 'object') {
-          logger.warn('[documentLlm] Invalid response: not an object');
-          return {
-            error: 'Invalid document analysis response structure.',
-            keywords: [],
-            confidence: 65
-          };
-        }
-
-        // Validate and sanitize date field
-        if (parsedJson.date) {
+    // FIX: Store timeout ID outside Promise.race to ensure cleanup
+    let timeoutId;
+    try {
+      const response = await Promise.race([
+        generatePromise,
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error('LLM request timed out')),
+            AppConfig.ai.textAnalysis.timeout
+          );
           try {
-            parsedJson.date = new Date(parsedJson.date).toISOString().split('T')[0];
+            timeoutId.unref();
           } catch {
-            delete parsedJson.date;
+            // Expected: unref() may fail on non-Node timers or if already cleared
           }
-        }
+        })
+      ]);
 
-        // Validate keywords array
-        const finalKeywords = Array.isArray(parsedJson.keywords)
-          ? parsedJson.keywords.filter((kw) => typeof kw === 'string' && kw.length > 0)
-          : [];
+      if (response.response) {
+        try {
+          // CRITICAL FIX: Use robust JSON extraction with repair for malformed LLM responses
+          const parsedJson = extractAndParseJSON(response.response, null);
 
-        // FIXED Bug #41 & #43: Calculate meaningful confidence based on response quality
-        // instead of using Math.random()
-        if (
-          !parsedJson.confidence ||
-          typeof parsedJson.confidence !== 'number' ||
-          parsedJson.confidence < 60 ||
-          parsedJson.confidence > 100
-        ) {
-          // Calculate confidence based on response completeness and quality
-          let calculatedConfidence = 70; // Base confidence
-
-          // Increase confidence if we have good quality fields
-          if (
-            parsedJson.category &&
-            typeof parsedJson.category === 'string' &&
-            parsedJson.category.length > 0
-          ) {
-            calculatedConfidence += 5;
-          }
-          if (
-            parsedJson.purpose &&
-            typeof parsedJson.purpose === 'string' &&
-            parsedJson.purpose.length > 0
-          ) {
-            calculatedConfidence += 5;
-          }
-          if (finalKeywords.length >= 3) {
-            calculatedConfidence += 5;
-          }
-          if (
-            parsedJson.project &&
-            typeof parsedJson.project === 'string' &&
-            parsedJson.project.length > 0
-          ) {
-            calculatedConfidence += 5;
-          }
-          if (
-            parsedJson.suggestedName &&
-            typeof parsedJson.suggestedName === 'string' &&
-            parsedJson.suggestedName.length > 0
-          ) {
-            calculatedConfidence += 5;
+          if (!parsedJson) {
+            logger.warn('[documentLlm] JSON extraction failed', {
+              responseLength: response.response.length,
+              responsePreview: response.response.substring(0, 500),
+              responseEnd: response.response.substring(Math.max(0, response.response.length - 200))
+            });
+            return {
+              error: 'Failed to parse document analysis JSON from Ollama.',
+              keywords: [],
+              confidence: 65
+            };
           }
 
-          parsedJson.confidence = Math.min(95, calculatedConfidence);
-        }
+          // CRITICAL FIX: Validate schema to prevent crashes from malformed responses
+          if (typeof parsedJson !== 'object') {
+            logger.warn('[documentLlm] Invalid response: not an object');
+            return {
+              error: 'Invalid document analysis response structure.',
+              keywords: [],
+              confidence: 65
+            };
+          }
 
-        // Build validated result object
-        const result = {
-          rawText: textContent.substring(0, 2000),
-          date: parsedJson.date || undefined,
-          project: typeof parsedJson.project === 'string' ? parsedJson.project : undefined,
-          purpose: typeof parsedJson.purpose === 'string' ? parsedJson.purpose : undefined,
-          category: typeof parsedJson.category === 'string' ? parsedJson.category : 'document',
-          suggestedName: (() => {
-            if (typeof parsedJson.suggestedName !== 'string') return undefined;
-            // Ensure the original file extension is preserved
-            const originalExt = path.extname(originalFileName);
-            const suggestedExt = path.extname(parsedJson.suggestedName);
-            if (originalExt && !suggestedExt) {
-              return parsedJson.suggestedName + originalExt;
+          // Validate and sanitize date field
+          if (parsedJson.date) {
+            try {
+              parsedJson.date = new Date(parsedJson.date).toISOString().split('T')[0];
+            } catch {
+              delete parsedJson.date;
             }
-            return parsedJson.suggestedName;
-          })(),
-          keywords: finalKeywords,
-          confidence: parsedJson.confidence
-        };
+          }
 
-        setCache(cacheKey, result);
-        return result;
-      } catch (e) {
-        logger.error('[documentLlm] Unexpected error processing response:', e.message);
-        return {
-          error: 'Failed to parse document analysis from Ollama.',
-          keywords: [],
-          confidence: 65
-        };
+          // Validate keywords array
+          const finalKeywords = Array.isArray(parsedJson.keywords)
+            ? parsedJson.keywords.filter((kw) => typeof kw === 'string' && kw.length > 0)
+            : [];
+
+          // FIXED Bug #41 & #43: Calculate meaningful confidence based on response quality
+          // instead of using Math.random()
+          if (
+            !parsedJson.confidence ||
+            typeof parsedJson.confidence !== 'number' ||
+            parsedJson.confidence < 60 ||
+            parsedJson.confidence > 100
+          ) {
+            // Calculate confidence based on response completeness and quality
+            let calculatedConfidence = 70; // Base confidence
+
+            // Increase confidence if we have good quality fields
+            if (
+              parsedJson.category &&
+              typeof parsedJson.category === 'string' &&
+              parsedJson.category.length > 0
+            ) {
+              calculatedConfidence += 5;
+            }
+            if (
+              parsedJson.purpose &&
+              typeof parsedJson.purpose === 'string' &&
+              parsedJson.purpose.length > 0
+            ) {
+              calculatedConfidence += 5;
+            }
+            if (finalKeywords.length >= 3) {
+              calculatedConfidence += 5;
+            }
+            if (
+              parsedJson.project &&
+              typeof parsedJson.project === 'string' &&
+              parsedJson.project.length > 0
+            ) {
+              calculatedConfidence += 5;
+            }
+            if (
+              parsedJson.suggestedName &&
+              typeof parsedJson.suggestedName === 'string' &&
+              parsedJson.suggestedName.length > 0
+            ) {
+              calculatedConfidence += 5;
+            }
+
+            parsedJson.confidence = Math.min(95, calculatedConfidence);
+          }
+
+          // Build validated result object
+          const result = {
+            rawText: textContent.substring(0, 2000),
+            date: parsedJson.date || undefined,
+            project: typeof parsedJson.project === 'string' ? parsedJson.project : undefined,
+            purpose: typeof parsedJson.purpose === 'string' ? parsedJson.purpose : undefined,
+            category: normalizeCategoryToSmartFolders(
+              typeof parsedJson.category === 'string' ? parsedJson.category : 'document',
+              smartFolders
+            ),
+            suggestedName: (() => {
+              if (typeof parsedJson.suggestedName !== 'string') return undefined;
+              // Ensure the original file extension is preserved
+              const originalExt = path.extname(originalFileName);
+              const suggestedExt = path.extname(parsedJson.suggestedName);
+              if (originalExt && !suggestedExt) {
+                return parsedJson.suggestedName + originalExt;
+              }
+              return parsedJson.suggestedName;
+            })(),
+            keywords: finalKeywords,
+            confidence: parsedJson.confidence
+          };
+
+          setCache(cacheKey, result);
+          return result;
+        } catch (e) {
+          logger.error('[documentLlm] Unexpected error processing response:', e.message);
+          return {
+            error: 'Failed to parse document analysis from Ollama.',
+            keywords: [],
+            confidence: 65
+          };
+        }
+      }
+      return {
+        error: 'No content in Ollama response for document',
+        keywords: [],
+        confidence: 60
+      };
+    } finally {
+      // FIX: Always clear timeout to prevent timer leak
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
     }
-    return {
-      error: 'No content in Ollama response for document',
-      keywords: [],
-      confidence: 60
-    };
   } catch (error) {
     return {
       error: `Ollama API error for document: ${error.message}`,
@@ -362,5 +441,6 @@ ${truncated}`;
 module.exports = {
   AppConfig,
   getOllama,
-  analyzeTextWithOllama
+  analyzeTextWithOllama,
+  normalizeCategoryToSmartFolders
 };

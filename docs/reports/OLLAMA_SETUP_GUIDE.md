@@ -1,8 +1,18 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Ollama Setup & Integration Guide
 
 ## Overview
 
-StratoSort uses Ollama for AI-powered features including intelligent file categorization, smart folder suggestions, and semantic search. This guide explains how Ollama is automatically set up and managed.
+StratoSort uses Ollama for AI-powered features including intelligent file categorization, smart
+folder suggestions, and semantic search. This guide explains how Ollama is automatically set up and
+managed.
 
 ## Automatic Setup
 
@@ -61,7 +71,8 @@ Runs the complete Ollama setup process:
 node setup-ollama.js --minimal
 ```
 
-Installs only the minimum required models (one text model and one vision model) for basic functionality.
+Installs only the minimum required models (one text model and one vision model) for basic
+functionality.
 
 ## Essential Models
 

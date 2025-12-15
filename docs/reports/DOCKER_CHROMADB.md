@@ -1,6 +1,15 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Using ChromaDB with Docker
 
-StratoSort can connect to a ChromaDB server running in Docker instead of managing its own ChromaDB process.
+StratoSort can connect to a ChromaDB server running in Docker instead of managing its own ChromaDB
+process.
 
 ## Quick Start
 
@@ -98,7 +107,7 @@ services:
       # WARNING: Setting ALLOW_RESET=true in production allows any client
       # with network access to delete all your vector embeddings!
       # Only use ALLOW_RESET=true for development/testing environments.
-      - ALLOW_RESET=false  # Set to true only for development
+      - ALLOW_RESET=false # Set to true only for development
 
       # ANONYMIZED_TELEMETRY: Controls anonymous usage data collection
       # - true:  Send anonymized usage statistics to ChromaDB developers
@@ -107,7 +116,7 @@ services:
       # Privacy consideration: Set to false if your organization has
       # strict data policies or if running in air-gapped environments.
       # Setting to true helps the ChromaDB project improve the software.
-      - ANONYMIZED_TELEMETRY=true  # Set to false to disable telemetry
+      - ANONYMIZED_TELEMETRY=true # Set to false to disable telemetry
     restart: unless-stopped
 
 volumes:
@@ -132,7 +141,7 @@ services:
     volumes:
       - chromadb-data-dev:/chroma/chroma
     environment:
-      - ALLOW_RESET=true   # Enables reset for testing
+      - ALLOW_RESET=true # Enables reset for testing
       - ANONYMIZED_TELEMETRY=false
     restart: unless-stopped
 
@@ -149,7 +158,8 @@ docker-compose up -d
 
 ### Persistent Storage
 
-The `-v chromadb-data:/chroma/chroma` flag ensures your embeddings persist across container restarts.
+The `-v chromadb-data:/chroma/chroma` flag ensures your embeddings persist across container
+restarts.
 
 To back up your data:
 

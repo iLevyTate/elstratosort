@@ -1,8 +1,14 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Office Document Extraction Bug Fixes
 
-**Date:** November 18, 2025
-**Status:** RESOLVED
-**Test Results:** All new tests passing (10/10)
+**Date:** November 18, 2025 **Status:** RESOLVED **Test Results:** All new tests passing (10/10)
 
 ## Executive Summary
 
@@ -11,7 +17,8 @@ Fixed critical bugs in Office document extraction that were causing:
 - **Excel (.xlsx) crashes:** "Cannot read properties of undefined (reading 'children')"
 - **PowerPoint (.pptx) failures:** "Unknown analysis error"
 
-The root causes were insufficient null/undefined checking and inadequate error handling when parsers return unexpected data structures.
+The root causes were insufficient null/undefined checking and inadequate error handling when parsers
+return unexpected data structures.
 
 ---
 
@@ -19,17 +26,19 @@ The root causes were insufficient null/undefined checking and inadequate error h
 
 ### Issue 1: Excel (.xlsx) - "Cannot read properties of undefined (reading 'children')"
 
-**File:** `src/main/analysis/documentExtractors.js` - `extractTextFromXlsx()` function (lines 140-247)
+**File:** `src/main/analysis/documentExtractors.js` - `extractTextFromXlsx()` function (lines
+140-247)
 
-**Root Cause:**
-The code assumed that `usedRange.value()` would always return a valid 2D array structure, but in some cases it could return:
+**Root Cause:** The code assumed that `usedRange.value()` would always return a valid 2D array
+structure, but in some cases it could return:
 
 - `null` or `undefined`
 - A scalar value instead of an array
 - A 2D array where some rows are objects instead of arrays
 - A 2D array where some rows are scalar values
 
-When rows weren't arrays, the code would skip processing but wouldn't properly validate the data structure before accessing methods.
+When rows weren't arrays, the code would skip processing but wouldn't properly validate the data
+structure before accessing methods.
 
 **Original Code Issues:**
 
@@ -46,8 +55,8 @@ if (Array.isArray(values)) {
 }
 ```
 
-**The Fix:**
-Implemented comprehensive null/undefined checking and support for multiple data structures:
+**The Fix:** Implemented comprehensive null/undefined checking and support for multiple data
+structures:
 
 1. **Validate usedRange exists** before calling `.value()`
 2. **Validate values** is an object before treating it as data
@@ -109,7 +118,7 @@ for (const sheet of sheets) {
   } catch (sheetError) {
     // FIX: Log sheet-level errors but continue processing other sheets
     logger.warn('[XLSX] Error processing sheet', {
-      error: sheetError.message,
+      error: sheetError.message
     });
     continue;
   }
@@ -120,10 +129,10 @@ for (const sheet of sheets) {
 
 ### Issue 2: PowerPoint (.pptx) - "Unknown analysis error"
 
-**File:** `src/main/analysis/documentExtractors.js` - `extractTextFromPptx()` function (lines 249-312)
+**File:** `src/main/analysis/documentExtractors.js` - `extractTextFromPptx()` function (lines
+249-312)
 
-**Root Cause:**
-The `officeParser.parseOfficeAsync()` function can return various data structures:
+**Root Cause:** The `officeParser.parseOfficeAsync()` function can return various data structures:
 
 - Simple string: `"presentation text"`
 - Object with `.text` property: `{ text: "presentation text" }`
@@ -131,20 +140,18 @@ The `officeParser.parseOfficeAsync()` function can return various data structure
 - Object with `.content` property: `{ content: "text" }`
 - Other unexpected structures
 
-The original code only handled strings and objects with a `.text` property, silently failing on other structures and not providing detailed error messages.
+The original code only handled strings and objects with a `.text` property, silently failing on
+other structures and not providing detailed error messages.
 
 **Original Code Issues:**
 
 ```javascript
 const result = await officeParser.parseOfficeAsync(filePath);
-const text =
-  typeof result === 'string' ? result : (result && result.text) || '';
-if (!text || text.trim().length === 0)
-  throw new Error('No text content in PPTX'); // Vague error message
+const text = typeof result === 'string' ? result : (result && result.text) || '';
+if (!text || text.trim().length === 0) throw new Error('No text content in PPTX'); // Vague error message
 ```
 
-**The Fix:**
-Implemented multi-format parser result handling with proper validation:
+**The Fix:** Implemented multi-format parser result handling with proper validation:
 
 1. **Handle string results** directly
 2. **Handle object results** with multiple property checks (`.text`, `.content`)
@@ -192,14 +199,14 @@ try {
   if (!text || typeof text !== 'string') {
     throw new FileProcessingError('PPTX_INVALID_RESULT', filePath, {
       suggestion: 'PowerPoint parser returned unexpected format',
-      resultType: typeof result,
+      resultType: typeof result
     });
   }
 
   text = text.trim();
   if (text.length === 0) {
     throw new FileProcessingError('PPTX_NO_TEXT_CONTENT', filePath, {
-      suggestion: 'PowerPoint file contains no extractable text',
+      suggestion: 'PowerPoint file contains no extractable text'
     });
   }
 
@@ -211,7 +218,7 @@ try {
   }
   throw new FileProcessingError('PPTX_EXTRACTION_ERROR', filePath, {
     originalError: error.message,
-    suggestion: 'PowerPoint file may be corrupted or in unsupported format',
+    suggestion: 'PowerPoint file may be corrupted or in unsupported format'
   });
 }
 ```
@@ -225,11 +232,11 @@ try {
 - `extractTextFromXls()` function (lines 446-487)
 - `extractTextFromPpt()` function (lines 489-531)
 
-**Root Cause:**
-Similar to PPTX, these functions didn't handle multiple parser result formats and silently returned empty strings on errors.
+**Root Cause:** Similar to PPTX, these functions didn't handle multiple parser result formats and
+silently returned empty strings on errors.
 
-**The Fix:**
-Applied the same multi-format handling pattern as PPTX, with file size checking and proper error propagation.
+**The Fix:** Applied the same multi-format handling pattern as PPTX, with file size checking and
+proper error propagation.
 
 ---
 
@@ -373,4 +380,5 @@ These fixes address the root causes of Office document extraction failures by im
 - Robust fallback handling
 - Proper resource cleanup
 
-The changes are minimal, focused, and fully backward compatible while significantly improving reliability.
+The changes are minimal, focused, and fully backward compatible while significantly improving
+reliability.

@@ -5,7 +5,8 @@ logger.setContext('ChromaSpawnUtils');
 const {
   findPythonLauncherAsync,
   checkChromaExecutableAsync,
-  asyncSpawn
+  asyncSpawn,
+  hasPythonModuleAsync
 } = require('./asyncSpawnUtils');
 const { getChromaDbBinName, shouldUseShell } = require('../../shared/platformUtils');
 
@@ -55,25 +56,41 @@ async function resolveChromaFromPythonUserScripts() {
       ...pythonLauncher.args,
       '-c',
       [
-        'import os, sysconfig, site',
+        // NOTE: This must be valid Python (newlines + indentation). We cannot rely on semicolon-joining
+        // because `def/try/except/for` blocks require real newlines.
+        'import os, sys, sysconfig, site',
         'paths = []',
+        '',
         'def add(p):',
-        '  p = (p or "").strip()',
-        '  if p and p not in paths: paths.append(p)',
+        '    p = (p or "").strip()',
+        '    if p and p not in paths:',
+        '        paths.append(p)',
+        '',
         'add(sysconfig.get_path("scripts"))',
         'try:',
-        '  ub = site.getuserbase()',
+        '    ub = site.getuserbase()',
         'except Exception:',
-        '  ub = ""',
+        '    ub = ""',
+        '',
         'add(os.path.join(ub, "Scripts"))',
+        // Microsoft Store Python puts --user entrypoints under:
+        //   <userbase>\\PythonXY\\Scripts
+        // Example:
+        //   C:\\Users\\<user>\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_*\\LocalCache\\local-packages\\Python313\\Scripts
+        'add(os.path.join(ub, "Python" + str(sys.version_info[0]) + str(sys.version_info[1]), "Scripts"))',
         'add(os.path.join(ub, "bin"))',
-        'print("\\n".join(paths))'
-      ].join('; ')
+        '',
+        'for p in paths:',
+        '    print(p)'
+      ].join('\n')
     ],
     {
       timeout: 3000,
       windowsHide: true,
-      shell: shouldUseShell()
+      // Important: do NOT use a shell here.
+      // On Windows, `shell: true` can interfere with passing `py -3 -c "<code>"` correctly,
+      // which results in empty output and prevents us from finding `chroma.exe`.
+      shell: false
     }
   );
 
@@ -155,7 +172,8 @@ async function buildChromaSpawnPlan(config) {
       command: pythonScriptsChroma,
       args: ['run', '--path', config.dbPath, '--host', config.host, '--port', String(config.port)],
       source: 'python-scripts-chroma',
-      options: { windowsHide: true, shell: shouldUseShell() }
+      // Absolute path to an .exe: do not use a shell (avoids quoting/escaping issues).
+      options: { windowsHide: true, shell: false }
     };
   }
 
@@ -177,6 +195,33 @@ async function buildChromaSpawnPlan(config) {
         shell: shouldUseShell()
       }
     };
+  }
+
+  // FIX: Fallback to python -m chromadb for users who have the module but no CLI
+  // This addresses the documented behavior and supports pip --user installs
+  const pythonLauncher = await findPythonLauncherAsync();
+  if (pythonLauncher) {
+    const hasChromaModule = await hasPythonModuleAsync('chromadb');
+    if (hasChromaModule) {
+      logger.info('[ChromaDB] Using python -m chromadb fallback');
+      return {
+        command: pythonLauncher.command,
+        args: [
+          ...pythonLauncher.args,
+          '-m',
+          'chromadb.cli.cli',
+          'run',
+          '--path',
+          config.dbPath,
+          '--host',
+          config.host,
+          '--port',
+          String(config.port)
+        ],
+        source: 'python-module',
+        options: { windowsHide: true, shell: false }
+      };
+    }
   }
 
   return null;

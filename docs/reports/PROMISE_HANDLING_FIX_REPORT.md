@@ -1,17 +1,27 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Promise Handling Fix Report
 
-**Date:** 2025-11-17
-**Status:** COMPLETE
-**Files Modified:** 7
-**Issues Fixed:** 34 non-critical promise handling issues
+**Date:** 2025-11-17 **Status:** COMPLETE **Files Modified:** 7 **Issues Fixed:** 34 non-critical
+promise handling issues
 
 ---
 
 ## Executive Summary
 
-This report details the comprehensive resolution of 34 non-critical promise handling issues across the StratoSort codebase. All fixes follow best practices for error handling, graceful degradation, and proper logging. The 8 critical issues previously fixed in ChromaDBService.js, SettingsService.js, ServiceIntegration.js, and files.js were excluded from this audit.
+This report details the comprehensive resolution of 34 non-critical promise handling issues across
+the StratoSort codebase. All fixes follow best practices for error handling, graceful degradation,
+and proper logging. The 8 critical issues previously fixed in ChromaDBService.js,
+SettingsService.js, ServiceIntegration.js, and files.js were excluded from this audit.
 
-**Result:** All identified non-critical promise handling issues have been resolved with proper error handling, logging, and fallback behavior.
+**Result:** All identified non-critical promise handling issues have been resolved with proper error
+handling, logging, and fallback behavior.
 
 ---
 
@@ -242,7 +252,8 @@ async getStats() {
 
 **Issues Fixed:** 0 (Already properly handled)
 
-**Note:** The `detectNvidiaGpu` function uses the Promise constructor with proper error handling via resolve() callbacks. All rejection paths are handled correctly. No changes needed.
+**Note:** The `detectNvidiaGpu` function uses the Promise constructor with proper error handling via
+resolve() callbacks. All rejection paths are handled correctly. No changes needed.
 
 ---
 
@@ -262,15 +273,13 @@ async getStats() {
 const handleAcceptSuggestion = (file, suggestion) => {
   setAcceptedSuggestions((prev) => ({
     ...prev,
-    [file.path]: suggestion,
+    [file.path]: suggestion
   }));
 
   // Record feedback for learning
-  window.electronAPI.suggestions
-    .recordFeedback(file, suggestion, true)
-    .catch((error) => {
-      console.error('Failed to record feedback:', error);
-    });
+  window.electronAPI.suggestions.recordFeedback(file, suggestion, true).catch((error) => {
+    console.error('Failed to record feedback:', error);
+  });
 };
 ```
 
@@ -333,8 +342,8 @@ The following files were previously fixed for critical issues and were excluded 
 | MEDIUM   | 6     | Missing try-catch in async operations, unhandled event promises |
 | LOW      | 0     | None identified in this audit                                   |
 
-**Total Issues Fixed:** 12 distinct issues across 7 files
-**Total Promise Handling Improvements:** 34 (including all nested calls and duplicate patterns)
+**Total Issues Fixed:** 12 distinct issues across 7 files **Total Promise Handling Improvements:**
+34 (including all nested calls and duplicate patterns)
 
 ---
 
@@ -392,6 +401,5 @@ All modified files have been verified to:
 
 ---
 
-**Report Generated:** 2025-11-17
-**Completed By:** Claude Code (Sonnet 4.5)
-**Review Status:** Ready for testing
+**Report Generated:** 2025-11-17 **Completed By:** Claude Code (Sonnet 4.5) **Review Status:** Ready
+for testing

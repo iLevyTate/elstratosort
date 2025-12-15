@@ -1,6 +1,16 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # ChromaDB Migration & Startup Notes
 
-The old `npx chromadb run` flow broke because the npm `chromadb` package ships **no CLI**. StratoSort now launches the official Python server (`python -m chromadb run ...`) and exposes clear hooks to customise or disable the service.
+The old `npx chromadb run` flow broke because the npm `chromadb` package ships **no CLI**.
+StratoSort now launches the official Python server (`python -m chromadb run ...`) and exposes clear
+hooks to customise or disable the service.
 
 ## ✅ Fast setup
 
@@ -23,7 +33,8 @@ The old `npx chromadb run` flow broke because the npm `chromadb` package ships *
    py -3 -m chromadb run --path %APPDATA%\stratosort\chromadb --host 127.0.0.1 --port 8000
    ```
 
-3. Already running your own Chroma server? Set `CHROMA_SERVER_URL=http://host:port` so StratoSort connects instead of spawning.
+3. Already running your own Chroma server? Set `CHROMA_SERVER_URL=http://host:port` so StratoSort
+   connects instead of spawning.
 
 ## What changed in the codebase
 
@@ -65,19 +76,24 @@ The old `npx chromadb run` flow broke because the npm `chromadb` package ships *
 ## Troubleshooting
 
 - **`ModuleNotFoundError: No module named 'chromadb'`**  
-  Install the package for the exact interpreter the launcher resolved (usually `py -3 -m pip install chromadb` on Windows).
+  Install the package for the exact interpreter the launcher resolved (usually
+  `py -3 -m pip install chromadb` on Windows).
 
 - **`python`/`py` command not found**  
-  Install Python from https://python.org, restart the shell, or point `CHROMA_SERVER_COMMAND` to the full interpreter path.
+  Install Python from https://python.org, restart the shell, or point `CHROMA_SERVER_COMMAND` to the
+  full interpreter path.
 
 - **Need a different host/port**  
-  Set `CHROMA_SERVER_URL` (or the HOST/PORT envs). The spawn arguments and client URL will automatically align.
+  Set `CHROMA_SERVER_URL` (or the HOST/PORT envs). The spawn arguments and client URL will
+  automatically align.
 
 - **Want to disable Chroma temporarily**  
-  Export `STRATOSORT_DISABLE_CHROMADB=1`. The UI will continue working; semantic search just stays inactive.
+  Export `STRATOSORT_DISABLE_CHROMADB=1`. The UI will continue working; semantic search just stays
+  inactive.
 
 - **Still seeing stderr noise**  
-  Check the logged lines right after `[ChromaDB] server stderr:`. They usually contain the Python error (missing dependency, port in use, etc.).
+  Check the logged lines right after `[ChromaDB] server stderr:`. They usually contain the Python
+  error (missing dependency, port in use, etc.).
 
 ## Summary
 
@@ -85,4 +101,6 @@ The old `npx chromadb run` flow broke because the npm `chromadb` package ships *
 - ✅ Added Python fallback with better logging and configurability.
 - ✅ Documented install steps + environment overrides so Windows/macOS/Linux setups are predictable.
 
-Keep this document handy—any time the log says `[ChromaDB] Unable to locate a suitable startup command`, follow the steps above to finish provisioning the local Chroma server.
+Keep this document handy—any time the log says
+`[ChromaDB] Unable to locate a suitable startup command`, follow the steps above to finish
+provisioning the local Chroma server.

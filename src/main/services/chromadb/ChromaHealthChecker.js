@@ -14,6 +14,15 @@ const { get: getConfig } = require('../../../shared/config/index');
 
 logger.setContext('ChromaDB:HealthChecker');
 
+function parseServerUrl(serverUrl) {
+  const parsed = new URL(serverUrl);
+  return {
+    ssl: parsed.protocol === 'https:',
+    host: parsed.hostname,
+    port: parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80
+  };
+}
+
 /**
  * Check if ChromaDB server is healthy via HTTP endpoints
  *
@@ -122,11 +131,7 @@ async function isServerAvailable({ serverUrl, client = null, timeoutMs = 3000, m
     try {
       // Reuse existing client if available to avoid creating
       // disposable ChromaClient instances that create TIME_WAIT connections
-      const checkClient =
-        client ||
-        new ChromaClient({
-          path: serverUrl
-        });
+      const checkClient = client || new ChromaClient(parseServerUrl(serverUrl));
 
       // Wrap heartbeat in Promise.race with timeout
       let timeoutId;

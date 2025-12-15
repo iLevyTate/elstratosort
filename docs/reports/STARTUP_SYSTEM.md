@@ -1,8 +1,18 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # StratoSort Startup System Documentation
 
 ## Overview
 
-The StratoSort startup system has been enhanced with a robust, production-ready startup manager that ensures all necessary services (ChromaDB, Ollama) are properly initialized before the application becomes available to users.
+The StratoSort startup system has been enhanced with a robust, production-ready startup manager that
+ensures all necessary services (ChromaDB, Ollama) are properly initialized before the application
+becomes available to users.
 
 ## Key Features
 
@@ -10,7 +20,8 @@ The StratoSort startup system has been enhanced with a robust, production-ready 
 
 The centralized startup orchestrator that handles:
 
-- **Retry Logic with Exponential Backoff**: Automatically retries failed service startups with increasing delays
+- **Retry Logic with Exponential Backoff**: Automatically retries failed service startups with
+  increasing delays
 - **Pre-flight Checks**: Validates system requirements before attempting to start services
 - **Health Monitoring**: Continuously monitors service health and attempts recovery
 - **Graceful Degradation**: Allows app to function with reduced features when services fail
@@ -74,7 +85,7 @@ Seamlessly integrated into the existing codebase with:
 
 After successful startup, the system continuously monitors service health:
 
-- **Check Interval**: Every 30 seconds (configurable)
+- **Check Interval**: Every 120 seconds / 2 minutes (configurable)
 - **Failure Threshold**: 3 consecutive failures trigger auto-restart
 - **Monitored Services**: ChromaDB, Ollama
 - **Recovery**: Automatic service restart on persistent failures
@@ -112,9 +123,9 @@ The StartupManager can be configured by modifying `src/main/services/StartupMana
 ```javascript
 this.config = {
   startupTimeout: 60000, // Overall startup timeout (ms)
-  healthCheckInterval: 30000, // Health check interval (ms)
+  healthCheckInterval: 120000, // Health check interval (2 minutes)
   maxRetries: 3, // Max service start attempts
-  baseRetryDelay: 1000, // Base delay for exponential backoff (ms)
+  baseRetryDelay: 1000 // Base delay for exponential backoff (ms)
 };
 ```
 
@@ -507,5 +518,4 @@ Same as StratoSort application license.
 
 ---
 
-**Last Updated**: 2025-11-15
-**Version**: 1.1.0
+**Last Updated**: 2025-11-15 **Version**: 1.1.0

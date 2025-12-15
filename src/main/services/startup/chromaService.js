@@ -229,12 +229,22 @@ async function startChromaDB({
     const { buildChromaSpawnPlan } = require('../../utils/chromaSpawnUtils');
     // Chroma service might not be registered yet during early startup.
     // Prefer registered service config when available; otherwise fall back to env/defaults.
-    const hasServiceResolver =
-      container && typeof container.has === 'function' && typeof container.resolve === 'function';
-    const serverConfig =
-      hasServiceResolver && container.has(ServiceIds.CHROMA_DB)
-        ? container.resolve(ServiceIds.CHROMA_DB).getServerConfig()
-        : buildDefaultChromaConfig();
+    let serverConfig;
+    try {
+      const hasServiceResolver =
+        container && typeof container.has === 'function' && typeof container.resolve === 'function';
+      if (hasServiceResolver && container.has(ServiceIds.CHROMA_DB)) {
+        // FIX: Wrap container resolution in try-catch to handle startup failures gracefully
+        serverConfig = container.resolve(ServiceIds.CHROMA_DB).getServerConfig();
+      } else {
+        serverConfig = buildDefaultChromaConfig();
+      }
+    } catch (resolveError) {
+      logger.debug('[STARTUP] Failed to resolve ChromaDB service, using default config', {
+        error: resolveError?.message
+      });
+      serverConfig = buildDefaultChromaConfig();
+    }
 
     plan = await buildChromaSpawnPlan(serverConfig);
 
@@ -271,6 +281,21 @@ async function startChromaDB({
   chromaProcess.on('exit', (code, signal) => {
     logger.warn(`[ChromaDB] Process exited with code ${code}, signal ${signal}`);
     serviceStatus.chromadb.status = 'stopped';
+    // FIX: Also update health status to reflect service is not running
+    serviceStatus.chromadb.health = 'unhealthy';
+
+    // FIX: Emit status change to notify renderer
+    try {
+      const { emitServiceStatusChange } = require('../../ipc/dependencies');
+      emitServiceStatusChange({
+        service: 'chromadb',
+        status: 'stopped',
+        health: 'unhealthy',
+        details: { exitCode: code, signal, reason: 'process_exited' }
+      });
+    } catch (e) {
+      logger.debug('[ChromaDB] Could not emit status change', { error: e?.message });
+    }
   });
 
   return { process: chromaProcess };

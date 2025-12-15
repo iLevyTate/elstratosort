@@ -83,6 +83,7 @@ describe('AutoOrganizeService - Batch Processing', () => {
       ];
 
       // Mock batch suggestions response
+      // FIX: Include path in files array to match input files for proper lookup
       mockSuggestionService.getBatchSuggestions.mockResolvedValue({
         success: true,
         groups: [
@@ -92,10 +93,12 @@ describe('AutoOrganizeService - Batch Processing', () => {
             files: [
               {
                 name: 'file1.pdf',
+                path: '/files/file1.pdf',
                 suggestion: { folder: 'Documents', path: '/folders/Documents' }
               },
               {
                 name: 'file3.doc',
+                path: '/files/file3.doc',
                 suggestion: { folder: 'Documents', path: '/folders/Documents' }
               }
             ]
@@ -106,6 +109,7 @@ describe('AutoOrganizeService - Batch Processing', () => {
             files: [
               {
                 name: 'file2.jpg',
+                path: '/files/file2.jpg',
                 suggestion: { folder: 'Images', path: '/folders/Images' }
               }
             ]
@@ -145,6 +149,7 @@ describe('AutoOrganizeService - Batch Processing', () => {
       }));
 
       // Mock batch suggestions to return success for each batch
+      // FIX: Include path in returned files for proper lookup in batchProcessor
       mockSuggestionService.getBatchSuggestions.mockImplementation((batchFiles) => {
         return Promise.resolve({
           success: true,
@@ -154,6 +159,7 @@ describe('AutoOrganizeService - Batch Processing', () => {
               confidence: 0.9,
               files: batchFiles.map((f) => ({
                 name: f.name,
+                path: f.path, // Include path for proper file lookup
                 suggestion: {
                   folder: 'Documents',
                   path: '/folders/Documents'
@@ -271,6 +277,7 @@ describe('AutoOrganizeService - Batch Processing', () => {
         }
       ];
 
+      // FIX: Include path in mock files for proper lookup
       mockSuggestionService.getBatchSuggestions.mockResolvedValue({
         success: true,
         groups: [
@@ -280,10 +287,12 @@ describe('AutoOrganizeService - Batch Processing', () => {
             files: [
               {
                 name: 'file1.pdf',
+                path: '/files/file1.pdf',
                 suggestion: { folder: 'Documents', path: '/folders/Documents' }
               },
               {
                 name: 'file3.doc',
+                path: '/files/file3.doc',
                 suggestion: { folder: 'Documents', path: '/folders/Documents' }
               }
             ]
@@ -338,6 +347,7 @@ describe('AutoOrganizeService - Batch Processing', () => {
         }
       ];
 
+      // FIX: Include path in mock files for proper lookup
       mockSuggestionService.getBatchSuggestions.mockResolvedValue({
         success: true,
         groups: [
@@ -347,6 +357,7 @@ describe('AutoOrganizeService - Batch Processing', () => {
             files: [
               {
                 name: 'file1.pdf',
+                path: '/files/file1.pdf',
                 suggestion: { folder: 'Documents', path: '/folders/Documents' }
               }
             ]
@@ -357,6 +368,7 @@ describe('AutoOrganizeService - Batch Processing', () => {
             files: [
               {
                 name: 'file2.jpg',
+                path: '/files/file2.jpg',
                 suggestion: { folder: 'Images', path: '/folders/Images' },
                 alternatives: [{ folder: 'Media', path: '/folders/Media' }]
               }
@@ -368,6 +380,7 @@ describe('AutoOrganizeService - Batch Processing', () => {
             files: [
               {
                 name: 'file3.txt',
+                path: '/files/file3.txt',
                 suggestion: { folder: 'Documents', path: '/folders/Documents' }
               }
             ]
@@ -411,6 +424,7 @@ describe('AutoOrganizeService - Batch Processing', () => {
       }));
 
       // Mock batch suggestions with simulated delay
+      // FIX: Include path in mapped files for proper lookup
       mockSuggestionService.getBatchSuggestions.mockImplementation((batchFiles) => {
         return new Promise((resolve) => {
           // Simulate 50ms per batch
@@ -423,6 +437,7 @@ describe('AutoOrganizeService - Batch Processing', () => {
                   confidence: 0.9,
                   files: batchFiles.map((f) => ({
                     name: f.name,
+                    path: f.path, // Include path for proper file lookup
                     suggestion: {
                       folder: 'Documents',
                       path: '/folders/Documents'

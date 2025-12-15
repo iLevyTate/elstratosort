@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Code Quality Quick Reference Guide
 
 ## I need to...
@@ -7,17 +15,14 @@
 **Use:** `src/shared/errorHandlingUtils.js`
 
 ```javascript
-const {
-  withErrorHandling,
-  createErrorResponse,
-} = require('../shared/errorHandlingUtils');
+const { withErrorHandling, createErrorResponse } = require('../shared/errorHandlingUtils');
 
 // Wrap your async functions
 const handler = withErrorHandling(
   async (arg) => {
     /* your code */
   },
-  { context: 'MyModule', operation: 'my-operation' },
+  { context: 'MyModule', operation: 'my-operation' }
 );
 ```
 
@@ -163,7 +168,7 @@ const { withRetry } = require('../shared/errorHandlingUtils');
 const reliableFunction = withRetry(myFunction, {
   maxRetries: 3,
   initialDelay: 1000,
-  shouldRetry: (error) => error.code === 'NETWORK_ERROR',
+  shouldRetry: (error) => error.code === 'NETWORK_ERROR'
 });
 ```
 
@@ -183,7 +188,7 @@ const { validateInput } = require('../shared/errorHandlingUtils');
 validateInput(input, {
   filePath: { required: true, type: 'string' },
   timeout: { type: 'number', min: 0, max: 60000 },
-  options: { required: false, type: 'object' },
+  options: { required: false, type: 'object' }
 });
 ```
 

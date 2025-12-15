@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # StratoSort Startup System - Quick Reference
 
 ## What Was Added
@@ -132,7 +140,7 @@ this.config = {
   startupTimeout: 60000, // 60 seconds
   healthCheckInterval: 30000, // 30 seconds
   maxRetries: 3, // 3 attempts
-  baseRetryDelay: 1000, // 1 second base delay
+  baseRetryDelay: 1000 // 1 second base delay
 };
 ```
 
@@ -304,5 +312,4 @@ ollama pull llama3.2
 
 ---
 
-**Quick Reference Version**: 1.0
-**Last Updated**: 2025-11-15
+**Quick Reference Version**: 1.0 **Last Updated**: 2025-11-15

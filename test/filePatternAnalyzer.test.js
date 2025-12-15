@@ -152,23 +152,24 @@ describe('File Pattern Analyzer', () => {
   });
 
   describe('findDominantCategory', () => {
-    test('returns null for empty set', () => {
-      const result = findDominantCategory(new Set());
+    test('returns null for empty object', () => {
+      const result = findDominantCategory({});
       expect(result).toBeNull();
     });
 
     test('returns single category', () => {
-      const result = findDominantCategory(new Set(['Reports']));
+      // Now expects object with category counts
+      const result = findDominantCategory({ Reports: 1 });
       expect(result).toBe('Reports');
     });
 
     test('returns most frequent category', () => {
-      // Note: Set doesn't allow duplicates, so this tests the count logic
-      const categories = new Set(['Reports', 'Invoices', 'Contracts']);
-      const result = findDominantCategory(categories);
+      // Object with category counts - Reports has highest count
+      const categoryCounts = { Reports: 5, Invoices: 3, Contracts: 2 };
+      const result = findDominantCategory(categoryCounts);
 
-      // With unique entries, returns first after sort
-      expect(['Reports', 'Invoices', 'Contracts']).toContain(result);
+      // Should return the category with highest count
+      expect(result).toBe('Reports');
     });
   });
 

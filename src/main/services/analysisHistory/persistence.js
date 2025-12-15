@@ -22,6 +22,66 @@ async function ensureParentDirectory(filePath) {
   await fs.mkdir(parentDirectory, { recursive: true });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isWindowsRenameLockError(error) {
+  const code = error?.code;
+  // Common Windows transient file lock errors (AV/Indexer/Sync) during rename/replace.
+  return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
+}
+
+async function replaceFileWithRetry(tempPath, filePath) {
+  const MAX_ATTEMPTS = 6;
+  const BASE_DELAY_MS = 40;
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await fs.rename(tempPath, filePath);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isWindowsRenameLockError(error) || attempt === MAX_ATTEMPTS) {
+        break;
+      }
+      const delay = BASE_DELAY_MS * attempt;
+      logger.warn('[AnalysisHistory] Rename blocked (likely file lock), retrying', {
+        attempt,
+        maxAttempts: MAX_ATTEMPTS,
+        delayMs: delay,
+        code: error.code,
+        message: error.message
+      });
+      await sleep(delay);
+    }
+  }
+
+  // Only apply copy fallback for common Windows lock errors.
+  // For non-lock failures (e.g., invalid path, permission issues), surface the real error.
+  if (lastError && !isWindowsRenameLockError(lastError)) {
+    throw lastError;
+  }
+
+  // Fallback: copy into place (best effort) then remove temp.
+  // This is less "atomic" but avoids losing history when Windows denies rename.
+  try {
+    await fs.copyFile(tempPath, filePath);
+    return;
+  } catch (copyError) {
+    // Prefer the original error for debugging, but attach copy failure details.
+    if (lastError) lastError.copyFailure = copyError;
+    throw lastError || copyError;
+  } finally {
+    try {
+      await fs.unlink(tempPath);
+    } catch {
+      // ignore cleanup
+    }
+  }
+}
+
 /**
  * Atomic write helper - writes to temp file then renames to prevent corruption
  * @param {string} filePath - Target file path
@@ -31,7 +91,7 @@ async function atomicWriteFile(filePath, data) {
   const tempPath = `${filePath}.tmp.${Date.now()}`;
   try {
     await fs.writeFile(tempPath, data);
-    await fs.rename(tempPath, filePath);
+    await replaceFileWithRetry(tempPath, filePath);
   } catch (error) {
     // Clean up temp file on failure
     try {

@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Dangling Pointer Crash Fix
 
 ## Problem Description
@@ -17,12 +25,16 @@ This crash occurred specifically when:
 
 ## Root Cause Analysis
 
-The crash was caused by dangling pointers in the renderer process during window state transitions. When a window is minimized and restored, Chromium's internal state management can leave dangling references if event listeners and DOM elements aren't properly cleaned up.
+The crash was caused by dangling pointers in the renderer process during window state transitions.
+When a window is minimized and restored, Chromium's internal state management can leave dangling
+references if event listeners and DOM elements aren't properly cleaned up.
 
 Key issues identified:
 
-1. **TooltipManager Component**: Had event listeners that weren't cleaned up during window state changes
-2. **Window State Transitions**: The restore operation was happening too quickly without proper deferrals
+1. **TooltipManager Component**: Had event listeners that weren't cleaned up during window state
+   changes
+2. **Window State Transitions**: The restore operation was happening too quickly without proper
+   deferrals
 3. **Event Handler Lifecycle**: Window event handlers weren't being properly tracked and cleaned up
 4. **Animation Frame Callbacks**: Pending animation frames could create dangling references
 
@@ -56,7 +68,9 @@ Key issues identified:
 
 ### Chromium's Dangling Pointer Detection
 
-Chromium uses PartitionAlloc with dangling pointer detection to identify use-after-free bugs. When enabled, it tracks raw pointers and crashes immediately when it detects a pointer to freed memory is being used.
+Chromium uses PartitionAlloc with dangling pointer detection to identify use-after-free bugs. When
+enabled, it tracks raw pointers and crashes immediately when it detects a pointer to freed memory is
+being used.
 
 ### Window State Transition Safety
 
@@ -90,7 +104,8 @@ To prevent similar issues in the future:
 
 ## Related Electron Issues
 
-- [#21813](https://github.com/electron/electron/pull/21813) - Fix crash when restoring minimized hidden window
+- [#21813](https://github.com/electron/electron/pull/21813) - Fix crash when restoring minimized
+  hidden window
 - [#42929](https://github.com/electron/electron/pull/42929) - Fix dangling raw_ptr in api::View
 - [#39370](https://github.com/electron/electron/issues/39370) - Dangling pointers on Linux
 
@@ -103,4 +118,6 @@ To prevent similar issues in the future:
 
 ## Impact
 
-This fix prevents application crashes during window state transitions, significantly improving stability and user experience. The changes are backward compatible and don't affect any existing functionality.
+This fix prevents application crashes during window state transitions, significantly improving
+stability and user experience. The changes are backward compatible and don't affect any existing
+functionality.

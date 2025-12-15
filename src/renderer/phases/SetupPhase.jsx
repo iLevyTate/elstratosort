@@ -89,6 +89,14 @@ function SetupPhase() {
 
   const loadDefaultLocation = useCallback(async () => {
     try {
+      if (!window.electronAPI?.settings?.get) {
+        logger.warn('electronAPI.settings not available, using fallback location');
+        if (documentsPathFromStore) {
+          setDefaultLocation(normalizePathValue(documentsPathFromStore, defaultLocation));
+        }
+        return;
+      }
+
       const settings = await window.electronAPI.settings.get();
       if (settings?.defaultSmartFolderLocation) {
         setDefaultLocation(
@@ -156,7 +164,9 @@ function SetupPhase() {
     return () => {
       isMountedRef.current = false;
     };
-  }, [loadSmartFolders, loadDefaultLocation, showError]);
+    // NOTE: do not depend on notification functions directly; they may be unstable and cause
+    // infinite effect re-runs (maximum update depth). We use notifyRef for stability.
+  }, [loadSmartFolders, loadDefaultLocation]);
 
   // Keep skeleton visible until content has had a frame to paint to avoid flash
   useEffect(() => {

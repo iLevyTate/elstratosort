@@ -14,6 +14,7 @@ import { logger } from '../../../shared/logger';
 import {
   validateProgressState,
   generatePreviewName as generatePreviewNameUtil,
+  generateSuggestedNameFromAnalysis,
   extractFileName
 } from './namingUtils';
 
@@ -28,6 +29,13 @@ logger.setContext('DiscoverPhase:Analysis');
  * @returns {Promise<Object>} Analysis result
  */
 async function analyzeWithRetry(filePath, attempt = 1) {
+  // Ensure electronAPI is available before attempting analysis
+  if (!window.electronAPI?.files?.analyze) {
+    throw new Error(
+      'File analysis API not available. The application may not have loaded correctly.'
+    );
+  }
+
   let timeoutId;
   try {
     return await Promise.race([
@@ -104,12 +112,14 @@ function mergeFileStates(existingStates, results) {
  * @param {number} params.failureCount - Number of failed analyses
  * @param {Function} params.addNotification - Notification function
  * @param {Object} params.actions - Phase actions
+ * @param {Function} params.getCurrentPhase - Function to get current phase (prevents race condition)
  */
 function showAnalysisCompletionNotification({
   successCount,
   failureCount,
   addNotification,
-  actions
+  actions,
+  getCurrentPhase
 }) {
   if (successCount > 0 && failureCount === 0) {
     addNotification(
@@ -119,7 +129,17 @@ function showAnalysisCompletionNotification({
       'analysis-complete'
     );
     setTimeout(() => {
-      actions.advancePhase(PHASES.ORGANIZE);
+      // FIX: Check if still in DISCOVER phase before auto-advancing
+      // This prevents unexpected navigation if user moved away during the delay
+      const currentPhase = getCurrentPhase?.();
+      if (currentPhase === PHASES.DISCOVER) {
+        actions.advancePhase(PHASES.ORGANIZE);
+      } else {
+        logger.debug('Skipping auto-advance: phase changed during delay', {
+          currentPhase,
+          expectedPhase: PHASES.DISCOVER
+        });
+      }
     }, 2000);
   } else if (successCount > 0) {
     addNotification(
@@ -129,7 +149,16 @@ function showAnalysisCompletionNotification({
       'analysis-complete'
     );
     setTimeout(() => {
-      actions.advancePhase(PHASES.ORGANIZE);
+      // FIX: Check if still in DISCOVER phase before auto-advancing
+      const currentPhase = getCurrentPhase?.();
+      if (currentPhase === PHASES.DISCOVER) {
+        actions.advancePhase(PHASES.ORGANIZE);
+      } else {
+        logger.debug('Skipping auto-advance: phase changed during delay', {
+          currentPhase,
+          expectedPhase: PHASES.DISCOVER
+        });
+      }
     }, 2000);
   } else if (failureCount > 0) {
     addNotification(
@@ -155,6 +184,7 @@ function showAnalysisCompletionNotification({
  * @param {Function} options.updateFileState - File state update function
  * @param {Function} options.addNotification - Notification function
  * @param {Object} options.actions - Phase actions
+ * @param {Function} options.getCurrentPhase - Function to get current phase (for race condition prevention)
  * @returns {Object} Analysis functions and state
  */
 export function useAnalysis(options) {
@@ -174,7 +204,8 @@ export function useAnalysis(options) {
     } = {},
     updateFileState,
     addNotification,
-    actions
+    actions,
+    getCurrentPhase
   } = options;
   const hasResumedRef = useRef(false);
   const analysisLockRef = useRef(false);
@@ -186,28 +217,20 @@ export function useAnalysis(options) {
   const pendingFilesRef = useRef([]);
 
   // Refs to track current state values (prevents stale closures in callbacks)
+  // PERF FIX: Update refs synchronously during render instead of using separate useEffect hooks.
+  // This is safe because ref assignments are idempotent and don't cause side effects.
   const isAnalyzingRef = useRef(isAnalyzing);
   const globalAnalysisActiveRef = useRef(globalAnalysisActive);
   const analysisResultsRef = useRef(analysisResults);
   const fileStatesRef = useRef(fileStates);
   const analysisProgressRef = useRef(analysisProgress);
 
-  // Keep refs in sync with state
-  useEffect(() => {
-    isAnalyzingRef.current = isAnalyzing;
-  }, [isAnalyzing]);
-  useEffect(() => {
-    globalAnalysisActiveRef.current = globalAnalysisActive;
-  }, [globalAnalysisActive]);
-  useEffect(() => {
-    analysisResultsRef.current = analysisResults;
-  }, [analysisResults]);
-  useEffect(() => {
-    fileStatesRef.current = fileStates;
-  }, [fileStates]);
-  useEffect(() => {
-    analysisProgressRef.current = analysisProgress;
-  }, [analysisProgress]);
+  // Sync refs during render (avoids useEffect overhead)
+  isAnalyzingRef.current = isAnalyzing;
+  globalAnalysisActiveRef.current = globalAnalysisActive;
+  analysisResultsRef.current = analysisResults;
+  fileStatesRef.current = fileStates;
+  analysisProgressRef.current = analysisProgress;
 
   /**
    * Reset analysis state
@@ -238,6 +261,17 @@ export function useAnalysis(options) {
     [namingSettings]
   );
 
+  const generateSuggestedName = useCallback(
+    (originalFileName, analysis) => {
+      return generateSuggestedNameFromAnalysis({
+        originalFileName,
+        analysis,
+        settings: namingSettings
+      });
+    },
+    [namingSettings]
+  );
+
   /**
    * Re-apply naming convention to existing analyses when settings change.
    * Keeps Discover and Organize screens in sync with the user-selected naming.
@@ -247,18 +281,21 @@ export function useAnalysis(options) {
       if (!prev || prev.length === 0) return prev;
       return prev.map((result) => {
         if (!result?.analysis) return result;
-        const baseName =
-          result.analysis.originalSuggestedName ||
-          result.analysis.suggestedName ||
-          result.name ||
-          extractFileName(result.path || '') ||
-          '';
         return {
           ...result,
           analysis: {
             ...result.analysis,
-            suggestedName: generatePreviewName(baseName),
-            namingConvention: namingSettings
+            suggestedName: generateSuggestedName(
+              result.name || extractFileName(result.path || ''),
+              result.analysis
+            ),
+            namingConvention: namingSettings,
+            // Keep a stable "raw subject" for re-naming and user edits.
+            originalSuggestedName:
+              result.analysis.originalSuggestedName ||
+              result.analysis.suggestedName ||
+              result.name ||
+              extractFileName(result.path || '')
           }
         };
       });
@@ -269,26 +306,29 @@ export function useAnalysis(options) {
       const next = { ...prev };
       Object.entries(next).forEach(([filePath, state]) => {
         if (!state?.analysis) return;
-        const baseName =
-          state.analysis.originalSuggestedName ||
-          state.analysis.suggestedName ||
-          state.name ||
-          extractFileName(filePath) ||
-          '';
         next[filePath] = {
           ...state,
           analysis: {
             ...state.analysis,
-            suggestedName: generatePreviewName(baseName),
-            namingConvention: namingSettings
+            // Ensure suggested name is regenerated with current settings
+            suggestedName: generateSuggestedName(
+              state.name || extractFileName(filePath),
+              state.analysis
+            ),
+            namingConvention: namingSettings,
+            originalSuggestedName:
+              state.analysis.originalSuggestedName ||
+              state.analysis.suggestedName ||
+              state.name ||
+              extractFileName(filePath)
           }
         };
       });
       return next;
     });
-    // Only re-run when naming settings change; avoid deps on state we set to prevent loops
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [namingSettings, generatePreviewName, setAnalysisResults, setFileStates]);
+    // Deps are complete: functional updates (prev =>) don't need current state as deps.
+    // Only re-run when naming convention settings or the name generator changes.
+  }, [namingSettings, generateSuggestedName, setAnalysisResults, setFileStates]);
 
   /**
    * Main analysis function
@@ -453,13 +493,17 @@ export function useAnalysis(options) {
           try {
             const analysis = await analyzeWithRetry(file.path);
 
+            // Fix: Check for abort signal immediately after async operation
+            // This prevents state updates if the user cancelled while analysis was in flight
+            if (abortSignal.aborted) return;
+
             // Increment progress AFTER analysis completes
-            completedCount++;
             const progress = {
-              current: completedCount,
+              current: Math.min(completedCount + 1, files.length), // Fix: Only increment on success, don't overshoot
               total: files.length,
               lastActivity: Date.now()
             };
+            completedCount++;
 
             if (validateProgressState(progress)) {
               localProgressRef.current = progress;
@@ -473,7 +517,7 @@ export function useAnalysis(options) {
                 ...analysis,
                 // Preserve the raw suggestion so we can re-apply naming changes later
                 originalSuggestedName: baseSuggestedName,
-                suggestedName: generatePreviewName(baseSuggestedName),
+                suggestedName: generateSuggestedName(fileName, analysis),
                 namingConvention: namingSettings
               };
               results.push({
@@ -505,7 +549,7 @@ export function useAnalysis(options) {
             // Still increment count on error so progress continues
             completedCount++;
             const progress = {
-              current: completedCount,
+              current: Math.min(completedCount, files.length), // Fix: Don't overshoot
               total: files.length,
               lastActivity: Date.now()
             };
@@ -575,7 +619,8 @@ export function useAnalysis(options) {
           successCount,
           failureCount,
           addNotification,
-          actions
+          actions,
+          getCurrentPhase
         });
       } catch (error) {
         if (error.message !== 'Analysis cancelled by user') {
@@ -637,9 +682,10 @@ export function useAnalysis(options) {
       updateFileState,
       addNotification,
       actions,
-      generatePreviewName,
+      generateSuggestedName,
       namingSettings,
-      resetAnalysisState
+      resetAnalysisState,
+      getCurrentPhase
     ]
   );
 

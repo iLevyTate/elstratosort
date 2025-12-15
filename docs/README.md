@@ -1,18 +1,32 @@
 # StratoSort Documentation Index
 
-This directory contains comprehensive documentation for the StratoSort codebase. Use this guide to find the right documentation for your needs.
+This directory contains comprehensive documentation for the StratoSort codebase. Use this guide to
+find the right documentation for your needs.
 
 ## Quick Links
 
 | Document                                                 | Description                                | Audience       |
 | -------------------------------------------------------- | ------------------------------------------ | -------------- |
+| [CONFIG.md](./CONFIG.md)                                 | Installation, dependencies & configuration | All users      |
 | [ARCHITECTURE.md](./ARCHITECTURE.md)                     | High-level system design and data flow     | All developers |
 | [CODE_QUALITY_STANDARDS.md](./CODE_QUALITY_STANDARDS.md) | Coding standards and style guide           | All developers |
 | [ERROR_HANDLING_GUIDE.md](./ERROR_HANDLING_GUIDE.md)     | Error handling patterns and best practices | All developers |
 
+## Installation & Dependencies
+
+> **⚠️ Beta Notice**: The automatic dependency installation feature is in beta. See
+> [CONFIG.md](./CONFIG.md#dependency-installation-beta) for manual CLI installation instructions.
+
+- **[CONFIG.md](./CONFIG.md)** - Complete dependency installation guide including:
+  - Manual CLI installation for Ollama and ChromaDB
+  - Required AI models and how to pull them
+  - Environment variable reference
+  - Troubleshooting tips
+
 ## Architecture & Design
 
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - System architecture diagram showing the relationship between Renderer, IPC, and Main processes
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - System architecture diagram showing the relationship
+  between Renderer, IPC, and Main processes
 - **[DI_PATTERNS.md](./DI_PATTERNS.md)** - Dependency injection patterns and ServiceContainer usage
 
 ## Development Standards
@@ -23,16 +37,20 @@ This directory contains comprehensive documentation for the StratoSort codebase.
   - JSDoc documentation standards
   - Code review checklist
 
-- **[IMPORT_PATH_STANDARDS.md](./IMPORT_PATH_STANDARDS.md)** - Import path conventions for main/renderer/shared modules
+- **[IMPORT_PATH_STANDARDS.md](./IMPORT_PATH_STANDARDS.md)** - Import path conventions for
+  main/renderer/shared modules
 
-- **[ERROR_HANDLING_GUIDE.md](./ERROR_HANDLING_GUIDE.md)** - Centralized error handling patterns and utilities
+- **[ERROR_HANDLING_GUIDE.md](./ERROR_HANDLING_GUIDE.md)** - Centralized error handling patterns and
+  utilities
 
 ## Performance & Optimization
 
 - **[LLM_OPTIMIZATION.md](./LLM_OPTIMIZATION.md)** - AI/LLM performance tuning strategies
 - **[OPTIMIZATION_DIAGRAM.md](./OPTIMIZATION_DIAGRAM.md)** - Visual optimization flow diagrams
-- **[PERFORMANCE_BENCHMARKING.md](./PERFORMANCE_BENCHMARKING.md)** - Benchmarking methodology and results
-- **[HIDDEN_PERFORMANCE_DRAINS_FIXED.md](./HIDDEN_PERFORMANCE_DRAINS_FIXED.md)** - Previously identified and resolved performance issues
+- **[PERFORMANCE_BENCHMARKING.md](./PERFORMANCE_BENCHMARKING.md)** - Benchmarking methodology and
+  results
+- **[HIDDEN_PERFORMANCE_DRAINS_FIXED.md](./HIDDEN_PERFORMANCE_DRAINS_FIXED.md)** - Previously
+  identified and resolved performance issues
 
 ## Testing
 
@@ -40,12 +58,15 @@ This directory contains comprehensive documentation for the StratoSort codebase.
 
 ## Utilities & Helpers
 
-- **[EDGE_CASE_UTILITIES_GUIDE.md](./EDGE_CASE_UTILITIES_GUIDE.md)** - Edge case handling utilities documentation
-- **[CONSOLE_LOG_MIGRATION.md](./CONSOLE_LOG_MIGRATION.md)** - Migration from console.log to structured logging
+- **[EDGE_CASE_UTILITIES_GUIDE.md](./EDGE_CASE_UTILITIES_GUIDE.md)** - Edge case handling utilities
+  documentation
+- **[CONSOLE_LOG_MIGRATION.md](./CONSOLE_LOG_MIGRATION.md)** - Migration from console.log to
+  structured logging
 
 ## Maintenance
 
-- **[REFACTORING_CANDIDATES.md](./REFACTORING_CANDIDATES.md)** - Identified areas for future refactoring
+- **[REFACTORING_CANDIDATES.md](./REFACTORING_CANDIDATES.md)** - Identified areas for future
+  refactoring
 - **[BUGFIXES.md](./BUGFIXES.md)** - Notable bug fixes and their solutions
 
 ## Configuration

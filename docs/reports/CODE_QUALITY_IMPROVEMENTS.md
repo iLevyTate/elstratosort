@@ -1,8 +1,17 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Code Quality Improvements Report
 
 ## Overview
 
-This document tracks the systematic improvements made to address 18 LOW priority code quality issues identified in the comprehensive scan.
+This document tracks the systematic improvements made to address 18 LOW priority code quality issues
+identified in the comprehensive scan.
 
 ## Progress Summary
 
@@ -48,8 +57,10 @@ Found 100+ instances of console.log/error/warn across the codebase:
 
 ### Commented Code
 
-- Found commented-out import in preload.js (line 4): `// const sanitizeHtml = require('sanitize-html');`
-- Found commented-out code in ollamaUtils.js (line 2): `// const { buildOllamaOptions } = require('./services/PerformanceService');`
+- Found commented-out import in preload.js (line 4):
+  `// const sanitizeHtml = require('sanitize-html');`
+- Found commented-out code in ollamaUtils.js (line 2):
+  `// const { buildOllamaOptions } = require('./services/PerformanceService');`
 - Most "commented code" is actually explanatory comments (good practice)
 
 ### Magic Numbers to Extract
@@ -124,8 +135,7 @@ Common patterns to address:
 
 ### 2. Created Error Handling Utilities
 
-**New File:** `src/shared/errorHandlingUtils.js` (320 lines)
-**Features:**
+**New File:** `src/shared/errorHandlingUtils.js` (320 lines) **Features:**
 
 - Standardized error codes (ERROR_CODES)
 - Error response factory functions
@@ -140,8 +150,7 @@ Common patterns to address:
 
 ### 3. Created Performance Constants
 
-**New File:** `src/shared/performanceConstants.js` (180 lines)
-**Features:**
+**New File:** `src/shared/performanceConstants.js` (180 lines) **Features:**
 
 - TIMEOUTS - All timeout values centralized
 - RETRY - Retry configuration constants

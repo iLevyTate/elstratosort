@@ -1,10 +1,20 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Continuation from Previous Conversation - Summary
 
 ## Date: November 16, 2025
 
 ## Context
 
-You asked me to continue from the previous conversation. I found that you were working on the **ChromaDB migration** - transitioning from a non-existent Node.js CLI to the Python-based ChromaDB server.
+You asked me to continue from the previous conversation. I found that you were working on the
+**ChromaDB migration** - transitioning from a non-existent Node.js CLI to the Python-based ChromaDB
+server.
 
 ## What Was Already Done ✅
 
@@ -20,7 +30,8 @@ You asked me to continue from the previous conversation. I found that you were w
 
 **Location**: `src/main/services/StartupManager.js:434`
 
-**Problem**: An orphaned `return { success: true, disabled: true };` statement caused the function to exit early, preventing ChromaDB from ever starting.
+**Problem**: An orphaned `return { success: true, disabled: true };` statement caused the function
+to exit early, preventing ChromaDB from ever starting.
 
 **Fix**: Removed the erroneous return statement.
 
@@ -54,7 +65,8 @@ const startFunc = async () => {
 
 **Location**: `src/main/services/StartupManager.js:48-66`
 
-**Problem**: The `hasPythonModule()` method only used `py -3` which is Windows-specific, causing the check to fail on macOS/Linux.
+**Problem**: The `hasPythonModule()` method only used `py -3` which is Windows-specific, causing the
+check to fail on macOS/Linux.
 
 **Fix**: Enhanced to try multiple Python commands in order based on platform.
 
@@ -219,7 +231,8 @@ curl http://127.0.0.1:8000/api/v2/heartbeat
 
 ## Status: COMPLETE ✅
 
-The ChromaDB integration is **production-ready** and fully functional. All critical bugs have been resolved.
+The ChromaDB integration is **production-ready** and fully functional. All critical bugs have been
+resolved.
 
 ## Next Steps (Optional Enhancements)
 

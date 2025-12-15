@@ -374,7 +374,8 @@ ConfirmModal.propTypes = {
   onClose: PropTypes.func.isRequired,
   onConfirm: PropTypes.func.isRequired,
   title: PropTypes.string,
-  message: PropTypes.string,
+  // FIX: Changed from string to node to support JSX content (e.g., UndoRedoSystem)
+  message: PropTypes.node,
   confirmText: PropTypes.string,
   cancelText: PropTypes.string,
   variant: PropTypes.oneOf(['default', 'danger', 'warning', 'info']),

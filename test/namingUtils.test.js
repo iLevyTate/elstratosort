@@ -175,6 +175,72 @@ describe('namingUtils', () => {
     });
   });
 
+  describe('generateSuggestedNameFromAnalysis', () => {
+    const settings = {
+      convention: 'project-subject-date',
+      separator: ' - ',
+      dateFormat: 'YYYYMMDD',
+      caseConvention: 'kebab-case'
+    };
+
+    test('uses analysis fields (project/subject/date) and preserves extension', () => {
+      const result = namingUtils.generateSuggestedNameFromAnalysis({
+        originalFileName: 'Invoice Q1.pdf',
+        analysis: {
+          date: '2024-01-15',
+          project: 'Acme Corp',
+          category: 'Financial Documents',
+          suggestedName: 'Q1 Invoice'
+        },
+        settings
+      });
+
+      // kebab-case will normalize separators and words; date format is YYYYMMDD
+      expect(result).toBe('acme-corp-q1-invoice-20240115.pdf');
+    });
+
+    test('category-subject uses analysis category', () => {
+      const result = namingUtils.generateSuggestedNameFromAnalysis({
+        originalFileName: 'photo.jpg',
+        analysis: { category: 'Research', suggestedName: 'Microscopy Image' },
+        settings: { ...settings, convention: 'category-subject', separator: '_' }
+      });
+
+      // kebab-case normalizes any separators to dashes
+      expect(result).toBe('research-microscopy-image.jpg');
+    });
+
+    test('keep-original preserves original base name and extension', () => {
+      const result = namingUtils.generateSuggestedNameFromAnalysis({
+        originalFileName: 'My Original Name.txt',
+        analysis: { suggestedName: 'Ignored' },
+        settings: { ...settings, convention: 'keep-original', caseConvention: undefined }
+      });
+
+      expect(result).toBe('My Original Name.txt');
+    });
+
+    test('replaces underscores with spaces before casing', () => {
+      // Fix verification: ensure underscores are treated as separators
+      const result = namingUtils.generateSuggestedNameFromAnalysis({
+        originalFileName: 'test.txt',
+        analysis: { suggestedName: 'my_file_name' },
+        // Use 'subject-date' to force reconstruction from components, skipping casing for clarity first
+        settings: {
+          // Use 'subject' logic implied by 'project-subject-date' or similar if we want suggestedName
+          // 'project-subject-date' uses 'suggestedName' as subject.
+          convention: 'project-subject-date',
+          separator: '-',
+          dateFormat: 'YYYYMMDD',
+          caseConvention: undefined // No casing, just sanitation
+        }
+      });
+      // project (Project) - subject (my file name) - date (YYYYMMDD)
+      // sanitizeToken should turn 'my_file_name' into 'my file name'
+      expect(result).toMatch(/Project-my file name-\d{8}\.txt/);
+    });
+  });
+
   describe('validateProgressState', () => {
     test('returns true for valid progress', () => {
       const progress = {

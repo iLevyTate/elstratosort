@@ -1,8 +1,17 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # ChromaDB Installation Instructions
 
 ## Issue
 
-StratoSort requires the ChromaDB Python module to enable semantic search and AI-powered file organization features.
+StratoSort requires the ChromaDB Python module to enable semantic search and AI-powered file
+organization features.
 
 ## Quick Fix
 

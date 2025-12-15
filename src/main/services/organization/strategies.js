@@ -61,12 +61,15 @@ const fileTypeCategories = {
 
 /**
  * Get file type category from extension
- * @param {string} extension - File extension
+ * @param {string} extension - File extension (with or without leading dot)
  * @returns {string} Category name
  */
 function getFileTypeCategory(extension) {
+  // Normalize extension: strip leading dot and convert to lowercase
+  const ext = (extension || '').toLowerCase().replace(/^\./, '');
+
   for (const [category, extensions] of Object.entries(fileTypeCategories)) {
-    if (extensions.includes(extension.toLowerCase())) {
+    if (extensions.includes(ext)) {
       return category.charAt(0).toUpperCase() + category.slice(1);
     }
   }

@@ -1,3 +1,11 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Blocker Bugs Report - StratoSort
 
 **Date:** 2025-01-16  
@@ -5,7 +13,9 @@
 
 ## Executive Summary
 
-This report documents all blocker bugs found during systematic investigation of the StratoSort codebase. The investigation covered test failures, runtime errors, IPC handler completeness, external dependencies, and code quality issues.
+This report documents all blocker bugs found during systematic investigation of the StratoSort
+codebase. The investigation covered test failures, runtime errors, IPC handler completeness,
+external dependencies, and code quality issues.
 
 ## Critical Bugs Fixed
 
@@ -20,33 +30,36 @@ This report documents all blocker bugs found during systematic investigation of 
 
 **File:** `src/main/analysis/ollamaImageAnalysis.js`  
 **Issue:** Function returns `undefined` when folderMatcher initialization fails (line 507)  
-**Fix:** Changed early `return;` to continue execution - analysis result is still valid without semantic folder refinement  
+**Fix:** Changed early `return;` to continue execution - analysis result is still valid without
+semantic folder refinement  
 **Status:** ✅ Fixed
 
 ### 3. AutoOrganizeService Method Name Mismatches (HIGH)
 
 **File:** `src/main/services/AutoOrganizeService.js`  
-**Issue:** Tests expect method names like 'automatic', 'fallback' but code returns 'individual-automatic', 'batch-fallback'  
+**Issue:** Tests expect method names like 'automatic', 'fallback' but code returns
+'individual-automatic', 'batch-fallback'  
 **Fix:** Updated method names in `_processFilesIndividually` to match test expectations:
 
 - 'individual-automatic' → 'automatic'
 - 'individual-low-confidence-fallback' → 'low-confidence-fallback'
 - 'individual-fallback' → 'fallback'
 - 'individual-suggestion-error-fallback' → 'suggestion-error-fallback'
-- 'no-analysis-default-batch' → 'no-analysis-default'
-  **Status:** ✅ Fixed
+- 'no-analysis-default-batch' → 'no-analysis-default' **Status:** ✅ Fixed
 
 ### 4. ChromaDB Query Deduplication Test Failure (MEDIUM)
 
 **File:** `test/verifyOptimizations.test.js`  
 **Issue:** Mock ChromaDBService doesn't implement in-flight query deduplication  
-**Fix:** Added `inflightQueries` Map and deduplication logic to mock class to match real implementation  
+**Fix:** Added `inflightQueries` Map and deduplication logic to mock class to match real
+implementation  
 **Status:** ✅ Fixed
 
 ### 5. Memory Limit Test Failure (MEDIUM)
 
 **File:** `test/verifyOptimizations.test.js`  
-**Issue:** Test directly manipulates `userPatterns` Map, bypassing pruning logic in `recordFeedback`  
+**Issue:** Test directly manipulates `userPatterns` Map, bypassing pruning logic in
+`recordFeedback`  
 **Fix:** Updated test to use `recordFeedback()` method which triggers proper pruning  
 **Status:** ✅ Fixed
 
@@ -63,7 +76,8 @@ This report documents all blocker bugs found during systematic investigation of 
 
 - ✅ `test/ollama-retry.test.js` - Syntax error fixed
 - ✅ `test/AutoOrganizeService.test.js` - Method name mismatches fixed (5 tests)
-- ✅ `test/verifyOptimizations.test.js` - ChromaDB deduplication and memory limit tests fixed (3 tests)
+- ✅ `test/verifyOptimizations.test.js` - ChromaDB deduplication and memory limit tests fixed (3
+  tests)
 
 ### Remaining Test Failures (Require Further Investigation)
 
@@ -78,7 +92,8 @@ This report documents all blocker bugs found during systematic investigation of 
 
 ### Status: ✅ Complete
 
-All IPC channels defined in `src/shared/constants.js` have corresponding handlers registered in `src/main/ipc/index.js`:
+All IPC channels defined in `src/shared/constants.js` have corresponding handlers registered in
+`src/main/ipc/index.js`:
 
 - ✅ Files IPC (11 handlers)
 - ✅ Smart Folders IPC (10 handlers)
@@ -171,4 +186,6 @@ All IPC channels defined in `src/shared/constants.js` have corresponding handler
 **IPC handlers verified:** 70/70 ✅  
 **External dependencies:** Properly handled with graceful degradation ✅
 
-The codebase is in good shape with proper error handling and IPC architecture. Remaining test failures appear to be related to test setup/mocking rather than actual code bugs. Further investigation needed for analysis function test failures.
+The codebase is in good shape with proper error handling and IPC architecture. Remaining test
+failures appear to be related to test setup/mocking rather than actual code bugs. Further
+investigation needed for analysis function test failures.

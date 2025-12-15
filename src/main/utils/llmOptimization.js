@@ -56,11 +56,24 @@ class LLMRequestDeduplicator {
       logger.debug('[LLM-DEDUP] Cleaned oldest pending request');
     }
 
-    // Execute the function and track the promise
-    const promise = fn().finally(() => {
-      // Clean up after completion
-      this.pendingRequests.delete(key);
-    });
+    // FIX: Wrap fn() call to handle synchronous throws
+    // If fn() throws synchronously, we should not add to pendingRequests
+    let promise;
+    try {
+      const fnResult = fn();
+      // Ensure we have a promise-like object
+      promise = Promise.resolve(fnResult).finally(() => {
+        // Clean up after completion
+        this.pendingRequests.delete(key);
+      });
+    } catch (syncError) {
+      // fn() threw synchronously, don't add to pending requests
+      logger.debug('[LLM-DEDUP] Function threw synchronously', {
+        key: key.slice(0, 8),
+        error: syncError.message
+      });
+      throw syncError;
+    }
 
     this.pendingRequests.set(key, promise);
     return promise;

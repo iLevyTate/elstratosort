@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './Modal';
 import Button from './ui/Button';
@@ -15,15 +15,20 @@ function normalizeOllamaModelName(name) {
   return trimmed;
 }
 
+// Unique ID counter for log entries (prevents key collisions)
+let logIdCounter = 0;
+
 export default function AiDependenciesModal({ isOpen, onClose }) {
   const [status, setStatus] = useState(null);
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(false);
   const [installing, setInstalling] = useState({ ollama: false, chromadb: false });
-  const [logLines, setLogLines] = useState([]);
+  const [logLines, setLogLines] = useState([]); // Now stores { id, text } objects
   const unsubRef = useRef(null);
+  const statusUnsubRef = useRef(null);
 
-  const refresh = async () => {
+  // Memoized refresh function - stable reference for use in effects
+  const refresh = useCallback(async () => {
     try {
       setLoading(true);
       const [s, st] = await Promise.all([
@@ -37,7 +42,7 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, []); // Empty deps: only uses setters (stable) and window.electronAPI (global)
 
   const recommendedModels = useMemo(() => {
     const text = normalizeOllamaModelName(settings?.textModel);
@@ -64,14 +69,14 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
               const next = prev.slice(-20);
               if (evt.type === 'dependency') {
                 const dep = evt.dependency ? `(${evt.dependency}) ` : '';
-                next.push(`${dep}${evt.message || 'Working…'}`);
+                next.push({ id: ++logIdCounter, text: `${dep}${evt.message || 'Working…'}` });
               } else if (evt.type === 'ollama-pull') {
                 const p = evt.progress;
                 const pct =
                   p && typeof p.completed === 'number' && typeof p.total === 'number' && p.total > 0
                     ? ` ${Math.round((p.completed / p.total) * 100)}%`
                     : '';
-                next.push(`(ollama) Downloading ${evt.model}${pct}`);
+                next.push({ id: ++logIdCounter, text: `(ollama) Downloading ${evt.model}${pct}` });
               }
               return next;
             });
@@ -84,6 +89,32 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
       logger.warn('Failed to subscribe to progress events', { error: e?.message });
     }
 
+    // Subscribe to service status changes (auto-refresh when services start/stop/fail)
+    try {
+      if (window.electronAPI?.dependencies?.onServiceStatusChanged) {
+        statusUnsubRef.current = window.electronAPI.dependencies.onServiceStatusChanged((evt) => {
+          try {
+            if (!evt) return;
+            // Log the status change
+            const statusMsg =
+              evt.status === 'permanently_failed'
+                ? `${evt.service} permanently failed (circuit breaker tripped)`
+                : `${evt.service} is now ${evt.status}`;
+            setLogLines((prev) => [
+              ...prev.slice(-20),
+              { id: ++logIdCounter, text: `[status] ${statusMsg}` }
+            ]);
+            // Auto-refresh status to update UI
+            refresh();
+          } catch (e) {
+            logger.debug('Status change handler error', { error: e?.message });
+          }
+        });
+      }
+    } catch (e) {
+      logger.warn('Failed to subscribe to service status events', { error: e?.message });
+    }
+
     return () => {
       if (typeof unsubRef.current === 'function') {
         try {
@@ -93,9 +124,17 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
         }
       }
       unsubRef.current = null;
+
+      if (typeof statusUnsubRef.current === 'function') {
+        try {
+          statusUnsubRef.current();
+        } catch {
+          // ignore
+        }
+      }
+      statusUnsubRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  }, [isOpen, refresh]); // refresh is stable (useCallback with empty deps)
 
   const saveSetting = async (patch) => {
     const next = { ...(settings || {}), ...(patch || {}) };
@@ -285,8 +324,8 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
               <div className="text-system-gray-500">No activity yet.</div>
             ) : (
               <ul className="flex flex-col gap-1">
-                {logLines.map((line, idx) => (
-                  <li key={`${idx}-${line}`}>{line}</li>
+                {logLines.map((entry) => (
+                  <li key={entry.id}>{entry.text}</li>
                 ))}
               </ul>
             )}

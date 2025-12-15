@@ -521,6 +521,21 @@
     @apply shadow-md border-border-strong/60 bg-white;
   }
 
+  /* Text clamping helpers for virtualized rows */
+  .clamp-1 {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
   .empty-state {
     @apply text-center rounded-2xl border border-border-soft bg-white/80 shadow-sm py-10 px-6 space-y-3;
   }

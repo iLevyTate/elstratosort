@@ -51,6 +51,29 @@ const {
 
 logger.setContext('ChromaDBService');
 
+/**
+ * Embedding function placeholder.
+ *
+ * We always provide embeddings explicitly (Ollama + our own embedding pipeline),
+ * so we must NOT rely on the Chroma JS SDK auto-embedding behavior.
+ *
+ * Passing a non-null embeddingFunction prevents the SDK from trying to instantiate
+ * DefaultEmbeddingFunction (which requires the optional @chroma-core/default-embed package).
+ */
+const explicitEmbeddingsOnlyEmbeddingFunction = {
+  generate: async () => {
+    throw new Error(
+      'ChromaDB embeddingFunction was invoked unexpectedly. StratoSort should always pass embeddings/queryEmbeddings explicitly.'
+    );
+  },
+  // Some SDK paths prefer generateForQueries; keep the message identical.
+  generateForQueries: async () => {
+    throw new Error(
+      'ChromaDB embeddingFunction was invoked unexpectedly. StratoSort should always pass embeddings/queryEmbeddings explicitly.'
+    );
+  }
+};
+
 // Configuration constants
 const QUERY_CACHE_TTL_MS = getConfig('PERFORMANCE.cacheTtlShort', 120000);
 const MAX_CACHE_SIZE = getConfig('PERFORMANCE.queryCacheSize', 200);
@@ -540,6 +563,13 @@ class ChromaDBServiceCore extends EventEmitter {
         return this._initPromise;
       }
 
+      // FIX: Add small delay to allow _initPromise to be set, avoiding race condition
+      // where _isInitializing is true but _initPromise hasn't been assigned yet
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (this._initPromise) {
+        return this._initPromise;
+      }
+
       return new Promise((resolve, reject) => {
         const maxWait = 30000;
         const checkInterval = 100;
@@ -554,6 +584,12 @@ class ChromaDBServiceCore extends EventEmitter {
         };
 
         const checkStatus = () => {
+          // FIX: Re-check _initPromise on each poll iteration to catch late assignment
+          if (this._initPromise) {
+            cleanup();
+            this._initPromise.then(resolve).catch(reject);
+            return;
+          }
           if (!this._isInitializing && this.initialized) {
             cleanup();
             resolve();
@@ -585,12 +621,18 @@ class ChromaDBServiceCore extends EventEmitter {
         await this.ensureDbDirectory();
         await this.offlineQueue.initialize();
 
-        this.client = new ChromaClient({ path: this.serverUrl });
+        // The Chroma JS SDK deprecated { path }. Use { ssl, host, port } to avoid console noise.
+        this.client = new ChromaClient({
+          ssl: this.serverProtocol === 'https',
+          host: this.serverHost,
+          port: this.serverPort
+        });
 
         // Wrap collection operations with timeout to prevent hanging on slow/unresponsive server
         this.fileCollection = await withTimeout(
           this.client.getOrCreateCollection({
             name: 'file_embeddings',
+            embeddingFunction: explicitEmbeddingsOnlyEmbeddingFunction,
             metadata: {
               description: 'Document and image file embeddings for semantic search',
               'hnsw:space': 'cosine'
@@ -603,6 +645,7 @@ class ChromaDBServiceCore extends EventEmitter {
         this.folderCollection = await withTimeout(
           this.client.getOrCreateCollection({
             name: 'folder_embeddings',
+            embeddingFunction: explicitEmbeddingsOnlyEmbeddingFunction,
             metadata: {
               description: 'Smart folder embeddings for categorization',
               'hnsw:space': 'cosine'
@@ -646,6 +689,54 @@ class ChromaDBServiceCore extends EventEmitter {
 
         logger.error('[ChromaDB] Initialization failed:', error);
 
+        // IMPORTANT: Do not aggressively delete the on-disk DB on transient startup errors.
+        // We only consider a backup+reset when:
+        // - the server is reachable/healthy (so this isn't a race / "server not ready" case)
+        // - the error strongly suggests on-disk schema/tenant corruption
+        //
+        // This preserves the user's previously working DB (pre-wizard behavior) and avoids data loss.
+        const errorMsg = error?.message || '';
+        const corruptionLike =
+          /default_tenant/i.test(errorMsg) ||
+          /tenant.*not found/i.test(errorMsg) ||
+          /could not find tenant/i.test(errorMsg) ||
+          /no such table/i.test(errorMsg) ||
+          /sqlite/i.test(errorMsg);
+
+        let serverHealthy = false;
+        try {
+          const health = await checkHealthViaHttp(this.serverUrl);
+          serverHealthy = Boolean(health?.healthy);
+        } catch {
+          serverHealthy = false;
+        }
+
+        if (serverHealthy && corruptionLike && !this._recoveryAttempted) {
+          this._recoveryAttempted = true;
+          logger.warn(
+            '[ChromaDB] Detected likely on-disk DB corruption while server is healthy. Backing up DB directory and resetting local data...'
+          );
+
+          try {
+            const fsSync = require('fs');
+            if (fsSync.existsSync(this.dbPath)) {
+              const backupPath = `${this.dbPath}.bak.${Date.now()}`;
+              await fs.rename(this.dbPath, backupPath);
+              logger.warn('[ChromaDB] Backed up database directory', { backupPath });
+            }
+
+            await this.ensureDbDirectory();
+
+            // Note: the running Chroma server must be restarted to pick up the new database directory.
+            logger.warn(
+              '[ChromaDB] Local database reset complete. Please restart the application.'
+            );
+          } catch (recoveryError) {
+            logger.error('[ChromaDB] Recovery attempt failed:', recoveryError.message);
+          }
+        }
+
+        // Cleanup references last (so health checks can still use serverUrl above).
         try {
           if (this.fileCollection) this.fileCollection = null;
           if (this.folderCollection) this.folderCollection = null;
@@ -654,40 +745,7 @@ class ChromaDBServiceCore extends EventEmitter {
           logger.error('[ChromaDB] Error during cleanup:', cleanupError);
         }
 
-        // Check for tenant/database corruption errors and attempt recovery
-        const errorMsg = error.message || '';
-        const isTenantError =
-          errorMsg.includes('tenant') ||
-          errorMsg.includes('default_tenant') ||
-          errorMsg.includes('ChromaServerError');
-
-        if (isTenantError && !this._recoveryAttempted) {
-          this._recoveryAttempted = true;
-          logger.warn(
-            '[ChromaDB] Detected tenant/database error, attempting recovery by resetting data...'
-          );
-
-          try {
-            // Delete the corrupt database directory
-            const fsSync = require('fs');
-            if (fsSync.existsSync(this.dbPath)) {
-              await fs.rm(this.dbPath, { recursive: true, force: true });
-              logger.info('[ChromaDB] Deleted corrupt database directory');
-            }
-
-            // Recreate the directory
-            await this.ensureDbDirectory();
-
-            // Note: The ChromaDB server needs to be restarted to pick up the new database
-            // For now, just log and let the next startup attempt succeed
-            logger.warn('[ChromaDB] Database reset complete. ChromaDB server may need restart.');
-            logger.warn('[ChromaDB] Please restart the application for changes to take effect.');
-          } catch (recoveryError) {
-            logger.error('[ChromaDB] Recovery attempt failed:', recoveryError.message);
-          }
-        }
-
-        throw new Error(`Failed to initialize ChromaDB: ${error.message}`);
+        throw new Error(`Failed to initialize ChromaDB: ${errorMsg}`);
       }
     })();
 

@@ -33,7 +33,7 @@ const {
   extractPlainTextFromXml,
   extractPlainTextFromHtml
 } = require('./documentExtractors');
-const { analyzeTextWithOllama } = require('./documentLlm');
+const { analyzeTextWithOllama, normalizeCategoryToSmartFolders } = require('./documentLlm');
 const { normalizeAnalysisResult } = require('./utils');
 const {
   getIntelligentCategory,
@@ -144,7 +144,7 @@ async function applyDocumentFolderMatching(
   await chromaDbService.initialize();
 
   if (folderMatcher && !folderMatcher.embeddingCache?.initialized) {
-    folderMatcher.initialize();
+    await folderMatcher.initialize();
     logger.debug('[DocumentAnalysis] FolderMatchingService initialized');
   }
 
@@ -456,10 +456,16 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
               'PowerPoint presentation - content extraction failed, using filename analysis';
           }
 
+          // Fix: Ensure category maps to a valid smart folder, not just "document"
+          const category = normalizeCategoryToSmartFolders(
+            intelligentCategory || 'document',
+            smartFolders
+          );
+
           return {
             purpose,
             project: fileName.replace(fileExtension, ''),
-            category: intelligentCategory || 'document',
+            category,
             date: new Date().toISOString().split('T')[0],
             keywords: intelligentKeywords || [],
             confidence,
@@ -476,7 +482,10 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       const keywords =
         archiveInfo.keywords?.slice(0, TRUNCATION.KEYWORDS_MAX) ||
         getIntelligentKeywords(fileName, fileExtension);
-      const category = 'archive';
+
+      // Fix: Ensure category maps to a valid smart folder
+      const category = normalizeCategoryToSmartFolders('archive', smartFolders);
+
       return {
         purpose: archiveInfo.summary || 'Archive file',
         project: fileName.replace(fileExtension, ''),

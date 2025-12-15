@@ -29,32 +29,58 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
 
   const loadAnalysisData = useCallback(async () => {
     setIsLoading(true);
-    try {
-      const [stats, history] = await Promise.all([
-        window.electronAPI.analysisHistory.getStatistics(),
-        window.electronAPI.analysisHistory.get({ all: true })
-      ]);
-      // FIX: Check if still mounted before updating state
-      if (!isMountedRef.current) return;
-      setAnalysisStats(stats);
-      // FIX H1: Validate history is an array before setting
-      if (Array.isArray(history)) {
-        setHistoryData(history);
-      } else {
-        logger.warn('History data is not an array, falling back to empty array', {
-          historyType: typeof history,
-          history
-        });
-        setHistoryData([]);
-      }
-    } catch (error) {
-      if (!isMountedRef.current) return;
-      addNotification('Failed to load analysis history', 'error');
-    } finally {
-      if (isMountedRef.current) {
+
+    // PERF FIX: Fetch each data source independently instead of Promise.all
+    // This allows the UI to update as soon as each response arrives,
+    // rather than waiting for the slowest request to complete.
+    let loadedCount = 0;
+    const totalLoads = 2;
+
+    const markLoaded = () => {
+      loadedCount++;
+      if (loadedCount >= totalLoads && isMountedRef.current) {
         setIsLoading(false);
       }
-    }
+    };
+
+    // Fetch statistics
+    window.electronAPI.analysisHistory
+      .getStatistics()
+      .then((stats) => {
+        if (isMountedRef.current) {
+          setAnalysisStats(stats);
+        }
+      })
+      .catch((error) => {
+        if (isMountedRef.current) {
+          logger.warn('Failed to load statistics', { error: error?.message });
+        }
+      })
+      .finally(markLoaded);
+
+    // Fetch history
+    window.electronAPI.analysisHistory
+      .get({ all: true })
+      .then((history) => {
+        if (!isMountedRef.current) return;
+        // FIX H1: Validate history is an array before setting
+        if (Array.isArray(history)) {
+          setHistoryData(history);
+        } else {
+          logger.warn('History data is not an array, falling back to empty array', {
+            historyType: typeof history,
+            history
+          });
+          setHistoryData([]);
+        }
+      })
+      .catch((error) => {
+        if (isMountedRef.current) {
+          addNotification('Failed to load analysis history', 'error');
+          logger.warn('Failed to load history', { error: error?.message });
+        }
+      })
+      .finally(markLoaded);
   }, [addNotification, setAnalysisStats]);
 
   useEffect(() => {

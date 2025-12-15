@@ -79,6 +79,23 @@ async function handleCircuitBreakerRecovery(serviceName, serviceStatus, startSer
       status.restartCount = 0;
       status.consecutiveFailures = 0;
       status.recoveryAttempts = 0;
+      status.status = 'running';
+      status.health = 'healthy';
+
+      // FIX: Emit recovery notification to renderer
+      try {
+        const { emitServiceStatusChange } = require('../../ipc/dependencies');
+        emitServiceStatusChange({
+          service: serviceName,
+          status: 'running',
+          health: 'healthy',
+          details: { reason: 'circuit_breaker_recovered' }
+        });
+      } catch (e) {
+        logger.debug(`[HEALTH] Could not emit ${serviceName} recovery status`, {
+          error: e?.message
+        });
+      }
     } else {
       throw new Error('Service started but health check failed');
     }
@@ -133,7 +150,8 @@ async function checkServiceHealthWithRecovery(
           chromaDbService = null;
         }
       }
-      isHealthy = await chromaDbService?.checkHealth?.();
+      // FIX: Ensure Boolean result to avoid undefined being treated ambiguously
+      isHealthy = Boolean(await chromaDbService?.checkHealth?.());
     } else if (serviceName === 'ollama') {
       const baseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
       const response = await axiosWithRetry(
@@ -172,6 +190,25 @@ async function checkServiceHealthWithRecovery(
         status.consecutiveFailures = 0;
         status.circuitBreakerTripped = true;
         status.circuitBreakerTrippedAt = new Date().toISOString();
+
+        // FIX: Emit circuit breaker trip notification to renderer
+        try {
+          const { emitServiceStatusChange } = require('../../ipc/dependencies');
+          emitServiceStatusChange({
+            service: serviceName,
+            status: 'permanently_failed',
+            health: 'permanently_failed',
+            details: {
+              reason: 'circuit_breaker_tripped',
+              restartAttempts: restartCount,
+              trippedAt: status.circuitBreakerTrippedAt
+            }
+          });
+        } catch (e) {
+          logger.debug(`[HEALTH] Could not emit ${serviceName} circuit breaker status`, {
+            error: e?.message
+          });
+        }
       } else {
         // Check for restart lock
         if (restartLocks[serviceName]) {

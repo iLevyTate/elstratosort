@@ -3,9 +3,56 @@
  *
  * Centralized selectors for computed state. These help prevent disconnections
  * between phases by ensuring data is consistently merged.
+ *
+ * PERFORMANCE FIX: Uses reference-stable selectors to prevent unnecessary re-renders.
+ * Each selector caches its previous result and returns the same reference if the
+ * output is deeply equal, preventing React components from re-rendering.
  */
 
 import { createSelector } from '@reduxjs/toolkit';
+
+/**
+ * Creates a selector that returns stable references when output is unchanged.
+ * Prevents unnecessary re-renders in consuming components.
+ */
+const createStableSelector = (dependencies, combiner) => {
+  const baseSelector = createSelector(dependencies, combiner);
+
+  // Store previous result for reference stability
+  let prevResult = null;
+
+  return (state) => {
+    const result = baseSelector(state);
+
+    // For arrays, check if contents are the same
+    if (Array.isArray(result) && Array.isArray(prevResult)) {
+      if (
+        result.length === prevResult.length &&
+        result.every((item, i) => item === prevResult[i])
+      ) {
+        return prevResult; // Return cached reference
+      }
+    }
+
+    // For objects, check shallow equality
+    if (
+      result &&
+      typeof result === 'object' &&
+      !Array.isArray(result) &&
+      prevResult &&
+      typeof prevResult === 'object'
+    ) {
+      const keys = Object.keys(result);
+      const prevKeys = Object.keys(prevResult);
+      if (keys.length === prevKeys.length && keys.every((key) => result[key] === prevResult[key])) {
+        return prevResult; // Return cached reference
+      }
+    }
+
+    prevResult = result;
+    return result;
+  };
+};
 
 // Base selectors
 const selectSelectedFiles = (state) => state.files.selectedFiles;
@@ -95,42 +142,59 @@ export const selectFilesWithAnalysis = createSelector(
 /**
  * Returns only files that have been successfully analyzed and are ready for organization.
  * Filters out files with errors or pending analysis.
+ * PERF: Uses stable selector to prevent re-renders when filter result is unchanged.
  */
-export const selectReadyFiles = createSelector([selectFilesWithAnalysis], (filesWithAnalysis) => {
-  return filesWithAnalysis.filter((file) => file.analysis && !file.error);
-});
+export const selectReadyFiles = createStableSelector(
+  [selectFilesWithAnalysis],
+  (filesWithAnalysis) => {
+    return filesWithAnalysis.filter((file) => file.analysis && !file.error);
+  }
+);
 
 /**
  * Returns files that failed analysis
+ * PERF: Uses stable selector to prevent re-renders when filter result is unchanged.
  */
-export const selectFailedFiles = createSelector([selectFilesWithAnalysis], (filesWithAnalysis) => {
-  return filesWithAnalysis.filter((file) => file.error);
-});
+export const selectFailedFiles = createStableSelector(
+  [selectFilesWithAnalysis],
+  (filesWithAnalysis) => {
+    return filesWithAnalysis.filter((file) => file.error);
+  }
+);
 
 /**
  * Returns files that are still pending analysis
+ * PERF: Uses stable selector to prevent re-renders when filter result is unchanged.
+ * FIX: Removed redundant selectFileStates dependency - selectFilesWithAnalysis already
+ * merges file states into file.status, so we use that instead of re-reading fileStates.
+ * NOTE: A file is pending if it has no analysis result and no error, regardless of status.
+ * This handles cases where status defaults to 'pending' but analysis actually exists.
  */
-export const selectPendingFiles = createSelector(
-  [selectFilesWithAnalysis, selectFileStates],
-  (filesWithAnalysis, fileStates) => {
+export const selectPendingFiles = createStableSelector(
+  [selectFilesWithAnalysis],
+  (filesWithAnalysis) => {
     return filesWithAnalysis.filter((file) => {
-      const state = fileStates?.[file.path]?.state;
-      return state === 'pending' || (!file.analysis && !file.error);
+      // A file is pending only if it hasn't been analyzed yet (no analysis and no error)
+      return !file.analysis && !file.error;
     });
   }
 );
 
 /**
  * Returns count statistics for file states
+ * PERF: Uses stable selector to prevent re-renders when stats are unchanged.
  */
-export const selectFileStats = createSelector([selectFilesWithAnalysis], (filesWithAnalysis) => {
-  const total = filesWithAnalysis.length;
-  const ready = filesWithAnalysis.filter((f) => f.analysis && !f.error).length;
-  const failed = filesWithAnalysis.filter((f) => f.error).length;
-  const pending = total - ready - failed;
+export const selectFileStats = createStableSelector(
+  [selectFilesWithAnalysis],
+  (filesWithAnalysis) => {
+    const total = filesWithAnalysis.length;
+    const ready = filesWithAnalysis.filter((f) => f.analysis && !f.error).length;
+    const failed = filesWithAnalysis.filter((f) => f.error).length;
+    const pending = total - ready - failed;
 
-  return { total, ready, failed, pending };
-});
+    return { total, ready, failed, pending };
+  }
+);
 
 /**
  * Get ChromaDB service status from Redux store

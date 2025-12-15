@@ -50,11 +50,12 @@ function parseArgs(argv) {
   };
 }
 
-async function tryCmd(cmd, args, timeout = 5000) {
+async function tryCmd(cmd, args, timeout = 5000, options = {}) {
   const res = await asyncSpawn(cmd, args, {
     timeout,
     windowsHide: true,
-    shell: process.platform === 'win32'
+    shell: process.platform === 'win32',
+    ...options
   });
   return res;
 }
@@ -150,88 +151,190 @@ async function checkExternalChroma(url) {
   return false;
 }
 
-async function main() {
-  const { auto, check, ciSkip } = parseArgs(process.argv);
+async function checkChromaExecutable(python) {
+  // 1. Check if 'chroma' is available on PATH
+  const candidates = process.platform === 'win32' ? ['chroma.exe', 'chroma'] : ['chroma'];
 
-  if (ciSkip && process.env.CI) {
-    console.log(chalk.gray('[chromadb] CI detected, skipping'));
-    process.exit(0);
+  for (const exe of candidates) {
+    try {
+      const res = await tryCmd(exe, ['--help'], 3000);
+      if (res.status === 0) return true;
+    } catch (e) {
+      // Ignore
+    }
   }
 
-  console.log(chalk.bold.cyan('\nChromaDB Setup (Developer)'));
+  // 2. Check Python script directories
+  const script = [
+    'import os, sys, sysconfig, site',
+    'paths = [sysconfig.get_path("scripts")]',
+    'try:',
+    '    ub = site.getuserbase()',
+    '    if ub:',
+    '        paths.append(os.path.join(ub, "Scripts"))',
+    '        paths.append(os.path.join(ub, "bin"))',
+    '        # Handle Microsoft Store Python paths',
+    '        paths.append(os.path.join(ub, "Python" + str(sys.version_info[0]) + str(sys.version_info[1]), "Scripts"))',
+    'except:',
+    '    pass',
+    'print("\\n".join(paths))'
+  ].join('\n');
+
+  // FIX: Use shell: false to avoid quoting issues on Windows when passing complex python scripts
+  const res = await tryCmd(python.command, [...python.args, '-c', script], 3000, { shell: false });
+
+  if (res.status === 0) {
+    const paths = (res.stdout || '').split(/\r?\n/).filter((p) => p.trim());
+    const exeName = process.platform === 'win32' ? 'chroma.exe' : 'chroma';
+    const fs = require('fs');
+    const path = require('path');
+
+    for (const dir of paths) {
+      const candidate = path.join(dir.trim(), exeName);
+      try {
+        if (fs.existsSync(candidate)) return true;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return false;
+}
+
+async function main({
+  argv = process.argv,
+  env = process.env,
+  log = console,
+  deps = {
+    checkExternalChroma,
+    findPythonLauncher,
+    isChromaInstalled,
+    pipInstallChroma,
+    checkChromaExecutable
+  }
+} = {}) {
+  const { auto, check, ciSkip } = parseArgs(argv);
+
+  if (ciSkip && env.CI) {
+    log.log(chalk.gray('[chromadb] CI detected, skipping'));
+    return 0;
+  }
+
+  log.log(chalk.bold.cyan('\nChromaDB Setup (Developer)'));
 
   // If an external ChromaDB is configured (e.g. Docker), just verify reachability.
-  if (process.env.CHROMA_SERVER_URL) {
-    const reachable = await checkExternalChroma(process.env.CHROMA_SERVER_URL);
+  if (env.CHROMA_SERVER_URL) {
+    const reachable = await deps.checkExternalChroma(env.CHROMA_SERVER_URL);
     if (reachable) {
-      console.log(chalk.green(`✓ External ChromaDB reachable — ${process.env.CHROMA_SERVER_URL}`));
-      process.exit(0);
+      log.log(chalk.green(`✓ External ChromaDB reachable — ${env.CHROMA_SERVER_URL}`));
+      return 0;
     }
 
-    console.log(
-      chalk.yellow(`⚠ External ChromaDB not reachable — ${process.env.CHROMA_SERVER_URL}`)
-    );
+    log.log(chalk.yellow(`⚠ External ChromaDB not reachable — ${env.CHROMA_SERVER_URL}`));
     // In check mode we should signal failure; in auto mode we keep best-effort behavior.
-    process.exit(check && !auto ? 1 : 0);
+    return check && !auto ? 1 : 0;
   }
 
-  const python = await findPythonLauncher();
+  const python = await deps.findPythonLauncher();
   if (!python) {
     const msg =
       'Python 3 not found. ChromaDB features will be unavailable.\n' +
       'Install Python 3 and ensure `py -3` (Windows) or `python3` is available on PATH.';
-    console.log(chalk.yellow(`[chromadb] ${msg}`));
+    log.log(chalk.yellow(`[chromadb] ${msg}`));
     // Best-effort: do not fail npm install
-    process.exit(check && !auto ? 1 : 0);
+    return check && !auto ? 1 : 0;
   }
 
-  const pre = await isChromaInstalled(python);
+  const pre = await deps.isChromaInstalled(python);
   if (pre.installed) {
-    console.log(chalk.green(`✓ ChromaDB installed (python module) — version: ${pre.version}`));
-    process.exit(0);
+    log.log(chalk.green(`✓ ChromaDB installed (python module) — version: ${pre.version}`));
+    return 0;
   }
 
   if (check && !auto) {
-    console.log(chalk.red('✗ ChromaDB is not installed'));
-    process.exit(1);
+    // Check fallback before failing
+    try {
+      const hasExecutable = await deps.checkChromaExecutable(python);
+      if (hasExecutable) {
+        log.log(chalk.green(`✓ ChromaDB CLI executable found (import failed, but CLI exists)`));
+        return 0;
+      }
+    } catch (e) {
+      // Ignore
+    }
+
+    log.log(chalk.red('✗ ChromaDB is not installed'));
+    return 1;
   }
 
   if (!auto) {
-    console.log(
+    log.log(
       chalk.yellow(
         '[chromadb] Not installed. Run `node scripts/setup-chromadb.js --auto` (or `npm run setup:chromadb`).'
       )
     );
-    process.exit(0);
+    return 0;
   }
 
-  console.log(chalk.cyan('[chromadb] Installing via pip (user install)…'));
-  const ok = await pipInstallChroma(python, { upgradePip: true, userInstall: true });
+  log.log(chalk.cyan('[chromadb] Installing via pip (user install)…'));
+  const ok = await deps.pipInstallChroma(python, { upgradePip: true, userInstall: true });
   if (!ok) {
-    console.log(
+    log.log(
       chalk.yellow(
         '[chromadb] pip install failed. You may need to install Python/pip or run with elevated permissions.'
       )
     );
-    process.exit(0);
+    return 0;
   }
 
-  const post = await isChromaInstalled(python);
+  const post = await deps.isChromaInstalled(python);
   if (post.installed) {
-    console.log(chalk.bold.green(`✓ ChromaDB installed — version: ${post.version}`));
-    process.exit(0);
+    log.log(chalk.bold.green(`✓ ChromaDB installed — version: ${post.version}`));
+    return 0;
   }
 
-  console.log(
+  // Fallback: Check if chroma executable exists in Scripts folder (common on Windows)
+  try {
+    const hasExecutable = await deps.checkChromaExecutable(python);
+    if (hasExecutable) {
+      log.log(chalk.bold.green(`✓ ChromaDB CLI executable found (import failed, but CLI exists)`));
+      return 0;
+    }
+  } catch (e) {
+    // Ignore error
+  }
+
+  log.log(
     chalk.yellow(
       '[chromadb] Install completed but import still failed. Try restarting your shell or verify your Python environment.'
     )
   );
-  process.exit(0);
+  return 0;
 }
 
-main().catch((err) => {
-  console.error(chalk.red(`[chromadb] Unexpected error: ${err?.message || err}`));
-  // Best-effort: don't fail developer install
-  process.exit(0);
-});
+if (require.main === module) {
+  main().then(
+    (code) => {
+      // eslint-disable-next-line no-process-exit
+      process.exit(code);
+    },
+    (err) => {
+      // Best-effort: don't fail developer install
+      console.error(chalk.red(`[chromadb] Unexpected error: ${err?.message || err}`));
+      // eslint-disable-next-line no-process-exit
+      process.exit(0);
+    }
+  );
+}
+
+module.exports = {
+  main,
+  parseArgs,
+  // export internals for unit tests
+  checkExternalChroma,
+  findPythonLauncher,
+  isChromaInstalled,
+  pipInstallChroma,
+  checkChromaExecutable
+};

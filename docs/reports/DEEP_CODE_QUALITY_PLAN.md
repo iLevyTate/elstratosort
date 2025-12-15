@@ -1,8 +1,18 @@
+> **[HISTORICAL REPORT]**
+>
+> This document is a historical development report capturing work completed during a specific
+> session. For current documentation, see the main [README.md](../../README.md) or [docs/](../)
+> directory.
+>
+> ---
+
 # Deep Code Quality Improvement Plan
 
 ## Executive Summary
 
-This comprehensive plan addresses all remaining code quality issues in the StratoSort codebase, prioritizing critical fixes, standardization efforts, and long-term maintainability improvements. The plan is organized into phases with clear deliverables, timelines, and success metrics.
+This comprehensive plan addresses all remaining code quality issues in the StratoSort codebase,
+prioritizing critical fixes, standardization efforts, and long-term maintainability improvements.
+The plan is organized into phases with clear deliverables, timelines, and success metrics.
 
 **Current Status:**
 
@@ -116,7 +126,8 @@ console.debug(...) → logger.debug(...)
 
 ### 1.2 Module System Standardization (MEDIUM PRIORITY)
 
-**Objective:** Standardize on CommonJS (`module.exports`) for consistency with Electron main process.
+**Objective:** Standardize on CommonJS (`module.exports`) for consistency with Electron main
+process.
 
 **Current State:**
 
