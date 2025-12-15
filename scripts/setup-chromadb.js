@@ -50,11 +50,12 @@ function parseArgs(argv) {
   };
 }
 
-async function tryCmd(cmd, args, timeout = 5000) {
+async function tryCmd(cmd, args, timeout = 5000, options = {}) {
   const res = await asyncSpawn(cmd, args, {
     timeout,
     windowsHide: true,
-    shell: process.platform === 'win32'
+    shell: process.platform === 'win32',
+    ...options
   });
   return res;
 }
@@ -179,7 +180,8 @@ async function checkChromaExecutable(python) {
     'print("\\n".join(paths))'
   ].join('\n');
 
-  const res = await tryCmd(python.command, [...python.args, '-c', script], 3000);
+  // FIX: Use shell: false to avoid quoting issues on Windows when passing complex python scripts
+  const res = await tryCmd(python.command, [...python.args, '-c', script], 3000, { shell: false });
 
   if (res.status === 0) {
     const paths = (res.stdout || '').split(/\r?\n/).filter((p) => p.trim());

@@ -132,7 +132,7 @@ function VirtualizedFileGrid({
   const [rowHeight, setRowHeight] = useState(DEFAULT_ROW_HEIGHT);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current) return undefined;
 
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];

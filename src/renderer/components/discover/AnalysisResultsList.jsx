@@ -143,7 +143,7 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
   const [dimensions, setDimensions] = useState({ width: 0, height: 600 });
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current) return undefined;
 
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
