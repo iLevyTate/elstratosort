@@ -163,13 +163,48 @@ function registerOrganizeIpc({ ipcMain, IPC_CHANNELS, getServiceIntegration, get
         groups: []
       },
       handler: async (event, { files, smartFolders, options = {} }, service) => {
+        const path = require('path');
+
+        // Validate all source files exist before processing (same as AUTO handler)
+        const { valid: validFiles, invalid: invalidFiles } = await validateSourceFiles(files);
+
+        if (invalidFiles.length > 0) {
+          logger.warn('[ORGANIZE] Batch: Some files were skipped (not found or invalid)', {
+            skippedCount: invalidFiles.length,
+            skippedFiles: invalidFiles.slice(0, 5).map((f) => f.error)
+          });
+        }
+
+        if (validFiles.length === 0) {
+          return {
+            success: false,
+            error: 'No valid files to organize - all source files are missing or invalid',
+            operations: [],
+            groups: [],
+            failed: invalidFiles.map((f) => ({
+              file: f.file,
+              error: f.error
+            }))
+          };
+        }
+
+        // Ensure extension property exists on all files
+        const filesWithExtension = validFiles.map((file) => {
+          if (!file.extension && file.path) {
+            const ext = path.extname(file.path).toLowerCase();
+            return { ...file, extension: ext };
+          }
+          return file;
+        });
+
         try {
           logger.info('[ORGANIZE] Starting batch organize', {
-            fileCount: files.length
+            fileCount: filesWithExtension.length,
+            skippedCount: invalidFiles.length
           });
 
           const folders = smartFolders || getCustomFolders();
-          const result = await service.batchOrganize(files, folders, options);
+          const result = await service.batchOrganize(filesWithExtension, folders, options);
 
           logger.info('[ORGANIZE] Batch organize complete', {
             operationCount: result.operations.length,

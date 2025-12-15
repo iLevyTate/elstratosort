@@ -42,9 +42,17 @@ class ProcessingStateService {
         await this.loadState();
         this.initialized = true;
       } catch (error) {
-        this.state = this.createEmptyState();
-        await this._saveStateInternal(); // Use internal method to avoid double-locking
-        this.initialized = true;
+        // FIX: Wrap fallback logic in try-catch to handle save failures
+        try {
+          this.state = this.createEmptyState();
+          await this._saveStateInternal(); // Use internal method to avoid double-locking
+          this.initialized = true;
+        } catch (saveError) {
+          // FIX: Clear _initPromise so next call can retry
+          logger.error('[ProcessingStateService] Failed to save initial state:', saveError.message);
+          this._initPromise = null;
+          throw saveError;
+        }
       }
     })();
 

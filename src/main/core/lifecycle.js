@@ -289,22 +289,37 @@ async function handleBeforeQuit() {
     // Post-shutdown verification: Verify all resources are released
     const shutdownTimeout = 10000; // 10 seconds max for shutdown
 
+    // FIX: Store timeout ID to clear it when verification completes
+    let verificationTimeoutId;
     try {
       await Promise.race([
         verifyShutdownCleanup(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Shutdown verification timeout')), shutdownTimeout)
-        )
+        new Promise((_, reject) => {
+          verificationTimeoutId = setTimeout(
+            () => reject(new Error('Shutdown verification timeout')),
+            shutdownTimeout
+          );
+        })
       ]);
     } catch (error) {
       logger.warn('[SHUTDOWN-VERIFY] Verification failed or timed out:', error.message);
+    } finally {
+      // FIX: Always clear the verification timeout
+      if (verificationTimeoutId) {
+        clearTimeout(verificationTimeoutId);
+      }
     }
   })(); // Close cleanup promise wrapper
 
   // HIGH PRIORITY FIX (HIGH-2): Race cleanup against timeout
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('Cleanup timeout exceeded')), CLEANUP_TIMEOUT)
-  );
+  // FIX: Store timeout ID to clear it when cleanup completes successfully
+  let cleanupTimeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    cleanupTimeoutId = setTimeout(
+      () => reject(new Error('Cleanup timeout exceeded')),
+      CLEANUP_TIMEOUT
+    );
+  });
 
   try {
     await Promise.race([cleanupPromise, timeoutPromise]);
@@ -319,6 +334,11 @@ async function handleBeforeQuit() {
       );
     } else {
       logger.error(`[SHUTDOWN] Cleanup failed after ${elapsed}ms:`, error.message);
+    }
+  } finally {
+    // FIX: Always clear the timeout to prevent memory leak
+    if (cleanupTimeoutId) {
+      clearTimeout(cleanupTimeoutId);
     }
   }
 }

@@ -17,10 +17,24 @@ const getOllamaConfigPath = () => {
 let ollamaInstance = null;
 let ollamaHost = 'http://127.0.0.1:11434';
 let ollamaInstanceHost = null; // MEDIUM PRIORITY FIX (MED-13): Track host used to create instance
+let currentHttpAgent = null; // FIX: Track HTTP agent for cleanup to prevent socket leaks
 // Selected models persisted in userData config
 let selectedTextModel = null;
 let selectedVisionModel = null;
 let selectedEmbeddingModel = null;
+
+// Helper to destroy HTTP agent and prevent socket leaks
+function destroyCurrentAgent() {
+  if (currentHttpAgent) {
+    try {
+      currentHttpAgent.destroy();
+      logger.debug('[OLLAMA] Previous HTTP agent destroyed');
+    } catch (e) {
+      logger.debug('[OLLAMA] Could not destroy previous HTTP agent:', e.message);
+    }
+    currentHttpAgent = null;
+  }
+}
 
 // Function to initialize or get the Ollama instance
 function getOllama() {
@@ -29,6 +43,7 @@ function getOllama() {
     logger.info(
       `[OLLAMA] Host changed from ${ollamaInstanceHost} to ${ollamaHost}, recreating instance`
     );
+    destroyCurrentAgent(); // FIX: Destroy old agent to prevent socket leaks
     ollamaInstance = null;
     ollamaInstanceHost = null;
   }
@@ -42,14 +57,15 @@ function getOllama() {
       const http = require('http');
       const https = require('https');
       const isHttps = ollamaHost.startsWith('https://');
-      const agent = isHttps
+      destroyCurrentAgent(); // FIX: Ensure any stale agent is cleaned up
+      currentHttpAgent = isHttps
         ? new https.Agent({ keepAlive: true, maxSockets: 10 })
         : new http.Agent({ keepAlive: true, maxSockets: 10 });
       ollamaInstance = new Ollama({
         host: ollamaHost,
         fetch: (url, opts = {}) => {
           return (global.fetch || require('node-fetch'))(url, {
-            agent,
+            agent: currentHttpAgent,
             ...opts
           });
         }
@@ -152,14 +168,15 @@ async function setOllamaHost(host) {
         const http = require('http');
         const https = require('https');
         const isHttps = ollamaHost.startsWith('https://');
-        const agent = isHttps
+        destroyCurrentAgent(); // FIX: Destroy old agent to prevent socket leaks
+        currentHttpAgent = isHttps
           ? new https.Agent({ keepAlive: true, maxSockets: 10 })
           : new http.Agent({ keepAlive: true, maxSockets: 10 });
         ollamaInstance = new Ollama({
           host: ollamaHost,
           fetch: (url, opts = {}) => {
             return (global.fetch || require('node-fetch'))(url, {
-              agent,
+              agent: currentHttpAgent,
               ...opts
             });
           }

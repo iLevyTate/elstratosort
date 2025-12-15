@@ -297,9 +297,11 @@ class AutoOrganizeServiceCore {
    */
   async getStatistics() {
     return {
-      userPatterns: this.suggestionService.userPatterns.size,
-      feedbackHistory: this.suggestionService.feedbackHistory.length,
-      folderUsageStats: Array.from(this.suggestionService.folderUsageStats.entries()),
+      userPatterns: this.suggestionService?.userPatterns?.size ?? 0,
+      feedbackHistory: this.suggestionService?.feedbackHistory?.length ?? 0,
+      folderUsageStats: this.suggestionService?.folderUsageStats
+        ? Array.from(this.suggestionService.folderUsageStats.entries())
+        : [],
       thresholds: this.thresholds
     };
   }

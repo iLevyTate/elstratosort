@@ -154,8 +154,17 @@ class ServiceIntegration {
 
     // Fixed: Initialize FolderMatchingService after ChromaDB is ready
     // This starts the embedding cache cleanup interval only after successful initialization
+    // FIX: Await initialization for consistency and proper error handling
     if (this.folderMatchingService) {
-      this.folderMatchingService.initialize();
+      try {
+        await this.folderMatchingService.initialize();
+      } catch (error) {
+        logger.warn(
+          '[ServiceIntegration] FolderMatchingService initialization failed:',
+          error.message
+        );
+        // Non-fatal - continue with degraded functionality
+      }
     }
 
     this.initialized = true;

@@ -362,9 +362,13 @@ class OrganizationSuggestionServiceCore {
           alternatives: suggestion.alternatives
         });
 
-        const currentTotal = group.confidence * (group.files.length - 1);
-        const newTotal = currentTotal + (suggestion.confidence || 0);
-        group.confidence = newTotal / group.files.length;
+        // Update average confidence (guard against division by zero)
+        const fileCount = group.files.length;
+        if (fileCount > 0) {
+          const currentTotal = group.confidence * (fileCount - 1);
+          const newTotal = currentTotal + (suggestion.confidence || 0);
+          group.confidence = newTotal / fileCount;
+        }
       }
 
       const recommendations = generateBatchRecommendations(groups, patterns);

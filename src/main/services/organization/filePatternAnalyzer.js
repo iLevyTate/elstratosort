@@ -17,14 +17,18 @@ function analyzeFilePatterns(files) {
     projects: new Set(),
     dates: new Set(),
     types: new Set(),
-    categories: new Set(),
+    categoryCounts: {}, // Track category counts (not Set) for finding dominant
     commonWords: {}
   };
 
   for (const file of files) {
     if (file.analysis) {
       if (file.analysis.project) patterns.projects.add(file.analysis.project);
-      if (file.analysis.category) patterns.categories.add(file.analysis.category);
+      if (file.analysis.category) {
+        // Count category occurrences for dominant detection
+        const cat = file.analysis.category;
+        patterns.categoryCounts[cat] = (patterns.categoryCounts[cat] || 0) + 1;
+      }
       if (file.analysis.documentDate) patterns.dates.add(file.analysis.documentDate);
     }
 
@@ -45,7 +49,7 @@ function analyzeFilePatterns(files) {
     hasDatePattern: patterns.dates.size > 0,
     dateRange: patterns.dates.size > 0 ? getDateRange(patterns.dates) : null,
     fileTypes: Array.from(patterns.types),
-    dominantCategory: findDominantCategory(patterns.categories),
+    dominantCategory: findDominantCategory(patterns.categoryCounts),
     commonTerms: Object.entries(patterns.commonWords)
       .filter(([, count]) => count > files.length * 0.3)
       .map(([word]) => word)
@@ -77,22 +81,18 @@ function getDateRange(dates) {
 }
 
 /**
- * Find the dominant category from a set
- * @param {Set} categories - Set of categories
- * @returns {string|null} Dominant category
+ * Find the dominant category from category counts
+ * @param {Object} categoryCounts - Object mapping category names to occurrence counts
+ * @returns {string|null} Dominant category (most frequent)
  */
-function findDominantCategory(categories) {
-  const categoryArray = Array.from(categories);
+function findDominantCategory(categoryCounts) {
+  const entries = Object.entries(categoryCounts || {});
 
-  if (categoryArray.length === 0) return null;
-  if (categoryArray.length === 1) return categoryArray[0];
+  if (entries.length === 0) return null;
+  if (entries.length === 1) return entries[0][0];
 
-  const counts = {};
-  for (const cat of categoryArray) {
-    counts[cat] = (counts[cat] || 0) + 1;
-  }
-
-  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+  // Sort by count descending and return the category with highest count
+  return entries.sort((a, b) => b[1] - a[1])[0][0];
 }
 
 /**

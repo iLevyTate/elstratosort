@@ -26,6 +26,16 @@ const Toast = ({
     setIsVisible(show);
   }, [show]);
 
+  // FIX: Explicit cleanup on unmount for animation timer from manual close
+  useEffect(() => {
+    return () => {
+      if (animationTimerRef.current) {
+        clearTimeout(animationTimerRef.current);
+        animationTimerRef.current = null;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (show && duration > 0) {
       const timer = setTimeout(() => {

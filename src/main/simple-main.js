@@ -707,7 +707,10 @@ app.whenReady().then(async () => {
     // Handled by ./core/jumpList module
     initializeJumpList();
     // Fire-and-forget resume of incomplete batches shortly after window is ready
+    // FIX: Track timeout for cleanup to prevent execution during shutdown
+    let resumeTimeoutCleared = false;
     const resumeTimeout = setTimeout(() => {
+      if (resumeTimeoutCleared) return; // Guard against execution during shutdown
       try {
         // Note: getMainWindow is already defined at line 566 and in scope here
         resumeIncompleteBatches(serviceIntegration, logger, getMainWindow);
@@ -720,6 +723,11 @@ app.whenReady().then(async () => {
     } catch (error) {
       logger.warn('[RESUME] Failed to unref timeout:', error.message);
     }
+    // FIX: Add cleanup function to clear the timeout on app quit
+    eventListeners.push(() => {
+      resumeTimeoutCleared = true;
+      clearTimeout(resumeTimeout);
+    });
 
     // Load Ollama config and apply any saved selections (LOW-3: renamed cfg to ollamaConfig)
     const ollamaConfig = await loadOllamaConfig();

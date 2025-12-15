@@ -37,14 +37,16 @@ function rankSuggestions(suggestions) {
     } else {
       // Merge scores if duplicate
       const existing = uniqueSuggestions.get(key);
-      existing.score = Math.max(existing.score, suggestion.score);
-      existing.confidence = Math.max(existing.confidence, suggestion.confidence);
 
-      // Keep the source that provided higher confidence
+      // Keep the source that provided higher confidence (check BEFORE updating)
       if (suggestion.confidence > existing.confidence) {
         existing.source = suggestion.source;
         existing.method = suggestion.method;
       }
+
+      // Then update to max scores
+      existing.score = Math.max(existing.score, suggestion.score);
+      existing.confidence = Math.max(existing.confidence, suggestion.confidence);
     }
   }
 
@@ -107,7 +109,7 @@ function generateExplanation(suggestion, file) {
     user_pattern: `You've organized similar files this way before`,
     strategy: `Using ${suggestion.strategyName || 'your preferred'} organization method`,
     llm: `Based on the file's content and purpose`,
-    pattern: `This is where ${file.extension.toUpperCase()} files usually go`,
+    pattern: `This is where ${(file?.extension || 'these').toUpperCase()} files usually go`,
     llm_creative: suggestion.reasoning || 'Alternative way to organize this file',
     folder_improvement: `"${suggestion.folder}" could be enhanced for this type of file`,
     improvement: suggestion.improvement || `Suggested improvement for better organization`,

@@ -279,7 +279,9 @@ class PatternMatcher {
       }
     }
 
-    return matches / Math.max(fileParts.length, patternParts.length);
+    // Guard against division by zero
+    const maxLength = Math.max(fileParts.length, patternParts.length);
+    return maxLength > 0 ? matches / maxLength : 0;
   }
 
   /**

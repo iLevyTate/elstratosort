@@ -102,11 +102,13 @@ Analyze this image:`;
       getOllamaVisionModel() || cfg.selectedVisionModel || AppConfig.ai.imageAnalysis.defaultModel;
 
     // Use deduplicator to prevent duplicate LLM calls for identical images
+    // FIX: Handle case where smartFolders is explicitly passed as undefined
+    const safeFolders = Array.isArray(smartFolders) ? smartFolders : [];
     const deduplicationKey = globalDeduplicator.generateKey({
       image: imageBase64.slice(0, TRUNCATION.CACHE_SIGNATURE), // Use first chars as signature
       model: modelToUse,
       fileName: originalFileName,
-      folders: smartFolders.map((f) => f.name).join(',')
+      folders: safeFolders.map((f) => f.name).join(',')
     });
 
     const client = await getOllama();

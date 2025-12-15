@@ -167,13 +167,15 @@ export const selectFailedFiles = createStableSelector(
  * PERF: Uses stable selector to prevent re-renders when filter result is unchanged.
  * FIX: Removed redundant selectFileStates dependency - selectFilesWithAnalysis already
  * merges file states into file.status, so we use that instead of re-reading fileStates.
+ * NOTE: A file is pending if it has no analysis result and no error, regardless of status.
+ * This handles cases where status defaults to 'pending' but analysis actually exists.
  */
 export const selectPendingFiles = createStableSelector(
   [selectFilesWithAnalysis],
   (filesWithAnalysis) => {
     return filesWithAnalysis.filter((file) => {
-      // Use the merged status from selectFilesWithAnalysis instead of re-reading fileStates
-      return file.status === 'pending' || (!file.analysis && !file.error);
+      // A file is pending only if it hasn't been analyzed yet (no analysis and no error)
+      return !file.analysis && !file.error;
     });
   }
 );

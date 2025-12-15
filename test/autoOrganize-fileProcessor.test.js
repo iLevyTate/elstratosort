@@ -35,7 +35,11 @@ jest.mock('../src/main/analysis/ollamaDocumentAnalysis', () => ({
   analyzeDocumentFile: jest.fn().mockResolvedValue({
     category: 'Reports',
     confidence: 0.9
-  }),
+  })
+}));
+
+// Mock ollamaImageAnalysis (analyzeImageFile was moved here)
+jest.mock('../src/main/analysis/ollamaImageAnalysis', () => ({
   analyzeImageFile: jest.fn().mockResolvedValue({
     category: 'Photos',
     confidence: 0.85
@@ -404,7 +408,8 @@ describe('AutoOrganize File Processor', () => {
     });
 
     test('handles image files', async () => {
-      const { analyzeImageFile } = require('../src/main/analysis/ollamaDocumentAnalysis');
+      // analyzeImageFile was moved to ollamaImageAnalysis
+      const { analyzeImageFile } = require('../src/main/analysis/ollamaImageAnalysis');
       analyzeImageFile.mockResolvedValueOnce({
         category: 'Photos',
         confidence: 0.9
