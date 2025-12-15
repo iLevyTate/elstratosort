@@ -251,7 +251,6 @@ export function useOrganization({
   getFileWithEdits,
   findSmartFolderForCategory,
   defaultLocation,
-  smartFolders,
   analysisResults,
   markFilesAsProcessed,
   unmarkFilesAsProcessed,
@@ -309,86 +308,25 @@ export function useOrganization({
         });
 
         // Check if auto-organize with suggestions is available
-        const useAutoOrganize = window.electronAPI?.organize?.auto;
-        logger.info('[ORGANIZE] Auto-organize API available:', !!useAutoOrganize);
+        const autoOrganizeAvailable = !!window.electronAPI?.organize?.auto;
+        logger.info('[ORGANIZE] Auto-organize API available:', autoOrganizeAvailable);
 
         let operations;
-        if (useAutoOrganize) {
-          logger.info('[ORGANIZE] Calling auto-organize API...');
-          const result = await window.electronAPI.organize.auto({
-            files: filesToProcess,
-            smartFolders,
-            options: {
-              defaultLocation,
-              confidenceThreshold: 0.7,
-              preserveNames: false
-            }
-          });
-          logger.info('[ORGANIZE] Auto-organize result:', {
-            success: result?.success,
-            operationsCount: result?.operations?.length ?? result?.organized?.length ?? 0,
-            error: result?.error
-          });
-
-          if (result && result.success === false) {
-            addNotification(
-              result.error || 'Auto-organize service is not available',
-              'error',
-              5000,
-              'organize-service-error'
-            );
-            logger.error('[ORGANIZE] Auto-organize failed:', result.error);
-            setIsOrganizing(false);
-            setOrganizingState(false);
-            setBatchProgress({ current: 0, total: 0, currentFile: '' });
-            return;
-          }
-
-          // Prefer operations array (correct format), fall back to organized but convert format
-          if (result?.operations && result.operations.length > 0) {
-            operations = result.operations;
-          } else if (result?.organized && result.organized.length > 0) {
-            logger.warn('[ORGANIZE] Using organized array as fallback - converting format');
-            // Convert organized format {file, destination, confidence} to operations format {type, source, destination}
-            operations = result.organized
-              .map((item) => ({
-                type: 'move',
-                source: item.file?.path || item.source || item.path,
-                destination: item.destination
-              }))
-              .filter((op) => op.source && op.destination);
-          } else {
-            operations = [];
-          }
-
-          if (result?.needsReview && result.needsReview.length > 0) {
-            addNotification(
-              `${result.needsReview.length} files need manual review due to low confidence`,
-              'info',
-              4000,
-              'organize-needs-review'
-            );
-          }
-
-          if (result?.failed && result.failed.length > 0) {
-            addNotification(
-              `${result.failed.length} files could not be organized`,
-              'warning',
-              4000,
-              'organize-failed-files'
-            );
-          }
-        } else {
-          // Fallback to original logic
-          operations = buildOperations({
-            filesToProcess,
-            unprocessedFiles,
-            editingFiles,
-            getFileWithEdits,
-            findSmartFolderForCategory,
-            defaultLocation
-          });
-        }
+        // IMPORTANT: For the Organize phase, the user has already reviewed/edited
+        // the category + name in the UI. Calling auto-organize here can re-run a
+        // separate suggestion pipeline and produce a *different* folder than what
+        // the UI displays (e.g., UI shows "How To" but auto-organize moves to "3D Print").
+        // To prevent that "disconnect", we always build operations locally from:
+        // - file.analysis.category/suggestedName
+        // - any user edits in editingFiles
+        operations = buildOperations({
+          filesToProcess,
+          unprocessedFiles,
+          editingFiles,
+          getFileWithEdits,
+          findSmartFolderForCategory,
+          defaultLocation
+        });
 
         if (!operations || operations.length === 0) {
           addNotification(
@@ -599,7 +537,6 @@ export function useOrganization({
       getFileWithEdits,
       findSmartFolderForCategory,
       defaultLocation,
-      smartFolders,
       analysisResults,
       markFilesAsProcessed,
       unmarkFilesAsProcessed,

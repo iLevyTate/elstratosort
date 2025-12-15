@@ -225,102 +225,73 @@ describe('useOrganization', () => {
         expect(options.executeAction).not.toHaveBeenCalled();
       });
 
-      test('uses auto-organize when available', async () => {
-        const options = createMockOptions();
+      test('does not use auto-organize in OrganizePhase (uses UI category/name for deterministic moves)', async () => {
+        // Even if auto-organize is available and would return a different destination,
+        // OrganizePhase must honor the reviewed UI category/name.
+        mockElectronAPI.organize.auto.mockResolvedValue({
+          success: true,
+          operations: [
+            { type: 'move', source: '/test.txt', destination: '/Documents/3D Print/test.txt' }
+          ]
+        });
+
+        const options = createMockOptions({
+          unprocessedFiles: [
+            {
+              path: '/test.txt',
+              name: 'test.txt',
+              analysis: { category: 'How To', suggestedName: 'Test Document.txt' }
+            }
+          ],
+          findSmartFolderForCategory: jest.fn((category) =>
+            category === 'How To' ? { name: 'How To', path: '/Documents/How To' } : null
+          )
+        });
         const { result } = renderHook(() => useOrganization(options));
 
         await act(async () => {
           await result.current.handleOrganizeFiles();
         });
 
-        expect(mockElectronAPI.organize.auto).toHaveBeenCalled();
+        expect(mockElectronAPI.organize.auto).not.toHaveBeenCalled();
+        expect(options.executeAction).toHaveBeenCalled();
       });
 
-      test('handles auto-organize failure', async () => {
+      test('does not depend on auto-organize failure handling in OrganizePhase', async () => {
         mockElectronAPI.organize.auto.mockResolvedValue({
           success: false,
           error: 'Service unavailable'
         });
 
-        const options = createMockOptions();
+        const options = createMockOptions({
+          unprocessedFiles: [
+            {
+              path: '/test.txt',
+              name: 'test.txt',
+              analysis: { category: 'Documents', suggestedName: 'Test Document.txt' }
+            }
+          ],
+          findSmartFolderForCategory: jest.fn((category) =>
+            category === 'Documents' ? { name: 'Documents', path: '/Documents/Documents' } : null
+          )
+        });
         const { result } = renderHook(() => useOrganization(options));
 
         await act(async () => {
           await result.current.handleOrganizeFiles();
         });
 
-        expect(options.addNotification).toHaveBeenCalledWith(
-          'Service unavailable',
-          'error',
-          5000,
-          'organize-service-error'
-        );
+        // No auto-organize call; executeAction is used instead
+        expect(mockElectronAPI.organize.auto).not.toHaveBeenCalled();
+        expect(options.executeAction).toHaveBeenCalled();
       });
 
-      test('shows notification for files needing review', async () => {
-        mockElectronAPI.organize.auto.mockResolvedValue({
-          success: true,
-          operations: [{ type: 'move', source: '/a.txt', destination: '/b.txt' }],
-          needsReview: [{ path: '/review.txt' }]
-        });
-
-        const options = createMockOptions();
-        const { result } = renderHook(() => useOrganization(options));
-
-        await act(async () => {
-          await result.current.handleOrganizeFiles();
-        });
-
-        expect(options.addNotification).toHaveBeenCalledWith(
-          expect.stringContaining('need manual review'),
-          'info',
-          4000,
-          'organize-needs-review'
-        );
-      });
-
-      test('shows notification for failed files', async () => {
-        mockElectronAPI.organize.auto.mockResolvedValue({
-          success: true,
-          operations: [{ type: 'move', source: '/a.txt', destination: '/b.txt' }],
-          failed: [{ path: '/failed.txt', error: 'Permission denied' }]
-        });
-
-        const options = createMockOptions();
-        const { result } = renderHook(() => useOrganization(options));
-
-        await act(async () => {
-          await result.current.handleOrganizeFiles();
-        });
-
-        expect(options.addNotification).toHaveBeenCalledWith(
-          expect.stringContaining('could not be organized'),
-          'warning',
-          4000,
-          'organize-failed-files'
-        );
-      });
-
-      test('shows notification when no operations generated', async () => {
-        mockElectronAPI.organize.auto.mockResolvedValue({
-          success: true,
-          operations: []
-        });
-
-        const options = createMockOptions();
-        const { result } = renderHook(() => useOrganization(options));
-
-        await act(async () => {
-          await result.current.handleOrganizeFiles();
-        });
-
-        expect(options.addNotification).toHaveBeenCalledWith(
-          expect.stringContaining('No confident file moves'),
-          'info',
-          4000,
-          'organize-no-operations'
-        );
-      });
+      // NOTE: The following notifications were produced by the auto-organize pipeline:
+      // - needsReview
+      // - failed files
+      // - no operations generated
+      // OrganizePhase now builds deterministic operations locally from the UI category/name,
+      // so these auto-organize-only notifications are intentionally not emitted here.
 
       test('executes action with organize batch', async () => {
         const options = createMockOptions();
@@ -345,9 +316,12 @@ describe('useOrganization', () => {
       });
 
       test('handles organization errors', async () => {
-        mockElectronAPI.organize.auto.mockRejectedValue(new Error('Organization failed'));
-
-        const options = createMockOptions();
+        const options = createMockOptions({
+          findSmartFolderForCategory: jest.fn((category) =>
+            category === 'documents' ? { name: 'documents', path: '/Documents/documents' } : null
+          ),
+          executeAction: jest.fn().mockRejectedValue(new Error('Organization failed'))
+        });
         const { result } = renderHook(() => useOrganization(options));
 
         await act(async () => {
@@ -384,11 +358,8 @@ describe('useOrganization', () => {
           await result.current.handleOrganizeFiles(filesToOrganize);
         });
 
-        expect(mockElectronAPI.organize.auto).toHaveBeenCalledWith(
-          expect.objectContaining({
-            files: filesToOrganize
-          })
-        );
+        expect(mockElectronAPI.organize.auto).not.toHaveBeenCalled();
+        expect(options.executeAction).toHaveBeenCalled();
       });
     });
 
