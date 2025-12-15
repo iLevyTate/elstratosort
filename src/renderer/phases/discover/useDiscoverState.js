@@ -7,7 +7,7 @@
  * @module phases/discover/useDiscoverState
  */
 
-import { useCallback, useMemo, useRef, useEffect } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import {
   setSelectedFiles as setSelectedFilesAction,
@@ -51,31 +51,21 @@ export function useDiscoverState() {
   const separator = namingConventionState.separator;
 
   // Refs to keep track of latest state for stable callbacks
+  // PERF FIX: Update refs synchronously during render instead of using 5 separate useEffect hooks.
+  // This is safe because ref assignments are idempotent and don't cause side effects.
+  // This eliminates 5 effect scheduling/cleanup cycles per state change.
   const selectedFilesRef = useRef(selectedFiles);
   const analysisResultsRef = useRef(analysisResults);
   const fileStatesRef = useRef(fileStates);
   const analysisProgressRef = useRef(analysisProgress);
   const currentPhaseRef = useRef(currentPhase);
 
-  useEffect(() => {
-    selectedFilesRef.current = selectedFiles;
-  }, [selectedFiles]);
-
-  useEffect(() => {
-    analysisResultsRef.current = analysisResults;
-  }, [analysisResults]);
-
-  useEffect(() => {
-    fileStatesRef.current = fileStates;
-  }, [fileStates]);
-
-  useEffect(() => {
-    analysisProgressRef.current = analysisProgress;
-  }, [analysisProgress]);
-
-  useEffect(() => {
-    currentPhaseRef.current = currentPhase;
-  }, [currentPhase]);
+  // Sync refs during render (safe for refs, avoids useEffect overhead)
+  selectedFilesRef.current = selectedFiles;
+  analysisResultsRef.current = analysisResults;
+  fileStatesRef.current = fileStates;
+  analysisProgressRef.current = analysisProgress;
+  currentPhaseRef.current = currentPhase;
 
   // Stable callback to get current phase (for async operations that need to check phase)
   const getCurrentPhase = useCallback(() => currentPhaseRef.current, []);

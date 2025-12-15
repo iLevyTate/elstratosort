@@ -14,7 +14,8 @@ const Toast = ({
   severity = 'info',
   duration = 3000, // Reduced from 5000ms to 3000ms for less invasiveness
   onClose,
-  show = true
+  show = true,
+  mergeCount = 0 // FIX: Show count when messages are grouped
 }) => {
   const [isVisible, setIsVisible] = useState(show);
   // CRITICAL FIX: Use ref to track animation timer so cleanup can always access current value
@@ -130,6 +131,12 @@ const Toast = ({
           <div className="flex-1">
             <div className="text-xs md:text-sm font-normal leading-tight opacity-90">
               {renderMessageContent()}
+              {/* FIX: Show count indicator when messages are grouped */}
+              {mergeCount > 1 && (
+                <span className="ml-2 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-current/20 text-[10px] font-medium">
+                  ×{mergeCount}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -152,7 +159,8 @@ Toast.propTypes = {
   severity: PropTypes.oneOf(['info', 'success', 'error', 'warning']),
   duration: PropTypes.number,
   onClose: PropTypes.func,
-  show: PropTypes.bool
+  show: PropTypes.bool,
+  mergeCount: PropTypes.number
 };
 
 // Toast Container for managing multiple toasts
@@ -247,6 +255,7 @@ export const ToastContainer = ({ toasts = [], onRemoveToast }) => {
                 duration={toast.duration}
                 show={toast.show !== false}
                 onClose={() => onRemoveToast?.(toast.id)}
+                mergeCount={toast.mergeCount || 0}
               />
             </div>
           ))}
@@ -285,16 +294,21 @@ export const useToast = () => {
 
     setToasts((prev) => {
       // If grouping, try to merge with an existing toast
+      // FIX: Instead of overwriting messages, show count to preserve awareness
       if (groupKey) {
         const idx = prev.findIndex(
           (t) => t.groupKey === groupKey && now - (t.createdAt || now) <= GROUP_WINDOW_MS
         );
         if (idx !== -1) {
           const existing = prev[idx];
+          const mergeCount = (existing.mergeCount || 1) + 1;
           const updated = {
             ...existing,
             id: existing.id, // keep id stable for animation
-            message,
+            // FIX: Preserve first message but add count indicator
+            message: existing.originalMessage || existing.message,
+            originalMessage: existing.originalMessage || existing.message,
+            mergeCount,
             severity: getHighestSeverity(existing.severity || 'info', severity || 'info'),
             duration: duration ?? existing.duration,
             createdAt: existing.createdAt || now

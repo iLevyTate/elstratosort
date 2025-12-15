@@ -186,20 +186,25 @@ export function useFileEditing() {
 export function useFileSelection(totalFiles) {
   const [selectedFiles, setSelectedFiles] = useState(new Set());
 
-  const toggleFileSelection = useCallback(
-    (index) => {
-      const next = new Set(selectedFiles);
+  // PERF FIX: Use functional update pattern to avoid dependency on selectedFiles
+  // This keeps toggleFileSelection stable across renders, preventing unnecessary re-renders
+  // of memoized child components like ReadyFileItem
+  const toggleFileSelection = useCallback((index) => {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
       next.has(index) ? next.delete(index) : next.add(index);
-      setSelectedFiles(next);
-    },
-    [selectedFiles]
-  );
+      return next;
+    });
+  }, []);
 
+  // PERF FIX: Use functional update pattern here too
   const selectAllFiles = useCallback(() => {
-    selectedFiles.size === totalFiles
-      ? setSelectedFiles(new Set())
-      : setSelectedFiles(new Set(Array.from({ length: totalFiles }, (_, i) => i)));
-  }, [selectedFiles, totalFiles]);
+    setSelectedFiles((prev) =>
+      prev.size === totalFiles
+        ? new Set()
+        : new Set(Array.from({ length: totalFiles }, (_, i) => i))
+    );
+  }, [totalFiles]);
 
   const clearSelection = useCallback(() => {
     setSelectedFiles(new Set());

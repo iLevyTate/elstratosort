@@ -1,4 +1,4 @@
-import React, { memo, useMemo, useCallback } from 'react';
+import React, { memo, useMemo, useCallback, useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { List } from 'react-window';
 import { FileText, Compass } from 'lucide-react';
@@ -139,6 +139,30 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
   const items = useMemo(() => (Array.isArray(results) ? results : []), [results]);
   const handleAction = useCallback((action, path) => onFileAction(action, path), [onFileAction]);
 
+  // FIX #13: Track viewport height for responsive list sizing
+  const [viewportHeight, setViewportHeight] = useState(
+    typeof window !== 'undefined' ? window.innerHeight : 900
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    let rafId;
+    const handleResize = () => {
+      // Use rAF to debounce resize events
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        setViewportHeight(window.innerHeight);
+      });
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, []);
+
   // react-window v2 expects rowProps (not itemData).
   // Keep a stable object so the list can memoize rows efficiently.
   const rowProps = useMemo(
@@ -153,16 +177,14 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
   // FIX: Use virtualization only for large lists to avoid overhead on small lists
   const shouldVirtualize = items.length > VIRTUALIZATION_THRESHOLD;
 
-  // FIX: Move useMemo before early return to follow React hooks rules
-  const computedListHeight = React.useMemo(() => {
-    // Keep list from blowing past viewport on shorter screens
-    const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 900;
+  // FIX #13: Now properly depends on viewportHeight from resize listener
+  const computedListHeight = useMemo(() => {
     // Use up to 65% of viewport, but at least 350px
     const maxHeight = Math.min(LIST_HEIGHT, Math.max(350, Math.round(viewportHeight * 0.65)));
     // Also avoid rendering excessive blank space when fewer rows
     const desired = Math.min(maxHeight, ITEM_HEIGHT * items.length);
     return Math.max(desired, Math.min(ITEM_HEIGHT * 4, maxHeight));
-  }, [items.length]);
+  }, [items.length, viewportHeight]);
 
   // Simple wrapper - inline to avoid component identity issues
   const listContainerClass = `p-4 w-full modern-scrollbar overflow-y-auto flex flex-col gap-3`;
@@ -203,8 +225,9 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
   // For smaller lists, render normally without virtualization overhead
   return (
     <div className={listContainerClass}>
-      {/* FIX: Use more stable key to prevent collisions when file.path is undefined */}
-      {items.map((file, index) => {
+      {/* FIX: Use stable composite key that doesn't rely on array index
+          Priority: path > id > name+size+lastModified (all stable file properties) */}
+      {items.map((file) => {
         const stateDisplay = getFileStateDisplay(file.path, !!file.analysis);
         const confidence = formatConfidence(file.analysis?.confidence);
         const tone = stateDisplay.color?.includes('green')
@@ -214,11 +237,11 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
             : stateDisplay.color?.includes('red') || stateDisplay.color?.includes('danger')
               ? 'error'
               : 'info';
+        // Generate stable key from file properties (avoid index which breaks on reorder)
+        const stableKey =
+          file.path || file.id || `${file.name}-${file.size || 0}-${file.lastModified || 'nomod'}`;
         return (
-          <div
-            key={file.path || file.id || `${file.name}-${file.size || index}`}
-            className="list-row p-4 overflow-visible"
-          >
+          <div key={stableKey} className="list-row p-4 overflow-visible">
             <div className="flex items-start gap-4">
               <FileText className="w-6 h-6 text-system-gray-400 flex-shrink-0" />
               <div className="flex-1 min-w-0 overflow-hidden">

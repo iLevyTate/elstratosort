@@ -217,28 +217,20 @@ export function useAnalysis(options) {
   const pendingFilesRef = useRef([]);
 
   // Refs to track current state values (prevents stale closures in callbacks)
+  // PERF FIX: Update refs synchronously during render instead of using separate useEffect hooks.
+  // This is safe because ref assignments are idempotent and don't cause side effects.
   const isAnalyzingRef = useRef(isAnalyzing);
   const globalAnalysisActiveRef = useRef(globalAnalysisActive);
   const analysisResultsRef = useRef(analysisResults);
   const fileStatesRef = useRef(fileStates);
   const analysisProgressRef = useRef(analysisProgress);
 
-  // Keep refs in sync with state
-  useEffect(() => {
-    isAnalyzingRef.current = isAnalyzing;
-  }, [isAnalyzing]);
-  useEffect(() => {
-    globalAnalysisActiveRef.current = globalAnalysisActive;
-  }, [globalAnalysisActive]);
-  useEffect(() => {
-    analysisResultsRef.current = analysisResults;
-  }, [analysisResults]);
-  useEffect(() => {
-    fileStatesRef.current = fileStates;
-  }, [fileStates]);
-  useEffect(() => {
-    analysisProgressRef.current = analysisProgress;
-  }, [analysisProgress]);
+  // Sync refs during render (avoids useEffect overhead)
+  isAnalyzingRef.current = isAnalyzing;
+  globalAnalysisActiveRef.current = globalAnalysisActive;
+  analysisResultsRef.current = analysisResults;
+  fileStatesRef.current = fileStates;
+  analysisProgressRef.current = analysisProgress;
 
   /**
    * Reset analysis state
@@ -333,8 +325,8 @@ export function useAnalysis(options) {
       });
       return next;
     });
-    // Only re-run when naming settings change; avoid deps on state we set to prevent loops
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Deps are complete: functional updates (prev =>) don't need current state as deps.
+    // Only re-run when naming convention settings or the name generator changes.
   }, [namingSettings, generateSuggestedName, setAnalysisResults, setFileStates]);
 
   /**

@@ -22,6 +22,7 @@ import {
   AnalysisResultsList,
   AnalysisProgress
 } from '../components/discover';
+import { FileListSkeleton } from '../components/LoadingSkeleton';
 
 // Extracted hooks and utilities
 import {
@@ -431,23 +432,31 @@ function DiscoverPhase() {
             </div>
           )}
 
-          {/* Bottom Section - Results */}
-          {visibleAnalysisResults.length > 0 && (
+          {/* Bottom Section - Results (or skeleton while analyzing) */}
+          {(visibleAnalysisResults.length > 0 || (isAnalyzing && selectedFiles.length > 0)) && (
             <div className="flex-1 min-h-content-md max-h-viewport-lg surface-panel flex flex-col overflow-hidden animate-slide-up">
               <div className="border-b border-border-soft/70 bg-white/70 flex items-center justify-between p-default">
                 <h3 className="heading-tertiary m-0 text-sm uppercase tracking-wider text-system-gray-500">
                   Analysis Results
                 </h3>
                 <div className="text-xs text-system-gray-500">
-                  {visibleReadyCount} successful, {visibleFailedCount} failed
+                  {isAnalyzing && visibleAnalysisResults.length === 0
+                    ? 'Analyzing files...'
+                    : `${visibleReadyCount} successful, ${visibleFailedCount} failed`}
                 </div>
               </div>
               <div className="flex-1 min-h-0 p-0 bg-white/10 overflow-y-auto modern-scrollbar pb-default">
-                <AnalysisResultsList
-                  results={visibleAnalysisResults}
-                  onFileAction={handleFileAction}
-                  getFileStateDisplay={getFileStateDisplay}
-                />
+                {visibleAnalysisResults.length > 0 ? (
+                  <AnalysisResultsList
+                    results={visibleAnalysisResults}
+                    onFileAction={handleFileAction}
+                    getFileStateDisplay={getFileStateDisplay}
+                  />
+                ) : (
+                  <div className="p-4">
+                    <FileListSkeleton count={Math.min(selectedFiles.length, 5)} />
+                  </div>
+                )}
               </div>
             </div>
           )}
