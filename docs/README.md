@@ -7,9 +7,21 @@ find the right documentation for your needs.
 
 | Document                                                 | Description                                | Audience       |
 | -------------------------------------------------------- | ------------------------------------------ | -------------- |
+| [CONFIG.md](./CONFIG.md)                                 | Installation, dependencies & configuration | All users      |
 | [ARCHITECTURE.md](./ARCHITECTURE.md)                     | High-level system design and data flow     | All developers |
 | [CODE_QUALITY_STANDARDS.md](./CODE_QUALITY_STANDARDS.md) | Coding standards and style guide           | All developers |
 | [ERROR_HANDLING_GUIDE.md](./ERROR_HANDLING_GUIDE.md)     | Error handling patterns and best practices | All developers |
+
+## Installation & Dependencies
+
+> **⚠️ Beta Notice**: The automatic dependency installation feature is in beta. See
+> [CONFIG.md](./CONFIG.md#dependency-installation-beta) for manual CLI installation instructions.
+
+- **[CONFIG.md](./CONFIG.md)** - Complete dependency installation guide including:
+  - Manual CLI installation for Ollama and ChromaDB
+  - Required AI models and how to pull them
+  - Environment variable reference
+  - Troubleshooting tips
 
 ## Architecture & Design
 

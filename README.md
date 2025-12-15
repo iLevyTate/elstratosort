@@ -129,8 +129,11 @@ npm install       # Automatically sets up Ollama, ChromaDB, and AI models
 npm run dev       # Start development mode
 ```
 
-**Note**: `npm install` runs `postinstall` hooks to auto-detect and install Ollama + ChromaDB
-(Python module). If you need to manually re-run setup:
+> **⚠️ Beta Notice**: The automatic dependency installation feature is currently in beta and may not
+> work as expected on all systems. If you encounter issues during `npm install` or the app fails to
+> detect Ollama/ChromaDB, please use the manual installation instructions below.
+
+**Automatic Setup Commands** (Beta):
 
 ```bash
 npm run setup:deps         # Install both Ollama and ChromaDB
@@ -138,6 +141,65 @@ npm run setup:ollama       # Install Ollama + pull models
 npm run setup:chromadb     # Install ChromaDB Python module
 npm run setup:ollama:check # Verify Ollama installation
 npm run setup:chromadb:check # Verify ChromaDB installation
+```
+
+#### Manual Dependency Installation (Recommended for Full Functionality)
+
+If the automatic setup doesn't work, install dependencies manually via CLI:
+
+**1. Install Ollama**
+
+```bash
+# Windows (PowerShell as Administrator)
+winget install Ollama.Ollama
+# Or download from: https://ollama.ai/download
+
+# macOS
+brew install ollama
+# Or download from: https://ollama.ai/download
+
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+```
+
+**2. Pull Required AI Models**
+
+After installing Ollama, pull the required models:
+
+```bash
+# Start Ollama service (if not running)
+ollama serve
+
+# In a new terminal, pull the models (~6GB total)
+ollama pull llama3.2:latest      # Text analysis model
+ollama pull llava:latest         # Vision/image analysis model
+ollama pull mxbai-embed-large    # Embedding model for similarity search
+```
+
+**3. Install ChromaDB**
+
+ChromaDB requires Python 3.8+ to be installed on your system.
+
+```bash
+# Windows (PowerShell)
+pip install --user chromadb
+
+# macOS/Linux
+pip3 install --user chromadb
+# Or with pipx for isolated installation:
+pipx install chromadb
+```
+
+**4. Verify Installation**
+
+```bash
+# Verify Ollama is running
+curl http://127.0.0.1:11434/api/tags
+# Or on Windows: Invoke-RestMethod http://127.0.0.1:11434/api/tags
+
+# Verify ChromaDB module is installed
+python -c "import chromadb; print('ChromaDB OK')"
+# Or: python3 -c "import chromadb; print('ChromaDB OK')"
 ```
 
 #### Build Commands

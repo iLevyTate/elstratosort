@@ -16,7 +16,7 @@ Welcome to StratoSort! This guide will help you get started in just a few minute
 
 **Windows Users:**
 
-1. Go to the [Releases page](https://github.com/stratosort/stratosort/releases/latest)
+1. Go to the [Releases page](https://github.com/iLevyTate/elstratosort/releases/latest)
 2. Download `StratoSort-Setup-1.0.0.exe`
 3. The installer is also available at: `release/build/` after building
 
@@ -214,9 +214,9 @@ You now know everything needed to:
 
 ### Need Help?
 
-- 📖 [Full Documentation](README.md)
-- 🐛 [Report Issues](https://github.com/stratosort/stratosort/issues)
-- 💬 [Community Support](https://github.com/stratosort/stratosort/discussions)
+- 📖 [Full Documentation](../../README.md)
+- 🐛 [Report Issues](https://github.com/iLevyTate/elstratosort/issues)
+- 💬 [Community Support](https://github.com/iLevyTate/elstratosort/discussions)
 
 ---
 

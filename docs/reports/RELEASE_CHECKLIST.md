@@ -82,7 +82,7 @@ npm run dist:linux
 
 ### GitHub Release
 
-1. Go to [Releases](https://github.com/stratosort/stratosort/releases)
+1. Go to [Releases](https://github.com/iLevyTate/elstratosort/releases)
 2. Click "Draft a new release"
 3. Create tag: `v1.0.0` (match package.json version)
 4. Title: `StratoSort v1.0.0 - [Feature Name]`
@@ -127,9 +127,9 @@ The installer will automatically:
 
 ### 📚 Documentation
 
-- [Quick Start Guide](QUICK_START.md)
-- [Full Documentation](README.md)
-- [Ollama Setup](OLLAMA_SETUP_GUIDE.md)
+- [Quick Start Guide](./QUICK_START.md)
+- [Full Documentation](../../README.md)
+- [Ollama Setup](./OLLAMA_SETUP_GUIDE.md)
 ```
 
 ## Post-Release

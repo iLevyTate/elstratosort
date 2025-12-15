@@ -2,6 +2,68 @@
 
 This document lists all environment variables and configuration options available in StratoSort.
 
+## Dependency Installation (Beta)
+
+> **⚠️ Beta Notice**: The automatic dependency installation feature (`npm run setup:deps`) is
+> currently in beta and may not work reliably on all systems. For full functionality, we recommend
+> installing dependencies manually via CLI as described below.
+
+### Manual Installation via CLI
+
+If the automatic setup scripts fail or you prefer manual installation, follow these steps:
+
+#### 1. Install Ollama
+
+| Platform | Command                                                   |
+| -------- | --------------------------------------------------------- |
+| Windows  | `winget install Ollama.Ollama` or download from ollama.ai |
+| macOS    | `brew install ollama` or download from ollama.ai          |
+| Linux    | `curl -fsSL https://ollama.ai/install.sh \| sh`           |
+
+#### 2. Pull Required AI Models
+
+```bash
+# Ensure Ollama is running
+ollama serve
+
+# Pull models (~6GB total download)
+ollama pull llama3.2:latest      # Text analysis
+ollama pull llava:latest         # Vision/image analysis
+ollama pull mxbai-embed-large    # Embedding model
+```
+
+#### 3. Install ChromaDB (Requires Python 3.8+)
+
+```bash
+# Windows
+pip install --user chromadb
+
+# macOS/Linux
+pip3 install --user chromadb
+```
+
+#### 4. Verify Installation
+
+```bash
+# Test Ollama
+curl http://127.0.0.1:11434/api/tags
+
+# Test ChromaDB
+python -c "import chromadb; print('ChromaDB OK')"
+```
+
+### Automatic Setup Commands (Beta)
+
+These commands attempt to auto-detect and install dependencies but may not work on all systems:
+
+```bash
+npm run setup:deps           # Install both Ollama and ChromaDB
+npm run setup:ollama         # Install Ollama + pull models
+npm run setup:chromadb       # Install ChromaDB Python module
+npm run setup:ollama:check   # Verify Ollama installation
+npm run setup:chromadb:check # Verify ChromaDB installation
+```
+
 ## Environment Variables
 
 ### Ollama Configuration

@@ -456,10 +456,16 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
               'PowerPoint presentation - content extraction failed, using filename analysis';
           }
 
+          // Fix: Ensure category maps to a valid smart folder, not just "document"
+          const category = normalizeCategoryToSmartFolders(
+            intelligentCategory || 'document',
+            smartFolders
+          );
+
           return {
             purpose,
             project: fileName.replace(fileExtension, ''),
-            category: intelligentCategory || 'document',
+            category,
             date: new Date().toISOString().split('T')[0],
             keywords: intelligentKeywords || [],
             confidence,

@@ -158,9 +158,9 @@ function processFileForOrganization({
   let categoryChanged = false;
 
   // Filter out "document" category if it's not a smart folder
-  if (currentCategory === 'document') {
-    const documentFolder = findSmartFolderForCategory('document');
-    if (!documentFolder) {
+  if (currentCategory === 'document' || currentCategory === 'image') {
+    const matchingFolder = findSmartFolderForCategory(currentCategory);
+    if (!matchingFolder) {
       currentCategory = 'Uncategorized';
       categoryChanged = true;
     }

@@ -310,6 +310,7 @@ export function useAnalysis(options) {
           ...state,
           analysis: {
             ...state.analysis,
+            // Ensure suggested name is regenerated with current settings
             suggestedName: generateSuggestedName(
               state.name || extractFileName(filePath),
               state.analysis
@@ -497,12 +498,12 @@ export function useAnalysis(options) {
             if (abortSignal.aborted) return;
 
             // Increment progress AFTER analysis completes
-            completedCount++;
             const progress = {
-              current: completedCount,
+              current: Math.min(completedCount + 1, files.length), // Fix: Only increment on success, don't overshoot
               total: files.length,
               lastActivity: Date.now()
             };
+            completedCount++;
 
             if (validateProgressState(progress)) {
               localProgressRef.current = progress;
@@ -548,7 +549,7 @@ export function useAnalysis(options) {
             // Still increment count on error so progress continues
             completedCount++;
             const progress = {
-              current: completedCount,
+              current: Math.min(completedCount, files.length), // Fix: Don't overshoot
               total: files.length,
               lastActivity: Date.now()
             };
