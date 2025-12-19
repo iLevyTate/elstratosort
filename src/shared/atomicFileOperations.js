@@ -649,14 +649,24 @@ class AtomicFileOperations {
 
       return { success: true, results };
     } catch (error) {
-      // Transaction failed, attempt rollback, but do not fail tests
+      // Transaction failed, attempt rollback
       try {
         await this.rollbackTransaction(transactionId);
-      } catch {
-        // ignore rollback errors in tests
+        transaction.status = 'rolled_back';
+      } catch (rollbackError) {
+        logger.error('[ATOMIC-OPS] Rollback failed:', {
+          transactionId,
+          originalError: error.message,
+          rollbackError: rollbackError.message
+        });
+        transaction.status = 'rollback_failed';
       }
-      transaction.status = 'committed';
-      return { success: true, results, failedOperation: failedOperation?.id };
+      return {
+        success: false,
+        results,
+        failedOperation: failedOperation?.id,
+        error: error.message
+      };
     }
   }
 

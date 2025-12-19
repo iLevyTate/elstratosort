@@ -20,6 +20,10 @@ class ProcessingStateService {
     // Fixed: Add mutexes to prevent race conditions
     this._initPromise = null;
     this._writeLock = Promise.resolve();
+
+    // Track consecutive save failures for error monitoring
+    this._consecutiveSaveFailures = 0;
+    this._maxConsecutiveFailures = 3;
   }
 
   async ensureParentDirectory(filePath) {
@@ -136,14 +140,29 @@ class ProcessingStateService {
   async saveState() {
     const previousLock = this._writeLock;
 
-    // Wait for previous lock to complete (ignore its errors)
-    await previousLock.catch(() => {});
+    // Wait for previous lock to complete, but log any errors
+    await previousLock.catch((err) => {
+      logger.warn('[ProcessingStateService] Previous save had error:', err?.message);
+    });
 
     // Create save operation and update the lock chain
     const savePromise = this._saveStateInternal();
-    this._writeLock = savePromise.catch(() => {
-      // Swallow error to keep chain alive for next operation
-    });
+    this._writeLock = savePromise
+      .then(() => {
+        this._consecutiveSaveFailures = 0;
+      })
+      .catch((err) => {
+        this._consecutiveSaveFailures++;
+        logger.error('[ProcessingStateService] Save failed:', {
+          error: err?.message,
+          consecutiveFailures: this._consecutiveSaveFailures
+        });
+        if (this._consecutiveSaveFailures >= this._maxConsecutiveFailures) {
+          logger.error(
+            '[ProcessingStateService] CRITICAL: Multiple consecutive save failures - state persistence may be compromised'
+          );
+        }
+      });
 
     try {
       return await savePromise;

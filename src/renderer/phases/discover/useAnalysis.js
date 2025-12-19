@@ -213,6 +213,7 @@ export function useAnalysis(options) {
   const analyzeFilesRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
   const analysisTimeoutRef = useRef(null);
+  const lockTimeoutRef = useRef(null);
   const abortControllerRef = useRef(null);
   const pendingFilesRef = useRef([]);
 
@@ -370,8 +371,8 @@ export function useAnalysis(options) {
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Safety timeout
-      const lockTimeout = setTimeout(() => {
+      // Safety timeout - store in ref for proper cleanup
+      lockTimeoutRef.current = setTimeout(() => {
         if (analysisLockRef.current) {
           logger.warn('Analysis lock timeout, forcing release');
           analysisLockRef.current = false;
@@ -384,6 +385,7 @@ export function useAnalysis(options) {
             analysisTimeoutRef.current = null;
           }
         }
+        lockTimeoutRef.current = null;
       }, TIMEOUTS.ANALYSIS_LOCK);
 
       setIsAnalyzing(true);
@@ -411,7 +413,14 @@ export function useAnalysis(options) {
           };
 
           if (validateProgressState(currentProgress)) {
-            setAnalysisProgress(currentProgress);
+            // Use functional update to prevent race conditions with concurrent progress updates
+            setAnalysisProgress((prev) => {
+              // Only update if this progress is newer (prevents stale updates)
+              if (currentProgress.lastActivity >= (prev?.lastActivity || 0)) {
+                return currentProgress;
+              }
+              return prev;
+            });
             actions.setPhaseData('analysisProgress', currentProgress);
           } else {
             logger.warn('Invalid heartbeat progress, resetting');
@@ -647,7 +656,10 @@ export function useAnalysis(options) {
 
         analysisLockRef.current = false;
         setGlobalAnalysisActive(false);
-        clearTimeout(lockTimeout);
+        if (lockTimeoutRef.current) {
+          clearTimeout(lockTimeoutRef.current);
+          lockTimeoutRef.current = null;
+        }
 
         try {
           localStorage.removeItem('stratosort_workflow_state');
@@ -749,6 +761,10 @@ export function useAnalysis(options) {
       if (analysisTimeoutRef.current) {
         clearTimeout(analysisTimeoutRef.current);
         analysisTimeoutRef.current = null;
+      }
+      if (lockTimeoutRef.current) {
+        clearTimeout(lockTimeoutRef.current);
+        lockTimeoutRef.current = null;
       }
     };
   }, []);

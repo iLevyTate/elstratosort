@@ -86,7 +86,8 @@ async function checkFileSize(filePath, fileName) {
   } catch (error) {
     if (error.code === 'FILE_TOO_LARGE') throw error;
     throw new FileProcessingError('FILE_READ_ERROR', fileName, {
-      suggestion: error.message
+      suggestion: error.message,
+      cause: error
     });
   }
 }
@@ -584,7 +585,8 @@ async function extractTextFromXlsx(filePath) {
     });
     throw new FileProcessingError('XLSX_EXTRACTION_FAILURE', filePath, {
       originalError: errorMessage,
-      suggestion: 'XLSX file may be corrupted, password-protected, or in an unsupported format'
+      suggestion: 'XLSX file may be corrupted, password-protected, or in an unsupported format',
+      cause: error
     });
   } finally {
     // Explicit cleanup
@@ -691,7 +693,8 @@ async function extractTextFromPptx(filePath) {
     // Re-throw as FileProcessingError for consistent error handling
     throw new FileProcessingError('PPTX_EXTRACTION_FAILURE', filePath, {
       originalError: errorMessage,
-      suggestion: 'PPTX file may be corrupted, password-protected, or in an unsupported format'
+      suggestion: 'PPTX file may be corrupted, password-protected, or in an unsupported format',
+      cause: error
     });
   }
 }
