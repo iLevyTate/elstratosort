@@ -1,4 +1,5 @@
 const { logger } = require('../../shared/logger');
+const { TIMEOUTS } = require('../../shared/performanceConstants');
 logger.setContext('OllamaService');
 const { Ollama } = require('ollama'); // MEDIUM PRIORITY FIX (MED-10): Import Ollama for temporary instances
 
@@ -49,7 +50,7 @@ class RateLimiter {
    */
   async waitForSlot() {
     while (!this.canCall()) {
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, TIMEOUTS.DELAY_BATCH));
     }
   }
 

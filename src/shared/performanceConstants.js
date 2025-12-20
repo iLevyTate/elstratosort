@@ -39,6 +39,7 @@ const TIMEOUTS = {
   ANIMATION_SHORT: 200,
   ANIMATION_MEDIUM: 300,
   ANIMATION_LONG: 500,
+  ANIMATION_FADE: 180, // Fade skeleton/overlay animations
   FILE_READ: 5000,
   FILE_WRITE: 10000,
   FILE_COPY: 30000,
@@ -52,18 +53,25 @@ const TIMEOUTS = {
   HEALTH_CHECK: 5000,
   AXIOS_DEFAULT: 5000,
   SERVICE_STARTUP: 30000,
+  SERVICE_INIT_WAIT: 2000, // Wait for service initialization
   DATABASE_INIT: 15000,
   MODEL_LOAD: 60000,
+  MODEL_DISCOVERY: 5000, // Model discovery/list timeout
+  DELAY_MICRO: 50, // Very short delays for race condition prevention
   DELAY_SHORT: 250,
   DELAY_MEDIUM: 500,
-  DELAY_BATCH: 100,
+  DELAY_BATCH: 100, // Short delay for batch operations
+  DELAY_LOCK_RETRY: 400, // Delay before retrying lock acquisition
   DELAY_NOTIFICATION: 1500,
+  CLEANUP_DELAY: 60000, // Delay before cleanup operations (e.g., temp file removal)
   CLEANUP_MAX: 5000,
   SHUTDOWN_MAX: 10000,
+  PROCESS_KILL_VERIFY: 500, // Delay to verify process termination
   IPC_HANDLER_RETRY_BASE: 100,
   IPC_HANDLER_MAX_WAIT: 2000,
   SEMANTIC_QUERY: 30000,
   FLUSH_MAX_WAIT: 30000,
+  WINDOW_LOAD_DELAY: 100, // Delay before loading window content
   // Analysis lock and monitoring timeouts
   ANALYSIS_LOCK: 5 * 60 * 1000, // 5 minutes - forces lock release if analysis hangs
   GLOBAL_ANALYSIS: 10 * 60 * 1000, // 10 minutes - max total analysis time
@@ -191,7 +199,7 @@ const LIMITS = {
   RATE_LIMIT_CLEANUP_THRESHOLD: 100,
   RATE_LIMIT_STALE_MS: 60000,
   MAX_NUMERIC_RETRIES: 5000,
-  MAX_FILENAME_LENGTH: 200,
+  MAX_FILENAME_LENGTH: 255, // Standard filesystem limit (NTFS, ext4, HFS+)
   MAX_SETTINGS_BACKUPS: 10,
   MAX_WATCHER_RESTARTS: 10,
   WATCHER_RESTART_WINDOW: 60000,

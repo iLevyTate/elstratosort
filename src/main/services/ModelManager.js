@@ -7,6 +7,7 @@ const { app } = require('electron');
 const fs = require('fs').promises;
 const path = require('path');
 const { logger } = require('../../shared/logger');
+const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { getOllama, getOllamaHost } = require('../ollamaUtils');
 logger.setContext('ModelManager');
 
@@ -142,7 +143,10 @@ class ModelManager {
         const discoverPromise = this.discoverModels();
         let timeoutId;
         const timeoutPromise = new Promise((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error('Model discovery timeout')), 5000);
+          timeoutId = setTimeout(
+            () => reject(new Error('Model discovery timeout')),
+            TIMEOUTS.MODEL_DISCOVERY
+          );
           // Ensure timeout doesn't keep process alive
           if (timeoutId && timeoutId.unref) {
             timeoutId.unref();

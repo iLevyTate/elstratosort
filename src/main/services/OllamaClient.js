@@ -13,6 +13,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { app } = require('electron');
 const { logger } = require('../../shared/logger');
+const { TIMEOUTS } = require('../../shared/performanceConstants');
 
 logger.setContext('OllamaClient');
 
@@ -152,7 +153,7 @@ class OllamaClient {
       const startTime = Date.now();
 
       while (this._pendingOperations.size > 0 && Date.now() - startTime < timeout) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, TIMEOUTS.DELAY_BATCH));
       }
 
       if (this._pendingOperations.size > 0) {

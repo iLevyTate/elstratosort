@@ -81,7 +81,7 @@ class DownloadWatcher {
     this.debounceDelay = 500; // 500ms debounce for rapid events
   }
 
-  start() {
+  async start() {
     if (this.watcher) {
       logger.debug('[DOWNLOAD-WATCHER] Watcher already running');
       return;
@@ -98,83 +98,77 @@ class DownloadWatcher {
       const downloadsPath = path.join(os.homedir(), 'Downloads');
 
       // Verify downloads directory exists and is accessible
-      this._verifyDirectory(downloadsPath)
-        .then((isValid) => {
-          if (!isValid) {
-            this.isStarting = false;
-            return;
-          }
+      const isValid = await this._verifyDirectory(downloadsPath);
+      if (!isValid) {
+        this.isStarting = false;
+        return;
+      }
 
-          logger.info('[DOWNLOAD-WATCHER] Watching', downloadsPath);
+      logger.info('[DOWNLOAD-WATCHER] Watching', downloadsPath);
 
-          // PERFORMANCE FIX: Optimize chokidar watcher configuration
-          // - ignoreInitial: Don't process existing files on startup
-          // - ignored: Comprehensive temp/system file filtering
-          // - awaitWriteFinish: Wait for file writes to complete before processing
-          // - usePolling: false by default for better performance, set to true for network drives
-          this.watcher = chokidar.watch(downloadsPath, {
-            ignoreInitial: true,
-            ignored: [
-              /(^|[\\/\\])\../, // Ignore dotfiles
-              /\.tmp$/i, // Ignore temp files
-              /\.temp$/i, // Ignore temp files
-              /\.crdownload$/i, // Chrome download temp files
-              /\.part$/i, // Firefox download temp files
-              /\.!qB$/i, // qBittorrent temp files
-              /\.download$/i, // Safari temp files
-              /\.partial$/i, // Generic partial downloads
-              /~\$/, // Microsoft Office temp files
-              /^~/, // Unix temp files
-              /\.swp$/i, // Vim swap files
-              /\.lock$/i, // Lock files
-              /\.lck$/i, // Alternative lock files
-              /Thumbs\.db$/i, // Windows thumbnails
-              /desktop\.ini$/i, // Windows desktop settings
-              /\.DS_Store$/i, // macOS directory settings
-              '**/node_modules/**', // Ignore node_modules
-              '**/.git/**' // Ignore git directories
-            ],
-            awaitWriteFinish: {
-              stabilityThreshold: 2000, // Wait 2s after last change
-              pollInterval: 100 // Check every 100ms
-            },
-            // Error handling options
-            persistent: true,
-            usePolling: false, // Use native watchers for better performance
-            alwaysStat: false, // Don't stat files we're ignoring
-            depth: 0 // Only watch immediate directory, not subdirectories
-          });
+      // PERFORMANCE FIX: Optimize chokidar watcher configuration
+      // - ignoreInitial: Don't process existing files on startup
+      // - ignored: Comprehensive temp/system file filtering
+      // - awaitWriteFinish: Wait for file writes to complete before processing
+      // - usePolling: false by default for better performance, set to true for network drives
+      this.watcher = chokidar.watch(downloadsPath, {
+        ignoreInitial: true,
+        ignored: [
+          /(^|[\\/\\])\../, // Ignore dotfiles
+          /\.tmp$/i, // Ignore temp files
+          /\.temp$/i, // Ignore temp files
+          /\.crdownload$/i, // Chrome download temp files
+          /\.part$/i, // Firefox download temp files
+          /\.!qB$/i, // qBittorrent temp files
+          /\.download$/i, // Safari temp files
+          /\.partial$/i, // Generic partial downloads
+          /~\$/, // Microsoft Office temp files
+          /^~/, // Unix temp files
+          /\.swp$/i, // Vim swap files
+          /\.lock$/i, // Lock files
+          /\.lck$/i, // Alternative lock files
+          /Thumbs\.db$/i, // Windows thumbnails
+          /desktop\.ini$/i, // Windows desktop settings
+          /\.DS_Store$/i, // macOS directory settings
+          '**/node_modules/**', // Ignore node_modules
+          '**/.git/**' // Ignore git directories
+        ],
+        awaitWriteFinish: {
+          stabilityThreshold: 2000, // Wait 2s after last change
+          pollInterval: 100 // Check every 100ms
+        },
+        // Error handling options
+        persistent: true,
+        usePolling: false, // Use native watchers for better performance
+        alwaysStat: false, // Don't stat files we're ignoring
+        depth: 0 // Only watch immediate directory, not subdirectories
+      });
 
-          // FIX #32: Validate watcher was created successfully before registering listeners
-          if (!this.watcher) {
-            logger.error('[DOWNLOAD-WATCHER] Failed to create file watcher');
-            this.isStarting = false;
-            return;
-          }
+      // FIX #32: Validate watcher was created successfully before registering listeners
+      if (!this.watcher) {
+        logger.error('[DOWNLOAD-WATCHER] Failed to create file watcher');
+        this.isStarting = false;
+        return;
+      }
 
-          // Handle new files with debouncing
-          this.watcher.on('add', (filePath) => {
-            this._debouncedHandleFile(filePath);
-          });
+      // Handle new files with debouncing
+      this.watcher.on('add', (filePath) => {
+        this._debouncedHandleFile(filePath);
+      });
 
-          // Handle watcher errors with recovery
-          this.watcher.on('error', (error) => {
-            this._handleWatcherError(error);
-          });
+      // Handle watcher errors with recovery
+      this.watcher.on('error', (error) => {
+        this._handleWatcherError(error);
+      });
 
-          // Handle ready event
-          this.watcher.on('ready', () => {
-            logger.info('[DOWNLOAD-WATCHER] Watcher ready and monitoring');
-            this.restartAttempts = 0; // Reset restart counter on successful start
-            this.lastError = null;
-          });
+      // Handle ready event
+      this.watcher.on('ready', () => {
+        logger.info('[DOWNLOAD-WATCHER] Watcher ready and monitoring');
+        this.restartAttempts = 0; // Reset restart counter on successful start
+        this.lastError = null;
+      });
 
-          this.isStarting = false;
-        })
-        .catch((error) => {
-          this.isStarting = false;
-          this._handleWatcherError(error);
-        });
+      this.isStarting = false;
     } catch (error) {
       this.isStarting = false;
       this._handleWatcherError(error);

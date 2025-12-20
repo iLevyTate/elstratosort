@@ -10,7 +10,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { logger } = require('./logger');
-const { RETRY } = require('./performanceConstants');
+const { RETRY, TIMEOUTS } = require('./performanceConstants');
 
 // Normalize paths using the host platform conventions to avoid breaking
 // real filesystem paths (especially on Windows where drive letters matter).
@@ -644,7 +644,10 @@ class AtomicFileOperations {
       // Transaction committed successfully
 
       // Clean up old backups after successful commit (optional)
-      const cleanupTimer = setTimeout(() => this.cleanupBackups(transactionId), 60000); // 1 minute delay
+      const cleanupTimer = setTimeout(
+        () => this.cleanupBackups(transactionId),
+        TIMEOUTS.CLEANUP_DELAY
+      );
       cleanupTimer.unref();
 
       return { success: true, results };

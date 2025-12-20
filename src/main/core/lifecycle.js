@@ -9,6 +9,7 @@
 
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { logger } = require('../../shared/logger');
+const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { destroyTray, getTray } = require('./systemTray');
 const { getStartupManager } = require('../services/startup');
 const systemAnalytics = require('./systemAnalytics');
@@ -241,7 +242,7 @@ async function handleBeforeQuit() {
         }
 
         // Brief async wait then verify (replaces blocking sleep)
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, TIMEOUTS.PROCESS_KILL_VERIFY));
 
         // Verify process is actually terminated
         if (isProcessRunning(pid)) {

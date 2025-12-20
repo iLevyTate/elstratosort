@@ -16,7 +16,8 @@ const {
   LIMITS,
   THRESHOLDS,
   RETRY,
-  CONCURRENCY
+  CONCURRENCY,
+  TIMEOUTS
 } = require('../../../shared/performanceConstants');
 
 const { loadPersistedData, persistQueueData } = require('./persistence');
@@ -621,7 +622,7 @@ class EmbeddingQueue {
       const maxWait = 30000;
       const startTime = Date.now();
       while (this.isFlushing && Date.now() - startTime < maxWait) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, TIMEOUTS.DELAY_BATCH));
       }
     }
 
