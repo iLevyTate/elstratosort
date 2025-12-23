@@ -97,6 +97,13 @@ if (!z) {
 
     // Trim trailing punctuation that often comes from prose/snippets
     s = s.replace(/[),;]+$/, '').trim();
+
+    // Collapse duplicate protocols (e.g. "http://http://127.0.0.1:11434")
+    // so validation and downstream normalization don't reject common paste mistakes.
+    if (/^(https?:\/\/){2,}/i.test(s)) {
+      const isHttps = /^https:\/\//i.test(s);
+      s = s.replace(/^(https?:\/\/)+/i, isHttps ? 'https://' : 'http://');
+    }
     return s;
   };
 

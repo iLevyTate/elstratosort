@@ -288,6 +288,12 @@ describe('IPC Validation Schemas', () => {
       expect(result.data).toBe('http://127.0.0.1:11434/api/tags');
     });
 
+    testIfZod('accepts a URL with duplicated protocol (normalizes it)', () => {
+      const result = schemas.ollamaHost.safeParse('http://http://127.0.0.1:11434');
+      expect(result.success).toBe(true);
+      expect(result.data).toBe('http://127.0.0.1:11434');
+    });
+
     testIfZod('accepts empty string', () => {
       const result = schemas.ollamaHost.safeParse('');
       expect(result.success).toBe(true);
