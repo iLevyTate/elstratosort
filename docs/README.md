@@ -69,6 +69,9 @@ find the right documentation for your needs.
   refactoring
 - **[BUGFIXES.md](./BUGFIXES.md)** - Notable bug fixes and their solutions
 
+> **Note:** Legacy development reports and session logs have been archived to `docs/.legacy/` (not
+> tracked in git).
+
 ## Configuration
 
 Environment variables and configuration are centralized in:
@@ -83,16 +86,21 @@ Environment variables and configuration are centralized in:
 docs/
 ├── README.md                        # This index file
 ├── ARCHITECTURE.md                  # System design
+├── BUGFIXES.md                      # Notable bug fixes
+├── CODE_EXAMPLES.md                 # Common patterns
 ├── CODE_QUALITY_STANDARDS.md        # Style guide
 ├── CONFIG.md                        # Environment variables
 ├── DI_PATTERNS.md                   # Dependency injection
 ├── ERROR_HANDLING_GUIDE.md          # Error patterns
 ├── IMPORT_PATH_STANDARDS.md         # Import conventions
+├── LEARNING_GUIDE.md                # Developer onboarding
 ├── LLM_OPTIMIZATION.md              # AI tuning
 ├── OPTIMIZATION_DIAGRAM.md          # Optimization visuals
 ├── PERFORMANCE_BENCHMARKING.md      # Benchmarks
+├── REFERENCE_AND_GLOSSARY.md        # Terms and concepts
+├── REFACTORING_CANDIDATES.md        # Future improvements
 ├── TESTING_STRATEGY.md              # Test strategy
-└── ...                              # Other guides
+└── .legacy/                         # Archived reports (gitignored)
 ```
 
 ## Contributing

@@ -103,3 +103,6 @@ assets/**/workspaceStorage_*/*
 
 # Internal planning documents
 .internal/
+
+# Legacy documentation (archived reports and session logs)
+docs/.legacy/
