@@ -2,7 +2,8 @@
 
 ## Overview
 
-This document identifies critical paths in the application that require comprehensive test coverage and provides testing recommendations.
+This document identifies critical paths in the application that require comprehensive test coverage
+and provides testing recommendations.
 
 ## Critical Paths Requiring Tests
 
@@ -289,9 +290,7 @@ it('should analyze file', () => {
 ```javascript
 // Always test error paths
 it('should handle missing files', async () => {
-  await expect(analyzeFile('nonexistent.pdf')).rejects.toThrow(
-    'File not found',
-  );
+  await expect(analyzeFile('nonexistent.pdf')).rejects.toThrow('File not found');
 });
 ```
 
@@ -352,7 +351,7 @@ npm test -- settings-service
 ### Run with Coverage
 
 ```bash
-npm test -- --coverage
+npm run test:coverage
 ```
 
 ### Watch Mode

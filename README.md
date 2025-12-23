@@ -1,6 +1,6 @@
 # El StratoSort
 
-![Coverage](https://img.shields.io/badge/coverage-73.4%25-orange)
+![Coverage](https://img.shields.io/badge/coverage-76.4%25-orange)
 
 **Smart File Organization with Local AI**
 
