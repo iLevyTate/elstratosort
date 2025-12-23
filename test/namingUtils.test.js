@@ -239,6 +239,42 @@ describe('namingUtils', () => {
       // sanitizeToken should turn 'my_file_name' into 'my file name'
       expect(result).toMatch(/Project-my file name-\d{8}\.txt/);
     });
+
+    test('does not double-append date when suggestedName already ends with the same date', () => {
+      const result = namingUtils.generateSuggestedNameFromAnalysis({
+        originalFileName: 'image.png',
+        analysis: {
+          date: '2023-04-19',
+          suggestedName: 'brain inspired decision engine 2023-04-19'
+        },
+        settings: {
+          convention: 'subject-date',
+          separator: '-',
+          dateFormat: 'YYYY-MM-DD',
+          caseConvention: 'kebab-case'
+        }
+      });
+
+      expect(result).toBe('brain-inspired-decision-engine-2023-04-19.png');
+    });
+
+    test('strips duplicated trailing date tokens (e.g. ...-2023-04-19-2023-04-19) before appending', () => {
+      const result = namingUtils.generateSuggestedNameFromAnalysis({
+        originalFileName: 'image.png',
+        analysis: {
+          date: '2023-04-19',
+          suggestedName: 'brain-inspired-decision-engine-2023-04-19-2023-04-19'
+        },
+        settings: {
+          convention: 'subject-date',
+          separator: '-',
+          dateFormat: 'YYYY-MM-DD',
+          caseConvention: 'kebab-case'
+        }
+      });
+
+      expect(result).toBe('brain-inspired-decision-engine-2023-04-19.png');
+    });
   });
 
   describe('makeUniqueFileName', () => {

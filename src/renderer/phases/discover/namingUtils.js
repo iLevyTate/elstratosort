@@ -282,24 +282,32 @@ export function generateSuggestedNameFromAnalysis({ originalFileName, analysis, 
   const dateFormat = settings?.dateFormat || 'YYYY-MM-DD';
   const caseConvention = settings?.caseConvention;
 
-  // Extract suggested name from analysis, with max length enforcement
-  const MAX_SUBJECT_LENGTH = 50; // Maximum characters for the subject/name portion
-  let rawSubject =
-    typeof analysis?.suggestedName === 'string' && analysis.suggestedName.trim()
-      ? analysis.suggestedName.trim().replace(/\.[^/.]+$/, '')
-      : originalBase;
+  const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  // Truncate overly long subjects intelligently (at word boundary if possible)
-  if (rawSubject.length > MAX_SUBJECT_LENGTH) {
-    // Try to break at a word boundary (space, hyphen, underscore)
-    const truncated = rawSubject.slice(0, MAX_SUBJECT_LENGTH);
-    const lastBreak = Math.max(
-      truncated.lastIndexOf(' '),
-      truncated.lastIndexOf('-'),
-      truncated.lastIndexOf('_')
-    );
-    rawSubject = lastBreak > MAX_SUBJECT_LENGTH * 0.5 ? truncated.slice(0, lastBreak) : truncated;
-  }
+  const stripTrailingDateToken = (subject, token) => {
+    if (!subject || !token) return subject;
+    const t = String(token).trim();
+    if (!t) return subject;
+
+    // Remove one or more occurrences of the date token at the end, allowing common separators
+    const re = new RegExp(`(?:[\\s._-]*${escapeRegExp(t)})+$`);
+    const stripped = String(subject)
+      .replace(re, '')
+      .replace(/[\s._-]+$/g, '')
+      .trim();
+    return stripped || subject;
+  };
+
+  const stripGenericTrailingDate = (subject) => {
+    if (!subject) return subject;
+    // Remove trailing YYYY-MM-DD or YYYYMMDD (one or more), allowing separators
+    const re = /(?:[\s._-]*(?:\d{4}-\d{2}-\d{2}|\d{8}))+$/;
+    const stripped = String(subject)
+      .replace(re, '')
+      .replace(/[\s._-]+$/g, '')
+      .trim();
+    return stripped || subject;
+  };
 
   const rawProject =
     typeof analysis?.project === 'string' && analysis.project.trim()
@@ -333,6 +341,38 @@ export function generateSuggestedNameFromAnalysis({ originalFileName, analysis, 
     }
   }
 
+  const formattedDate = formatDate(effectiveDate, dateFormat);
+
+  // Extract suggested name from analysis, with max length enforcement
+  const MAX_SUBJECT_LENGTH = 50; // Maximum characters for the subject/name portion
+  let rawSubject =
+    typeof analysis?.suggestedName === 'string' && analysis.suggestedName.trim()
+      ? analysis.suggestedName.trim().replace(/\.[^/.]+$/, '')
+      : originalBase;
+
+  // If the naming convention already adds a date, strip trailing date tokens from the LLM subject
+  // so we don't end up with "...-2023-04-19-2023-04-19".
+  const conventionAddsDate = ['subject-date', 'date-subject', 'project-subject-date'].includes(
+    convention
+  );
+  if (conventionAddsDate) {
+    rawSubject = stripTrailingDateToken(rawSubject, formattedDate);
+    rawSubject = stripTrailingDateToken(rawSubject, analysis?.date);
+    rawSubject = stripGenericTrailingDate(rawSubject);
+  }
+
+  // Truncate overly long subjects intelligently (at word boundary if possible)
+  if (rawSubject.length > MAX_SUBJECT_LENGTH) {
+    // Try to break at a word boundary (space, hyphen, underscore)
+    const truncated = rawSubject.slice(0, MAX_SUBJECT_LENGTH);
+    const lastBreak = Math.max(
+      truncated.lastIndexOf(' '),
+      truncated.lastIndexOf('-'),
+      truncated.lastIndexOf('_')
+    );
+    rawSubject = lastBreak > MAX_SUBJECT_LENGTH * 0.5 ? truncated.slice(0, lastBreak) : truncated;
+  }
+
   // Keep filenames safe across platforms. (Windows particularly)
   const sanitizeToken = (value) =>
     String(value || '')
@@ -346,18 +386,14 @@ export function generateSuggestedNameFromAnalysis({ originalFileName, analysis, 
   const subject = sanitizeToken(rawSubject) || originalBase;
   const project = sanitizeToken(rawProject) || 'Project';
   const category = sanitizeToken(rawCategory) || 'Category';
-  const formattedDate = formatDate(effectiveDate, dateFormat);
 
   let base;
   switch (convention) {
     case 'subject-date':
-      base = `${subject}${separator}${formattedDate}`;
       break;
     case 'date-subject':
-      base = `${formattedDate}${separator}${subject}`;
       break;
     case 'project-subject-date':
-      base = `${project}${separator}${subject}${separator}${formattedDate}`;
       break;
     case 'category-subject':
       base = `${category}${separator}${subject}`;
@@ -370,6 +406,12 @@ export function generateSuggestedNameFromAnalysis({ originalFileName, analysis, 
       base = subject;
       break;
   }
+
+  // Now that subject/project/category are computed, fill in date-based conventions.
+  if (convention === 'subject-date') base = `${subject}${separator}${formattedDate}`;
+  if (convention === 'date-subject') base = `${formattedDate}${separator}${subject}`;
+  if (convention === 'project-subject-date')
+    base = `${project}${separator}${subject}${separator}${formattedDate}`;
 
   const finalBase = caseConvention ? applyCaseConvention(base, caseConvention) : base;
   return `${finalBase}${extension}`;
