@@ -15,6 +15,7 @@ import {
   validateProgressState,
   generatePreviewName as generatePreviewNameUtil,
   generateSuggestedNameFromAnalysis,
+  makeUniqueFileName,
   extractFileName
 } from './namingUtils';
 
@@ -75,6 +76,33 @@ function mergeAnalysisResults(existingResults, newResults) {
   const resultsByPath = new Map((existingResults || []).map((r) => [r.path, r]));
   newResults.forEach((r) => resultsByPath.set(r.path, r));
   return Array.from(resultsByPath.values());
+}
+
+/**
+ * De-duplicate suggested names across the current result set.
+ * This prevents multiple similar files from ending up with identical suggested names in the UI.
+ *
+ * NOTE: Actual filesystem collision handling is also performed during organize operations.
+ */
+function dedupeSuggestedNames(results) {
+  const used = new Map();
+  let changed = false;
+
+  const next = (results || []).map((r) => {
+    if (!r?.analysis?.suggestedName) return r;
+    const unique = makeUniqueFileName(r.analysis.suggestedName, used);
+    if (unique === r.analysis.suggestedName) return r;
+    changed = true;
+    return {
+      ...r,
+      analysis: {
+        ...r.analysis,
+        suggestedName: unique
+      }
+    };
+  });
+
+  return changed ? next : results;
 }
 
 /**
@@ -324,7 +352,8 @@ export function useAnalysis(options) {
       });
 
       // Only return new array if there were actual changes
-      return hasChanges ? updated : prev;
+      const withNamingApplied = hasChanges ? updated : prev;
+      return dedupeSuggestedNames(withNamingApplied);
     });
 
     setFileStates((prev) => {
@@ -653,10 +682,10 @@ export function useAnalysis(options) {
         await runWorkerPool();
 
         // Merge results using extracted helper functions
-        const mergedResults = mergeAnalysisResults(analysisResults, results);
+        const mergedResults = dedupeSuggestedNames(mergeAnalysisResults(analysisResults, results));
         setAnalysisResults(mergedResults);
 
-        const mergedStates = mergeFileStates(fileStates, results);
+        const mergedStates = mergeFileStates(fileStates, mergedResults);
         setFileStates(mergedStates);
 
         actions.setPhaseData('analysisResults', mergedResults);

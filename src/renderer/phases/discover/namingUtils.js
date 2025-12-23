@@ -374,3 +374,52 @@ export function generateSuggestedNameFromAnalysis({ originalFileName, analysis, 
   const finalBase = caseConvention ? applyCaseConvention(base, caseConvention) : base;
   return `${finalBase}${extension}`;
 }
+
+/**
+ * Ensure a filename is unique within a set by appending a numeric suffix before the extension.
+ *
+ * Example:
+ * - "photo.jpg" -> "photo.jpg"
+ * - "photo.jpg" again -> "photo-2.jpg"
+ * - "photo.jpg" again -> "photo-3.jpg"
+ *
+ * Uniqueness is case-insensitive.
+ *
+ * @param {string} desiredName - Desired filename (may include extension)
+ * @param {Map<string, number>} usedCounts - Map keyed by lowercased full filename to count
+ * @returns {string} Unique filename
+ */
+export function makeUniqueFileName(desiredName, usedCounts) {
+  const raw = String(desiredName || '').trim();
+  if (!raw) return '';
+
+  const key = raw.toLowerCase();
+  const prevCount = usedCounts.get(key) || 0;
+  if (prevCount === 0) {
+    usedCounts.set(key, 1);
+    return raw;
+  }
+
+  // Split extension (only last dot)
+  const dotIdx = raw.lastIndexOf('.');
+  const hasExt = dotIdx > 0 && dotIdx > raw.length - 6;
+  const base = hasExt ? raw.slice(0, dotIdx) : raw;
+  const ext = hasExt ? raw.slice(dotIdx) : '';
+
+  let n = prevCount + 1;
+  // Find the first unused candidate
+  for (let attempts = 0; attempts < 10000; attempts += 1) {
+    const candidate = `${base}-${n}${ext}`;
+    const candidateKey = candidate.toLowerCase();
+    if (!usedCounts.has(candidateKey)) {
+      usedCounts.set(key, n); // track latest for the original key
+      usedCounts.set(candidateKey, 1);
+      return candidate;
+    }
+    n += 1;
+  }
+
+  // Extremely unlikely unless usedCounts was pre-populated with a huge contiguous range.
+  // Return the raw name rather than hanging.
+  return raw;
+}

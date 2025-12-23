@@ -241,6 +241,22 @@ describe('namingUtils', () => {
     });
   });
 
+  describe('makeUniqueFileName', () => {
+    test('keeps first occurrence unchanged and appends numeric suffix for duplicates', () => {
+      const used = new Map();
+      expect(namingUtils.makeUniqueFileName('photo.jpg', used)).toBe('photo.jpg');
+      expect(namingUtils.makeUniqueFileName('photo.jpg', used)).toBe('photo-2.jpg');
+      expect(namingUtils.makeUniqueFileName('photo.jpg', used)).toBe('photo-3.jpg');
+    });
+
+    test('is case-insensitive for uniqueness', () => {
+      const used = new Map();
+      expect(namingUtils.makeUniqueFileName('Photo.JPG', used)).toBe('Photo.JPG');
+      // Current behavior uses the casing of the incoming desired name for the suffixed variant.
+      expect(namingUtils.makeUniqueFileName('photo.jpg', used)).toBe('photo-2.jpg');
+    });
+  });
+
   describe('validateProgressState', () => {
     test('returns true for valid progress', () => {
       const progress = {
