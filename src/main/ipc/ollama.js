@@ -1,5 +1,6 @@
 const { Ollama } = require('ollama');
 const { withErrorLogging, withValidation } = require('./ipcWrappers');
+const { optionalUrl: optionalUrlSchema } = require('./validationSchemas');
 const { SERVICE_URLS } = require('../../shared/configDefaults');
 let z;
 
@@ -187,20 +188,8 @@ function registerOllamaIpc({
   );
 
   // Use relaxed URL validation that allows URLs with or without protocol
-  // Normalize URL before validation to handle user input like "localhost:11434"
-  const relaxedUrlPattern =
-    /^(?:https?:\/\/)?(?:[\w.-]+|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/.*)?$/;
-  const hostSchema = z
-    ? z
-        .string()
-        .trim()
-        .regex(
-          relaxedUrlPattern,
-          'Invalid Ollama URL format (expected host[:port] with optional http/https)'
-        )
-        .or(z.string().length(0))
-        .optional()
-    : null;
+  // Normalize and validate user input (also extracts URL from pasted commands like `curl ...`).
+  const hostSchema = z && optionalUrlSchema ? optionalUrlSchema : null;
   const testConnectionHandler =
     z && hostSchema
       ? withValidation(logger, hostSchema, async (event, hostUrl) => {

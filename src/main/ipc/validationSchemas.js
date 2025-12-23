@@ -48,18 +48,50 @@ if (!z) {
 
   /**
    * Optional URL validation (relaxed: protocol optional, trims whitespace)
-   * Uses .nullish() to allow both null and undefined values
+   *
+   * Also supports extracting a URL from common pasted commands (e.g. `curl http://127.0.0.1:11434/api/tags`).
+   * Uses optional+nullable to allow both undefined and null values.
    */
   const relaxedUrlRegex = /^(?:https?:\/\/)?(?:[\w.-]+|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/.*)?$/;
+
+  const extractUrlLikeToken = (raw) => {
+    if (typeof raw !== 'string') return raw;
+    let s = raw.trim();
+    if (!s) return '';
+
+    // Strip surrounding quotes commonly added when copying values
+    if (
+      (s.startsWith('"') && s.endsWith('"')) ||
+      (s.startsWith("'") && s.endsWith("'")) ||
+      (s.startsWith('`') && s.endsWith('`'))
+    ) {
+      s = s.slice(1, -1).trim();
+    }
+
+    // If the user pasted a full command (e.g. "curl ..."), try to extract the first URL-like token.
+    // We prefer http(s)://... first, then host[:port][/path] patterns.
+    if (/\s/.test(s)) {
+      const tokenMatch = s.match(
+        /(https?:\/\/[^\s"'`]+|(?:[\w.-]+|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/[^\s"'`]+)?)/i
+      );
+      if (tokenMatch?.[1]) {
+        s = tokenMatch[1];
+      }
+    }
+
+    // Trim trailing punctuation that often comes from prose/snippets
+    s = s.replace(/[),;]+$/, '').trim();
+    return s;
+  };
+
   const optionalUrlSchema = z
-    .string()
-    .trim()
-    .nullish()
-    .or(z.literal(''))
+    .preprocess(extractUrlLikeToken, z.string())
     .refine(
       (val) => val === undefined || val === null || val === '' || relaxedUrlRegex.test(val),
       'Invalid Ollama URL format (expected host[:port] with optional http/https)'
-    );
+    )
+    .optional()
+    .nullable();
 
   /**
    * Model name validation - alphanumeric with common separators
