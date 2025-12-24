@@ -100,21 +100,17 @@ async function checkOllamaInstallation() {
 async function isPortAvailable(host, port) {
   try {
     await axios.get(`http://${host}:${port}`, {
-      timeout: DEFAULT_AXIOS_TIMEOUT
+      timeout: DEFAULT_AXIOS_TIMEOUT,
+      validateStatus: () => true
     });
-    // If we get here, something is already running on the port
+    // If we get here, something responded on the port, so it's NOT available for binding.
     return false;
   } catch (error) {
-    const PORT_AVAILABLE_ERRORS = new Set([
-      'ECONNREFUSED',
-      'ETIMEDOUT',
-      'ECONNRESET',
-      'EHOSTUNREACH',
-      'ENETUNREACH'
-    ]);
-
-    if (PORT_AVAILABLE_ERRORS.has(error.code)) {
-      logger.debug(`[PREFLIGHT] Port ${host}:${port} appears available (${error.code})`);
+    // NOTE: For localhost, ECONNREFUSED is the reliable signal that *nothing is listening*.
+    // Other errors (timeouts, resets, unreachable) are treated as "not available" to avoid
+    // incorrectly claiming the port is free when something is bound but unhealthy.
+    if (error?.code === 'ECONNREFUSED') {
+      logger.debug(`[PREFLIGHT] Port ${host}:${port} appears free (${error.code})`);
       return true;
     }
 
@@ -126,6 +122,44 @@ async function isPortAvailable(host, port) {
     logger.warn(
       `[PREFLIGHT] Port check inconclusive for ${host}:${port}: ${error.code || error.message}`
     );
+    return false;
+  }
+}
+
+/**
+ * Check if a ChromaDB server is reachable on the given host/port.
+ * @returns {Promise<boolean>}
+ */
+async function isChromaReachable(host, port) {
+  const baseUrl = `http://${host}:${port}`;
+  const endpoints = ['/api/v2/heartbeat', '/api/v1/heartbeat', '/api/v1'];
+  for (const endpoint of endpoints) {
+    try {
+      const res = await axios.get(`${baseUrl}${endpoint}`, {
+        timeout: 1000,
+        validateStatus: () => true
+      });
+      if (res.status === 200) return true;
+    } catch {
+      // try next endpoint
+    }
+  }
+  return false;
+}
+
+/**
+ * Check if an Ollama server is reachable on the given host/port.
+ * @returns {Promise<boolean>}
+ */
+async function isOllamaReachable(host, port) {
+  const baseUrl = `http://${host}:${port}`;
+  try {
+    const res = await axios.get(`${baseUrl}/api/tags`, {
+      timeout: 1000,
+      validateStatus: () => true
+    });
+    return res.status === 200;
+  } catch {
     return false;
   }
 }
@@ -244,34 +278,51 @@ async function runPreflightChecks({ reportProgress, errors }) {
     const ollamaPort = 11434;
     logger.debug(`[PREFLIGHT] Checking ports: ChromaDB=${chromaPort}, Ollama=${ollamaPort}`);
 
-    const chromaPortAvailable = await isPortAvailable('127.0.0.1', chromaPort);
-    logger.debug(`[PREFLIGHT] ChromaDB port ${chromaPort} available: ${chromaPortAvailable}`);
+    const chromaReachable = await isChromaReachable('127.0.0.1', chromaPort);
+    const ollamaReachable = await isOllamaReachable('127.0.0.1', ollamaPort);
 
-    const ollamaPortAvailable = await isPortAvailable('127.0.0.1', ollamaPort);
-    logger.debug(`[PREFLIGHT] Ollama port ${ollamaPort} available: ${ollamaPortAvailable}`);
+    // If the service isn't reachable, we require the port to be free so we can spawn it.
+    const chromaPortFree = chromaReachable ? false : await isPortAvailable('127.0.0.1', chromaPort);
+    const ollamaPortFree = ollamaReachable ? false : await isPortAvailable('127.0.0.1', ollamaPort);
+
+    const chromaOk = chromaReachable || chromaPortFree;
+    const ollamaOk = ollamaReachable || ollamaPortFree;
+
+    logger.debug('[PREFLIGHT] ChromaDB reachability/port:', {
+      chromaPort,
+      chromaReachable,
+      chromaPortFree
+    });
+    logger.debug('[PREFLIGHT] Ollama reachability/port:', {
+      ollamaPort,
+      ollamaReachable,
+      ollamaPortFree
+    });
 
     checks.push({
-      name: 'Port Availability',
-      status: chromaPortAvailable && ollamaPortAvailable ? 'ok' : 'warn',
+      name: 'Service Ports',
+      status: chromaOk && ollamaOk ? 'ok' : 'warn',
       details: {
         chromaPort,
         ollamaPort,
-        chromaPortAvailable,
-        ollamaPortAvailable
+        chromaReachable,
+        ollamaReachable,
+        chromaPortFree,
+        ollamaPortFree
       }
     });
 
-    if (!chromaPortAvailable || !ollamaPortAvailable) {
+    if (!chromaOk || !ollamaOk) {
       errors.push({
         check: 'port-availability',
-        error: `Port conflicts detected: chroma(${chromaPortAvailable ? 'free' : 'in use'}), ollama(${ollamaPortAvailable ? 'free' : 'in use'})`,
+        error: `Service port issue: chroma(${chromaReachable ? 'reachable' : chromaPortFree ? 'free' : 'blocked'}), ollama(${ollamaReachable ? 'reachable' : ollamaPortFree ? 'free' : 'blocked'})`,
         critical: false
       });
     }
   } catch (error) {
     logger.error('[PREFLIGHT] Port availability check threw error:', error);
     checks.push({
-      name: 'Port Availability',
+      name: 'Service Ports',
       status: 'warn',
       error: error.message
     });

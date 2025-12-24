@@ -172,7 +172,12 @@ function normalizeTextForModel(input, maxLen) {
   return text;
 }
 
-async function analyzeTextWithOllama(textContent, originalFileName, smartFolders = []) {
+async function analyzeTextWithOllama(
+  textContent,
+  originalFileName,
+  smartFolders = [],
+  fileDate = null
+) {
   try {
     const cfg = await loadOllamaConfig();
     const modelToUse =
@@ -222,13 +227,16 @@ async function analyzeTextWithOllama(textContent, originalFileName, smartFolders
       }
     }
 
+    const fileDateContext = fileDate ? `\nDocument File Date: ${fileDate}` : '';
+
     const prompt = `You are an expert document analyzer. Analyze the ACTUAL TEXT CONTENT below (not just the filename) and extract structured information based on what the document actually contains.
+${fileDateContext}
 
 IMPORTANT: Base your analysis on the CONTENT, not the filename "${originalFileName}". Read through the text carefully to understand the document's true purpose, topics, and themes.
 
 Your response MUST be a valid JSON object with ALL these fields:
 {
-  "date": "YYYY-MM-DD format if found in content, otherwise today's date",
+  "date": "YYYY-MM-DD format. Use the date explicitly found in the document content (e.g. invoice date, meeting date). If NO date is found in the text, use the Document File Date provided above: ${fileDate || 'today'}",
   "project": "main subject/project from content (2-5 words)",
   "purpose": "document's purpose based on content (5-10 words)",
   "category": "most appropriate category (must be one of the folder names above)"${folderCategoriesStr},
@@ -332,10 +340,20 @@ ${truncated}`;
           // Validate and sanitize date field
           if (parsedJson.date) {
             try {
-              parsedJson.date = new Date(parsedJson.date).toISOString().split('T')[0];
+              const dateObj = new Date(parsedJson.date);
+              if (isNaN(dateObj.getTime())) {
+                delete parsedJson.date;
+              } else {
+                parsedJson.date = dateObj.toISOString().split('T')[0];
+              }
             } catch {
               delete parsedJson.date;
             }
+          }
+
+          // Use file date if LLM returned no date or invalid date
+          if (!parsedJson.date && fileDate) {
+            parsedJson.date = fileDate;
           }
 
           // Validate keywords array

@@ -35,6 +35,20 @@
 const { logger } = require('./logger');
 
 /**
+ * Get a Node-style require that bypasses Webpack static analysis when bundled.
+ * In Electron main, Webpack exposes __non_webpack_require__ for this purpose.
+ * Fallback uses eval to avoid Webpack treating it as a dependency graph input.
+ */
+function getNodeRequire() {
+  /* global __non_webpack_require__ */
+  if (typeof __non_webpack_require__ !== 'undefined') {
+    return __non_webpack_require__;
+  }
+  // eslint-disable-next-line no-eval
+  return eval('require');
+}
+
+/**
  * Create singleton helper functions for a service
  *
  * @param {Object} options - Configuration options
@@ -68,7 +82,8 @@ function createSingletonHelpers(options) {
   function getInstance(instanceOptions = {}) {
     // Try to get from DI container first (preferred)
     try {
-      const { container, ServiceIds } = require(containerPath);
+      const dynamicRequire = getNodeRequire();
+      const { container, ServiceIds } = dynamicRequire(containerPath);
       if (container.has(ServiceIds[serviceId])) {
         return container.resolve(ServiceIds[serviceId]);
       }
@@ -126,7 +141,8 @@ function createSingletonHelpers(options) {
 
     // Clear from DI container if registered
     try {
-      const { container, ServiceIds } = require(containerPath);
+      const dynamicRequire = getNodeRequire();
+      const { container, ServiceIds } = dynamicRequire(containerPath);
       if (container.has(ServiceIds[serviceId])) {
         const instance = container.tryResolve(ServiceIds[serviceId]);
         container.clearInstance(ServiceIds[serviceId]);

@@ -94,7 +94,8 @@ function createDocumentFallback(fileName, fileExtension, purpose, smartFolders, 
   const {
     confidence = CACHE_CONFIG.FALLBACK_CONFIDENCE,
     extractionMethod = 'filename_fallback',
-    error = null
+    error = null,
+    date = new Date().toISOString().split('T')[0]
   } = options;
 
   const intelligentCategory = getIntelligentCategory(fileName, fileExtension, smartFolders);
@@ -107,7 +108,7 @@ function createDocumentFallback(fileName, fileExtension, purpose, smartFolders, 
       `fallback analysis for ${safeCategory.charAt(0).toUpperCase() + safeCategory.slice(1)} document`,
     project: fileName.replace(fileExtension, ''),
     category: safeCategory,
-    date: new Date().toISOString().split('T')[0],
+    date,
     keywords: intelligentKeywords || [],
     confidence,
     suggestedName: safeSuggestedName(fileName, fileExtension),
@@ -235,6 +236,45 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
     modelName = defaultTextModel;
   }
 
+  // Step 1: Attempt to compute file signature and check cache (non-fatal if fails)
+  let fileSignature = null;
+  let fileStats = null;
+  try {
+    fileStats = await fs.stat(filePath);
+    fileSignature = `${ANALYSIS_SIGNATURE_VERSION}|${modelName}|${smartFolderSig}|${filePath}|${fileStats.size}|${fileStats.mtimeMs}`;
+    if (fileAnalysisCache.has(fileSignature)) {
+      return fileAnalysisCache.get(fileSignature);
+    }
+    logger.debug('Cache miss, analyzing', { path: filePath });
+  } catch (statError) {
+    // Non-fatal: proceed without cache if stats fail
+    logger.debug('Could not stat file for caching, proceeding with analysis', {
+      path: filePath,
+      error: statError.message
+    });
+  }
+
+  // Get file date from stats or default to today
+  // Some test fixtures (and some fs polyfills) may not provide a Date-valued mtime.
+  const fileDate = (() => {
+    const today = new Date().toISOString().split('T')[0];
+    if (!fileStats) return today;
+
+    // Prefer Date-valued mtime when available
+    const mtime = fileStats.mtime;
+    if (mtime && typeof mtime.toISOString === 'function') {
+      return mtime.toISOString().split('T')[0];
+    }
+
+    // Fall back to numeric mtimeMs when present
+    const mtimeMs = fileStats.mtimeMs;
+    if (typeof mtimeMs === 'number' && Number.isFinite(mtimeMs) && mtimeMs > 0) {
+      return new Date(mtimeMs).toISOString().split('T')[0];
+    }
+
+    return today;
+  })();
+
   // FAST SEMANTIC LABELING (Short-circuit)
   // Skip AI analysis for video files and use extension-based fallback immediately
   if ((SUPPORTED_VIDEO_EXTENSIONS || []).includes(fileExtension)) {
@@ -246,7 +286,7 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       purpose: 'Video file',
       project: fileName.replace(fileExtension, ''),
       category: safeCategory,
-      date: new Date().toISOString().split('T')[0],
+      date: fileDate,
       keywords: intelligentKeywords,
       confidence: 80, // High confidence for known types
       suggestedName: safeSuggestedName(fileName, fileExtension),
@@ -259,30 +299,15 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
     const connectionCheck = await modelVerifier.checkOllamaConnection();
     if (!connectionCheck.connected) {
       logger.warn(`Ollama unavailable (${connectionCheck.error}). Using filename-based analysis.`);
-      return createDocumentFallback(fileName, fileExtension, null, smartFolders);
+      return createDocumentFallback(fileName, fileExtension, null, smartFolders, {
+        date: fileDate
+      });
     }
   } catch (error) {
     logger.error('Pre-flight verification failed:', error);
     return createDocumentFallback(fileName, fileExtension, null, smartFolders, {
-      confidence: 65
-    });
-  }
-
-  // FIX: Flattened nested try/catch - separate cache logic from main extraction
-  // Step 1: Attempt to compute file signature and check cache (non-fatal if fails)
-  let fileSignature = null;
-  try {
-    const stats = await fs.stat(filePath);
-    fileSignature = `${ANALYSIS_SIGNATURE_VERSION}|${modelName}|${smartFolderSig}|${filePath}|${stats.size}|${stats.mtimeMs}`;
-    if (fileAnalysisCache.has(fileSignature)) {
-      return fileAnalysisCache.get(fileSignature);
-    }
-    logger.debug('Cache miss, analyzing', { path: filePath });
-  } catch (statError) {
-    // Non-fatal: proceed without cache if stats fail
-    logger.debug('Could not stat file for caching, proceeding with analysis', {
-      path: filePath,
-      error: statError.message
+      confidence: 65,
+      date: fileDate
     });
   }
 
@@ -466,7 +491,7 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
             purpose,
             project: fileName.replace(fileExtension, ''),
             category,
-            date: new Date().toISOString().split('T')[0],
+            date: fileDate,
             keywords: intelligentKeywords || [],
             confidence,
             suggestedName: safeSuggestedName(fileName, fileExtension),
@@ -504,7 +529,8 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       });
       return createDocumentFallback(fileName, fileExtension, null, smartFolders, {
         confidence: 75,
-        extractionMethod: 'filename'
+        extractionMethod: 'filename',
+        date: fileDate
       });
     }
 
@@ -540,7 +566,7 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       });
 
       const analysis = await globalDeduplicator.deduplicate(deduplicationKey, () =>
-        analyzeTextWithOllama(extractedText, fileName, smartFolders)
+        analyzeTextWithOllama(extractedText, fileName, smartFolders, fileDate)
       );
 
       // Semantic folder refinement using embeddings (delegated to helper)
@@ -589,7 +615,7 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
             : ['document', 'analysis_failed'],
           purpose: 'Text extracted, but Ollama analysis failed.',
           project: fileName,
-          date: new Date().toISOString().split('T')[0],
+          date: fileDate,
           category: 'document',
           confidence: 60,
           error: analysis?.error || 'Ollama analysis failed for document content.',
@@ -623,7 +649,8 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       error: error.message
     });
     return createDocumentFallback(fileName, fileExtension, null, smartFolders, {
-      confidence: 60
+      confidence: 60,
+      date: fileDate
     });
   }
 }
