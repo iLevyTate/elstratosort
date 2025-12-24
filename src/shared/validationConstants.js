@@ -38,14 +38,14 @@ const NUMERIC_LIMITS = {
  * Supports IP addresses, localhost, and hostnames with optional port and path
  */
 const URL_PATTERN =
-  /^https?:\/\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|localhost|[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?)(:\d{1,5})?(\/.*)?$/i;
+  /^https?:\/\/(?:\[[0-9a-f:]+\]|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|localhost|[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?)(:\d{1,5})?(\/.*)?$/i;
 
 /**
  * Lenient URL pattern (allows missing protocol)
  * Used for user input that may omit http://
  */
 const LENIENT_URL_PATTERN =
-  /^(?:https?:\/\/)?(?:[\w.-]+|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/.*)?$/i;
+  /^(?:https?:\/\/)?(?:\[[0-9a-f:]+\]|[\w.-]+|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/.*)?$/i;
 
 /**
  * Model name validation pattern
