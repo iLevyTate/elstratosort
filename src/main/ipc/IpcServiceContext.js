@@ -342,7 +342,5 @@ function createFromLegacyParams(params) {
 
 module.exports = {
   IpcServiceContext,
-  createFromLegacyParams,
-  // Backward compatibility alias
-  ServiceContainer: IpcServiceContext
+  createFromLegacyParams
 };

@@ -3,7 +3,13 @@
  * SECURITY CRITICAL - Prevents path traversal and injection attacks
  */
 
-const { sanitizePath, isPathSafe, sanitizeMetadata } = require('../src/shared/pathSanitization');
+const {
+  sanitizePath,
+  isPathSafe,
+  sanitizeMetadata,
+  prepareFileMetadata,
+  prepareFolderMetadata
+} = require('../src/shared/pathSanitization');
 const path = require('path');
 const fs = require('fs');
 
@@ -515,6 +521,128 @@ describe('Path Sanitization', () => {
       await fs.promises.unlink(link).catch(() => {});
       await fs.promises.unlink(target).catch(() => {});
       await fs.promises.rmdir(baseDir).catch(() => {});
+    });
+  });
+
+  describe('prepareFileMetadata', () => {
+    test('prepares file metadata from file object', () => {
+      const file = {
+        id: 'file-123',
+        meta: {
+          path: 'C:\\Users\\docs\\file.txt',
+          name: 'file.txt',
+          mimeType: 'text/plain'
+        },
+        model: 'llama3.2',
+        updatedAt: '2024-01-01T00:00:00Z'
+      };
+
+      const result = prepareFileMetadata(file);
+
+      expect(result.path).toBe('C:\\Users\\docs\\file.txt');
+      expect(result.name).toBe('file.txt');
+      expect(result.model).toBe('llama3.2');
+      expect(result.updatedAt).toBe('2024-01-01T00:00:00Z');
+      expect(result.mimeType).toBe('text/plain');
+    });
+
+    test('handles missing meta properties gracefully', () => {
+      const file = {
+        id: 'file-123',
+        model: 'llama3.2'
+      };
+
+      const result = prepareFileMetadata(file);
+
+      expect(result.path).toBe('');
+      expect(result.name).toBe('');
+      expect(result.model).toBe('llama3.2');
+      expect(result.updatedAt).toBeDefined();
+    });
+
+    test('returns empty object for null file', () => {
+      expect(prepareFileMetadata(null)).toEqual({});
+      expect(prepareFileMetadata(undefined)).toEqual({});
+    });
+
+    test('generates updatedAt if not provided', () => {
+      const file = {
+        id: 'file-123',
+        meta: { path: '/test' }
+      };
+
+      const result = prepareFileMetadata(file);
+
+      expect(result.updatedAt).toBeDefined();
+      expect(new Date(result.updatedAt).toString()).not.toBe('Invalid Date');
+    });
+
+    test('sanitizes path in metadata', () => {
+      const file = {
+        id: 'file-123',
+        meta: {
+          path: 'C:\\Users\\Documents\\./subdir\\file.txt',
+          name: 'file.txt'
+        }
+      };
+
+      const result = prepareFileMetadata(file);
+
+      // Path should be normalized (no ./)
+      expect(result.path).not.toContain('./');
+    });
+  });
+
+  describe('prepareFolderMetadata', () => {
+    test('prepares folder metadata from folder object', () => {
+      const folder = {
+        id: 'folder-123',
+        name: 'Documents',
+        description: 'User documents folder',
+        path: 'C:\\Users\\docs',
+        model: 'llama3.2',
+        updatedAt: '2024-01-01T00:00:00Z'
+      };
+
+      const result = prepareFolderMetadata(folder);
+
+      expect(result.name).toBe('Documents');
+      expect(result.description).toBe('User documents folder');
+      expect(result.path).toBe('C:\\Users\\docs');
+      expect(result.model).toBe('llama3.2');
+      expect(result.updatedAt).toBe('2024-01-01T00:00:00Z');
+    });
+
+    test('handles missing properties gracefully', () => {
+      const folder = {
+        id: 'folder-123',
+        name: 'Documents'
+      };
+
+      const result = prepareFolderMetadata(folder);
+
+      expect(result.name).toBe('Documents');
+      expect(result.description).toBe('');
+      expect(result.path).toBe('');
+      expect(result.model).toBe('');
+      expect(result.updatedAt).toBeDefined();
+    });
+
+    test('returns empty object for null folder', () => {
+      expect(prepareFolderMetadata(null)).toEqual({});
+      expect(prepareFolderMetadata(undefined)).toEqual({});
+    });
+
+    test('generates updatedAt if not provided', () => {
+      const folder = {
+        id: 'folder-123',
+        name: 'Test'
+      };
+
+      const result = prepareFolderMetadata(folder);
+
+      expect(result.updatedAt).toBeDefined();
+      expect(new Date(result.updatedAt).toString()).not.toBe('Invalid Date');
     });
   });
 });

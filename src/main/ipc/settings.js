@@ -6,6 +6,14 @@ const fs = require('fs').promises;
 
 // Import centralized security configuration
 const { SETTINGS_VALIDATION, PROTOTYPE_POLLUTION_KEYS } = require('../../shared/securityConfig');
+const {
+  THEME_VALUES,
+  LOGGING_LEVELS,
+  NUMERIC_LIMITS,
+  isValidTheme,
+  isValidLoggingLevel,
+  isValidNumericSetting
+} = require('../../shared/validationConstants');
 
 let z;
 try {
@@ -90,8 +98,8 @@ function validateImportedSettings(settings, logger) {
         break;
 
       case 'theme':
-        if (typeof value !== 'string' || !['light', 'dark', 'auto', 'system'].includes(value)) {
-          throw new Error(`Invalid ${key}: must be 'light', 'dark', 'auto', or 'system'`);
+        if (!isValidTheme(value)) {
+          throw new Error(`Invalid ${key}: must be one of ${THEME_VALUES.join(', ')}`);
         }
         break;
 
@@ -102,15 +110,22 @@ function validateImportedSettings(settings, logger) {
         break;
 
       case 'loggingLevel':
-        if (typeof value !== 'string' || !['error', 'warn', 'info', 'debug'].includes(value)) {
-          throw new Error(`Invalid ${key}: must be 'error', 'warn', 'info', or 'debug'`);
+        if (!isValidLoggingLevel(value)) {
+          throw new Error(`Invalid ${key}: must be one of ${LOGGING_LEVELS.join(', ')}`);
         }
         break;
 
       case 'cacheSize':
+        if (!isValidNumericSetting('cacheSize', value)) {
+          const { min, max } = NUMERIC_LIMITS.cacheSize;
+          throw new Error(`Invalid ${key}: must be integer between ${min} and ${max}`);
+        }
+        break;
+
       case 'maxBatchSize':
-        if (!Number.isInteger(value) || value < 0 || value > 100000) {
-          throw new Error(`Invalid ${key}: must be integer between 0 and 100000`);
+        if (!isValidNumericSetting('maxBatchSize', value)) {
+          const { min, max } = NUMERIC_LIMITS.maxBatchSize;
+          throw new Error(`Invalid ${key}: must be integer between ${min} and ${max}`);
         }
         break;
 

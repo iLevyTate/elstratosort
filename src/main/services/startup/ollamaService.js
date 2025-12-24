@@ -10,29 +10,14 @@
 const { spawn } = require('child_process');
 const axios = require('axios');
 const { logger } = require('../../../shared/logger');
-const { axiosWithRetry } = require('../../utils/ollamaApiRetry');
+const { axiosWithRetry, checkOllamaHealth } = require('../../utils/ollamaApiRetry');
 const { TIMEOUTS } = require('../../../shared/performanceConstants');
 const { shouldUseShell } = require('../../../shared/platformUtils');
 const { SERVICE_URLS } = require('../../../shared/configDefaults');
 
 logger.setContext('StartupManager:Ollama');
 
-/**
- * Check Ollama health
- * @returns {Promise<boolean>}
- */
-async function checkOllamaHealth() {
-  try {
-    const baseUrl = process.env.OLLAMA_BASE_URL || SERVICE_URLS.OLLAMA_HOST;
-    const response = await axios.get(`${baseUrl}/api/tags`, {
-      timeout: 2000
-    });
-    return response.status === 200;
-  } catch (error) {
-    logger.debug('[HEALTH] Ollama health check failed:', error.message);
-    return false;
-  }
-}
+// Note: checkOllamaHealth is imported from shared ollamaApiRetry module
 
 /**
  * Check if Ollama is running

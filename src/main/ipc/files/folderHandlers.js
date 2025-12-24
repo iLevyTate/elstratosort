@@ -10,6 +10,12 @@ const path = require('path');
 const fs = require('fs').promises;
 const { withErrorLogging } = require('../ipcWrappers');
 const { logger } = require('../../../shared/logger');
+const {
+  isNotFoundError,
+  isPermissionError,
+  ErrorCategory,
+  getErrorCategory
+} = require('../../../shared/errorClassifier');
 
 logger.setContext('IPC:Files:Folders');
 
@@ -77,13 +83,13 @@ function registerFolderHandlers({ ipcMain, IPC_CHANNELS, shell }) {
         let userMessage = 'Failed to create folder';
         let errorCode = 'CREATE_FAILED';
 
-        if (error.code === 'EACCES' || error.code === 'EPERM') {
+        if (isPermissionError(error)) {
           errorCode = 'PERMISSION_DENIED';
           userMessage = 'Permission denied - cannot create folder here';
-        } else if (error.code === 'ENOSPC') {
+        } else if (getErrorCategory(error) === ErrorCategory.DISK_FULL) {
           errorCode = 'NO_SPACE';
           userMessage = 'Insufficient disk space';
-        } else if (error.code === 'ENAMETOOLONG') {
+        } else if (getErrorCategory(error) === ErrorCategory.PATH_TOO_LONG) {
           errorCode = 'NAME_TOO_LONG';
           userMessage = 'Folder path is too long';
         }
@@ -178,7 +184,7 @@ function registerFolderHandlers({ ipcMain, IPC_CHANNELS, shell }) {
             };
           }
         } catch (statError) {
-          if (statError.code === 'ENOENT') {
+          if (isNotFoundError(statError)) {
             return {
               success: true,
               message: 'Folder already deleted or does not exist',
@@ -210,11 +216,11 @@ function registerFolderHandlers({ ipcMain, IPC_CHANNELS, shell }) {
         logger.error('[FILE-OPS] Error deleting folder:', error);
 
         let userMessage = 'Failed to delete folder';
-        if (error.code === 'EACCES' || error.code === 'EPERM') {
+        if (isPermissionError(error)) {
           userMessage = 'Permission denied - check folder permissions';
-        } else if (error.code === 'ENOTEMPTY') {
+        } else if (getErrorCategory(error) === ErrorCategory.DIRECTORY_NOT_EMPTY) {
           userMessage = 'Directory not empty - contains files or subfolders';
-        } else if (error.code === 'EBUSY') {
+        } else if (getErrorCategory(error) === ErrorCategory.FILE_IN_USE) {
           userMessage = 'Directory is in use by another process';
         }
 

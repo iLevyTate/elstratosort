@@ -2,18 +2,26 @@
  * OllamaClient - Resilient client for Ollama API
  *
  * Features:
- * - Retry with exponential backoff and jitter
+ * - Retry with exponential backoff and jitter (uses shared ollamaApiRetry)
  * - Offline queue with disk persistence
  * - Concurrency limiting (semaphore pattern)
  * - Health checking and availability monitoring
  * - Batch operations support
+ *
+ * Shared utilities from ollamaApiRetry.js:
+ * - isRetryableError: Error classification for retry decisions
+ * - withOllamaRetry: Retry wrapper with exponential backoff and jitter
+ *
+ * @module services/OllamaClient
  */
 
-const fs = require('fs').promises;
 const path = require('path');
 const { app } = require('electron');
 const { logger } = require('../../shared/logger');
-const { TIMEOUTS } = require('../../shared/performanceConstants');
+const { TIMEOUTS, RETRY } = require('../../shared/performanceConstants');
+const { isRetryableError, withOllamaRetry } = require('../utils/ollamaApiRetry');
+const { atomicWriteFile, loadJsonFile, safeUnlink } = require('../../shared/atomicFile');
+const { Semaphore } = require('../../shared/RateLimiter');
 
 logger.setContext('OllamaClient');
 
@@ -29,12 +37,13 @@ const REQUEST_TYPES = {
 
 /**
  * Default configuration
+ * Uses shared constants from performanceConstants.js where applicable
  */
 const DEFAULT_CONFIG = {
-  // Retry settings
-  maxRetries: 3,
-  initialRetryDelay: 1000,
-  maxRetryDelay: 8000,
+  // Retry settings (from shared RETRY.OLLAMA_API config)
+  maxRetries: RETRY.OLLAMA_API.maxAttempts,
+  initialRetryDelay: RETRY.OLLAMA_API.initialDelay,
+  maxRetryDelay: RETRY.OLLAMA_API.maxDelay,
   retryJitterFactor: 0.3,
 
   // Concurrency settings
@@ -42,9 +51,9 @@ const DEFAULT_CONFIG = {
   maxQueuedRequests: 100,
 
   // Health check settings
-  healthCheckInterval: 30000, // 30 seconds
-  healthCheckTimeout: 5000, // 5 seconds
-  unhealthyThreshold: 3, // consecutive failures to mark unhealthy
+  healthCheckInterval: TIMEOUTS.HEALTH_CHECK || 30000,
+  healthCheckTimeout: 5000,
+  unhealthyThreshold: RETRY.MAX_ATTEMPTS_MEDIUM,
 
   // Offline queue settings
   maxOfflineQueueSize: 500,
@@ -66,9 +75,12 @@ class OllamaClient {
     this.lastHealthCheck = null;
     this.healthCheckTimer = null;
 
-    // Concurrency control (semaphore)
-    this.activeRequests = 0;
-    this.waitQueue = [];
+    // Concurrency control (uses shared Semaphore utility)
+    this.semaphore = new Semaphore(
+      this.config.maxConcurrentRequests,
+      this.config.maxQueuedRequests,
+      60000 // 1 minute timeout for queued requests
+    );
 
     // Offline queue for failed requests
     this.offlineQueue = [];
@@ -181,136 +193,21 @@ class OllamaClient {
    * @returns {Promise<void>}
    */
   async _acquireSlot() {
-    if (this.activeRequests < this.config.maxConcurrentRequests) {
-      this.activeRequests++;
-      return Promise.resolve();
-    }
-
-    // Check if queue is full
-    if (this.waitQueue.length >= this.config.maxQueuedRequests) {
-      throw new Error('Request queue full, try again later');
-    }
-
-    // Wait for a slot
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        const index = this.waitQueue.findIndex((item) => item.resolve === resolve);
-        if (index !== -1) {
-          this.waitQueue.splice(index, 1);
-          reject(new Error('Request queue timeout'));
-        }
-      }, 60000); // 1 minute timeout for queued requests
-
-      this.waitQueue.push({ resolve, reject, timeout });
-    });
+    return this.semaphore.acquire();
   }
 
   /**
    * Release a slot in the concurrency semaphore
    */
   _releaseSlot() {
-    this.activeRequests--;
-
-    if (this.waitQueue.length > 0) {
-      const next = this.waitQueue.shift();
-      clearTimeout(next.timeout);
-      this.activeRequests++;
-      next.resolve();
-    }
+    this.semaphore.release();
   }
 
   // ============= RETRY LOGIC =============
 
   /**
-   * Calculate delay with exponential backoff and jitter
-   * @param {number} attempt - Current attempt number (0-based)
-   * @returns {number} Delay in milliseconds
-   */
-  _calculateRetryDelay(attempt) {
-    const { initialRetryDelay, maxRetryDelay, retryJitterFactor } = this.config;
-
-    // Exponential backoff
-    const exponentialDelay = initialRetryDelay * Math.pow(2, attempt);
-    const baseDelay = Math.min(exponentialDelay, maxRetryDelay);
-
-    // Add jitter to prevent thundering herd
-    const jitter = baseDelay * retryJitterFactor * (Math.random() - 0.5) * 2;
-
-    return Math.max(0, Math.floor(baseDelay + jitter));
-  }
-
-  /**
-   * Determine if an error is retryable
-   * @param {Error} error - The error to check
-   * @returns {boolean}
-   */
-  _isRetryableError(error) {
-    if (!error) return false;
-
-    const message = (error.message || '').toLowerCase();
-    const code = error.code || '';
-
-    // Network errors - always retry
-    if (
-      [
-        'ECONNREFUSED',
-        'ECONNRESET',
-        'ETIMEDOUT',
-        'ENOTFOUND',
-        'EHOSTUNREACH',
-        'ENETUNREACH'
-      ].includes(code)
-    ) {
-      return true;
-    }
-
-    // Fetch/network errors - retry
-    if (
-      message.includes('fetch failed') ||
-      message.includes('network') ||
-      message.includes('timeout') ||
-      message.includes('aborted') ||
-      message.includes('connection')
-    ) {
-      return true;
-    }
-
-    // HTTP status codes
-    if (error.status) {
-      const retryableStatuses = [408, 429, 500, 502, 503, 504];
-      if (retryableStatuses.includes(error.status)) {
-        return true;
-      }
-    }
-
-    // Ollama-specific temporary errors
-    if (
-      message.includes('model is loading') ||
-      message.includes('server busy') ||
-      message.includes('temporarily unavailable')
-    ) {
-      return true;
-    }
-
-    // Non-retryable errors
-    if (
-      message.includes('invalid') ||
-      message.includes('validation') ||
-      message.includes('not found') ||
-      message.includes('unauthorized') ||
-      message.includes('forbidden') ||
-      message.includes('bad request') ||
-      message.includes('zero length image') ||
-      message.includes('unsupported')
-    ) {
-      return false;
-    }
-
-    return false;
-  }
-
-  /**
    * Execute a function with retry logic
+   * Delegates to shared withOllamaRetry utility while tracking stats
    * @param {Function} fn - Function to execute
    * @param {Object} options - Options
    * @returns {Promise<*>}
@@ -322,63 +219,28 @@ class OllamaClient {
       onRetry = null
     } = options;
 
-    let lastError;
+    let retryAttempts = 0;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const result = await fn();
-
-        if (attempt > 0) {
-          logger.info(`[OllamaClient] ${operation} succeeded on retry ${attempt}`);
-          this.stats.retriedRequests++;
-        }
-
-        return result;
-      } catch (error) {
-        lastError = error;
-
-        const isRetryable = this._isRetryableError(error);
-        const hasRetriesLeft = attempt < maxRetries;
-
-        if (isRetryable && hasRetriesLeft) {
-          const delay = this._calculateRetryDelay(attempt);
-
-          logger.warn(
-            `[OllamaClient] ${operation} failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms`,
-            {
-              error: error.message,
-              code: error.code
-            }
-          );
-
-          if (onRetry) {
-            try {
-              await onRetry(attempt, error);
-            } catch (retryError) {
-              logger.warn('[OllamaClient] onRetry callback error:', retryError.message);
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        } else {
-          // No more retries
-          if (!isRetryable) {
-            logger.debug(
-              `[OllamaClient] ${operation} failed with non-retryable error:`,
-              error.message
-            );
-          } else {
-            logger.error(
-              `[OllamaClient] ${operation} failed after ${attempt + 1} attempts:`,
-              error.message
-            );
-          }
-          break;
+    const result = await withOllamaRetry(fn, {
+      operation,
+      maxRetries,
+      initialDelay: this.config.initialRetryDelay,
+      maxDelay: this.config.maxRetryDelay,
+      jitterFactor: this.config.retryJitterFactor,
+      onRetry: async (attempt, error) => {
+        retryAttempts = attempt;
+        if (onRetry) {
+          await onRetry(attempt, error);
         }
       }
+    });
+
+    // Track successful retries in stats
+    if (retryAttempts > 0) {
+      this.stats.retriedRequests++;
     }
 
-    throw lastError;
+    return result;
   }
 
   // ============= HEALTH MONITORING =============
@@ -468,12 +330,13 @@ class OllamaClient {
    * @returns {Object}
    */
   getHealthStatus() {
+    const semaphoreStats = this.semaphore.getStats();
     return {
       isHealthy: this.isHealthy,
       consecutiveFailures: this.consecutiveFailures,
       lastHealthCheck: this.lastHealthCheck,
-      activeRequests: this.activeRequests,
-      queuedRequests: this.waitQueue.length,
+      activeRequests: semaphoreStats.activeCount,
+      queuedRequests: semaphoreStats.queueLength,
       offlineQueueSize: this.offlineQueue.length
     };
   }
@@ -484,18 +347,14 @@ class OllamaClient {
    * Load offline queue from disk
    */
   async _loadOfflineQueue() {
-    try {
-      const data = await fs.readFile(this.offlineQueuePath, 'utf8');
-      const parsed = JSON.parse(data);
+    const data = await loadJsonFile(this.offlineQueuePath, {
+      description: 'offline queue',
+      backupCorrupt: true
+    });
 
-      if (Array.isArray(parsed)) {
-        this.offlineQueue = parsed.slice(0, this.config.maxOfflineQueueSize);
-        logger.info('[OllamaClient] Loaded offline queue:', this.offlineQueue.length);
-      }
-    } catch (error) {
-      if (error.code !== 'ENOENT') {
-        logger.warn('[OllamaClient] Error loading offline queue:', error.message);
-      }
+    if (Array.isArray(data)) {
+      this.offlineQueue = data.slice(0, this.config.maxOfflineQueueSize);
+      logger.info('[OllamaClient] Loaded offline queue:', this.offlineQueue.length);
     }
   }
 
@@ -505,26 +364,11 @@ class OllamaClient {
   async _persistOfflineQueue() {
     try {
       if (this.offlineQueue.length === 0) {
-        await fs.unlink(this.offlineQueuePath).catch((e) => {
-          if (e.code !== 'ENOENT') throw e;
-        });
+        await safeUnlink(this.offlineQueuePath);
         return;
       }
 
-      // FIX: Use atomic write (temp + rename) to prevent corruption on crash
-      const tempPath = `${this.offlineQueuePath}.tmp.${Date.now()}`;
-      try {
-        await fs.writeFile(tempPath, JSON.stringify(this.offlineQueue, null, 2), 'utf8');
-        await fs.rename(tempPath, this.offlineQueuePath);
-      } catch (writeError) {
-        // Clean up temp file on failure
-        try {
-          await fs.unlink(tempPath);
-        } catch {
-          // Ignore cleanup errors
-        }
-        throw writeError;
-      }
+      await atomicWriteFile(this.offlineQueuePath, this.offlineQueue, { pretty: true });
     } catch (error) {
       logger.warn('[OllamaClient] Error persisting offline queue:', error.message);
     }
@@ -689,7 +533,7 @@ class OllamaClient {
       this.stats.lastErrorTime = new Date().toISOString();
 
       // Add to offline queue if service is unhealthy
-      if (!this.isHealthy && this._isRetryableError(error)) {
+      if (!this.isHealthy && isRetryableError(error)) {
         this._addToOfflineQueue({
           type: REQUEST_TYPES.EMBEDDING,
           payload: options
@@ -741,7 +585,7 @@ class OllamaClient {
       this.stats.lastErrorTime = new Date().toISOString();
 
       // Add to offline queue if service is unhealthy (only for non-streaming)
-      if (!this.isHealthy && this._isRetryableError(error) && !options.stream) {
+      if (!this.isHealthy && isRetryableError(error) && !options.stream) {
         this._addToOfflineQueue({
           type: REQUEST_TYPES.GENERATE,
           payload: options
@@ -839,11 +683,12 @@ class OllamaClient {
    * @returns {Object}
    */
   getStats() {
+    const semaphoreStats = this.semaphore.getStats();
     return {
       ...this.stats,
       isHealthy: this.isHealthy,
-      activeRequests: this.activeRequests,
-      queuedRequests: this.waitQueue.length,
+      activeRequests: semaphoreStats.activeCount,
+      queuedRequests: semaphoreStats.queueLength,
       offlineQueueSize: this.offlineQueue.length,
       config: {
         maxConcurrentRequests: this.config.maxConcurrentRequests,
@@ -872,96 +717,16 @@ class OllamaClient {
   }
 }
 
-// Singleton management - delegates to DI container when available
-let _localInstance = null;
-let _containerRegistered = false;
+// Use shared singleton factory for getInstance, registerWithContainer, resetInstance
+const { createSingletonHelpers } = require('../../shared/singletonFactory');
 
-/**
- * Get or create the singleton instance
- *
- * This function provides backward compatibility while the DI container
- * is the single source of truth for singleton instances.
- *
- * @param {Object} options - Configuration options
- * @returns {OllamaClient}
- */
-function getInstance(options = {}) {
-  // Try to get from DI container first (preferred)
-  try {
-    const { container, ServiceIds } = require('./ServiceContainer');
-    if (container.has(ServiceIds.OLLAMA_CLIENT)) {
-      return container.resolve(ServiceIds.OLLAMA_CLIENT);
-    }
-  } catch {
-    // Container not available yet, use local instance
-  }
-
-  // Fallback to local instance for early startup or testing
-  if (!_localInstance) {
-    _localInstance = new OllamaClient(options);
-  }
-  return _localInstance;
-}
-
-/**
- * Register this service with the DI container
- * Called by ServiceIntegration during initialization
- * @param {ServiceContainer} container - The DI container
- * @param {string} serviceId - The service identifier
- */
-function registerWithContainer(container, serviceId) {
-  if (_containerRegistered) return;
-
-  container.registerSingleton(serviceId, () => {
-    // If we have a local instance, migrate it to the container
-    if (_localInstance) {
-      const instance = _localInstance;
-      _localInstance = null; // Clear local reference
-      return instance;
-    }
-    return new OllamaClient();
-  });
-  _containerRegistered = true;
-  logger.debug('[OllamaClient] Registered with DI container');
-}
-
-/**
- * Reset the singleton (for testing)
- * @returns {Promise<void>}
- */
-async function resetInstance() {
-  // Reset container registration flag
-  _containerRegistered = false;
-
-  // Clear from DI container if registered
-  try {
-    const { container, ServiceIds } = require('./ServiceContainer');
-    if (container.has(ServiceIds.OLLAMA_CLIENT)) {
-      const instance = container.tryResolve(ServiceIds.OLLAMA_CLIENT);
-      container.clearInstance(ServiceIds.OLLAMA_CLIENT);
-      if (instance) {
-        try {
-          await instance.shutdown();
-        } catch (e) {
-          logger.warn('[OllamaClient] Error during container instance shutdown:', e.message);
-        }
-      }
-    }
-  } catch {
-    // Container not available
-  }
-
-  // Also clear local instance
-  if (_localInstance) {
-    const oldInstance = _localInstance;
-    _localInstance = null;
-    try {
-      await oldInstance.shutdown();
-    } catch (e) {
-      logger.warn('[OllamaClient] Error during reset shutdown:', e.message);
-    }
-  }
-}
+const { getInstance, registerWithContainer, resetInstance } = createSingletonHelpers({
+  ServiceClass: OllamaClient,
+  serviceId: 'OLLAMA_CLIENT',
+  serviceName: 'OllamaClient',
+  containerPath: './ServiceContainer',
+  shutdownMethod: 'shutdown'
+});
 
 module.exports = {
   OllamaClient,

@@ -1,75 +1,10 @@
 const { logger } = require('../../shared/logger');
-const { TIMEOUTS } = require('../../shared/performanceConstants');
+const { createOllamaRateLimiter } = require('../../shared/RateLimiter');
 logger.setContext('OllamaService');
 const { Ollama } = require('ollama'); // MEDIUM PRIORITY FIX (MED-10): Import Ollama for temporary instances
 
-/**
- * MED-5: Simple sliding window rate limiter for Ollama calls
- * Prevents overwhelming the Ollama server with too many concurrent requests
- */
-class RateLimiter {
-  /**
-   * @param {number} maxCalls - Maximum calls allowed in the time window
-   * @param {number} windowMs - Time window in milliseconds
-   */
-  constructor(maxCalls, windowMs) {
-    this.maxCalls = maxCalls;
-    this.windowMs = windowMs;
-    this.calls = [];
-  }
-
-  /**
-   * Check if a new call can be made
-   * @returns {boolean} True if call is allowed
-   */
-  canCall() {
-    this._cleanup();
-    return this.calls.length < this.maxCalls;
-  }
-
-  /**
-   * Record a call timestamp
-   */
-  recordCall() {
-    this._cleanup();
-    this.calls.push(Date.now());
-  }
-
-  /**
-   * Remove expired timestamps from the sliding window
-   * @private
-   */
-  _cleanup() {
-    const cutoff = Date.now() - this.windowMs;
-    this.calls = this.calls.filter((t) => t > cutoff);
-  }
-
-  /**
-   * Wait until a slot is available
-   * @returns {Promise<void>}
-   */
-  async waitForSlot() {
-    while (!this.canCall()) {
-      await new Promise((r) => setTimeout(r, TIMEOUTS.DELAY_BATCH));
-    }
-  }
-
-  /**
-   * Get current rate limiter stats
-   * @returns {{currentCalls: number, maxCalls: number, windowMs: number}}
-   */
-  getStats() {
-    this._cleanup();
-    return {
-      currentCalls: this.calls.length,
-      maxCalls: this.maxCalls,
-      windowMs: this.windowMs
-    };
-  }
-}
-
-// Global rate limiter: 5 concurrent requests per second max
-const ollamaRateLimiter = new RateLimiter(5, 1000);
+// Use shared rate limiter: 5 requests per second max
+const ollamaRateLimiter = createOllamaRateLimiter({ maxCalls: 5, windowMs: 1000 });
 
 const {
   getOllama,
@@ -630,117 +565,17 @@ class OllamaService {
   }
 }
 
-// Singleton management - delegates to DI container when available
-let _localInstance = null;
-let _containerRegistered = false;
+// Use shared singleton factory for getInstance, registerWithContainer, resetInstance
+const { createSingletonHelpers } = require('../../shared/singletonFactory');
 
-/**
- * Get the singleton OllamaService instance
- *
- * This function provides backward compatibility while the DI container
- * is the single source of truth for singleton instances.
- *
- * @example
- * // Using ServiceContainer (recommended)
- * const { container, ServiceIds } = require('./ServiceContainer');
- * const ollama = container.resolve(ServiceIds.OLLAMA_SERVICE);
- *
- * // Using getInstance (backward compatible)
- * const { getInstance } = require('./OllamaService');
- * const ollama = getInstance();
- *
- * @returns {OllamaService} The singleton instance
- */
-function getInstance() {
-  // Try to get from DI container first (preferred)
-  try {
-    const { container, ServiceIds } = require('./ServiceContainer');
-    if (container.has(ServiceIds.OLLAMA_SERVICE)) {
-      return container.resolve(ServiceIds.OLLAMA_SERVICE);
-    }
-  } catch {
-    // Container not available yet, use local instance
-  }
-
-  // Fallback to local instance for early startup or testing
-  if (!_localInstance) {
-    _localInstance = new OllamaService();
-  }
-  return _localInstance;
-}
-
-/**
- * Create a new OllamaService instance (for testing or custom configuration)
- *
- * Unlike getInstance(), this creates a fresh instance not tied to the singleton.
- * Useful for testing or when custom configuration is needed.
- *
- * @returns {OllamaService} A new OllamaService instance
- */
-function createInstance() {
-  return new OllamaService();
-}
-
-/**
- * Register this service with the DI container
- * Called by ServiceIntegration during initialization
- * @param {ServiceContainer} container - The DI container
- * @param {string} serviceId - The service identifier
- */
-function registerWithContainer(container, serviceId) {
-  if (_containerRegistered) return;
-
-  container.registerSingleton(serviceId, () => {
-    // If we have a local instance, migrate it to the container
-    if (_localInstance) {
-      const instance = _localInstance;
-      _localInstance = null; // Clear local reference
-      return instance;
-    }
-    return new OllamaService();
+const { getInstance, createInstance, registerWithContainer, resetInstance } =
+  createSingletonHelpers({
+    ServiceClass: OllamaService,
+    serviceId: 'OLLAMA_SERVICE',
+    serviceName: 'OllamaService',
+    containerPath: './ServiceContainer',
+    shutdownMethod: 'shutdown'
   });
-  _containerRegistered = true;
-  logger.debug('[OllamaService] Registered with DI container');
-}
-
-/**
- * Reset the singleton instance (primarily for testing)
- */
-async function resetInstance() {
-  // Reset container registration flag
-  _containerRegistered = false;
-
-  // Clear from DI container if registered
-  try {
-    const { container, ServiceIds } = require('./ServiceContainer');
-    if (container.has(ServiceIds.OLLAMA_SERVICE)) {
-      const instance = container.tryResolve(ServiceIds.OLLAMA_SERVICE);
-      container.clearInstance(ServiceIds.OLLAMA_SERVICE);
-      if (instance && typeof instance.shutdown === 'function') {
-        try {
-          await instance.shutdown();
-        } catch (e) {
-          logger.warn('[OllamaService] Error during container instance shutdown:', e.message);
-        }
-      }
-    }
-  } catch {
-    // Container not available
-  }
-
-  // Also clear local instance
-  if (_localInstance) {
-    const oldInstance = _localInstance;
-    _localInstance = null;
-    if (typeof oldInstance.shutdown === 'function') {
-      try {
-        await oldInstance.shutdown();
-      } catch (e) {
-        logger.warn('[OllamaService] Error during reset shutdown:', e.message);
-      }
-    }
-  }
-}
 
 // Create the default singleton instance for backward compatibility
 // This maintains the original export pattern: require('./OllamaService').someMethod()

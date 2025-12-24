@@ -21,7 +21,14 @@ jest.mock('../src/shared/errorHandlingUtils', () => ({
 
 // Mock pathSanitization
 jest.mock('../src/shared/pathSanitization', () => ({
-  sanitizeMetadata: jest.fn((meta) => meta)
+  sanitizeMetadata: jest.fn((meta) => meta),
+  prepareFileMetadata: jest.fn((file) => ({
+    path: file?.meta?.path || '',
+    name: file?.meta?.name || '',
+    model: file?.model || '',
+    updatedAt: file?.updatedAt || new Date().toISOString(),
+    ...(file?.meta || {})
+  }))
 }));
 
 // Mock OfflineQueue

@@ -47,7 +47,7 @@ const {
   batchQueryFolders: batchQueryFoldersOp,
   getAllFolders: getAllFoldersOp,
   resetFolders: resetFoldersOp
-} = require('./folderOperations');
+} = require('./folderEmbeddings');
 
 logger.setContext('ChromaDBService');
 

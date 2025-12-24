@@ -403,10 +403,57 @@ function validateFileOperationPathSync(filePath, allowedBasePaths = null) {
   }
 }
 
+/**
+ * Prepare file metadata for ChromaDB storage
+ * Combines base metadata with file.meta and sanitizes the result.
+ *
+ * @param {Object} file - File object with id, meta, model, updatedAt
+ * @returns {Object} Sanitized metadata ready for ChromaDB
+ */
+function prepareFileMetadata(file) {
+  if (!file) return {};
+
+  const baseMetadata = {
+    path: file.meta?.path || '',
+    name: file.meta?.name || '',
+    model: file.model || '',
+    updatedAt: file.updatedAt || new Date().toISOString()
+  };
+
+  return sanitizeMetadata({
+    ...baseMetadata,
+    ...file.meta
+  });
+}
+
+/**
+ * Prepare folder metadata for ChromaDB storage
+ * Creates base metadata from folder properties and sanitizes the result.
+ *
+ * @param {Object} folder - Folder object with id, name, description, path, model, updatedAt
+ * @returns {Object} Sanitized metadata ready for ChromaDB
+ */
+function prepareFolderMetadata(folder) {
+  if (!folder) return {};
+
+  const metadata = {
+    name: folder.name || '',
+    description: folder.description || '',
+    path: folder.path || '',
+    model: folder.model || '',
+    updatedAt: folder.updatedAt || new Date().toISOString()
+  };
+
+  return sanitizeMetadata(metadata);
+}
+
 module.exports = {
   sanitizePath,
   isPathSafe,
   sanitizeMetadata,
+  // ChromaDB metadata helpers
+  prepareFileMetadata,
+  prepareFolderMetadata,
   // New exports for file operation security
   validateFileOperationPath,
   validateFileOperationPathSync,

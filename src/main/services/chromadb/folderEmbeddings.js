@@ -1,16 +1,16 @@
 /**
- * ChromaDB Folder Operations
+ * ChromaDB Folder Embeddings
  *
  * Folder embedding operations for ChromaDB.
  * Extracted from ChromaDBService for better maintainability.
  *
- * @module services/chromadb/folderOperations
+ * @module services/chromadb/folderEmbeddings
  */
 
 const { logger } = require('../../../shared/logger');
 const { RETRY } = require('../../../shared/performanceConstants');
 const { withRetry } = require('../../../shared/errorHandlingUtils');
-const { sanitizeMetadata } = require('../../../shared/pathSanitization');
+const { prepareFolderMetadata } = require('../../../shared/pathSanitization');
 
 logger.setContext('ChromaDB:FolderOps');
 
@@ -27,15 +27,8 @@ async function directUpsertFolder({ folder, folderCollection, queryCache }) {
   return withRetry(
     async () => {
       try {
-        const metadata = {
-          name: folder.name || '',
-          description: folder.description || '',
-          path: folder.path || '',
-          model: folder.model || '',
-          updatedAt: folder.updatedAt || new Date().toISOString()
-        };
-
-        const sanitized = sanitizeMetadata(metadata);
+        // Use shared helper to prepare and sanitize metadata
+        const sanitized = prepareFolderMetadata(folder);
 
         await folderCollection.upsert({
           ids: [folder.id],
@@ -114,17 +107,12 @@ async function directBatchUpsertFolders({ folders, folderCollection, queryCache 
             continue;
           }
 
-          const metadata = {
-            name: folder.name || '',
-            description: folder.description || '',
-            path: folder.path || '',
-            model: folder.model || '',
-            updatedAt: folder.updatedAt || new Date().toISOString()
-          };
+          // Use shared helper to prepare and sanitize metadata
+          const sanitized = prepareFolderMetadata(folder);
 
           ids.push(folder.id);
           embeddings.push(folder.vector);
-          metadatas.push(sanitizeMetadata(metadata));
+          metadatas.push(sanitized);
           documents.push(folder.name || folder.id);
         }
 

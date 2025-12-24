@@ -8,6 +8,12 @@ const fs = require('fs').promises;
 const path = require('path');
 const { ERROR_TYPES } = require('../../shared/constants');
 const { logger } = require('../../shared/logger');
+const { parseJsonLines } = require('../../shared/safeJsonOps');
+const {
+  isNotFoundError,
+  isPermissionError,
+  isNetworkError
+} = require('../../shared/errorClassifier');
 logger.setContext('ErrorHandler');
 
 /**
@@ -166,19 +172,21 @@ class ErrorHandler {
     if (error instanceof Error) {
       errorInfo.message = error.message;
 
-      // Determine error type
-      if (error.code === 'ENOENT') {
+      // Determine error type using centralized error classifier
+      // Note: AI/Ollama check comes before network check because Ollama connection
+      // errors should be classified as AI_UNAVAILABLE, not NETWORK_ERROR
+      if (isNotFoundError(error)) {
         errorInfo.type = ERROR_TYPES.FILE_NOT_FOUND;
         errorInfo.message = 'File or directory not found';
-      } else if (error.code === 'EACCES' || error.code === 'EPERM') {
+      } else if (isPermissionError(error)) {
         errorInfo.type = ERROR_TYPES.PERMISSION_DENIED;
         errorInfo.message = 'Permission denied';
-      } else if (error.message.includes('network') || error.code === 'ENOTFOUND') {
-        errorInfo.type = ERROR_TYPES.NETWORK_ERROR;
-        errorInfo.message = 'Network connection error';
       } else if (error.message.includes('AI') || error.message.includes('Ollama')) {
         errorInfo.type = ERROR_TYPES.AI_UNAVAILABLE;
         errorInfo.message = 'AI service is unavailable';
+      } else if (isNetworkError(error)) {
+        errorInfo.type = ERROR_TYPES.NETWORK_ERROR;
+        errorInfo.message = 'Network connection error';
       }
     }
 
@@ -295,17 +303,10 @@ class ErrorHandler {
   async getRecentErrors(count = 50) {
     try {
       const logContent = await fs.readFile(this.currentLogFile, 'utf-8');
-      const lines = logContent.trim().split('\n');
-      const errors = lines
+      const entries = parseJsonLines(logContent);
+      const errors = entries
         .slice(-count)
-        .map((line) => {
-          try {
-            return JSON.parse(line);
-          } catch {
-            return null;
-          }
-        })
-        .filter((entry) => entry && ['ERROR', 'CRITICAL'].includes(entry.level));
+        .filter((entry) => ['ERROR', 'CRITICAL'].includes(entry.level));
 
       return errors;
     } catch (error) {

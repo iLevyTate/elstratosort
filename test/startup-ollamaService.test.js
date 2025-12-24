@@ -26,9 +26,15 @@ jest.mock('../src/shared/logger', () => ({
   }
 }));
 
-jest.mock('../src/main/utils/ollamaApiRetry', () => ({
-  axiosWithRetry: jest.fn()
-}));
+jest.mock('../src/main/utils/ollamaApiRetry', () => {
+  const actual = jest.requireActual('../src/main/utils/ollamaApiRetry');
+  return {
+    ...actual,
+    axiosWithRetry: jest.fn(),
+    // checkOllamaHealth uses axios which is mocked, so use actual implementation
+    checkOllamaHealth: actual.checkOllamaHealth
+  };
+});
 
 jest.mock('../src/shared/performanceConstants', () => ({
   TIMEOUTS: {

@@ -465,6 +465,7 @@ const ServiceIds = {
   // Core services
   CHROMA_DB: 'chromaDb',
   SETTINGS: 'settings',
+  DEPENDENCY_MANAGER: 'dependencyManager',
 
   // AI/Embedding services
   OLLAMA_SERVICE: 'ollamaService',

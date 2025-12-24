@@ -7,9 +7,8 @@ const { backupAndReplace, atomicFileOps } = require('../../shared/atomicFileOper
 const { validateSettings, sanitizeSettings } = require('../../shared/settingsValidation');
 const { DEFAULT_SETTINGS } = require('../../shared/defaultSettings');
 const { logger } = require('../../shared/logger');
+const { createSingletonHelpers } = require('../../shared/singletonFactory');
 logger.setContext('SettingsService');
-
-let singletonInstance = null;
 
 class SettingsService {
   constructor() {
@@ -803,20 +802,22 @@ class SettingsService {
   }
 }
 
-/**
- * Get singleton instance of SettingsService
- * @returns {SettingsService}
- */
-function getInstance() {
-  if (!singletonInstance) {
-    singletonInstance = new SettingsService();
-  }
-  return singletonInstance;
-}
+// Use shared singleton factory for getInstance, registerWithContainer, resetInstance
+const { getInstance, createInstance, registerWithContainer, resetInstance } =
+  createSingletonHelpers({
+    ServiceClass: SettingsService,
+    serviceId: 'SETTINGS',
+    serviceName: 'SettingsService',
+    containerPath: './ServiceContainer',
+    shutdownMethod: 'shutdown'
+  });
 
 // Backwards compatibility alias
 const getService = getInstance;
 
 module.exports = SettingsService;
 module.exports.getInstance = getInstance;
+module.exports.createInstance = createInstance;
+module.exports.registerWithContainer = registerWithContainer;
+module.exports.resetInstance = resetInstance;
 module.exports.getService = getService; // Deprecated: use getInstance

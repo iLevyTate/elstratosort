@@ -518,11 +518,14 @@ describe('IpcServiceContext', () => {
     });
   });
 
-  describe('backward compatibility alias', () => {
-    test('exports ServiceContainer as alias', () => {
+  describe('exports', () => {
+    test('does not export ServiceContainer alias (removed to avoid confusion with main DI container)', () => {
       const module = require('../src/main/ipc/IpcServiceContext');
 
-      expect(module.ServiceContainer).toBe(module.IpcServiceContext);
+      // ServiceContainer alias was intentionally removed to avoid confusion
+      // with src/main/services/ServiceContainer.js (the main DI container)
+      expect(module.ServiceContainer).toBeUndefined();
+      expect(module.IpcServiceContext).toBeDefined();
     });
   });
 });

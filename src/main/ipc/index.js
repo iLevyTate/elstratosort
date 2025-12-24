@@ -12,11 +12,7 @@ const { registerSuggestionsIpc } = require('./suggestions');
 const { registerOrganizeIpc } = require('./organize');
 const { registerChromaDBIpc } = require('./chromadb');
 const { registerDependenciesIpc } = require('./dependencies');
-const {
-  IpcServiceContext,
-  createFromLegacyParams,
-  ServiceContainer
-} = require('./IpcServiceContext');
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 
 // Export IPC utilities for handler creation
 const {
@@ -265,8 +261,6 @@ module.exports = {
   // IPC service context utilities
   IpcServiceContext,
   createFromLegacyParams,
-  // Backward compatibility alias
-  ServiceContainer,
 
   // IPC handler utilities
   createHandler,

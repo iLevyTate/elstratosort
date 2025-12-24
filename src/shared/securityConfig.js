@@ -14,6 +14,15 @@
 // We only need the platform string here, so read it directly from process.
 const PLATFORM = typeof process !== 'undefined' && process.platform ? process.platform : 'browser';
 
+// Import shared validation constants
+const {
+  THEME_VALUES,
+  LOGGING_LEVELS,
+  NUMERIC_LIMITS,
+  URL_PATTERN,
+  MODEL_NAME_PATTERN
+} = require('./validationConstants');
+
 /**
  * Path length limits by platform
  * These are OS-imposed limits that shouldn't change
@@ -148,25 +157,19 @@ const SETTINGS_VALIDATION = {
     'telemetryEnabled'
   ]),
 
-  // Valid values for enum fields
+  // Valid values for enum fields (from shared validationConstants)
   enums: {
-    theme: ['light', 'dark', 'auto', 'system'],
-    loggingLevel: ['error', 'warn', 'info', 'debug']
+    theme: THEME_VALUES,
+    loggingLevel: LOGGING_LEVELS
   },
 
-  // Numeric field constraints
-  numericLimits: {
-    cacheSize: { min: 0, max: 100000 },
-    maxBatchSize: { min: 1, max: 100000 }
-  },
+  // Numeric field constraints (from shared validationConstants)
+  numericLimits: NUMERIC_LIMITS,
 
-  // Regex patterns for string validation
+  // Regex patterns for string validation (from shared validationConstants)
   patterns: {
-    // URL pattern for Ollama host - properly matches IP addresses and hostnames
-    // Matches: http://127.0.0.1:11434, https://localhost:11434, http://ollama.local:11434
-    url: /^https?:\/\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|localhost|[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?)(:\d{1,5})?(\/.*)?$/,
-    // Model name pattern (alphanumeric with some special chars)
-    modelName: /^[a-zA-Z0-9][a-zA-Z0-9\-_.@:/]*[a-zA-Z0-9]$/
+    url: URL_PATTERN,
+    modelName: MODEL_NAME_PATTERN
   }
 };
 

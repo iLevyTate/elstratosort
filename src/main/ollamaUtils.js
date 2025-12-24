@@ -24,6 +24,36 @@ let selectedTextModel = null;
 let selectedVisionModel = null;
 let selectedEmbeddingModel = null;
 
+/**
+ * Normalize a URL for Ollama server connection
+ * Handles missing protocol, extra whitespace, and double-protocol issues
+ *
+ * @param {string} [hostUrl] - The URL to normalize
+ * @param {string} [defaultUrl] - Default URL if none provided
+ * @returns {string} Normalized URL with protocol
+ */
+function normalizeOllamaUrl(hostUrl, defaultUrl = SERVICE_URLS.OLLAMA_HOST) {
+  let url = hostUrl || defaultUrl;
+
+  if (url && typeof url === 'string') {
+    url = url.trim();
+
+    // Check if URL already has a protocol
+    const hasHttps = url.toLowerCase().startsWith('https://');
+    const hasHttp = url.toLowerCase().startsWith('http://');
+
+    if (hasHttps || hasHttp) {
+      // Remove duplicate protocols (e.g., http://http://...)
+      url = url.replace(/^(https?:\/\/)+/i, hasHttps ? 'https://' : 'http://');
+    } else {
+      // No protocol specified, add http://
+      url = `http://${url}`;
+    }
+  }
+
+  return url;
+}
+
 // Helper to destroy HTTP agent and prevent socket leaks
 function destroyCurrentAgent() {
   if (currentHttpAgent) {
@@ -146,22 +176,7 @@ function getOllamaHost() {
 async function setOllamaHost(host) {
   try {
     if (typeof host === 'string' && host.trim()) {
-      let normalizedHost = host.trim();
-
-      // Normalize URL - preserve https if specified, default to http
-      const hasHttps = normalizedHost.toLowerCase().startsWith('https://');
-      const hasHttp = normalizedHost.toLowerCase().startsWith('http://');
-
-      if (hasHttps || hasHttp) {
-        // Remove duplicate protocols (e.g., http://http://...)
-        normalizedHost = normalizedHost.replace(
-          /^(https?:\/\/)+/i,
-          hasHttps ? 'https://' : 'http://'
-        );
-      } else {
-        // No protocol specified, add http://
-        normalizedHost = `http://${normalizedHost}`;
-      }
+      const normalizedHost = normalizeOllamaUrl(host);
 
       ollamaHost = normalizedHost;
       // Recreate client with new host
@@ -370,5 +385,6 @@ module.exports = {
   setOllamaHost,
   getOllamaConfigPath,
   loadOllamaConfig,
-  saveOllamaConfig
+  saveOllamaConfig,
+  normalizeOllamaUrl
 };

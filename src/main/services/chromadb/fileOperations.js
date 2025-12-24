@@ -9,7 +9,7 @@
 
 const { logger } = require('../../../shared/logger');
 const { withRetry } = require('../../../shared/errorHandlingUtils');
-const { sanitizeMetadata } = require('../../../shared/pathSanitization');
+const { prepareFileMetadata, sanitizeMetadata } = require('../../../shared/pathSanitization');
 const { OperationType } = require('../../utils/OfflineQueue');
 
 logger.setContext('ChromaDB:FileOps');
@@ -27,19 +27,8 @@ async function directUpsertFile({ file, fileCollection, queryCache }) {
   return withRetry(
     async () => {
       try {
-        // Sanitize metadata to prevent injection and bloat
-        const baseMetadata = {
-          path: file.meta?.path || '',
-          name: file.meta?.name || '',
-          model: file.model || '',
-          updatedAt: file.updatedAt || new Date().toISOString()
-        };
-
-        // Merge with sanitized additional metadata (filters dangerous fields)
-        const sanitized = sanitizeMetadata({
-          ...baseMetadata,
-          ...file.meta
-        });
+        // Use shared helper to prepare and sanitize metadata
+        const sanitized = prepareFileMetadata(file);
 
         // ChromaDB expects embeddings as arrays
         await fileCollection.upsert({

@@ -21,7 +21,14 @@ jest.mock('../src/shared/errorHandlingUtils', () => ({
 
 // Mock pathSanitization
 jest.mock('../src/shared/pathSanitization', () => ({
-  sanitizeMetadata: jest.fn((meta) => meta)
+  sanitizeMetadata: jest.fn((meta) => meta),
+  prepareFolderMetadata: jest.fn((folder) => ({
+    name: folder?.name || '',
+    description: folder?.description || '',
+    path: folder?.path || '',
+    model: folder?.model || '',
+    updatedAt: folder?.updatedAt || new Date().toISOString()
+  }))
 }));
 
 describe('ChromaDB Folder Operations', () => {
@@ -74,7 +81,7 @@ describe('ChromaDB Folder Operations', () => {
       createCollection: jest.fn().mockResolvedValue(mockFolderCollection)
     };
 
-    const module = require('../src/main/services/chromadb/folderOperations');
+    const module = require('../src/main/services/chromadb/folderEmbeddings');
     directUpsertFolder = module.directUpsertFolder;
     directBatchUpsertFolders = module.directBatchUpsertFolders;
     queryFoldersByEmbedding = module.queryFoldersByEmbedding;

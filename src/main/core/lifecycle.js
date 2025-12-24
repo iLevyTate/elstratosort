@@ -13,6 +13,7 @@ const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { destroyTray, getTray } = require('./systemTray');
 const { getStartupManager } = require('../services/startup');
 const systemAnalytics = require('./systemAnalytics');
+const { withTimeout } = require('../../shared/promiseUtils');
 
 logger.setContext('Lifecycle');
 
@@ -290,56 +291,27 @@ async function handleBeforeQuit() {
     // Post-shutdown verification: Verify all resources are released
     const shutdownTimeout = 10000; // 10 seconds max for shutdown
 
-    // FIX: Store timeout ID to clear it when verification completes
-    let verificationTimeoutId;
     try {
-      await Promise.race([
-        verifyShutdownCleanup(),
-        new Promise((_, reject) => {
-          verificationTimeoutId = setTimeout(
-            () => reject(new Error('Shutdown verification timeout')),
-            shutdownTimeout
-          );
-        })
-      ]);
+      await withTimeout(verifyShutdownCleanup(), shutdownTimeout, 'Shutdown verification');
     } catch (error) {
       logger.warn('[SHUTDOWN-VERIFY] Verification failed or timed out:', error.message);
-    } finally {
-      // FIX: Always clear the verification timeout
-      if (verificationTimeoutId) {
-        clearTimeout(verificationTimeoutId);
-      }
     }
   })(); // Close cleanup promise wrapper
 
-  // HIGH PRIORITY FIX (HIGH-2): Race cleanup against timeout
-  // FIX: Store timeout ID to clear it when cleanup completes successfully
-  let cleanupTimeoutId;
-  const timeoutPromise = new Promise((_, reject) => {
-    cleanupTimeoutId = setTimeout(
-      () => reject(new Error('Cleanup timeout exceeded')),
-      CLEANUP_TIMEOUT
-    );
-  });
-
+  // Race cleanup against timeout
   try {
-    await Promise.race([cleanupPromise, timeoutPromise]);
+    await withTimeout(cleanupPromise, CLEANUP_TIMEOUT, 'Cleanup');
     const elapsed = Date.now() - cleanupStartTime;
     logger.info(`[SHUTDOWN] Cleanup completed successfully in ${elapsed}ms`);
   } catch (error) {
     const elapsed = Date.now() - cleanupStartTime;
-    if (error.message === 'Cleanup timeout exceeded') {
+    if (error.message.includes('timed out')) {
       logger.error(`[SHUTDOWN] Cleanup timed out after ${elapsed}ms (max: ${CLEANUP_TIMEOUT}ms)`);
       logger.error(
         '[SHUTDOWN] Forcing app quit to prevent hanging. Some resources may not be properly released.'
       );
     } else {
       logger.error(`[SHUTDOWN] Cleanup failed after ${elapsed}ms:`, error.message);
-    }
-  } finally {
-    // FIX: Always clear the timeout to prevent memory leak
-    if (cleanupTimeoutId) {
-      clearTimeout(cleanupTimeoutId);
     }
   }
 }

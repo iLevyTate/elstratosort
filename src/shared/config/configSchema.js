@@ -23,6 +23,7 @@ const {
   DEFAULT_AI_MODELS,
   FILE_SIZE_LIMITS
 } = require('../constants');
+const { THEME_VALUES } = require('../validationConstants');
 
 /**
  * Configuration Schema Definition
@@ -491,7 +492,7 @@ const CONFIG_SCHEMA = {
     theme: {
       type: 'enum',
       default: DEFAULT_SETTINGS.theme,
-      values: ['light', 'dark', 'system'],
+      values: THEME_VALUES,
       description: 'Application color theme'
     },
     /** Enable notifications */

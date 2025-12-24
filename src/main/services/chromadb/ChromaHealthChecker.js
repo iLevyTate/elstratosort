@@ -11,6 +11,11 @@ const axios = require('axios');
 const { ChromaClient } = require('chromadb');
 const { logger } = require('../../../shared/logger');
 const { get: getConfig } = require('../../../shared/config/index');
+const {
+  createHealthCheckInterval: createSharedHealthCheckInterval
+} = require('../../../shared/healthCheckUtils');
+const { isNetworkError, isRetryable } = require('../../../shared/errorClassifier');
+const { withTimeout } = require('../../../shared/promiseUtils');
 
 logger.setContext('ChromaDB:HealthChecker');
 
@@ -133,21 +138,8 @@ async function isServerAvailable({ serverUrl, client = null, timeoutMs = 3000, m
       // disposable ChromaClient instances that create TIME_WAIT connections
       const checkClient = client || new ChromaClient(parseServerUrl(serverUrl));
 
-      // Wrap heartbeat in Promise.race with timeout
-      let timeoutId;
-      const heartbeatPromise = checkClient.heartbeat();
-      const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(new Error(`Heartbeat timeout after ${timeoutMs}ms`));
-        }, timeoutMs);
-      });
-
-      let hb;
-      try {
-        hb = await Promise.race([heartbeatPromise, timeoutPromise]);
-      } finally {
-        if (timeoutId) clearTimeout(timeoutId);
-      }
+      // Use shared timeout utility for heartbeat check
+      const hb = await withTimeout(checkClient.heartbeat(), timeoutMs, 'ChromaDB heartbeat');
 
       logger.debug('[HealthChecker] Server heartbeat successful:', {
         hb,
@@ -158,11 +150,7 @@ async function isServerAvailable({ serverUrl, client = null, timeoutMs = 3000, m
     } catch (error) {
       lastError = error;
 
-      const isTimeout = error.message && error.message.includes('timeout');
-      const isNetworkError =
-        error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND';
-
-      const shouldRetry = (isTimeout || isNetworkError) && attempt < maxRetries - 1;
+      const shouldRetry = (isRetryable(error) || isNetworkError(error)) && attempt < maxRetries - 1;
 
       if (shouldRetry) {
         // Exponential backoff: 500ms, 1000ms, 2000ms
@@ -176,19 +164,12 @@ async function isServerAvailable({ serverUrl, client = null, timeoutMs = 3000, m
         });
         await new Promise((resolve) => setTimeout(resolve, delay));
       } else {
-        if (isTimeout) {
-          logger.debug('[HealthChecker] Heartbeat timed out:', {
-            timeoutMs,
-            serverUrl,
-            attempt: attempt + 1
-          });
-        } else {
-          logger.debug('[HealthChecker] Heartbeat failed:', {
-            message: error.message,
-            serverUrl,
-            attempt: attempt + 1
-          });
-        }
+        logger.debug('[HealthChecker] Heartbeat failed:', {
+          message: error.message,
+          code: error.code,
+          serverUrl,
+          attempt: attempt + 1
+        });
       }
     }
   }
@@ -203,39 +184,28 @@ async function isServerAvailable({ serverUrl, client = null, timeoutMs = 3000, m
 /**
  * Create a periodic health check interval
  *
+ * Uses shared healthCheckUtils for consistent behavior across services.
+ *
  * @param {Object} options - Options
  * @param {Function} options.checkFn - Health check function to call
  * @param {number} options.intervalMs - Interval in milliseconds
- * @returns {Object} Object with interval ID and stop function
+ * @returns {Object} Object with stop function and state
  */
 function createHealthCheckInterval({ checkFn, intervalMs }) {
   const interval = getConfig('PERFORMANCE.healthCheckInterval', intervalMs || 30000);
 
-  // Initial check
-  checkFn().catch((err) => {
-    logger.debug('[HealthChecker] Initial check failed', {
-      error: err.message
-    });
+  const checker = createSharedHealthCheckInterval({
+    checkFn,
+    intervalMs: interval,
+    timeoutMs: 5000,
+    name: 'ChromaDB:HealthChecker'
   });
 
-  const intervalId = setInterval(() => {
-    checkFn().catch((err) => {
-      logger.debug('[HealthChecker] Periodic check failed', {
-        error: err.message
-      });
-    });
-  }, interval);
-
-  // Unref to allow process to exit
-  if (intervalId.unref) {
-    intervalId.unref();
-  }
-
+  // Return compatible interface
   return {
-    intervalId,
-    stop: () => {
-      clearInterval(intervalId);
-    }
+    intervalId: null, // Not exposed by shared utility
+    stop: checker.stop,
+    state: checker.state
   };
 }
 
