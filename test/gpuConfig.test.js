@@ -37,6 +37,7 @@ describe('GPU Configuration', () => {
     delete process.env.ELECTRON_FORCE_SOFTWARE;
     delete process.env.ANGLE_BACKEND;
     delete process.env.STRATOSORT_GL_IMPLEMENTATION;
+    delete process.env.STRATOSORT_IGNORE_GPU_BLOCKLIST;
   });
 
   describe('forceSoftwareRenderer', () => {
@@ -94,12 +95,21 @@ describe('GPU Configuration', () => {
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith('use-gl', 'desktop');
     });
 
-    test('ignores GPU blocklist', () => {
+    test('ignores GPU blocklist when STRATOSORT_IGNORE_GPU_BLOCKLIST=1', () => {
+      process.env.STRATOSORT_IGNORE_GPU_BLOCKLIST = '1';
       gpuConfig = require('../src/main/core/gpuConfig');
 
       gpuConfig.initializeGpuConfig();
 
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith('ignore-gpu-blocklist');
+    });
+
+    test('does not ignore GPU blocklist by default (stability-first)', () => {
+      gpuConfig = require('../src/main/core/gpuConfig');
+
+      gpuConfig.initializeGpuConfig();
+
+      expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalledWith('ignore-gpu-blocklist');
     });
 
     test('handles app.commandLine errors gracefully', () => {

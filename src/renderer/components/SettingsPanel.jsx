@@ -86,6 +86,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   const [showAnalysisHistory, setShowAnalysisHistory] = useState(false);
   const [analysisStats, setAnalysisStats] = useState(null);
   const didAutoHealthCheckRef = useRef(false);
+  const skipAutoSaveRef = useRef(false);
 
   // Memoized computed values
   // Text models: use categorized list, but fall back to all if empty (text is the default category)
@@ -121,6 +122,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     try {
       const savedSettings = await window.electronAPI.settings.get();
       if (savedSettings) {
+        // Avoid auto-save loops caused by setSettings during hydration
+        skipAutoSaveRef.current = true;
         setSettings((prev) => ({ ...prev, ...savedSettings }));
       }
       setSettingsLoaded(true);
@@ -154,6 +157,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       setModelToDelete((response?.models || [])[0] || '');
       if (response?.ollamaHealth) setOllamaHealth(response.ollamaHealth);
       if (response?.selected) {
+        // Avoid auto-save loops caused by setSettings during hydration
+        skipAutoSaveRef.current = true;
         setSettings((prev) => {
           const desiredEmbed = response.selected.embeddingModel || prev.embeddingModel;
           const nextEmbeddingModel =
@@ -238,9 +243,20 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     try {
       setIsSaving(true);
       const normalizedSettings = sanitizeSettings(settings);
+      // Avoid auto-save loops caused by setSettings during explicit save
+      skipAutoSaveRef.current = true;
       setSettings(normalizedSettings);
-      await window.electronAPI.settings.save(normalizedSettings);
-      addNotification('Settings saved successfully!', 'success');
+      const res = await window.electronAPI.settings.save(normalizedSettings);
+      // Apply canonical settings returned from main (may include normalization / warnings)
+      if (res?.settings && typeof res.settings === 'object') {
+        skipAutoSaveRef.current = true;
+        setSettings((prev) => ({ ...prev, ...res.settings }));
+      }
+      if (Array.isArray(res?.validationWarnings) && res.validationWarnings.length > 0) {
+        addNotification(`Saved with warnings: ${res.validationWarnings.join('; ')}`, 'warning');
+      } else {
+        addNotification('Settings saved successfully!', 'success');
+      }
       handleToggleSettings();
     } catch (error) {
       logger.error('Failed to save settings', {
@@ -258,8 +274,11 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     async () => {
       try {
         const normalizedSettings = sanitizeSettings(settings);
-        setSettings(normalizedSettings);
-        await window.electronAPI.settings.save(normalizedSettings);
+        const res = await window.electronAPI.settings.save(normalizedSettings);
+        if (res?.settings && typeof res.settings === 'object') {
+          skipAutoSaveRef.current = true;
+          setSettings((prev) => ({ ...prev, ...res.settings }));
+        }
       } catch (error) {
         logger.error('Auto-save settings failed', {
           error: error.message,
@@ -273,6 +292,11 @@ const SettingsPanel = React.memo(function SettingsPanel() {
 
   useEffect(() => {
     if (isApiAvailable && settingsLoaded) {
+      // Prevent auto-save storm during initial hydration or when we just applied canonical settings.
+      if (skipAutoSaveRef.current) {
+        skipAutoSaveRef.current = false;
+        return;
+      }
       autoSaveSettings();
     }
   }, [isApiAvailable, settings, settingsLoaded, autoSaveSettings]);
