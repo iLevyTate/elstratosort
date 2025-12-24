@@ -5,6 +5,7 @@ logger.setContext('FolderMatchingService');
 const EmbeddingCache = require('./EmbeddingCache');
 const { getInstance: getParallelEmbeddingService } = require('./ParallelEmbeddingService');
 const { get: getConfig } = require('../../shared/config/index');
+const { buildOllamaOptions } = require('./PerformanceService');
 
 /**
  * Embedding dimension constants for different models
@@ -149,6 +150,7 @@ class FolderMatchingService {
     try {
       const ollama = getOllama();
       const model = getOllamaEmbeddingModel();
+      const perfOptions = await buildOllamaOptions('embeddings');
 
       // Check cache first
       const cachedResult = this.embeddingCache.get(text, model);
@@ -161,7 +163,8 @@ class FolderMatchingService {
       // Cache miss - generate embedding via API
       const response = await ollama.embeddings({
         model,
-        prompt: text || ''
+        prompt: text || '',
+        options: { ...perfOptions }
       });
 
       let vector = Array.isArray(response.embedding) ? response.embedding : [];
@@ -273,7 +276,39 @@ class FolderMatchingService {
         throw new Error('ChromaDB service not available');
       }
 
-      await this.chromaDbService.initialize();
+      // Startup-safety: Chroma can still be booting even after process spawn.
+      // If initialization fails, treat folder upsert as non-fatal and retry later via subsequent calls.
+      try {
+        await this.chromaDbService.initialize();
+      } catch (initError) {
+        const msg = initError?.message || '';
+        const isStartupLike =
+          initError?.name === 'ChromaNotFoundError' ||
+          /requested resource could not be found/i.test(msg) ||
+          /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(msg);
+
+        // Avoid log spam during boot: log at warn once per call, and skip.
+        logger.warn(
+          '[FolderMatchingService] ChromaDB not ready; deferring folder embedding upsert',
+          {
+            reason: msg
+          }
+        );
+        return {
+          count: 0,
+          skipped: folders.map((f) => ({
+            folder: f,
+            error: isStartupLike ? 'chromadb_not_ready' : msg
+          })),
+          stats: {
+            total: folders.length,
+            cached: 0,
+            generated: 0,
+            failed: folders.length,
+            deferred: true
+          }
+        };
+      }
 
       const { onProgress = null } = options;
       const skipped = [];
@@ -400,9 +435,37 @@ class FolderMatchingService {
         }
       };
     } catch (error) {
+      const msg = error?.message || '';
+      const isStartupLike =
+        error?.name === 'ChromaNotFoundError' ||
+        /requested resource could not be found/i.test(msg) ||
+        /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(msg);
+
+      // During startup, don't spam error logs; treat as deferred/non-fatal.
+      if (isStartupLike) {
+        logger.warn(
+          '[FolderMatchingService] Folder embedding upsert deferred (ChromaDB not ready)',
+          {
+            error: msg,
+            totalFolders: folders?.length || 0
+          }
+        );
+        return {
+          count: 0,
+          skipped: (folders || []).map((f) => ({ folder: f, error: 'chromadb_not_ready' })),
+          stats: {
+            total: folders?.length || 0,
+            cached: 0,
+            generated: 0,
+            failed: (folders || []).length,
+            deferred: true
+          }
+        };
+      }
+
       logger.error('[FolderMatchingService] Failed to batch upsert folder embeddings:', {
         totalFolders: folders.length,
-        error: error.message,
+        error: msg,
         errorStack: error.stack
       });
       throw error;
@@ -759,6 +822,80 @@ class FolderMatchingService {
       logger.info('[FolderMatchingService] Shutting down embedding cache');
       await this.embeddingCache.shutdown();
     }
+  }
+
+  /**
+   * Match a category string to a smart folder using fuzzy matching logic
+   * (Static helper to allow usage without instantiation)
+   * @param {string} category - The raw category string from LLM
+   * @param {Array} smartFolders - List of available smart folders
+   * @returns {string} The matched folder name
+   */
+  static matchCategoryToFolder(category, smartFolders) {
+    const folders = Array.isArray(smartFolders) ? smartFolders : [];
+    if (folders.length === 0) return category;
+
+    const raw = String(category || '').trim();
+    const normalizedRaw = raw.toLowerCase();
+
+    // Prefer Uncategorized if model returns generic buckets
+    const uncategorized = folders.find(
+      (f) => String(f?.name || '').toLowerCase() === 'uncategorized'
+    );
+    if (
+      normalizedRaw === 'document' ||
+      normalizedRaw === 'documents' ||
+      normalizedRaw === 'image' ||
+      normalizedRaw === 'images'
+    ) {
+      return uncategorized?.name || folders[0].name;
+    }
+
+    // Exact match (case-insensitive)
+    const exact = folders.find(
+      (f) =>
+        String(f?.name || '')
+          .trim()
+          .toLowerCase() === normalizedRaw
+    );
+    if (exact) return exact.name;
+
+    // Normalize punctuation/whitespace for near-exact matches
+    const canon = (s) =>
+      String(s || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    const rawCanon = canon(raw);
+    if (rawCanon) {
+      const canonMatch = folders.find((f) => canon(f?.name) === rawCanon);
+      if (canonMatch) return canonMatch.name;
+    }
+
+    // Token overlap scoring (simple, deterministic)
+    const tokens = new Set(rawCanon.split(' ').filter(Boolean));
+    let best = null;
+    let bestScore = 0;
+    for (const f of folders) {
+      const name = String(f?.name || '').trim();
+      if (!name) continue;
+      const nameCanon = canon(name);
+      const nameTokens = nameCanon.split(' ').filter(Boolean);
+      if (nameTokens.length === 0) continue;
+      let score = 0;
+      nameTokens.forEach((t) => {
+        if (tokens.has(t)) score += 1;
+      });
+      // Small bias for shorter names to avoid always matching long "Financial Documents" when raw is "Financial"
+      score -= Math.min(0.25, nameTokens.length * 0.01);
+      if (score > bestScore) {
+        bestScore = score;
+        best = name;
+      }
+    }
+
+    if (bestScore > 0.5 && best) return best;
+    return uncategorized?.name || folders[0].name;
   }
 }
 

@@ -15,11 +15,42 @@ const mockFs = {
   readFile: jest.fn(),
   writeFile: jest.fn().mockResolvedValue(undefined),
   unlink: jest.fn().mockResolvedValue(undefined),
-  rename: jest.fn().mockResolvedValue(undefined)
+  rename: jest.fn().mockResolvedValue(undefined),
+  access: jest.fn()
 };
 jest.mock('fs', () => ({
   promises: mockFs
 }));
+
+// Mock atomicFile module to use the same fs mocks
+jest.mock('../src/shared/atomicFile', () => {
+  const fs = require('fs').promises;
+  return {
+    atomicWriteFile: jest.fn(async (filePath, data, options = {}) => {
+      const { pretty = false } = options;
+      const tempPath = `${filePath}.tmp.${Date.now()}`;
+      const content = pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data);
+      await fs.writeFile(tempPath, content, 'utf8');
+      await fs.rename(tempPath, filePath);
+    }),
+    loadJsonFile: jest.fn(async (filePath) => {
+      try {
+        const data = await fs.readFile(filePath, 'utf8');
+        return JSON.parse(data);
+      } catch (e) {
+        if (e.code === 'ENOENT') return null;
+        throw e;
+      }
+    }),
+    safeUnlink: jest.fn(async (filePath) => {
+      try {
+        await fs.unlink(filePath);
+      } catch (e) {
+        if (e.code !== 'ENOENT') throw e;
+      }
+    })
+  };
+});
 
 // Mock logger
 jest.mock('../src/shared/logger', () => ({
@@ -166,103 +197,8 @@ describe('OllamaClient', () => {
     });
   });
 
-  describe('_calculateRetryDelay', () => {
-    test('applies exponential backoff', () => {
-      const client = new OllamaClient({
-        initialRetryDelay: 1000,
-        maxRetryDelay: 8000,
-        retryJitterFactor: 0
-      });
-
-      const delay0 = client._calculateRetryDelay(0);
-      const delay1 = client._calculateRetryDelay(1);
-      const delay2 = client._calculateRetryDelay(2);
-
-      expect(delay0).toBe(1000);
-      expect(delay1).toBe(2000);
-      expect(delay2).toBe(4000);
-    });
-
-    test('caps at maxRetryDelay', () => {
-      const client = new OllamaClient({
-        initialRetryDelay: 1000,
-        maxRetryDelay: 5000,
-        retryJitterFactor: 0
-      });
-
-      const delay = client._calculateRetryDelay(10);
-
-      expect(delay).toBe(5000);
-    });
-  });
-
-  describe('_isRetryableError', () => {
-    test('returns true for network error codes', () => {
-      const client = new OllamaClient();
-
-      const codes = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EHOSTUNREACH'];
-
-      codes.forEach((code) => {
-        const error = new Error('test');
-        error.code = code;
-        expect(client._isRetryableError(error)).toBe(true);
-      });
-    });
-
-    test('returns true for network error messages', () => {
-      const client = new OllamaClient();
-
-      const messages = ['fetch failed', 'network error', 'timeout exceeded', 'connection refused'];
-
-      messages.forEach((msg) => {
-        expect(client._isRetryableError(new Error(msg))).toBe(true);
-      });
-    });
-
-    test('returns true for retryable HTTP status codes', () => {
-      const client = new OllamaClient();
-
-      const statuses = [408, 429, 500, 502, 503, 504];
-
-      statuses.forEach((status) => {
-        const error = new Error('HTTP error');
-        error.status = status;
-        expect(client._isRetryableError(error)).toBe(true);
-      });
-    });
-
-    test('returns true for Ollama temporary errors', () => {
-      const client = new OllamaClient();
-
-      const messages = ['model is loading', 'server busy', 'temporarily unavailable'];
-
-      messages.forEach((msg) => {
-        expect(client._isRetryableError(new Error(msg))).toBe(true);
-      });
-    });
-
-    test('returns false for non-retryable errors', () => {
-      const client = new OllamaClient();
-
-      const messages = [
-        'invalid request',
-        'validation failed',
-        'not found',
-        'unauthorized',
-        'bad request'
-      ];
-
-      messages.forEach((msg) => {
-        expect(client._isRetryableError(new Error(msg))).toBe(false);
-      });
-    });
-
-    test('returns false for null error', () => {
-      const client = new OllamaClient();
-
-      expect(client._isRetryableError(null)).toBe(false);
-    });
-  });
+  // Note: calculateDelayWithJitter and isRetryableError tests are in ollamaApiRetry.test.js
+  // OllamaClient uses these shared functions from ollamaApiRetry
 
   describe('concurrency control', () => {
     test('allows requests up to concurrency limit', async () => {
@@ -271,7 +207,9 @@ describe('OllamaClient', () => {
       await client._acquireSlot();
       await client._acquireSlot();
 
-      expect(client.activeRequests).toBe(2);
+      // Uses shared Semaphore - check via getStats()
+      const stats = client.semaphore.getStats();
+      expect(stats.activeCount).toBe(2);
     });
 
     test('queues requests over concurrency limit', async () => {
@@ -280,13 +218,14 @@ describe('OllamaClient', () => {
       await client._acquireSlot();
 
       const waitPromise = client._acquireSlot();
-      expect(client.waitQueue).toHaveLength(1);
+      // Uses shared Semaphore - check via getStats()
+      expect(client.semaphore.getStats().queueLength).toBe(1);
 
       client._releaseSlot();
       jest.runAllTimers();
 
       await waitPromise;
-      expect(client.activeRequests).toBe(1);
+      expect(client.semaphore.getStats().activeCount).toBe(1);
     });
 
     test('throws when queue is full', async () => {

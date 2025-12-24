@@ -173,14 +173,14 @@ describe('Preflight Checks', () => {
       expect(result).toBe(true);
     });
 
-    test('returns true on ETIMEDOUT', async () => {
+    test('returns false on ETIMEDOUT', async () => {
       const error = new Error('Timeout');
       error.code = 'ETIMEDOUT';
       axios.get.mockRejectedValueOnce(error);
 
       const result = await isPortAvailable('127.0.0.1', 8000);
 
-      expect(result).toBe(true);
+      expect(result).toBe(false);
     });
 
     test('returns false when port responds', async () => {
@@ -333,9 +333,11 @@ describe('Preflight Checks', () => {
 
       const checks = await runPreflightChecks({ reportProgress, errors });
 
-      const portCheck = checks.find((c) => c.name === 'Port Availability');
+      const portCheck = checks.find((c) => c.name === 'Service Ports');
       expect(portCheck).toBeDefined();
       expect(portCheck.details).toBeDefined();
+      expect(portCheck.details).toHaveProperty('chromaPort');
+      expect(portCheck.details).toHaveProperty('ollamaPort');
     });
 
     test('checks disk space', async () => {

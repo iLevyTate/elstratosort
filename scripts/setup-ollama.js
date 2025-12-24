@@ -3,9 +3,13 @@
 
 const { spawn } = require('child_process');
 const { asyncSpawn } = require('../src/main/utils/asyncSpawnUtils');
+const {
+  isOllamaInstalled,
+  isOllamaRunning,
+  getInstalledModels
+} = require('../src/main/utils/ollamaDetection');
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
 const os = require('os');
 
 // Simple color output without external dependencies
@@ -108,104 +112,8 @@ async function run(cmd, args = [], opts = {}) {
   return res.status === 0;
 }
 
-// Async check with timeout to prevent hanging
-async function checkAsync(cmd, args = [], timeoutMs = 5000) {
-  return new Promise((resolve) => {
-    const child = spawn(cmd, args, {
-      encoding: 'utf8',
-      shell: process.platform === 'win32'
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let resolved = false;
-
-    const timeout = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        child.kill();
-        resolve({ ok: false, stdout: '', stderr: 'Timeout' });
-      }
-    }, timeoutMs);
-
-    child.stdout?.on('data', (data) => {
-      stdout += data.toString();
-    });
-
-    child.stderr?.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    child.on('close', (code) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timeout);
-        resolve({
-          ok: code === 0,
-          stdout: stdout.trim(),
-          stderr: stderr.trim()
-        });
-      }
-    });
-
-    child.on('error', (error) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timeout);
-        resolve({ ok: false, stdout: '', stderr: error.message });
-      }
-    });
-  });
-}
-
 async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// Check if Ollama is installed (async with timeout to prevent hanging)
-async function isOllamaInstalled() {
-  const result = await checkAsync('ollama', ['--version'], 5000);
-  return result.ok;
-}
-
-// Check if Ollama server is running
-async function isOllamaRunning() {
-  try {
-    const url = new URL('/api/tags', OLLAMA_HOST);
-    return new Promise((resolve) => {
-      const request = (url.protocol === 'https:' ? https : require('http')).get(url, (res) => {
-        resolve(res.statusCode === 200);
-      });
-      request.on('error', () => resolve(false));
-      request.setTimeout(2000, () => {
-        request.abort();
-        resolve(false);
-      });
-    });
-  } catch {
-    return false;
-  }
-}
-
-// Get list of installed models (async with timeout to prevent hanging)
-async function getInstalledModels() {
-  try {
-    const result = await checkAsync('ollama', ['list'], 5000);
-    if (!result.ok) return [];
-
-    const lines = result.stdout.split('\n').slice(1); // Skip header
-    const models = lines
-      .filter((line) => line.trim())
-      .map((line) => {
-        const parts = line.split(/\s+/);
-        return parts[0] ? parts[0].toLowerCase() : null;
-      })
-      .filter(Boolean);
-
-    return models;
-  } catch {
-    return [];
-  }
 }
 
 // Start Ollama server in background

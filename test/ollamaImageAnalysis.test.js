@@ -85,14 +85,10 @@ jest.mock('../src/main/ollamaUtils', () => {
   };
 });
 
-// Mock ModelVerifier
-jest.mock('../src/main/services/ModelVerifier', () => {
-  return jest.fn().mockImplementation(() => ({
-    checkOllamaConnection: jest.fn().mockResolvedValue({
-      connected: true
-    })
-  }));
-});
+// Mock ollamaDetection
+jest.mock('../src/main/utils/ollamaDetection', () => ({
+  isOllamaRunning: jest.fn().mockResolvedValue(true)
+}));
 
 // Mock ChromaDB to return null (skip semantic matching)
 jest.mock('../src/main/services/ChromaDBService', () => ({
@@ -208,13 +204,8 @@ describe('ollamaImageAnalysis - Rewritten Tests', () => {
     });
 
     test('should fallback when Ollama is unavailable', async () => {
-      const ModelVerifier = require('../src/main/services/ModelVerifier');
-      ModelVerifier.mockImplementation(() => ({
-        checkOllamaConnection: jest.fn().mockResolvedValue({
-          connected: false,
-          error: 'Connection refused'
-        })
-      }));
+      const { isOllamaRunning } = require('../src/main/utils/ollamaDetection');
+      isOllamaRunning.mockResolvedValue(false);
 
       jest.spyOn(fs, 'stat').mockResolvedValue({
         size: 50000,

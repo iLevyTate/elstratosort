@@ -36,6 +36,10 @@ jest.mock('../src/shared/config/index', () => ({
   get: jest.fn((key, defaultValue) => defaultValue)
 }));
 
+jest.mock('../src/main/services/PerformanceService', () => ({
+  buildOllamaOptions: jest.fn().mockResolvedValue({ num_gpu: -1, main_gpu: 0 })
+}));
+
 describe('ParallelEmbeddingService', () => {
   let ParallelEmbeddingService;
   let getInstance;

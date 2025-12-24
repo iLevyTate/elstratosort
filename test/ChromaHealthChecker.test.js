@@ -33,6 +33,23 @@ jest.mock('../src/shared/config/index', () => ({
   get: jest.fn((key, defaultVal) => defaultVal)
 }));
 
+// Mock healthCheckUtils to use simple interval for testing
+jest.mock('../src/shared/healthCheckUtils', () => ({
+  createHealthCheckInterval: jest.fn(({ checkFn, intervalMs }) => {
+    // Simple implementation that works with Jest fake timers
+    checkFn().catch(() => {});
+    const intervalId = setInterval(() => {
+      checkFn().catch(() => {});
+    }, intervalMs);
+    if (intervalId.unref) intervalId.unref();
+    return {
+      state: { isHealthy: true },
+      stop: () => clearInterval(intervalId),
+      forceCheck: () => checkFn()
+    };
+  })
+}));
+
 describe('ChromaHealthChecker', () => {
   let checkHealthViaHttp;
   let checkHealthViaClient;

@@ -8,6 +8,7 @@ const fsSync = require('fs');
 const path = require('path');
 const { logger } = require('../../shared/logger');
 const { RETRY } = require('../../shared/performanceConstants');
+const { withRetry } = require('../../shared/promiseUtils');
 const {
   FileSystemError,
   WatcherError,
@@ -128,24 +129,17 @@ async function safeWriteFile(filePath, data, options = 'utf8') {
       }
 
       // Atomic rename with retry for Windows EPERM errors
-      let lastError;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
+      await withRetry(
+        async () => {
           await fs.rename(tempPath, filePath);
-          lastError = null;
-          break;
-        } catch (renameError) {
-          lastError = renameError;
-          if (renameError.code === 'EPERM' && attempt < 2) {
-            await new Promise((resolve) =>
-              setTimeout(resolve, RETRY.ATOMIC_BACKOFF_STEP_MS * (attempt + 1))
-            );
-            continue;
-          }
-          throw renameError;
+        },
+        {
+          maxRetries: 3,
+          initialDelay: RETRY.ATOMIC_BACKOFF_STEP_MS,
+          shouldRetry: (error) => error.code === 'EPERM',
+          operationName: 'safeWriteFile:rename'
         }
-      }
-      if (lastError) throw lastError;
+      )();
     } catch (writeError) {
       // Clean up temp file on failure
       try {

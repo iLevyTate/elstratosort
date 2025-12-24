@@ -13,6 +13,7 @@ const fs = require('fs').promises;
 const { spawn } = require('child_process');
 
 const { logger } = require('../../shared/logger');
+const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { isWindows, shouldUseShell } = require('../../shared/platformUtils');
 const {
   asyncSpawn,
@@ -20,15 +21,22 @@ const {
   findPythonLauncherAsync
 } = require('../utils/asyncSpawnUtils');
 const {
-  checkPythonInstallation,
-  checkOllamaInstallation
-} = require('../services/startup/preflightChecks');
-const { isOllamaRunning } = require('../services/startup/ollamaService');
+  isOllamaInstalled,
+  getOllamaVersion,
+  isOllamaRunning
+} = require('../utils/ollamaDetection');
+const { checkPythonInstallation } = require('../services/startup/preflightChecks');
 const { isChromaDBRunning } = require('../services/startup/chromaService');
 
 logger.setContext('DependencyManager');
 
 const OLLAMA_WINDOWS_INSTALLER_URL = 'https://ollama.com/download/OllamaSetup.exe';
+
+async function checkOllamaInstallation() {
+  const installed = await isOllamaInstalled();
+  const version = installed ? await getOllamaVersion() : null;
+  return { installed, version };
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -423,8 +431,19 @@ class DependencyManagerService {
   }
 }
 
-// Singleton instance for shared lock coordination
-let singletonInstance = null;
+// Create singleton helpers using shared factory
+const {
+  getInstance: _baseGetInstance,
+  createInstance,
+  registerWithContainer,
+  resetInstance
+} = createSingletonHelpers({
+  ServiceClass: DependencyManagerService,
+  serviceId: 'DEPENDENCY_MANAGER',
+  serviceName: 'DependencyManagerService',
+  containerPath: './ServiceContainer'
+  // No shutdownMethod - service has no cleanup needs
+});
 
 /**
  * Get the singleton DependencyManagerService instance.
@@ -435,24 +454,21 @@ let singletonInstance = null;
  * @returns {DependencyManagerService}
  */
 function getInstance(options = {}) {
-  if (!singletonInstance) {
-    singletonInstance = new DependencyManagerService(options);
-  } else if (options.onProgress) {
-    // FIX: Add callback instead of replacing - supports multiple listeners
-    singletonInstance.addProgressCallback(options.onProgress);
+  const instance = _baseGetInstance(options);
+  // Special behavior: Add callback to existing instance instead of replacing
+  if (options.onProgress && instance._progressCallbacks) {
+    // Only add if not already registered (avoid duplicates on repeated calls)
+    if (!instance._progressCallbacks.includes(options.onProgress)) {
+      instance.addProgressCallback(options.onProgress);
+    }
   }
-  return singletonInstance;
-}
-
-/**
- * Reset the singleton instance (for testing purposes)
- */
-function resetInstance() {
-  singletonInstance = null;
+  return instance;
 }
 
 module.exports = {
   DependencyManagerService,
   getInstance,
+  createInstance,
+  registerWithContainer,
   resetInstance
 };

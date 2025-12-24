@@ -87,6 +87,16 @@ describe('SettingsService', () => {
 
     mockFs.readFile.mockRejectedValue({ code: 'ENOENT' });
     mockFs.readdir.mockResolvedValue([]);
+    // Default access to fail for legacy configs to skip migration in standard tests
+    mockFs.access.mockImplementation((p) => {
+      if (
+        typeof p === 'string' &&
+        (p.includes('ollama-config.json') || p.includes('model-config.json'))
+      ) {
+        return Promise.reject({ code: 'ENOENT' });
+      }
+      return Promise.resolve();
+    });
 
     SettingsService = require('../src/main/services/SettingsService');
     service = new SettingsService();

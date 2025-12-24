@@ -66,6 +66,10 @@ jest.mock('../src/main/services/OllamaClient', () => ({
   }))
 }));
 
+jest.mock('../src/main/services/PerformanceService', () => ({
+  buildOllamaOptions: jest.fn().mockResolvedValue({ num_gpu: -1, main_gpu: 0 })
+}));
+
 // Import the service module (mocks are applied before this)
 const OllamaServiceModule = require('../src/main/services/OllamaService');
 
@@ -363,7 +367,7 @@ describe('OllamaService', () => {
       expect(mockOllama.embeddings).toHaveBeenCalledWith({
         model: 'mxbai-embed-large',
         prompt: 'test text',
-        options: {}
+        options: { num_gpu: -1, main_gpu: 0 }
       });
     });
 
@@ -377,7 +381,7 @@ describe('OllamaService', () => {
       expect(mockOllama.embeddings).toHaveBeenCalledWith({
         model: 'custom-embed-model',
         prompt: 'text',
-        options: {}
+        options: { num_gpu: -1, main_gpu: 0 }
       });
     });
 
@@ -391,7 +395,7 @@ describe('OllamaService', () => {
       expect(mockOllama.embeddings).toHaveBeenCalledWith({
         model: 'mxbai-embed-large',
         prompt: 'text',
-        options: { temperature: 0.5 }
+        options: { num_gpu: -1, main_gpu: 0, temperature: 0.5 }
       });
     });
 
@@ -418,7 +422,9 @@ describe('OllamaService', () => {
       expect(mockOllama.generate).toHaveBeenCalledWith({
         model: 'llama2',
         prompt: 'Analyze this text',
-        options: {},
+        format: undefined,
+        system: undefined,
+        options: { num_gpu: -1, main_gpu: 0 },
         stream: false
       });
     });
@@ -431,7 +437,9 @@ describe('OllamaService', () => {
       expect(mockOllama.generate).toHaveBeenCalledWith({
         model: 'mistral',
         prompt: 'text',
-        options: {},
+        format: undefined,
+        system: undefined,
+        options: { num_gpu: -1, main_gpu: 0 },
         stream: false
       });
     });
@@ -446,7 +454,9 @@ describe('OllamaService', () => {
       expect(mockOllama.generate).toHaveBeenCalledWith({
         model: 'llama2',
         prompt: 'text',
-        options: { temperature: 0.7, num_predict: 100 },
+        format: undefined,
+        system: undefined,
+        options: { num_gpu: -1, main_gpu: 0, temperature: 0.7, num_predict: 100 },
         stream: false
       });
     });
@@ -476,7 +486,8 @@ describe('OllamaService', () => {
         model: 'llava',
         prompt: 'Describe this image',
         images: [imageBase64],
-        options: {},
+        format: undefined,
+        options: { num_gpu: -1, main_gpu: 0 },
         stream: false
       });
     });
@@ -492,7 +503,8 @@ describe('OllamaService', () => {
         model: 'bakllava',
         prompt: 'prompt',
         images: ['image'],
-        options: {},
+        format: undefined,
+        options: { num_gpu: -1, main_gpu: 0 },
         stream: false
       });
     });
@@ -508,7 +520,8 @@ describe('OllamaService', () => {
         model: 'llava',
         prompt: 'prompt',
         images: ['image'],
-        options: { temperature: 0.3 },
+        format: undefined,
+        options: { num_gpu: -1, main_gpu: 0, temperature: 0.3 },
         stream: false
       });
     });

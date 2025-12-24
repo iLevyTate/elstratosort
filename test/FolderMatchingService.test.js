@@ -23,6 +23,10 @@ jest.mock('../src/shared/logger', () => ({
   }
 }));
 
+jest.mock('../src/main/services/PerformanceService', () => ({
+  buildOllamaOptions: jest.fn().mockResolvedValue({ num_gpu: -1, main_gpu: 0 })
+}));
+
 describe('FolderMatchingService', () => {
   let service;
   let mockChromaDBService;
@@ -81,7 +85,8 @@ describe('FolderMatchingService', () => {
       expect(result.model).toBe('mxbai-embed-large');
       expect(mockOllama.embeddings).toHaveBeenCalledWith({
         model: 'mxbai-embed-large',
-        prompt: text
+        prompt: text,
+        options: { num_gpu: -1, main_gpu: 0 }
       });
     });
 
@@ -105,7 +110,8 @@ describe('FolderMatchingService', () => {
       expect(result.vector).toBeInstanceOf(Array);
       expect(mockOllama.embeddings).toHaveBeenCalledWith({
         model: 'mxbai-embed-large',
-        prompt: ''
+        prompt: '',
+        options: { num_gpu: -1, main_gpu: 0 }
       });
     });
 
@@ -242,7 +248,8 @@ describe('FolderMatchingService', () => {
 
       expect(mockOllama.embeddings).toHaveBeenCalledWith({
         model: 'mxbai-embed-large',
-        prompt: 'Projects - Active development projects'
+        prompt: 'Projects - Active development projects',
+        options: { num_gpu: -1, main_gpu: 0 }
       });
     });
 
@@ -256,7 +263,8 @@ describe('FolderMatchingService', () => {
       expect(result.description).toBe('');
       expect(mockOllama.embeddings).toHaveBeenCalledWith({
         model: 'mxbai-embed-large',
-        prompt: 'SimpleFolder'
+        prompt: 'SimpleFolder',
+        options: { num_gpu: -1, main_gpu: 0 }
       });
     });
 
@@ -283,7 +291,8 @@ describe('FolderMatchingService', () => {
 
       expect(mockOllama.embeddings).toHaveBeenCalledWith({
         model: 'mxbai-embed-large',
-        prompt: contentSummary
+        prompt: contentSummary,
+        options: { num_gpu: -1, main_gpu: 0 }
       });
 
       expect(mockChromaDBService.upsertFile).toHaveBeenCalledWith({
@@ -300,7 +309,8 @@ describe('FolderMatchingService', () => {
 
       expect(mockOllama.embeddings).toHaveBeenCalledWith({
         model: 'mxbai-embed-large',
-        prompt: ''
+        prompt: '',
+        options: { num_gpu: -1, main_gpu: 0 }
       });
     });
 
@@ -309,7 +319,8 @@ describe('FolderMatchingService', () => {
 
       expect(mockOllama.embeddings).toHaveBeenCalledWith({
         model: 'mxbai-embed-large',
-        prompt: ''
+        prompt: '',
+        options: { num_gpu: -1, main_gpu: 0 }
       });
     });
 
@@ -524,7 +535,8 @@ describe('FolderMatchingService', () => {
       expect(result).toBeDefined();
       expect(mockOllama.embeddings).toHaveBeenCalledWith({
         model: 'mxbai-embed-large',
-        prompt: longText
+        prompt: longText,
+        options: { num_gpu: -1, main_gpu: 0 }
       });
     });
 

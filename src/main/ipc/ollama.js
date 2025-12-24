@@ -2,6 +2,7 @@ const { Ollama } = require('ollama');
 const { withErrorLogging, withValidation } = require('./ipcWrappers');
 const { optionalUrl: optionalUrlSchema } = require('./validationSchemas');
 const { SERVICE_URLS } = require('../../shared/configDefaults');
+const { normalizeOllamaUrl } = require('../ollamaUtils');
 let z;
 
 function isValidOllamaUrl(url) {
@@ -14,35 +15,8 @@ function isValidOllamaUrl(url) {
 const OLLAMA_URL_PATTERN =
   /^https?:\/\/([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(:\d{1,5})?(\/.*)?$|^https?:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d{1,5})?(\/.*)?$|^https?:\/\/localhost(:\d{1,5})?(\/.*)?$/;
 
-/**
- * Normalize a URL for Ollama server connection
- * Handles missing protocol, extra whitespace, and double-protocol issues
- *
- * @param {string} [hostUrl] - The URL to normalize
- * @param {string} [defaultUrl='http://127.0.0.1:11434'] - Default URL if none provided
- * @returns {string} Normalized URL with protocol
- */
-function normalizeOllamaUrl(hostUrl, defaultUrl = SERVICE_URLS.OLLAMA_HOST) {
-  let url = hostUrl || defaultUrl;
+// Note: normalizeOllamaUrl is imported from shared ollamaUtils module
 
-  if (url && typeof url === 'string') {
-    url = url.trim();
-
-    // Check if URL already has a protocol
-    const hasHttps = url.toLowerCase().startsWith('https://');
-    const hasHttp = url.toLowerCase().startsWith('http://');
-
-    if (hasHttps || hasHttp) {
-      // Remove duplicate protocols (e.g., http://http://...)
-      url = url.replace(/^(https?:\/\/)+/i, hasHttps ? 'https://' : 'http://');
-    } else {
-      // No protocol specified, add http://
-      url = `http://${url}`;
-    }
-  }
-
-  return url;
-}
 try {
   z = require('zod');
 } catch {

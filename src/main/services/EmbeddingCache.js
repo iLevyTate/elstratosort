@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { LRUCache } = require('../../shared/LRUCache');
 const { logger } = require('../../shared/logger');
 const { CACHE } = require('../../shared/performanceConstants');
 logger.setContext('EmbeddingCache');
@@ -6,6 +7,8 @@ logger.setContext('EmbeddingCache');
 /**
  * High-performance LRU cache for embedding vectors with TTL support
  * Dramatically reduces AI API calls by caching previously computed embeddings
+ *
+ * Uses shared LRUCache with embedding-specific key generation and metrics.
  */
 class EmbeddingCache {
   /**
@@ -18,21 +21,16 @@ class EmbeddingCache {
     this.maxSize = options.maxSize || 500;
     this.ttlMs = options.ttlMs || CACHE.TTL_SHORT;
 
-    // Cache storage: Map<key, {vector, model, timestamp, accessTime}>
-    this.cache = new Map();
+    this._cache = new LRUCache({
+      maxSize: this.maxSize,
+      ttlMs: this.ttlMs,
+      lruStrategy: 'access',
+      trackMetrics: true,
+      name: 'EmbeddingCache'
+    });
 
-    // Metrics tracking
-    this.metrics = {
-      hits: 0,
-      misses: 0,
-      evictions: 0,
-      size: 0
-    };
-
-    // Fixed: Don't start interval in constructor - wait for initialize()
-    // This prevents orphaned intervals if service initialization fails
-    this.cleanupInterval = null;
-    this.initialized = false;
+    // Track size separately for metrics (updated on set)
+    this._currentSize = 0;
 
     logger.info('[EmbeddingCache] Created', {
       maxSize: this.maxSize,
@@ -45,26 +43,26 @@ class EmbeddingCache {
    * Should be called after successful service initialization
    */
   initialize() {
-    if (this.initialized) {
-      logger.warn('[EmbeddingCache] Already initialized, skipping');
-      return;
-    }
-
-    // PERFORMANCE FIX: Increased cleanup interval from 60s to 300s (5 minutes)
-    // Cache cleanup doesn't need to run so frequently when app is idle
-    this.cleanupInterval = setInterval(() => this.cleanup(), 300000); // 5 minutes
-
-    // Use unref() to allow process to exit even with active interval
-    if (this.cleanupInterval.unref) {
-      this.cleanupInterval.unref();
-    }
-
-    this.initialized = true;
+    this._cache.initialize(300000); // 5 minute cleanup interval
 
     logger.info('[EmbeddingCache] Initialized with cleanup interval', {
       maxSize: this.maxSize,
       ttlMinutes: this.ttlMs / 60000
     });
+  }
+
+  /**
+   * Check if cache is initialized
+   */
+  get initialized() {
+    return this._cache.initialized;
+  }
+
+  /**
+   * Get cleanup interval (for testing)
+   */
+  get cleanupInterval() {
+    return this._cache.cleanupInterval;
   }
 
   /**
@@ -88,33 +86,15 @@ class EmbeddingCache {
    */
   get(text, model) {
     const key = this.generateKey(text, model);
-    const entry = this.cache.get(key);
+    const entry = this._cache.get(key);
 
     if (!entry) {
-      this.metrics.misses++;
       return null;
     }
-
-    // Check TTL expiry
-    const age = Date.now() - entry.timestamp;
-    if (age > this.ttlMs) {
-      this.cache.delete(key);
-      this.metrics.misses++;
-      logger.debug('[EmbeddingCache] Entry expired', {
-        age,
-        ttlMs: this.ttlMs
-      });
-      return null;
-    }
-
-    // Update access time for LRU tracking
-    entry.accessTime = Date.now();
-    this.metrics.hits++;
 
     logger.debug('[EmbeddingCache] Cache hit', {
       textLength: text.length,
-      model,
-      age
+      model
     });
 
     return { vector: entry.vector, model: entry.model };
@@ -140,76 +120,24 @@ class EmbeddingCache {
 
     const key = this.generateKey(text, model);
 
-    // Evict LRU entry if at capacity (and not updating existing entry)
-    if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
-      this.evictLRU();
-    }
-
-    this.cache.set(key, {
-      vector,
-      model,
-      timestamp: Date.now(),
-      accessTime: Date.now()
-    });
-
-    this.metrics.size = this.cache.size;
+    this._cache.set(key, { vector, model });
+    this._currentSize = this._cache.size;
 
     logger.debug('[EmbeddingCache] Cached embedding', {
       textLength: text.length,
       model,
       vectorDim: vector.length,
-      cacheSize: this.cache.size
+      cacheSize: this._cache.size
     });
   }
 
   /**
-   * Evict least recently used entry
-   * Called automatically when cache is full
-   */
-  evictLRU() {
-    let oldestKey = null;
-    let oldestTime = Infinity;
-
-    // Find the entry with the oldest access time
-    for (const [key, entry] of this.cache.entries()) {
-      if (entry.accessTime < oldestTime) {
-        oldestTime = entry.accessTime;
-        oldestKey = key;
-      }
-    }
-
-    if (oldestKey) {
-      this.cache.delete(oldestKey);
-      this.metrics.evictions++;
-      logger.debug('[EmbeddingCache] Evicted LRU entry', {
-        age: Date.now() - oldestTime
-      });
-    }
-  }
-
-  /**
    * Remove expired entries
-   * Called automatically every minute via interval
+   * Called automatically via interval
    */
   cleanup() {
-    const now = Date.now();
-    let cleaned = 0;
-
-    for (const [key, entry] of this.cache.entries()) {
-      const age = now - entry.timestamp;
-      if (age > this.ttlMs) {
-        this.cache.delete(key);
-        cleaned++;
-      }
-    }
-
-    if (cleaned > 0) {
-      this.metrics.size = this.cache.size;
-      logger.debug('[EmbeddingCache] Cleaned expired entries', {
-        cleaned,
-        remaining: this.cache.size
-      });
-    }
+    this._cache.cleanup();
+    this._currentSize = this._cache.size;
   }
 
   /**
@@ -217,21 +145,20 @@ class EmbeddingCache {
    * @returns {Object} - Statistics object with metrics and hit rate
    */
   getStats() {
-    const total = this.metrics.hits + this.metrics.misses;
-    const hitRate = total > 0 ? (this.metrics.hits / total) * 100 : 0;
+    const baseStats = this._cache.getStats();
 
     // Estimate memory usage
     // Rough estimate: 1024 floats * 8 bytes per float + metadata overhead
     const bytesPerEntry = 1024 * 8 + 200; // vector + metadata
-    const estimatedBytes = this.cache.size * bytesPerEntry;
+    const estimatedBytes = this._cache.size * bytesPerEntry;
     const estimatedMB = estimatedBytes / (1024 * 1024);
 
     return {
-      hits: this.metrics.hits,
-      misses: this.metrics.misses,
-      evictions: this.metrics.evictions,
-      size: this.metrics.size,
-      hitRate: `${hitRate.toFixed(2)}%`,
+      hits: baseStats.hits,
+      misses: baseStats.misses,
+      evictions: baseStats.evictions,
+      size: this._cache.size,
+      hitRate: baseStats.hitRate,
       estimatedMB: `${estimatedMB.toFixed(2)} MB`,
       maxSize: this.maxSize,
       ttlMinutes: this.ttlMs / 60000
@@ -239,12 +166,25 @@ class EmbeddingCache {
   }
 
   /**
+   * Get internal metrics (for compatibility)
+   */
+  get metrics() {
+    const stats = this._cache.getStats();
+    return {
+      hits: stats.hits || 0,
+      misses: stats.misses || 0,
+      evictions: stats.evictions || 0,
+      size: this._cache.size
+    };
+  }
+
+  /**
    * Clear all cache entries and reset metrics
    */
   clear() {
-    const previousSize = this.cache.size;
-    this.cache.clear();
-    this.metrics = { hits: 0, misses: 0, evictions: 0, size: 0 };
+    const previousSize = this._cache.size;
+    this._cache.clear();
+    this._currentSize = 0;
 
     logger.info('[EmbeddingCache] Cache cleared', {
       previousSize
@@ -257,27 +197,11 @@ class EmbeddingCache {
    * @returns {Promise<void>}
    */
   async shutdown() {
-    // Clear cleanup interval if it exists
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-      this.cleanupInterval = null;
-      logger.debug('[EmbeddingCache] Cleanup interval cleared');
-    }
-
-    // Verify interval is cleared (defensive check)
-    if (this.cleanupInterval !== null) {
-      logger.warn('[EmbeddingCache] Warning: cleanupInterval was not properly cleared');
-      // Force clear again
-      this.cleanupInterval = null;
-    }
-
     const stats = this.getStats();
     logger.info('[EmbeddingCache] Shutdown complete', stats);
 
-    // Always clear all cache entries, even if not initialized
-    this.clear();
-
-    this.initialized = false;
+    await this._cache.shutdown();
+    this._currentSize = 0;
   }
 }
 

@@ -5,6 +5,14 @@
 
 const { DEFAULT_SETTINGS } = require('./defaultSettings');
 const { PROTOTYPE_POLLUTION_KEYS } = require('./securityConfig');
+const { THEME_VALUES, LENIENT_URL_PATTERN } = require('./validationConstants');
+
+/**
+ * Shared URL validation regex (from validationConstants)
+ * Matches URLs with optional protocol (http/https), hostname/IP, optional port, optional path
+ * Examples: "localhost:11434", "http://127.0.0.1:11434", "https://ollama.example.com/api"
+ */
+const URL_PATTERN = LENIENT_URL_PATTERN;
 
 /**
  * Validation rules for settings
@@ -12,7 +20,7 @@ const { PROTOTYPE_POLLUTION_KEYS } = require('./securityConfig');
 const VALIDATION_RULES = {
   theme: {
     type: 'string',
-    enum: ['light', 'dark', 'system'],
+    enum: THEME_VALUES,
     required: false
   },
   notifications: {
@@ -52,10 +60,8 @@ const VALIDATION_RULES = {
   },
   ollamaHost: {
     type: 'string',
-    // CRITICAL FIX: Allow URLs with or without protocol
-    // setOllamaHost will normalize it by adding http:// if missing
-    // Pattern: optional http(s)://, then hostname with optional port
-    pattern: /^(?:https?:\/\/)?(?:[\w.-]+|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/.*)?$/,
+    // Uses shared URL_PATTERN - allows URLs with or without protocol
+    pattern: URL_PATTERN,
     maxLength: 500,
     required: false
   },
@@ -313,7 +319,29 @@ function sanitizeSettings(settings) {
     // Normalize special fields before validation
     let normalizedValue = value;
     if (key === 'ollamaHost' && typeof value === 'string') {
-      normalizedValue = value.trim();
+      let s = value.trim();
+
+      // Normalize common Windows paste mistakes (backslashes) and mixed-case protocols.
+      // Examples:
+      // - "HTTP://127.0.0.1:11434/" -> "http://127.0.0.1:11434"
+      // - "http:\\\\127.0.0.1:11434\\api\\tags" -> "http://127.0.0.1:11434"
+      s = s.replace(/\\/g, '/');
+      if (/^https?:\/\//i.test(s)) {
+        const isHttps = /^https:\/\//i.test(s);
+        s = s.replace(/^https?:\/\//i, isHttps ? 'https://' : 'http://');
+      }
+
+      // Remove path/query/hash and keep only protocol + host[:port]
+      // (users often paste "/api/tags" or other endpoints).
+      try {
+        const urlForParse = s.includes('://') ? s : `http://${s}`;
+        const u = new URL(urlForParse);
+        s = `${u.protocol}//${u.host}`;
+      } catch {
+        // If parsing fails, keep trimmed/cleaned input (validation will decide).
+      }
+
+      normalizedValue = s;
     }
 
     // Validate and sanitize
@@ -370,6 +398,7 @@ function getConfigurableLimits(settings) {
 }
 
 module.exports = {
+  URL_PATTERN,
   VALIDATION_RULES,
   validateSettings,
   validateSetting,

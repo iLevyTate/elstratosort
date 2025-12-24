@@ -524,17 +524,14 @@ async function analyzeImageFile(filePath, smartFolders = []) {
   }
 
   // Fixed: Proactive graceful degradation - check Ollama availability before processing
-  const ModelVerifier = require('../services/ModelVerifier');
-  const modelVerifier = new ModelVerifier();
+  // Use shared detection logic instead of ModelVerifier
+  const { isOllamaRunning } = require('../utils/ollamaDetection');
 
   try {
-    const connectionCheck = await modelVerifier.checkOllamaConnection();
-    if (!connectionCheck.connected) {
-      logger.warn('[ANALYSIS-FALLBACK] Ollama unavailable, using filename-based analysis', {
-        fileName,
-        error: connectionCheck.error
-      });
-      return createFallbackResult(fileName, fileExtension, connectionCheck.error, 60);
+    const isRunning = await isOllamaRunning();
+    if (!isRunning) {
+      logger.warn('[ANALYSIS-FALLBACK] Ollama unavailable, using filename-based analysis');
+      return createFallbackResult(fileName, fileExtension, 'Ollama unavailable', 60);
     }
   } catch (error) {
     logger.error('[IMAGE] Pre-flight verification failed', {

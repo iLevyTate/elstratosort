@@ -11,18 +11,9 @@ const fs = require('fs').promises;
 const { app } = require('electron');
 const { logger } = require('../../../shared/logger');
 const { getFileTypeCategory } = require('./fileTypeUtils');
+const { isUNCPath } = require('../../../shared/crossPlatformUtils');
 
 logger.setContext('AutoOrganize-Folders');
-
-/**
- * Check if path is a UNC path (Windows network path)
- * @param {string} p - Path to check
- * @returns {boolean} True if UNC path
- */
-function isUNCPath(p) {
-  if (!p || typeof p !== 'string') return false;
-  return p.startsWith('\\\\') || p.startsWith('//');
-}
 
 /**
  * Create default folder for unanalyzed files with security validation

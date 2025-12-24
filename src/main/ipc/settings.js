@@ -1,11 +1,19 @@
 const { withErrorLogging, withValidation } = require('./ipcWrappers');
-const { optionalUrl: optionalUrlSchema } = require('./validationSchemas');
 const { app, dialog } = require('electron');
 const { getConfigurableLimits } = require('../../shared/settingsValidation');
 const fs = require('fs').promises;
+const { sanitizeSettings } = require('../../shared/settingsValidation');
 
 // Import centralized security configuration
 const { SETTINGS_VALIDATION, PROTOTYPE_POLLUTION_KEYS } = require('../../shared/securityConfig');
+const {
+  THEME_VALUES,
+  LOGGING_LEVELS,
+  NUMERIC_LIMITS,
+  isValidTheme,
+  isValidLoggingLevel,
+  isValidNumericSetting
+} = require('../../shared/validationConstants');
 
 let z;
 try {
@@ -90,8 +98,8 @@ function validateImportedSettings(settings, logger) {
         break;
 
       case 'theme':
-        if (typeof value !== 'string' || !['light', 'dark', 'auto', 'system'].includes(value)) {
-          throw new Error(`Invalid ${key}: must be 'light', 'dark', 'auto', or 'system'`);
+        if (!isValidTheme(value)) {
+          throw new Error(`Invalid ${key}: must be one of ${THEME_VALUES.join(', ')}`);
         }
         break;
 
@@ -102,15 +110,22 @@ function validateImportedSettings(settings, logger) {
         break;
 
       case 'loggingLevel':
-        if (typeof value !== 'string' || !['error', 'warn', 'info', 'debug'].includes(value)) {
-          throw new Error(`Invalid ${key}: must be 'error', 'warn', 'info', or 'debug'`);
+        if (!isValidLoggingLevel(value)) {
+          throw new Error(`Invalid ${key}: must be one of ${LOGGING_LEVELS.join(', ')}`);
         }
         break;
 
       case 'cacheSize':
+        if (!isValidNumericSetting('cacheSize', value)) {
+          const { min, max } = NUMERIC_LIMITS.cacheSize;
+          throw new Error(`Invalid ${key}: must be integer between ${min} and ${max}`);
+        }
+        break;
+
       case 'maxBatchSize':
-        if (!Number.isInteger(value) || value < 0 || value > 100000) {
-          throw new Error(`Invalid ${key}: must be integer between 0 and 100000`);
+        if (!isValidNumericSetting('maxBatchSize', value)) {
+          const { min, max } = NUMERIC_LIMITS.maxBatchSize;
+          throw new Error(`Invalid ${key}: must be integer between ${min} and ${max}`);
         }
         break;
 
@@ -172,8 +187,11 @@ function registerSettingsIpc({
   const settingsSchema = z
     ? z
         .object({
-          // Shared optional URL validator (allows blank to clear value, optional protocol)
-          ollamaHost: optionalUrlSchema,
+          // IMPORTANT:
+          // Don't hard-fail saves on a single invalid field (e.g. ollamaHost while typing/pasting).
+          // We sanitize/normalize on the main-process side before persisting so other settings still save.
+          // Validation for "test connection" remains strict elsewhere.
+          ollamaHost: z.any().optional().nullable(),
           textModel: z.string().nullish(),
           visionModel: z.string().nullish(),
           embeddingModel: z.string().nullish(),
@@ -201,8 +219,10 @@ function registerSettingsIpc({
       ? withValidation(logger, settingsSchema, async (event, settings) => {
           void event;
           try {
+            const normalizedInput =
+              settings && typeof settings === 'object' ? sanitizeSettings(settings) : {};
             // Fixed: Handle validation results from SettingsService
-            const saveResult = await settingsService.save(settings);
+            const saveResult = await settingsService.save(normalizedInput);
             const merged = saveResult.settings || saveResult; // Backward compatibility
             const validationWarnings = saveResult.validationWarnings || [];
 
@@ -267,8 +287,10 @@ function registerSettingsIpc({
       : withErrorLogging(logger, async (event, settings) => {
           void event;
           try {
+            const normalizedInput =
+              settings && typeof settings === 'object' ? sanitizeSettings(settings) : {};
             // Fixed: Handle validation results from SettingsService
-            const saveResult = await settingsService.save(settings);
+            const saveResult = await settingsService.save(normalizedInput);
             const merged = saveResult.settings || saveResult; // Backward compatibility
             const validationWarnings = saveResult.validationWarnings || [];
 

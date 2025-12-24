@@ -14,11 +14,10 @@
  */
 
 const { EventEmitter } = require('events');
-const fs = require('fs').promises;
 const path = require('path');
 const { app } = require('electron');
 const { logger } = require('../../shared/logger');
-const { RETRY } = require('../../shared/performanceConstants');
+const { atomicWriteFile, loadJsonFile, safeUnlink } = require('../../shared/atomicFile');
 
 logger.setContext('OfflineQueue');
 
@@ -541,6 +540,12 @@ class OfflineQueue extends EventEmitter {
    */
   async _persistToDisk() {
     try {
+      if (this.queue.length === 0) {
+        await safeUnlink(this.config.persistPath);
+        this.lastPersistTime = Date.now();
+        return;
+      }
+
       const data = {
         version: 1,
         timestamp: Date.now(),
@@ -548,38 +553,7 @@ class OfflineQueue extends EventEmitter {
         stats: this.stats
       };
 
-      // FIX: Use atomic write (temp + rename) to prevent corruption on crash
-      const tempPath = `${this.config.persistPath}.tmp.${Date.now()}`;
-      try {
-        await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-        // Retry rename on Windows EPERM errors (file handle race condition)
-        let lastError;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            await fs.rename(tempPath, this.config.persistPath);
-            lastError = null;
-            break;
-          } catch (renameError) {
-            lastError = renameError;
-            if (renameError.code === 'EPERM' && attempt < 2) {
-              await new Promise((resolve) =>
-                setTimeout(resolve, RETRY.ATOMIC_BACKOFF_STEP_MS * (attempt + 1))
-              );
-              continue;
-            }
-            throw renameError;
-          }
-        }
-        if (lastError) throw lastError;
-      } catch (writeError) {
-        // Clean up temp file on failure
-        try {
-          await fs.unlink(tempPath);
-        } catch {
-          // Ignore cleanup errors
-        }
-        throw writeError;
-      }
+      await atomicWriteFile(this.config.persistPath, data, { pretty: true });
 
       this.lastPersistTime = Date.now();
       logger.debug('[OfflineQueue] Queue persisted to disk', {
@@ -599,8 +573,14 @@ class OfflineQueue extends EventEmitter {
    * @returns {Promise<void>}
    */
   async _loadFromDisk() {
-    const rawData = await fs.readFile(this.config.persistPath, 'utf-8');
-    const data = JSON.parse(rawData);
+    const data = await loadJsonFile(this.config.persistPath, {
+      description: 'offline queue',
+      backupCorrupt: true
+    });
+
+    if (!data) {
+      return;
+    }
 
     if (data.version !== 1) {
       logger.warn('[OfflineQueue] Unknown queue version, starting fresh', {

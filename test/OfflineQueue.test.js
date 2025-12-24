@@ -28,11 +28,42 @@ const mockFs = {
   readFile: jest.fn(),
   writeFile: jest.fn().mockResolvedValue(undefined),
   rename: jest.fn().mockResolvedValue(undefined),
-  unlink: jest.fn().mockResolvedValue(undefined)
+  unlink: jest.fn().mockResolvedValue(undefined),
+  access: jest.fn()
 };
 jest.mock('fs', () => ({
   promises: mockFs
 }));
+
+// Mock atomicFile module to use the same fs mocks
+jest.mock('../src/shared/atomicFile', () => {
+  const fs = require('fs').promises;
+  return {
+    atomicWriteFile: jest.fn(async (filePath, data, options = {}) => {
+      const { pretty = false } = options;
+      const tempPath = `${filePath}.tmp.${Date.now()}`;
+      const content = pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data);
+      await fs.writeFile(tempPath, content, 'utf8');
+      await fs.rename(tempPath, filePath);
+    }),
+    loadJsonFile: jest.fn(async (filePath) => {
+      try {
+        const data = await fs.readFile(filePath, 'utf8');
+        return JSON.parse(data);
+      } catch (e) {
+        if (e.code === 'ENOENT') return null;
+        throw e;
+      }
+    }),
+    safeUnlink: jest.fn(async (filePath) => {
+      try {
+        await fs.unlink(filePath);
+      } catch (e) {
+        if (e.code !== 'ENOENT') throw e;
+      }
+    })
+  };
+});
 
 describe('OfflineQueue', () => {
   let OfflineQueue;

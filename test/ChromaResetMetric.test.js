@@ -3,7 +3,7 @@
  */
 
 const { resetFiles } = require('../src/main/services/chromadb/fileOperations');
-const { resetFolders } = require('../src/main/services/chromadb/folderOperations');
+const { resetFolders } = require('../src/main/services/chromadb/folderEmbeddings');
 
 describe('Chroma reset preserves hnsw:space metric key', () => {
   test('resetFiles uses hnsw:space', async () => {

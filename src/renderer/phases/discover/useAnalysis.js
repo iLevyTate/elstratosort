@@ -493,14 +493,12 @@ export function useAnalysis(options) {
 
           if (validateProgressState(currentProgress)) {
             // Use functional update to prevent race conditions with concurrent progress updates
-            setAnalysisProgress((prev) => {
-              // Only update if this progress is newer (prevents stale updates)
-              if (currentProgress.lastActivity >= (prev?.lastActivity || 0)) {
-                return currentProgress;
-              }
-              return prev;
-            });
-            actions.setPhaseData('analysisProgress', currentProgress);
+            const prev = analysisProgressRef.current;
+            // Only update if this progress is newer (prevents stale updates)
+            if (currentProgress.lastActivity >= (prev?.lastActivity || 0)) {
+              setAnalysisProgress(currentProgress);
+              actions.setPhaseData('analysisProgress', currentProgress);
+            }
           } else {
             logger.warn('Invalid heartbeat progress, resetting');
             if (heartbeatIntervalRef.current) {

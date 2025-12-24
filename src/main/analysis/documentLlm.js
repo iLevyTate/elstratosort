@@ -4,10 +4,12 @@ const { buildOllamaOptions } = require('../services/PerformanceService');
 const { globalDeduplicator } = require('../utils/llmOptimization');
 const { generateWithRetry } = require('../utils/ollamaApiRetry');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
-const crypto = require('crypto');
 const { AI_DEFAULTS } = require('../../shared/constants');
 const { logger } = require('../../shared/logger');
 const { chunkTextForAnalysis } = require('./documentExtractors');
+const FolderMatchingService = require('../services/FolderMatchingService');
+const { getInstance: getAnalysisCache } = require('../services/AnalysisCacheService');
+
 logger.setContext('DocumentLLM');
 
 const AppConfig = {
@@ -25,134 +27,8 @@ const AppConfig = {
 
 // Use shared client from ollamaUtils
 
-// FIXED Bug #24: Proper LRU cache implementation with timestamp tracking
-const ANALYSIS_CACHE_MAX_ENTRIES = 200;
-const ANALYSIS_CACHE_TTL_MS = 3600000; // 1 hour TTL
-const analysisCache = new Map(); // key -> { value, timestamp }
-
-function normalizeCategoryToSmartFolders(category, smartFolders) {
-  const folders = Array.isArray(smartFolders) ? smartFolders : [];
-  if (folders.length === 0) return category;
-
-  const raw = String(category || '').trim();
-  const normalizedRaw = raw.toLowerCase();
-
-  // Prefer Uncategorized if model returns generic buckets
-  const uncategorized = folders.find(
-    (f) => String(f?.name || '').toLowerCase() === 'uncategorized'
-  );
-  if (
-    normalizedRaw === 'document' ||
-    normalizedRaw === 'documents' ||
-    normalizedRaw === 'image' ||
-    normalizedRaw === 'images'
-  ) {
-    return uncategorized?.name || folders[0].name;
-  }
-
-  // Exact match (case-insensitive)
-  const exact = folders.find(
-    (f) =>
-      String(f?.name || '')
-        .trim()
-        .toLowerCase() === normalizedRaw
-  );
-  if (exact) return exact.name;
-
-  // Normalize punctuation/whitespace for near-exact matches
-  const canon = (s) =>
-    String(s || '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, ' ')
-      .trim();
-  const rawCanon = canon(raw);
-  if (rawCanon) {
-    const canonMatch = folders.find((f) => canon(f?.name) === rawCanon);
-    if (canonMatch) return canonMatch.name;
-  }
-
-  // Token overlap scoring (simple, deterministic)
-  const tokens = new Set(rawCanon.split(' ').filter(Boolean));
-  let best = null;
-  let bestScore = 0;
-  for (const f of folders) {
-    const name = String(f?.name || '').trim();
-    if (!name) continue;
-    const nameCanon = canon(name);
-    const nameTokens = nameCanon.split(' ').filter(Boolean);
-    if (nameTokens.length === 0) continue;
-    let score = 0;
-    nameTokens.forEach((t) => {
-      if (tokens.has(t)) score += 1;
-    });
-    // Small bias for shorter names to avoid always matching long "Financial Documents" when raw is "Financial"
-    score -= Math.min(0.25, nameTokens.length * 0.01);
-    if (score > bestScore) {
-      bestScore = score;
-      best = name;
-    }
-  }
-
-  if (bestScore > 0.5 && best) return best;
-  return uncategorized?.name || folders[0].name;
-}
-
-function getCacheKey(textContent, model, smartFolders) {
-  // FIXED Bug #44: Limit input size to prevent excessive hash computation
-  const MAX_TEXT_LENGTH = 50000; // 50KB max for hash key
-  const truncatedText =
-    textContent?.length > MAX_TEXT_LENGTH ? textContent.slice(0, MAX_TEXT_LENGTH) : textContent;
-
-  const hasher = crypto.createHash('sha1');
-  // MEDIUM PRIORITY FIX (MED-12): Include original length to prevent hash collision
-  // Files with same first 50KB but different total length should have different keys
-  hasher.update(`${textContent?.length || 0}:`);
-  hasher.update(truncatedText || '');
-  hasher.update('|');
-  hasher.update(String(model || ''));
-  hasher.update('|');
-  try {
-    const foldersKey = Array.isArray(smartFolders)
-      ? smartFolders.map((f) => `${f?.name || ''}:${(f?.description || '').slice(0, 64)}`).join(',')
-      : '';
-    hasher.update(foldersKey);
-  } catch (error) {
-    // Expected: Continue with partial key if folder data is malformed
-    logger.debug('Error generating cache key from folder data', {
-      error: error.message
-    });
-  }
-  return hasher.digest('hex');
-}
-
-function getCachedValue(key) {
-  const entry = analysisCache.get(key);
-  if (!entry) return null;
-
-  // Check TTL
-  if (Date.now() - entry.timestamp > ANALYSIS_CACHE_TTL_MS) {
-    analysisCache.delete(key);
-    return null;
-  }
-
-  // LRU: Move to end by re-inserting
-  analysisCache.delete(key);
-  analysisCache.set(key, { ...entry, timestamp: Date.now() });
-  return entry.value;
-}
-
-function setCache(key, value) {
-  // Evict oldest entry if at capacity (LRU eviction)
-  if (analysisCache.size >= ANALYSIS_CACHE_MAX_ENTRIES) {
-    const oldestKey = analysisCache.keys().next().value;
-    analysisCache.delete(oldestKey);
-  }
-
-  analysisCache.set(key, {
-    value,
-    timestamp: Date.now()
-  });
-}
+// Re-export for backward compatibility
+const normalizeCategoryToSmartFolders = FolderMatchingService.matchCategoryToFolder;
 
 function normalizeTextForModel(input, maxLen) {
   if (!input) return '';
@@ -172,7 +48,12 @@ function normalizeTextForModel(input, maxLen) {
   return text;
 }
 
-async function analyzeTextWithOllama(textContent, originalFileName, smartFolders = []) {
+async function analyzeTextWithOllama(
+  textContent,
+  originalFileName,
+  smartFolders = [],
+  fileDate = null
+) {
   try {
     const cfg = await loadOllamaConfig();
     const modelToUse =
@@ -197,8 +78,9 @@ async function analyzeTextWithOllama(textContent, originalFileName, smartFolders
     const chunkCount = Array.isArray(chunks) && chunks.length > 0 ? chunks.length : 1;
 
     // Fast-path: return cached result if available
-    const cacheKey = getCacheKey(truncated, modelToUse, smartFolders);
-    const cachedResult = getCachedValue(cacheKey);
+    const cacheService = getAnalysisCache();
+    const cacheKey = cacheService.generateKey(truncated, modelToUse, smartFolders);
+    const cachedResult = cacheService.get(cacheKey);
     if (cachedResult) {
       return cachedResult;
     }
@@ -222,13 +104,16 @@ async function analyzeTextWithOllama(textContent, originalFileName, smartFolders
       }
     }
 
+    const fileDateContext = fileDate ? `\nDocument File Date: ${fileDate}` : '';
+
     const prompt = `You are an expert document analyzer. Analyze the ACTUAL TEXT CONTENT below (not just the filename) and extract structured information based on what the document actually contains.
+${fileDateContext}
 
 IMPORTANT: Base your analysis on the CONTENT, not the filename "${originalFileName}". Read through the text carefully to understand the document's true purpose, topics, and themes.
 
 Your response MUST be a valid JSON object with ALL these fields:
 {
-  "date": "YYYY-MM-DD format if found in content, otherwise today's date",
+  "date": "YYYY-MM-DD format. Use the date explicitly found in the document content (e.g. invoice date, meeting date). If NO date is found in the text, use the Document File Date provided above: ${fileDate || 'today'}",
   "project": "main subject/project from content (2-5 words)",
   "purpose": "document's purpose based on content (5-10 words)",
   "category": "most appropriate category (must be one of the folder names above)"${folderCategoriesStr},
@@ -332,10 +217,20 @@ ${truncated}`;
           // Validate and sanitize date field
           if (parsedJson.date) {
             try {
-              parsedJson.date = new Date(parsedJson.date).toISOString().split('T')[0];
+              const dateObj = new Date(parsedJson.date);
+              if (isNaN(dateObj.getTime())) {
+                delete parsedJson.date;
+              } else {
+                parsedJson.date = dateObj.toISOString().split('T')[0];
+              }
             } catch {
               delete parsedJson.date;
             }
+          }
+
+          // Use file date if LLM returned no date or invalid date
+          if (!parsedJson.date && fileDate) {
+            parsedJson.date = fileDate;
           }
 
           // Validate keywords array
@@ -414,7 +309,7 @@ ${truncated}`;
             confidence: parsedJson.confidence
           };
 
-          setCache(cacheKey, result);
+          cacheService.set(cacheKey, result);
           return result;
         } catch (e) {
           logger.error('[documentLlm] Unexpected error processing response:', e.message);

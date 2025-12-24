@@ -5,6 +5,13 @@
  * These schemas ensure type safety and provide clear error messages.
  */
 
+const { URL_PATTERN } = require('../../shared/settingsValidation');
+const {
+  THEME_VALUES,
+  LOGGING_LEVELS,
+  NUMERIC_LIMITS
+} = require('../../shared/validationConstants');
+
 // Try to load zod
 let z;
 let zodLoadError = null;
@@ -51,9 +58,8 @@ if (!z) {
    *
    * Also supports extracting a URL from common pasted commands (e.g. `curl http://127.0.0.1:11434/api/tags`).
    * Uses optional+nullable to allow both undefined and null values.
+   * Uses shared URL_PATTERN from settingsValidation.js
    */
-  const relaxedUrlRegex = /^(?:https?:\/\/)?(?:[\w.-]+|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/.*)?$/;
-
   const extractUrlLikeToken = (raw) => {
     if (typeof raw !== 'string') return raw;
     let s = raw.trim();
@@ -90,7 +96,7 @@ if (!z) {
           return false;
         };
 
-        const candidate = tokens.find((t) => isLikelyHost(t) && relaxedUrlRegex.test(t));
+        const candidate = tokens.find((t) => isLikelyHost(t) && URL_PATTERN.test(t));
         if (candidate) s = candidate;
       }
     }
@@ -110,7 +116,7 @@ if (!z) {
   const optionalUrlSchema = z
     .preprocess(extractUrlLikeToken, z.string())
     .refine(
-      (val) => val === undefined || val === null || val === '' || relaxedUrlRegex.test(val),
+      (val) => val === undefined || val === null || val === '' || URL_PATTERN.test(val),
       'Invalid Ollama URL format (expected host[:port] with optional http/https)'
     )
     .optional()
@@ -134,6 +140,7 @@ if (!z) {
 
   /**
    * Settings object validation
+   * Uses shared constants from validationConstants.js
    */
   const settingsSchema = z
     .object({
@@ -144,11 +151,21 @@ if (!z) {
       launchOnStartup: z.boolean().optional(),
       autoOrganize: z.boolean().optional(),
       backgroundMode: z.boolean().optional(),
-      theme: z.enum(['light', 'dark', 'auto']).optional(),
+      theme: z.enum(THEME_VALUES).optional(),
       language: z.string().max(10).optional(),
-      loggingLevel: z.enum(['error', 'warn', 'info', 'debug']).optional(),
-      cacheSize: z.number().int().min(0).max(100000).optional(),
-      maxBatchSize: z.number().int().min(0).max(100000).optional()
+      loggingLevel: z.enum(LOGGING_LEVELS).optional(),
+      cacheSize: z
+        .number()
+        .int()
+        .min(NUMERIC_LIMITS.cacheSize.min)
+        .max(NUMERIC_LIMITS.cacheSize.max)
+        .optional(),
+      maxBatchSize: z
+        .number()
+        .int()
+        .min(NUMERIC_LIMITS.maxBatchSize.min)
+        .max(NUMERIC_LIMITS.maxBatchSize.max)
+        .optional()
     })
     .partial();
 

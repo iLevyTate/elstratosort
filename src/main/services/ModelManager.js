@@ -3,25 +3,30 @@
  * Ensures the application works with ANY available Ollama model
  */
 
-const { app } = require('electron');
-const fs = require('fs').promises;
-const path = require('path');
 const { logger } = require('../../shared/logger');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { SERVICE_URLS } = require('../../shared/configDefaults');
 const { getOllama, getOllamaHost } = require('../ollamaUtils');
+
+// Lazy load SettingsService
+let settingsService = null;
+function getSettings() {
+  if (!settingsService) {
+    settingsService = require('./SettingsService').getInstance();
+  }
+  return settingsService;
+}
+
 logger.setContext('ModelManager');
 
 class ModelManager {
   constructor(host = SERVICE_URLS.OLLAMA_HOST) {
-    // Use shared Ollama instance to avoid multiple HTTP connection pools
-    this.ollamaClient = getOllama();
-    this.host = getOllamaHost() || host;
+    // Use shared Ollama instance via getter to ensure we always get the current one
+    this._host = getOllamaHost() || host;
     this.availableModels = [];
     this.selectedModel = null;
     this.modelCapabilities = new Map();
     this.lastHealthCheck = null;
-    this.configPath = path.join(app.getPath('userData'), 'model-config.json');
 
     // Add initialization guards to prevent race conditions
     this.initialized = false;
@@ -93,6 +98,14 @@ class ModelManager {
       'neural-chat',
       'orca-mini'
     ];
+  }
+
+  get ollamaClient() {
+    return getOllama();
+  }
+
+  get host() {
+    return getOllamaHost() || this._host;
   }
 
   /**
@@ -544,45 +557,27 @@ class ModelManager {
   }
 
   /**
-   * Load configuration from disk
+   * Load configuration from SettingsService
    */
   async loadConfig() {
     try {
-      const data = await fs.readFile(this.configPath, 'utf-8');
-      const config = JSON.parse(data);
-      this.selectedModel = config.selectedModel || null;
+      const settings = await getSettings().load();
+      this.selectedModel = settings.textModel || null;
+      this._host = settings.ollamaHost || this._host;
       logger.debug(`[ModelManager] Loaded config: ${this.selectedModel}`);
     } catch (error) {
-      if (error.code !== 'ENOENT') {
-        logger.error('[ModelManager] Error loading config', {
-          error: error.message
-        });
-      }
+      logger.error('[ModelManager] Error loading config', {
+        error: error.message
+      });
     }
   }
 
   /**
-   * Save configuration to disk
+   * Save configuration to SettingsService
    */
   async saveConfig() {
     try {
-      const config = {
-        selectedModel: this.selectedModel,
-        lastUpdated: new Date().toISOString()
-      };
-      // FIX: Use atomic write (temp + rename) to prevent corruption on crash
-      const tempPath = `${this.configPath}.tmp.${Date.now()}`;
-      try {
-        await fs.writeFile(tempPath, JSON.stringify(config, null, 2));
-        await fs.rename(tempPath, this.configPath);
-      } catch (writeError) {
-        try {
-          await fs.unlink(tempPath);
-        } catch {
-          // Ignore cleanup errors
-        }
-        throw writeError;
-      }
+      await getSettings().save({ textModel: this.selectedModel });
     } catch (error) {
       logger.error('[ModelManager] Error saving config', {
         error: error.message

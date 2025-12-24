@@ -445,6 +445,28 @@ class SecureIPCManager {
 // Initialize secure IPC manager
 const secureIPC = new SecureIPCManager();
 
+/**
+ * Throw on structured failure responses.
+ *
+ * Many IPC handlers return { success: boolean, error?: string } rather than throwing.
+ * For operations that must not silently fail (like settings persistence), use this helper
+ * to convert failures into exceptions so the renderer can show a real error.
+ */
+function throwIfFailed(result, opts = {}) {
+  const { allowCanceled = true, defaultMessage = 'Operation failed' } = opts;
+  if (!result || typeof result !== 'object') return result;
+  if (!Object.prototype.hasOwnProperty.call(result, 'success')) return result;
+  if (result.success !== false) return result;
+  if (allowCanceled && (result.canceled === true || result.cancelled === true)) return result;
+  const msg =
+    (typeof result.error === 'string' && result.error) ||
+    (typeof result.message === 'string' && result.message) ||
+    defaultMessage;
+  const err = new Error(msg);
+  err.details = result;
+  throw err;
+}
+
 // Cleanup on window unload
 window.addEventListener('beforeunload', () => {
   secureIPC.cleanup();
@@ -776,17 +798,46 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Settings - FIX: Use centralized IPC_CHANNELS constants to prevent drift
   settings: {
     get: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET),
-    save: (settings) => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.SAVE, settings),
+    save: async (settings) => {
+      const result = await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.SAVE, settings);
+      // If persistence fails, throw so renderer can't "pretend" it saved.
+      return throwIfFailed(result, {
+        allowCanceled: false,
+        defaultMessage: 'Failed to save settings'
+      });
+    },
     getConfigurableLimits: () =>
       secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET_CONFIGURABLE_LIMITS),
-    export: (exportPath) => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.EXPORT, exportPath),
-    import: (importPath) => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.IMPORT, importPath),
+    export: async (exportPath) => {
+      const result = await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.EXPORT, exportPath);
+      return throwIfFailed(result, {
+        allowCanceled: true,
+        defaultMessage: 'Failed to export settings'
+      });
+    },
+    import: async (importPath) => {
+      const result = await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.IMPORT, importPath);
+      return throwIfFailed(result, {
+        allowCanceled: true,
+        defaultMessage: 'Failed to import settings'
+      });
+    },
     createBackup: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.CREATE_BACKUP),
     listBackups: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.LIST_BACKUPS),
-    restoreBackup: (backupPath) =>
-      secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.RESTORE_BACKUP, backupPath),
-    deleteBackup: (backupPath) =>
-      secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.DELETE_BACKUP, backupPath)
+    restoreBackup: async (backupPath) => {
+      const result = await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.RESTORE_BACKUP, backupPath);
+      return throwIfFailed(result, {
+        allowCanceled: false,
+        defaultMessage: 'Failed to restore settings backup'
+      });
+    },
+    deleteBackup: async (backupPath) => {
+      const result = await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.DELETE_BACKUP, backupPath);
+      return throwIfFailed(result, {
+        allowCanceled: false,
+        defaultMessage: 'Failed to delete settings backup'
+      });
+    }
   },
 
   // ChromaDB Service Status

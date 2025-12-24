@@ -47,7 +47,7 @@ const {
   batchQueryFolders: batchQueryFoldersOp,
   getAllFolders: getAllFoldersOp,
   resetFolders: resetFoldersOp
-} = require('./folderOperations');
+} = require('./folderEmbeddings');
 
 logger.setContext('ChromaDBService');
 
@@ -182,6 +182,54 @@ class ChromaDBServiceCore extends EventEmitter {
 
     // Server configuration
     this._initializeServerConfig();
+  }
+
+  /**
+   * Detect Chroma "not found" style failures (commonly caused by stale collection handles
+   * after server restarts, wrong server on the configured port, or missing tenant/db).
+   * @private
+   */
+  _isChromaNotFoundError(error) {
+    const msg = error?.message || '';
+    return (
+      error?.name === 'ChromaNotFoundError' ||
+      /requested resource could not be found/i.test(msg) ||
+      /not found/i.test(msg)
+    );
+  }
+
+  /**
+   * Force a clean re-initialization of client/collections.
+   * @private
+   */
+  async _forceReinitialize(reason, context = {}) {
+    logger.warn('[ChromaDB] Forcing re-initialization', { reason, ...context });
+    this.initialized = false;
+    this.isOnline = false;
+    this.client = null;
+    this.fileCollection = null;
+    this.folderCollection = null;
+    this._initPromise = null;
+    this._isInitializing = false;
+    return this.initialize();
+  }
+
+  /**
+   * Execute an operation once; if it fails with a not-found error, attempt a single
+   * re-initialize + retry to recover from stale collection IDs.
+   * @private
+   */
+  async _executeWithNotFoundRecovery(operation, fn) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!this._isChromaNotFoundError(error)) {
+        throw error;
+      }
+      await this._forceReinitialize('not_found_recovery', { operation, error: error?.message });
+      // Retry once after reinit
+      return await fn();
+    }
   }
 
   /**
@@ -768,7 +816,9 @@ class ChromaDBServiceCore extends EventEmitter {
     }
 
     await this.initialize();
-    return this.circuitBreaker.execute(async () => this._directUpsertFolder(folder));
+    return this.circuitBreaker.execute(async () =>
+      this._executeWithNotFoundRecovery('upsertFolder', () => this._directUpsertFolder(folder))
+    );
   }
 
   async _directUpsertFolder(folder) {
@@ -800,7 +850,9 @@ class ChromaDBServiceCore extends EventEmitter {
 
     await this.initialize();
     const result = await this.circuitBreaker.execute(async () =>
-      this._directBatchUpsertFolders(folders)
+      this._executeWithNotFoundRecovery('batchUpsertFolders', () =>
+        this._directBatchUpsertFolders(folders)
+      )
     );
     return { queued: false, ...result };
   }
@@ -816,14 +868,16 @@ class ChromaDBServiceCore extends EventEmitter {
   async queryFoldersByEmbedding(embedding, topK = 5) {
     await this.initialize();
     // Wrap query with timeout to prevent UI freeze on slow server
-    return withTimeout(
-      queryFoldersByEmbeddingOp({
-        embedding,
-        topK,
-        folderCollection: this.folderCollection
-      }),
-      CHROMADB_OPERATION_TIMEOUT_MS,
-      'ChromaDB queryFoldersByEmbedding'
+    return this._executeWithNotFoundRecovery('queryFoldersByEmbedding', async () =>
+      withTimeout(
+        queryFoldersByEmbeddingOp({
+          embedding,
+          topK,
+          folderCollection: this.folderCollection
+        }),
+        CHROMADB_OPERATION_TIMEOUT_MS,
+        'ChromaDB queryFoldersByEmbedding'
+      )
     );
   }
 
@@ -843,15 +897,17 @@ class ChromaDBServiceCore extends EventEmitter {
     }
 
     // Wrap query with timeout to prevent UI freeze on slow server
-    const queryPromise = withTimeout(
-      executeQueryFolders({
-        fileId,
-        topK,
-        fileCollection: this.fileCollection,
-        folderCollection: this.folderCollection
-      }),
-      CHROMADB_OPERATION_TIMEOUT_MS,
-      'ChromaDB queryFolders'
+    const queryPromise = this._executeWithNotFoundRecovery('queryFolders', async () =>
+      withTimeout(
+        executeQueryFolders({
+          fileId,
+          topK,
+          fileCollection: this.fileCollection,
+          folderCollection: this.folderCollection
+        }),
+        CHROMADB_OPERATION_TIMEOUT_MS,
+        'ChromaDB queryFolders'
+      )
     );
     // Use bounded helper to prevent memory exhaustion
     this._addInflightQuery(cacheKey, queryPromise);

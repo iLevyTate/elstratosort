@@ -465,6 +465,7 @@ const ServiceIds = {
   // Core services
   CHROMA_DB: 'chromaDb',
   SETTINGS: 'settings',
+  DEPENDENCY_MANAGER: 'dependencyManager',
 
   // AI/Embedding services
   OLLAMA_SERVICE: 'ollamaService',
@@ -480,7 +481,11 @@ const ServiceIds = {
   // State services
   ANALYSIS_HISTORY: 'analysisHistory',
   UNDO_REDO: 'undoRedo',
-  PROCESSING_STATE: 'processingState'
+  PROCESSING_STATE: 'processingState',
+
+  // New cached services
+  ANALYSIS_CACHE: 'analysisCache',
+  FILE_ACCESS_POLICY: 'fileAccessPolicy'
 };
 
 module.exports = {

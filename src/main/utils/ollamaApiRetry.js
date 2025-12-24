@@ -1,18 +1,26 @@
 /**
  * Centralized Ollama API retry utility with exponential backoff and jitter
- * Provides robust error handling for transient failures
+ * SINGLE SOURCE OF TRUTH for Ollama retry logic, error classification, and health checks.
+ *
+ * This module is used by:
+ * - OllamaClient.js: Uses isRetryableError, withOllamaRetry
+ * - startup/ollamaService.js: Uses checkOllamaHealth, axiosWithRetry
  *
  * Features:
  * - Exponential backoff with configurable parameters
  * - Jitter to prevent thundering herd problem
  * - Retryable error classification
  * - Detailed logging and error context
- * - Integration with OllamaClient for advanced features
+ * - Health check utility for Ollama service
+ *
+ * @module utils/ollamaApiRetry
  */
 
+const axios = require('axios');
 const { logger } = require('../../shared/logger');
 logger.setContext('OllamaApiRetry');
 const { withRetry } = require('../../shared/errorHandlingUtils');
+const { SERVICE_URLS } = require('../../shared/configDefaults');
 
 /**
  * Default jitter factor (0.3 = +/- 30% of delay)
@@ -404,6 +412,23 @@ async function axiosWithRetry(axiosCall, retryOptions = {}) {
   );
 }
 
+/**
+ * Simple Ollama health check
+ * @param {string} [host] - Ollama host URL (defaults to env or config)
+ * @param {number} [timeout=2000] - Timeout in milliseconds
+ * @returns {Promise<boolean>} - True if Ollama is healthy
+ */
+async function checkOllamaHealth(host, timeout = 2000) {
+  try {
+    const baseUrl = host || process.env.OLLAMA_BASE_URL || SERVICE_URLS.OLLAMA_HOST;
+    const response = await axios.get(`${baseUrl}/api/tags`, { timeout });
+    return response.status === 200;
+  } catch (error) {
+    logger.debug('[HEALTH] Ollama health check failed:', error.message);
+    return false;
+  }
+}
+
 module.exports = {
   withOllamaRetry,
   fetchWithRetry,
@@ -412,5 +437,6 @@ module.exports = {
   isRetryableError,
   categorizeError,
   calculateDelayWithJitter,
+  checkOllamaHealth,
   DEFAULT_JITTER_FACTOR
 };

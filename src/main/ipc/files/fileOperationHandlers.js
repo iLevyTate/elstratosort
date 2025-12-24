@@ -14,6 +14,13 @@ const { logger } = require('../../../shared/logger');
 const { handleBatchOrganize } = require('./batchOrganizeHandler');
 const { z, schemas } = require('../validationSchemas');
 const { validateFileOperationPath } = require('../../../shared/pathSanitization');
+const {
+  isNotFoundError,
+  isPermissionError,
+  isExistsError,
+  ErrorCategory,
+  getErrorCategory
+} = require('../../../shared/errorClassifier');
 
 // Alias for backward compatibility
 const operationSchema = schemas?.fileOperation || null;
@@ -377,13 +384,13 @@ function registerFileOperationHandlers({
         let errorCode = 'DELETE_FAILED';
         let userMessage = 'Failed to delete file';
 
-        if (error.code === 'ENOENT') {
+        if (isNotFoundError(error)) {
           errorCode = 'FILE_NOT_FOUND';
           userMessage = 'File not found';
-        } else if (error.code === 'EACCES' || error.code === 'EPERM') {
+        } else if (isPermissionError(error)) {
           errorCode = 'PERMISSION_DENIED';
           userMessage = 'Permission denied - file may be in use';
-        } else if (error.code === 'EBUSY') {
+        } else if (getErrorCategory(error) === ErrorCategory.FILE_IN_USE) {
           errorCode = 'FILE_IN_USE';
           userMessage = 'File is currently in use';
         }
@@ -470,16 +477,16 @@ function registerFileOperationHandlers({
         let errorCode = 'COPY_FAILED';
         let userMessage = 'Failed to copy file';
 
-        if (error.code === 'ENOSPC') {
+        if (getErrorCategory(error) === ErrorCategory.DISK_FULL) {
           errorCode = 'INSUFFICIENT_SPACE';
           userMessage = 'Insufficient disk space';
-        } else if (error.code === 'EACCES' || error.code === 'EPERM') {
+        } else if (isPermissionError(error)) {
           errorCode = 'PERMISSION_DENIED';
           userMessage = 'Permission denied';
-        } else if (error.code === 'EEXIST') {
+        } else if (isExistsError(error)) {
           errorCode = 'FILE_EXISTS';
           userMessage = 'Destination file already exists';
-        } else if (error.code === 'ENOENT') {
+        } else if (isNotFoundError(error)) {
           errorCode = 'SOURCE_NOT_FOUND';
           userMessage = 'Source file not found';
         }
