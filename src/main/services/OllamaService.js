@@ -21,6 +21,7 @@ const {
 } = require('../ollamaUtils');
 const { withOllamaRetry } = require('../utils/ollamaApiRetry');
 const { getInstance: getOllamaClient } = require('./OllamaClient');
+const { buildOllamaOptions } = require('./PerformanceService');
 
 /**
  * Centralized service for Ollama operations
@@ -331,11 +332,13 @@ class OllamaService {
       async () => {
         const ollama = getOllama();
         const model = options.model || getOllamaEmbeddingModel();
+        const perfOptions = await buildOllamaOptions('embeddings');
+        const mergedOptions = { ...perfOptions, ...(options.ollamaOptions || {}) };
 
         const response = await ollama.embeddings({
           model,
           prompt: text,
-          options: options.ollamaOptions || {}
+          options: mergedOptions
         });
 
         return {
@@ -370,13 +373,15 @@ class OllamaService {
       async () => {
         const ollama = getOllama();
         const model = options.model || getOllamaModel();
+        const perfOptions = await buildOllamaOptions('text');
+        const mergedOptions = { ...perfOptions, ...(options.ollamaOptions || {}) };
 
         const response = await ollama.generate({
           model,
           prompt,
           format: options.format,
           system: options.system,
-          options: options.ollamaOptions || {},
+          options: mergedOptions,
           stream: false
         });
 
@@ -411,13 +416,15 @@ class OllamaService {
       async () => {
         const ollama = getOllama();
         const model = options.model || getOllamaVisionModel();
+        const perfOptions = await buildOllamaOptions('vision');
+        const mergedOptions = { ...perfOptions, ...(options.ollamaOptions || {}) };
 
         const response = await ollama.generate({
           model,
           prompt,
           images: [imageBase64],
           format: options.format,
-          options: options.ollamaOptions || {},
+          options: mergedOptions,
           stream: false
         });
 

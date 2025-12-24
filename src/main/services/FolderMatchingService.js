@@ -5,6 +5,7 @@ logger.setContext('FolderMatchingService');
 const EmbeddingCache = require('./EmbeddingCache');
 const { getInstance: getParallelEmbeddingService } = require('./ParallelEmbeddingService');
 const { get: getConfig } = require('../../shared/config/index');
+const { buildOllamaOptions } = require('./PerformanceService');
 
 /**
  * Embedding dimension constants for different models
@@ -149,6 +150,7 @@ class FolderMatchingService {
     try {
       const ollama = getOllama();
       const model = getOllamaEmbeddingModel();
+      const perfOptions = await buildOllamaOptions('embeddings');
 
       // Check cache first
       const cachedResult = this.embeddingCache.get(text, model);
@@ -161,7 +163,8 @@ class FolderMatchingService {
       // Cache miss - generate embedding via API
       const response = await ollama.embeddings({
         model,
-        prompt: text || ''
+        prompt: text || '',
+        options: { ...perfOptions }
       });
 
       let vector = Array.isArray(response.embedding) ? response.embedding : [];

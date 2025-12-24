@@ -1,4 +1,5 @@
 const { getOllama, getOllamaEmbeddingModel } = require('../ollamaUtils');
+const { buildOllamaOptions } = require('./PerformanceService');
 const { logger } = require('../../shared/logger');
 const os = require('os');
 const { withOllamaRetry, isRetryableError } = require('../utils/ollamaApiRetry');
@@ -197,9 +198,11 @@ class ParallelEmbeddingService {
       const result = await withOllamaRetry(
         async () => {
           const ollama = getOllama();
+          const perfOptions = await buildOllamaOptions('embeddings');
           const response = await ollama.embeddings({
             model,
-            prompt: text || ''
+            prompt: text || '',
+            options: { ...perfOptions }
           });
           return { vector: response.embedding, model };
         },
