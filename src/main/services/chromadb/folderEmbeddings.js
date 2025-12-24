@@ -24,46 +24,46 @@ logger.setContext('ChromaDB:FolderOps');
  * @returns {Promise<void>}
  */
 async function directUpsertFolder({ folder, folderCollection, queryCache }) {
-  return withRetry(
-    async () => {
-      try {
-        // Use shared helper to prepare and sanitize metadata
-        const sanitized = prepareFolderMetadata(folder);
+  const sanitized = prepareFolderMetadata(folder);
 
+  try {
+    await withRetry(
+      async () => {
         await folderCollection.upsert({
           ids: [folder.id],
           embeddings: [folder.vector],
           metadatas: [sanitized],
           documents: [folder.name || folder.id]
         });
-
-        // Invalidate query cache entries that might reference this folder
-        if (queryCache) {
-          queryCache.invalidateForFolder();
-        }
-
-        logger.debug('[FolderOps] Upserted folder embedding', {
-          id: folder.id,
-          name: folder.name
-        });
-      } catch (error) {
-        logger.error('[FolderOps] Failed to upsert folder with context:', {
-          operation: 'upsert-folder',
-          folderId: folder.id,
-          folderName: folder.name,
-          folderPath: folder.path,
-          timestamp: new Date().toISOString(),
-          error: error.message,
-          errorStack: error.stack
-        });
-        throw error;
+      },
+      {
+        maxRetries: 3,
+        initialDelay: 500
       }
-    },
-    {
-      maxRetries: 3,
-      initialDelay: 500
+    )();
+
+    // Invalidate query cache entries that might reference this folder
+    if (queryCache) {
+      queryCache.invalidateForFolder();
     }
-  )();
+
+    logger.debug('[FolderOps] Upserted folder embedding', {
+      id: folder.id,
+      name: folder.name
+    });
+  } catch (error) {
+    // Log once after retries are exhausted to avoid noisy startup spam.
+    logger.error('[FolderOps] Failed to upsert folder with context:', {
+      operation: 'upsert-folder',
+      folderId: folder.id,
+      folderName: folder.name,
+      folderPath: folder.path,
+      timestamp: new Date().toISOString(),
+      error: error.message,
+      errorStack: error.stack
+    });
+    throw error;
+  }
 }
 
 /**
@@ -76,81 +76,82 @@ async function directUpsertFolder({ folder, folderCollection, queryCache }) {
  * @returns {Promise<Object>} Object with count and skipped array
  */
 async function directBatchUpsertFolders({ folders, folderCollection, queryCache }) {
-  return withRetry(
-    async () => {
-      const ids = [];
-      const embeddings = [];
-      const metadatas = [];
-      const documents = [];
-      const skipped = [];
+  const ids = [];
+  const embeddings = [];
+  const metadatas = [];
+  const documents = [];
+  const skipped = [];
 
-      try {
-        for (const folder of folders) {
-          if (!folder.id || !folder.vector || !Array.isArray(folder.vector)) {
-            logger.warn('[FolderOps] Skipping invalid folder in batch', {
-              id: folder.id,
-              name: folder.name,
-              reason: !folder.id
-                ? 'missing_id'
-                : !folder.vector
-                  ? 'missing_vector'
-                  : 'invalid_vector_type'
-            });
-            skipped.push({
-              folder: { id: folder.id, name: folder.name },
-              reason: !folder.id
-                ? 'missing_id'
-                : !folder.vector
-                  ? 'missing_vector'
-                  : 'invalid_vector_type'
-            });
-            continue;
-          }
+  for (const folder of folders) {
+    if (!folder.id || !folder.vector || !Array.isArray(folder.vector)) {
+      logger.warn('[FolderOps] Skipping invalid folder in batch', {
+        id: folder.id,
+        name: folder.name,
+        reason: !folder.id
+          ? 'missing_id'
+          : !folder.vector
+            ? 'missing_vector'
+            : 'invalid_vector_type'
+      });
+      skipped.push({
+        folder: { id: folder.id, name: folder.name },
+        reason: !folder.id
+          ? 'missing_id'
+          : !folder.vector
+            ? 'missing_vector'
+            : 'invalid_vector_type'
+      });
+      continue;
+    }
 
-          // Use shared helper to prepare and sanitize metadata
-          const sanitized = prepareFolderMetadata(folder);
+    const sanitized = prepareFolderMetadata(folder);
+    ids.push(folder.id);
+    embeddings.push(folder.vector);
+    metadatas.push(sanitized);
+    documents.push(folder.name || folder.id);
+  }
 
-          ids.push(folder.id);
-          embeddings.push(folder.vector);
-          metadatas.push(sanitized);
-          documents.push(folder.name || folder.id);
-        }
+  if (ids.length === 0) {
+    return { count: 0, skipped };
+  }
 
-        if (ids.length > 0) {
-          await folderCollection.upsert({
-            ids,
-            embeddings,
-            metadatas,
-            documents
-          });
-
-          // Invalidate cache for all affected folders
-          if (queryCache) {
-            queryCache.invalidateForFolder();
-          }
-
-          logger.info('[FolderOps] Batch upserted folder embeddings', {
-            count: ids.length,
-            skipped: skipped.length
-          });
-        }
-
-        return { count: ids.length, skipped };
-      } catch (error) {
-        logger.error('[FolderOps] Failed to batch upsert folders with context:', {
-          operation: 'batch-upsert-folders',
-          totalFolders: folders.length,
-          successfulCount: ids.length,
-          skippedCount: skipped.length,
-          timestamp: new Date().toISOString(),
-          error: error.message,
-          errorStack: error.stack
+  try {
+    await withRetry(
+      async () => {
+        await folderCollection.upsert({
+          ids,
+          embeddings,
+          metadatas,
+          documents
         });
-        throw error;
-      }
-    },
-    { maxRetries: 3, initialDelay: 500 }
-  )();
+      },
+      { maxRetries: 3, initialDelay: 500 }
+    )();
+
+    // Invalidate cache for all affected folders
+    if (queryCache) {
+      queryCache.invalidateForFolder();
+    }
+
+    logger.info('[FolderOps] Batch upserted folder embeddings', {
+      count: ids.length,
+      skipped: skipped.length
+    });
+
+    return { count: ids.length, skipped };
+  } catch (error) {
+    // Log once after retries are exhausted to avoid noisy startup spam.
+    logger.error('[FolderOps] Failed to batch upsert folders with context:', {
+      operation: 'batch-upsert-folders',
+      totalFolders: folders.length,
+      successfulCount: ids.length,
+      skippedCount: skipped.length,
+      timestamp: new Date().toISOString(),
+      error: error.message,
+      errorStack: error.stack
+    });
+    throw error;
+  }
 }
 
 /**

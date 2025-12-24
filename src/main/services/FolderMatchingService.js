@@ -276,7 +276,39 @@ class FolderMatchingService {
         throw new Error('ChromaDB service not available');
       }
 
-      await this.chromaDbService.initialize();
+      // Startup-safety: Chroma can still be booting even after process spawn.
+      // If initialization fails, treat folder upsert as non-fatal and retry later via subsequent calls.
+      try {
+        await this.chromaDbService.initialize();
+      } catch (initError) {
+        const msg = initError?.message || '';
+        const isStartupLike =
+          initError?.name === 'ChromaNotFoundError' ||
+          /requested resource could not be found/i.test(msg) ||
+          /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(msg);
+
+        // Avoid log spam during boot: log at warn once per call, and skip.
+        logger.warn(
+          '[FolderMatchingService] ChromaDB not ready; deferring folder embedding upsert',
+          {
+            reason: msg
+          }
+        );
+        return {
+          count: 0,
+          skipped: folders.map((f) => ({
+            folder: f,
+            error: isStartupLike ? 'chromadb_not_ready' : msg
+          })),
+          stats: {
+            total: folders.length,
+            cached: 0,
+            generated: 0,
+            failed: folders.length,
+            deferred: true
+          }
+        };
+      }
 
       const { onProgress = null } = options;
       const skipped = [];
@@ -403,9 +435,37 @@ class FolderMatchingService {
         }
       };
     } catch (error) {
+      const msg = error?.message || '';
+      const isStartupLike =
+        error?.name === 'ChromaNotFoundError' ||
+        /requested resource could not be found/i.test(msg) ||
+        /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(msg);
+
+      // During startup, don't spam error logs; treat as deferred/non-fatal.
+      if (isStartupLike) {
+        logger.warn(
+          '[FolderMatchingService] Folder embedding upsert deferred (ChromaDB not ready)',
+          {
+            error: msg,
+            totalFolders: folders?.length || 0
+          }
+        );
+        return {
+          count: 0,
+          skipped: (folders || []).map((f) => ({ folder: f, error: 'chromadb_not_ready' })),
+          stats: {
+            total: folders?.length || 0,
+            cached: 0,
+            generated: 0,
+            failed: (folders || []).length,
+            deferred: true
+          }
+        };
+      }
+
       logger.error('[FolderMatchingService] Failed to batch upsert folder embeddings:', {
         totalFolders: folders.length,
-        error: error.message,
+        error: msg,
         errorStack: error.stack
       });
       throw error;
