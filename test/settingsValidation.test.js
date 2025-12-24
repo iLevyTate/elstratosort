@@ -136,6 +136,10 @@ describe('Settings Validation', () => {
         expect(
           validateSetting('ollamaHost', 'https://api.example.com', VALIDATION_RULES.ollamaHost)
         ).toEqual([]);
+        // Scheme should be treated case-insensitively (users commonly paste "HTTP://...")
+        expect(
+          validateSetting('ollamaHost', 'HTTP://localhost:11434', VALIDATION_RULES.ollamaHost)
+        ).toEqual([]);
       });
 
       test('rejects invalid URLs', () => {
@@ -411,6 +415,24 @@ describe('Settings Validation', () => {
       const result = sanitizeSettings(settings);
 
       expect(result).toEqual(settings);
+    });
+
+    test('normalizes common Ollama host inputs (scheme case, backslashes, and paths)', () => {
+      const settings = {
+        ollamaHost: 'HTTP:\\\\127.0.0.1:11434\\api\\tags'
+      };
+
+      const result = sanitizeSettings(settings);
+      expect(result.ollamaHost).toBe('http://127.0.0.1:11434');
+    });
+
+    test('strips trailing path/query from Ollama host', () => {
+      const settings = {
+        ollamaHost: 'http://localhost:11434/api/tags?x=1'
+      };
+
+      const result = sanitizeSettings(settings);
+      expect(result.ollamaHost).toBe('http://localhost:11434');
     });
 
     test('handles empty object', () => {

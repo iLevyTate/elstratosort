@@ -319,7 +319,29 @@ function sanitizeSettings(settings) {
     // Normalize special fields before validation
     let normalizedValue = value;
     if (key === 'ollamaHost' && typeof value === 'string') {
-      normalizedValue = value.trim();
+      let s = value.trim();
+
+      // Normalize common Windows paste mistakes (backslashes) and mixed-case protocols.
+      // Examples:
+      // - "HTTP://127.0.0.1:11434/" -> "http://127.0.0.1:11434"
+      // - "http:\\\\127.0.0.1:11434\\api\\tags" -> "http://127.0.0.1:11434"
+      s = s.replace(/\\/g, '/');
+      if (/^https?:\/\//i.test(s)) {
+        const isHttps = /^https:\/\//i.test(s);
+        s = s.replace(/^https?:\/\//i, isHttps ? 'https://' : 'http://');
+      }
+
+      // Remove path/query/hash and keep only protocol + host[:port]
+      // (users often paste "/api/tags" or other endpoints).
+      try {
+        const urlForParse = s.includes('://') ? s : `http://${s}`;
+        const u = new URL(urlForParse);
+        s = `${u.protocol}//${u.host}`;
+      } catch {
+        // If parsing fails, keep trimmed/cleaned input (validation will decide).
+      }
+
+      normalizedValue = s;
     }
 
     // Validate and sanitize
