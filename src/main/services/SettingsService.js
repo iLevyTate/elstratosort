@@ -41,9 +41,19 @@ class SettingsService {
 
     // Start file watching
     this._startFileWatcher();
+    this._migrationChecked = false;
   }
 
   async load() {
+    // Perform migration once per session before first load
+    if (!this._migrationChecked) {
+      await this.migrateLegacyConfig();
+      this._migrationChecked = true;
+    }
+    return this._loadRaw();
+  }
+
+  async _loadRaw() {
     try {
       const now = Date.now();
       if (this._cache && now - this._cacheTimestamp < this._cacheTtlMs) {
@@ -63,6 +73,118 @@ class SettingsService {
         logger.warn(`[SettingsService] Failed to read settings, using defaults: ${err.message}`);
       }
       return merged;
+    }
+  }
+
+  /**
+   * Migrate legacy configuration files (ollama-config.json, model-config.json)
+   * to the main settings.json file.
+   */
+  async migrateLegacyConfig() {
+    const userDataPath = app.getPath('userData');
+    const ollamaConfigPath = path.join(userDataPath, 'ollama-config.json');
+    const modelConfigPath = path.join(userDataPath, 'model-config.json');
+
+    const updates = {};
+    let hasUpdates = false;
+    let legacyFilesFound = false;
+
+    // Helper to check file existence
+    const fileExists = async (p) => {
+      try {
+        await fs.access(p);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    // 1. Check ollama-config.json
+    if (await fileExists(ollamaConfigPath)) {
+      legacyFilesFound = true;
+      try {
+        const raw = await fs.readFile(ollamaConfigPath, 'utf-8');
+        const config = JSON.parse(raw);
+        if (config.host) {
+          updates.ollamaHost = config.host;
+          hasUpdates = true;
+        }
+        if (config.selectedTextModel || config.selectedModel) {
+          updates.textModel = config.selectedTextModel || config.selectedModel;
+          hasUpdates = true;
+        }
+        if (config.selectedVisionModel) {
+          updates.visionModel = config.selectedVisionModel;
+          hasUpdates = true;
+        }
+        if (config.selectedEmbeddingModel) {
+          updates.embeddingModel = config.selectedEmbeddingModel;
+          hasUpdates = true;
+        }
+      } catch (e) {
+        logger.warn('[SettingsService] Failed to read legacy ollama-config.json:', e.message);
+      }
+    }
+
+    // 2. Check model-config.json (ModelManager)
+    if (await fileExists(modelConfigPath)) {
+      legacyFilesFound = true;
+      try {
+        const raw = await fs.readFile(modelConfigPath, 'utf-8');
+        const config = JSON.parse(raw);
+        // Only set textModel if not already set from ollama-config
+        if (config.selectedModel && !updates.textModel) {
+          updates.textModel = config.selectedModel;
+          hasUpdates = true;
+        }
+      } catch (e) {
+        logger.warn('[SettingsService] Failed to read legacy model-config.json:', e.message);
+      }
+    }
+
+    // 3. Apply updates if any
+    if (hasUpdates) {
+      logger.info('[SettingsService] Migrating legacy configuration...', updates);
+      try {
+        const current = await this._loadRaw();
+        const merged = { ...current, ...updates };
+
+        // Validate and sanitize before saving
+        const validation = validateSettings(merged);
+        if (validation.valid) {
+          const sanitized = sanitizeSettings(merged);
+
+          // Use atomic save directly
+          await fs.mkdir(path.dirname(this.settingsPath), { recursive: true });
+          await backupAndReplace(this.settingsPath, JSON.stringify(sanitized, null, 2));
+
+          // Update cache
+          this._cache = sanitized;
+          this._cacheTimestamp = Date.now();
+          logger.info('[SettingsService] Legacy configuration migrated successfully.');
+        } else {
+          logger.warn(
+            '[SettingsService] Migration skipped due to validation errors:',
+            validation.errors
+          );
+        }
+      } catch (err) {
+        logger.error('[SettingsService] Migration save failed:', err);
+      }
+    }
+
+    // 4. Archive legacy files if migration ran or they just exist
+    if (legacyFilesFound) {
+      try {
+        if (await fileExists(ollamaConfigPath)) {
+          await fs.rename(ollamaConfigPath, `${ollamaConfigPath}.migrated.bak`);
+        }
+        if (await fileExists(modelConfigPath)) {
+          await fs.rename(modelConfigPath, `${modelConfigPath}.migrated.bak`);
+        }
+      } catch (e) {
+        logger.warn('[SettingsService] Failed to archive legacy config files:', e.message);
+      }
     }
   }
 

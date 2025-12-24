@@ -53,15 +53,12 @@ jest.mock('../src/shared/constants', () => ({
   }
 }));
 
-// Mock ModelVerifier to return Ollama unavailable
-jest.mock('../src/main/services/ModelVerifier', () => {
-  return jest.fn().mockImplementation(() => ({
-    checkOllamaConnection: jest.fn().mockResolvedValue({
-      connected: false,
-      error: 'Ollama unavailable'
-    })
-  }));
-});
+// Mock ollamaDetection
+jest.mock('../src/main/utils/ollamaDetection', () => ({
+  isOllamaRunning: jest.fn().mockResolvedValue(false),
+  isOllamaInstalled: jest.fn().mockResolvedValue(true),
+  getOllamaVersion: jest.fn().mockResolvedValue('0.1.30')
+}));
 
 // Mock other services
 jest.mock('../src/main/services/ChromaDBService', () => ({

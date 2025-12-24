@@ -68,9 +68,7 @@ function setFileCache(signature, value) {
 
 // Import error handling system
 const { FileProcessingError } = require('../errors/AnalysisError');
-const ModelVerifier = require('../services/ModelVerifier');
 
-const modelVerifier = new ModelVerifier();
 const chromaDbService = getChromaDB();
 const folderMatcher = new FolderMatchingService(chromaDbService);
 
@@ -296,9 +294,12 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
 
   // Pre-flight checks for AI-first operation (graceful fallback if Ollama unavailable)
   try {
-    const connectionCheck = await modelVerifier.checkOllamaConnection();
-    if (!connectionCheck.connected) {
-      logger.warn(`Ollama unavailable (${connectionCheck.error}). Using filename-based analysis.`);
+    // Check if Ollama is running using shared detection logic or ModelManager
+    const { isOllamaRunning } = require('../utils/ollamaDetection');
+    const isRunning = await isOllamaRunning();
+
+    if (!isRunning) {
+      logger.warn('Ollama unavailable. Using filename-based analysis.');
       return createDocumentFallback(fileName, fileExtension, null, smartFolders, {
         date: fileDate
       });

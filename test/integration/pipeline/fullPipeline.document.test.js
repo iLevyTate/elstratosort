@@ -40,18 +40,13 @@ jest.mock('electron', () => ({
   }
 }));
 
-// Mock ModelVerifier
-jest.mock('../../../src/main/services/ModelVerifier', () => {
-  const mockInstance = {
-    checkOllamaConnection: jest.fn().mockResolvedValue({
-      connected: true,
-      error: null
-    })
-  };
-  const MockModelVerifier = jest.fn().mockImplementation(() => mockInstance);
-  MockModelVerifier._mockInstance = mockInstance;
-  return MockModelVerifier;
-});
+// Mock ollamaDetection
+jest.mock('../../../src/main/utils/ollamaDetection', () => ({
+  isOllamaRunning: jest.fn().mockResolvedValue(true),
+  isOllamaInstalled: jest.fn().mockResolvedValue(true),
+  getOllamaVersion: jest.fn().mockResolvedValue('0.1.30'),
+  getInstalledModels: jest.fn().mockResolvedValue(['llama3.2:latest'])
+}));
 
 // Mock documentLlm - capture what content is sent to Ollama
 const mockAnalyzeTextWithOllama = jest.fn().mockImplementation((content, fileName) => {
@@ -154,12 +149,11 @@ const {
 } = require('../../../src/main/analysis/ollamaDocumentAnalysis');
 
 // Import mocked modules for assertions
-const ModelVerifier = require('../../../src/main/services/ModelVerifier');
 const FolderMatchingService = require('../../../src/main/services/FolderMatchingService');
 const embeddingQueue = require('../../../src/main/analysis/embeddingQueue');
+const { isOllamaRunning } = require('../../../src/main/utils/ollamaDetection');
 
 // Get mock instances
-const mockModelVerifier = ModelVerifier._mockInstance;
 const mockFolderMatcher = FolderMatchingService._mockInstance;
 
 // Import fixtures and loader
@@ -198,10 +192,7 @@ describe('Document Files Full Pipeline - REAL FILE Integration Tests', () => {
     // Re-load fixtures into memfs (vol.reset() in global beforeEach clears it)
     loadAllFixtures(DOCUMENT_FIXTURES);
 
-    mockModelVerifier.checkOllamaConnection.mockResolvedValue({
-      connected: true,
-      error: null
-    });
+    isOllamaRunning.mockResolvedValue(true);
   });
 
   describe('Pipeline Infrastructure', () => {
@@ -432,10 +423,7 @@ describe('Document Files Full Pipeline - REAL FILE Integration Tests', () => {
 
   describe('Ollama Offline Fallback', () => {
     beforeEach(() => {
-      mockModelVerifier.checkOllamaConnection.mockResolvedValue({
-        connected: false,
-        error: 'Ollama service unavailable'
-      });
+      isOllamaRunning.mockResolvedValue(false);
     });
 
     test('returns fallback when Ollama offline for TXT', async () => {

@@ -47,7 +47,10 @@ function initializeGpuConfig() {
       }
 
       // Safer GPU settings
-      app.commandLine.appendSwitch('ignore-gpu-blocklist');
+      if (process.env.STRATOSORT_IGNORE_GPU_BLOCKLIST === '1') {
+        app.commandLine.appendSwitch('ignore-gpu-blocklist');
+        logger.warn('[GPU] GPU blocklist ignored via STRATOSORT_IGNORE_GPU_BLOCKLIST');
+      }
 
       logger.info(`[GPU] Flags set: ANGLE=${angleBackend}`);
     }

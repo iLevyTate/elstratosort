@@ -21,15 +21,22 @@ const {
   findPythonLauncherAsync
 } = require('../utils/asyncSpawnUtils');
 const {
-  checkPythonInstallation,
-  checkOllamaInstallation
-} = require('../services/startup/preflightChecks');
-const { isOllamaRunning } = require('../services/startup/ollamaService');
+  isOllamaInstalled,
+  getOllamaVersion,
+  isOllamaRunning
+} = require('../utils/ollamaDetection');
+const { checkPythonInstallation } = require('../services/startup/preflightChecks');
 const { isChromaDBRunning } = require('../services/startup/chromaService');
 
 logger.setContext('DependencyManager');
 
 const OLLAMA_WINDOWS_INSTALLER_URL = 'https://ollama.com/download/OllamaSetup.exe';
+
+async function checkOllamaInstallation() {
+  const installed = await isOllamaInstalled();
+  const version = installed ? await getOllamaVersion() : null;
+  return { installed, version };
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

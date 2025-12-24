@@ -58,13 +58,13 @@ jest.mock('../../src/main/services/FolderMatchingService', () => {
   }));
 });
 
-// Mock ModelVerifier
-jest.mock('../../src/main/services/ModelVerifier', () => {
-  return jest.fn().mockImplementation(() => ({
-    checkOllamaConnection: jest.fn().mockResolvedValue({ connected: true }),
-    verifyModel: jest.fn().mockResolvedValue({ valid: true })
-  }));
-});
+// Mock ollamaDetection
+jest.mock('../../src/main/utils/ollamaDetection', () => ({
+  isOllamaRunning: jest.fn().mockResolvedValue(true),
+  isOllamaInstalled: jest.fn().mockResolvedValue(true),
+  getOllamaVersion: jest.fn().mockResolvedValue('0.1.30'),
+  getInstalledModels: jest.fn().mockResolvedValue(['llama3.2:latest', 'mxbai-embed-large:latest'])
+}));
 
 // Mock ServiceContainer
 jest.mock('../../src/main/services/ServiceContainer', () => ({

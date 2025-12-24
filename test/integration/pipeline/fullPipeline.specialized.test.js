@@ -39,18 +39,13 @@ jest.mock('electron', () => ({
   }
 }));
 
-// Mock ModelVerifier
-jest.mock('../../../src/main/services/ModelVerifier', () => {
-  const mockInstance = {
-    checkOllamaConnection: jest.fn().mockResolvedValue({
-      connected: true,
-      error: null
-    })
-  };
-  const MockModelVerifier = jest.fn().mockImplementation(() => mockInstance);
-  MockModelVerifier._mockInstance = mockInstance;
-  return MockModelVerifier;
-});
+// Mock ollamaDetection
+jest.mock('../../../src/main/utils/ollamaDetection', () => ({
+  isOllamaRunning: jest.fn().mockResolvedValue(true),
+  isOllamaInstalled: jest.fn().mockResolvedValue(true),
+  getOllamaVersion: jest.fn().mockResolvedValue('0.1.30'),
+  getInstalledModels: jest.fn().mockResolvedValue(['llama3.2:latest'])
+}));
 
 // Mock document extractors (won't be called for specialized files)
 jest.mock('../../../src/main/analysis/documentExtractors', () => ({
@@ -154,13 +149,12 @@ jest.mock('fs', () => {
 const { analyzeDocumentFile } = require('../../../src/main/analysis/ollamaDocumentAnalysis');
 
 // Import mocked modules to get references for assertions
-const ModelVerifier = require('../../../src/main/services/ModelVerifier');
 const FolderMatchingService = require('../../../src/main/services/FolderMatchingService');
 const embeddingQueue = require('../../../src/main/analysis/embeddingQueue');
 const fsPromises = require('fs').promises;
+const { isOllamaRunning } = require('../../../src/main/utils/ollamaDetection');
 
 // Get mock instances via the static _mockInstance property
-const mockModelVerifier = ModelVerifier._mockInstance;
 const mockFolderMatcher = FolderMatchingService._mockInstance;
 
 // Import fixtures and test utilities
@@ -201,10 +195,7 @@ describe('Specialized Files Pipeline', () => {
     jest.clearAllMocks();
 
     // Reset mock implementations to default success state
-    mockModelVerifier.checkOllamaConnection.mockResolvedValue({
-      connected: true,
-      error: null
-    });
+    isOllamaRunning.mockResolvedValue(true);
 
     fsPromises.stat.mockResolvedValue({
       size: 1024,
@@ -239,7 +230,7 @@ describe('Specialized Files Pipeline', () => {
       const uniquePath = `/test/model-${Date.now()}.stl`;
       const result = await analyzeDocumentFile(uniquePath, smartFolders);
 
-      expect(mockModelVerifier.checkOllamaConnection).toHaveBeenCalled();
+      expect(isOllamaRunning).toHaveBeenCalled();
       expect(result).toBeDefined();
       expect(result.extractionMethod).toBe('filename');
     });
@@ -312,10 +303,7 @@ describe('Specialized Files Pipeline', () => {
 
   describe('analyzeDocumentFile() - Ollama Offline Fallback', () => {
     beforeEach(() => {
-      mockModelVerifier.checkOllamaConnection.mockResolvedValue({
-        connected: false,
-        error: 'Ollama service unavailable'
-      });
+      isOllamaRunning.mockResolvedValue(false);
     });
 
     test('returns fallback result when Ollama is offline', async () => {

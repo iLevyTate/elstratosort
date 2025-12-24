@@ -516,19 +516,15 @@ app.whenReady().then(async () => {
 
     // Verify AI models on startup (only if Ollama is running)
     if (startupResult?.services?.ollama?.success) {
-      const ModelVerifier = require('./services/ModelVerifier');
-      const modelVerifier = new ModelVerifier();
-      const modelStatus = await modelVerifier.verifyEssentialModels();
-
-      if (!modelStatus.success) {
-        logger.warn('[STARTUP] Missing AI models detected:', modelStatus.missingModels);
-        logger.info('[STARTUP] Install missing models:');
-        modelStatus.installationCommands.forEach((cmd) => logger.info('  ', cmd));
-      } else {
-        logger.info('[STARTUP] ✅ All essential AI models verified and ready');
-        if (modelStatus.hasWhisper) {
-          logger.info('[STARTUP] ✅ Whisper model available for audio analysis');
-        }
+      // Use ModelManager which is now the single source of truth for model verification
+      const ModelManager = require('./services/ModelManager');
+      const modelManager = new ModelManager();
+      // Ensure we have a working model selected
+      try {
+        await modelManager.ensureWorkingModel();
+        logger.info('[STARTUP] ✅ AI models verified and ready');
+      } catch (err) {
+        logger.warn('[STARTUP] Model verification warning:', err.message);
       }
     }
 
