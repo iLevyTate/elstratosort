@@ -545,7 +545,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                   onChange={(e) =>
                     setSettings((prev) => ({
                       ...prev,
-                      maxConcurrentAnalysis: parseInt(e.target.value)
+                      maxConcurrentAnalysis: parseInt(e.target.value, 10)
                     }))
                   }
                   className="w-full"

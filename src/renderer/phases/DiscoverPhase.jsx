@@ -8,7 +8,7 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { AlertTriangle, Search as SearchIcon, X } from 'lucide-react';
+import { AlertTriangle, Search as SearchIcon, X, Network, Sparkles, RefreshCw } from 'lucide-react';
 import { PHASES } from '../../shared/constants';
 import { TIMEOUTS } from '../../shared/performanceConstants';
 import { logger } from '../../shared/logger';
@@ -16,8 +16,7 @@ import { useNotification } from '../contexts/NotificationContext';
 import { useConfirmDialog, useDragAndDrop, useSettingsSubscription } from '../hooks';
 import { Button } from '../components/ui';
 import { FolderOpenIcon, SettingsIcon } from '../components/icons';
-import SemanticSearchModal from '../components/search/SemanticSearchModal';
-import ExploreGraphModal from '../components/explore/ExploreGraphModal';
+import UnifiedSearchModal from '../components/search/UnifiedSearchModal';
 import {
   NamingSettingsModal,
   SelectionControls,
@@ -73,9 +72,88 @@ function DiscoverPhase() {
 
   // Local UI state
   const [showNamingSettings, setShowNamingSettings] = useState(false);
-  const [showSemanticSearch, setShowSemanticSearch] = useState(false);
-  const [showExploreGraph, setShowExploreGraph] = useState(false);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [searchModalTab, setSearchModalTab] = useState('search'); // 'search' | 'graph'
   const [totalAnalysisFailure, setTotalAnalysisFailure] = useState(false);
+  const [showEmbeddingPrompt, setShowEmbeddingPrompt] = useState(false);
+  const [isRebuildingEmbeddings, setIsRebuildingEmbeddings] = useState(false);
+
+  // Track previous analyzing state for detecting completion
+  const prevAnalyzingRef = useRef(isAnalyzing);
+  // Check localStorage to see if user has dismissed the prompt before
+  const hasShownEmbeddingPromptRef = useRef(
+    localStorage.getItem('stratosort_embedding_prompt_dismissed') === 'true'
+  );
+
+  // Helper to open unified search modal with specific tab
+  const openSearchModal = useCallback((tab = 'search') => {
+    setSearchModalTab(tab);
+    setSearchModalOpen(true);
+  }, []);
+
+  // Check embeddings and prompt user after first successful analysis
+  useEffect(() => {
+    // Detect transition from analyzing -> not analyzing (analysis completed)
+    const wasAnalyzing = prevAnalyzingRef.current;
+    prevAnalyzingRef.current = isAnalyzing;
+
+    // Early returns for non-completion scenarios
+    if (!wasAnalyzing || isAnalyzing) return undefined; // Not a completion transition
+    if (hasShownEmbeddingPromptRef.current) return undefined; // Already prompted this session
+    if (visibleReadyCount === 0) return undefined; // No successful analyses
+
+    // Check if embeddings exist
+    const checkEmbeddings = async () => {
+      try {
+        const stats = await window.electronAPI?.embeddings?.getStats?.();
+        if (stats?.success && stats.files === 0) {
+          // No embeddings yet - show prompt
+          setShowEmbeddingPrompt(true);
+          hasShownEmbeddingPromptRef.current = true;
+        }
+      } catch (e) {
+        logger.warn('Failed to check embedding stats', e);
+      }
+    };
+
+    // Small delay to let UI settle
+    const timeoutId = setTimeout(checkEmbeddings, 1000);
+    return () => clearTimeout(timeoutId);
+  }, [isAnalyzing, visibleReadyCount]);
+
+  // Dismiss embedding prompt (with optional persistence)
+  const dismissEmbeddingPrompt = useCallback((permanent = false) => {
+    setShowEmbeddingPrompt(false);
+    if (permanent) {
+      localStorage.setItem('stratosort_embedding_prompt_dismissed', 'true');
+      hasShownEmbeddingPromptRef.current = true;
+    }
+  }, []);
+
+  // Handle embedding rebuild from the prompt
+  const handleRebuildEmbeddings = useCallback(async () => {
+    setIsRebuildingEmbeddings(true);
+    try {
+      // Rebuild files (which is the main one users need)
+      const res = await window.electronAPI?.embeddings?.rebuildFiles?.();
+      if (res?.success) {
+        addNotification(
+          `Indexed ${res.files || 0} files for semantic search`,
+          'success',
+          4000,
+          'embedding-rebuild'
+        );
+        // Permanently dismiss since they built embeddings
+        dismissEmbeddingPrompt(true);
+      } else {
+        throw new Error(res?.error || 'Failed to build embeddings');
+      }
+    } catch (e) {
+      addNotification(e?.message || 'Failed to build embeddings', 'error', 5000, 'embedding-error');
+    } finally {
+      setIsRebuildingEmbeddings(false);
+    }
+  }, [addNotification, dismissEmbeddingPrompt]);
 
   // Refs for analysis state
   const hasResumedRef = useRef(false);
@@ -290,18 +368,20 @@ function DiscoverPhase() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => setShowSemanticSearch(true)}
+              onClick={() => openSearchModal('search')}
               className="text-sm gap-compact"
+              title="Search your library by meaning, not just filename"
             >
               <SearchIcon className="w-4 h-4" /> Semantic Search
             </Button>
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => setShowExploreGraph(true)}
+              onClick={() => openSearchModal('graph')}
               className="text-sm gap-compact"
+              title="Visualize file relationships in an interactive graph"
             >
-              Explore
+              <Network className="w-4 h-4" /> Explore Graph
             </Button>
           </div>
         </div>
@@ -356,6 +436,46 @@ function DiscoverPhase() {
                 isScanning={isScanning}
                 className="w-full max-w-sm justify-center"
               />
+
+              {/* Semantic Search Prompt - shown when no files selected */}
+              {selectedFiles.length === 0 && (
+                <div className="mt-6 pt-6 border-t border-system-gray-200/50 w-full max-w-md">
+                  <div className="glass-panel border border-stratosort-blue/20 bg-gradient-to-br from-stratosort-blue/5 to-stratosort-indigo/5 p-4 rounded-xl">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-stratosort-blue/10 rounded-lg shrink-0">
+                        <Sparkles className="w-5 h-5 text-stratosort-blue" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-semibold text-system-gray-900 mb-1">
+                          Looking for a file?
+                        </h4>
+                        <p className="text-xs text-system-gray-600 mb-3">
+                          Use Semantic Search to find files by meaning — describe what you are
+                          looking for in natural language.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => openSearchModal('search')}
+                            className="text-xs"
+                          >
+                            <SearchIcon className="w-3.5 h-3.5" /> Try Semantic Search
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => openSearchModal('graph')}
+                            className="text-xs"
+                          >
+                            <Network className="w-3.5 h-3.5" /> Explore Graph
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 
@@ -439,6 +559,72 @@ function DiscoverPhase() {
             </div>
           )}
         </div>
+
+        {/* Embedding Prompt Banner - shown after first successful analysis */}
+        {showEmbeddingPrompt && !isAnalyzing && (
+          <div className="flex-shrink-0 glass-panel border border-stratosort-blue/30 bg-gradient-to-r from-stratosort-blue/5 to-stratosort-indigo/5 backdrop-blur-md animate-fade-in p-default">
+            <div className="flex items-start gap-cozy">
+              <div className="p-2 bg-stratosort-blue/10 rounded-lg shrink-0">
+                <Sparkles className="w-5 h-5 text-stratosort-blue" />
+              </div>
+              <div className="flex-1">
+                <h4 className="heading-tertiary text-stratosort-blue mb-compact">
+                  Enable Semantic Search
+                </h4>
+                <p className="text-xs text-system-gray-700 mb-cozy">
+                  Your files have been analyzed! Build embeddings to enable semantic search — find
+                  files by describing what you are looking for in natural language.
+                </p>
+                <div className="flex flex-wrap gap-compact">
+                  <Button
+                    onClick={handleRebuildEmbeddings}
+                    variant="primary"
+                    size="sm"
+                    disabled={isRebuildingEmbeddings}
+                  >
+                    {isRebuildingEmbeddings ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" /> Building...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" /> Build Embeddings
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={() => dismissEmbeddingPrompt(false)}
+                    variant="ghost"
+                    size="sm"
+                    title="Dismiss for now (will ask again next session)"
+                  >
+                    Maybe Later
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      dismissEmbeddingPrompt(true);
+                      openSearchModal('search');
+                    }}
+                    variant="secondary"
+                    size="sm"
+                  >
+                    <SearchIcon className="w-4 h-4" /> Open Search
+                  </Button>
+                </div>
+              </div>
+              <Button
+                onClick={() => dismissEmbeddingPrompt(true)}
+                variant="ghost"
+                size="sm"
+                className="text-system-gray-400 hover:text-system-gray-600 p-compact"
+                aria-label="Dismiss permanently"
+                title="Don't show this again"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Analysis Failure Recovery Banner */}
         {totalAnalysisFailure && (
@@ -565,15 +751,11 @@ function DiscoverPhase() {
         </div>
 
         <ConfirmDialog />
-        <SemanticSearchModal
-          isOpen={showSemanticSearch}
-          onClose={() => setShowSemanticSearch(false)}
+        <UnifiedSearchModal
+          isOpen={searchModalOpen}
+          onClose={() => setSearchModalOpen(false)}
           defaultTopK={20}
-        />
-        <ExploreGraphModal
-          isOpen={showExploreGraph}
-          onClose={() => setShowExploreGraph(false)}
-          defaultTopK={20}
+          initialTab={searchModalTab}
         />
         <NamingSettingsModal
           isOpen={showNamingSettings}
