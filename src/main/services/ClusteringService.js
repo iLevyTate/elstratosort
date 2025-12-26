@@ -478,19 +478,45 @@ Respond with ONLY the label, nothing else. Examples: "Financial Documents", "Pro
   }
 
   /**
-   * Get members of a specific cluster
+   * Get members of a specific cluster with fresh metadata from ChromaDB
    *
    * @param {number} clusterId - Cluster ID
-   * @returns {Array} Cluster members
+   * @returns {Promise<Array>} Cluster members with current metadata
    */
-  getClusterMembers(clusterId) {
+  async getClusterMembers(clusterId) {
     const cluster = this.clusters.find((c) => c.id === clusterId);
     if (!cluster) return [];
 
-    return cluster.members.map((m) => ({
-      id: m.id,
-      metadata: m.metadata
-    }));
+    const memberIds = cluster.members.map((m) => m.id);
+
+    // Fetch fresh metadata from ChromaDB to get current file paths/names
+    try {
+      await this.chromaDb.initialize();
+
+      const result = await this.chromaDb.fileCollection.get({
+        ids: memberIds,
+        include: ['metadatas']
+      });
+
+      // Build a map of fresh metadata
+      const freshMetadata = new Map();
+      for (let i = 0; i < result.ids.length; i++) {
+        freshMetadata.set(result.ids[i], result.metadatas?.[i] || {});
+      }
+
+      // Return members with fresh metadata (current paths and names)
+      return cluster.members.map((m) => ({
+        id: m.id,
+        metadata: freshMetadata.get(m.id) || m.metadata
+      }));
+    } catch (error) {
+      logger.warn('[ClusteringService] Failed to fetch fresh metadata, using cached:', error);
+      // Fallback to cached metadata
+      return cluster.members.map((m) => ({
+        id: m.id,
+        metadata: m.metadata
+      }));
+    }
   }
 
   /**
@@ -529,6 +555,97 @@ Respond with ONLY the label, nothing else. Examples: "Financial Documents", "Pro
     this.clusterLabels.clear();
     this.lastComputedAt = null;
     logger.info('[ClusteringService] Clusters cleared');
+  }
+
+  /**
+   * Find similarity edges between files for graph visualization
+   * Returns edges between files that are semantically similar
+   *
+   * @param {Array<string>} fileIds - Array of file IDs to compute edges for
+   * @param {Object} options - Options
+   * @param {number} options.threshold - Similarity threshold (0-1), default 0.5
+   * @param {number} options.maxEdgesPerNode - Maximum edges per node, default 3
+   * @returns {Promise<Array>} Array of similarity edges
+   */
+  async findFileSimilarityEdges(fileIds, options = {}) {
+    const { threshold = 0.5, maxEdgesPerNode = 3 } = options;
+
+    if (!fileIds || fileIds.length < 2) {
+      return [];
+    }
+
+    try {
+      // Get embeddings for the specified files
+      await this.chromaDb.initialize();
+
+      const result = await this.chromaDb.fileCollection.get({
+        ids: fileIds,
+        include: ['embeddings', 'metadatas']
+      });
+
+      if (!result.ids || result.ids.length < 2) {
+        return [];
+      }
+
+      // Build a map of id -> embedding
+      const embeddings = new Map();
+      for (let i = 0; i < result.ids.length; i++) {
+        if (result.embeddings?.[i]) {
+          embeddings.set(result.ids[i], {
+            vector: result.embeddings[i],
+            metadata: result.metadatas?.[i] || {}
+          });
+        }
+      }
+
+      // Compute pairwise similarities
+      const edges = [];
+      const edgeCounts = new Map();
+      const ids = Array.from(embeddings.keys());
+
+      for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) {
+          const idA = ids[i];
+          const idB = ids[j];
+          const embA = embeddings.get(idA);
+          const embB = embeddings.get(idB);
+
+          const similarity = cosineSimilarity(embA.vector, embB.vector);
+
+          if (similarity >= threshold) {
+            // Check if we've reached max edges for either node
+            const countA = edgeCounts.get(idA) || 0;
+            const countB = edgeCounts.get(idB) || 0;
+
+            if (countA < maxEdgesPerNode && countB < maxEdgesPerNode) {
+              edges.push({
+                id: `sim:${idA}->${idB}`,
+                source: idA,
+                target: idB,
+                similarity: Math.round(similarity * 100) / 100,
+                type: 'similarity'
+              });
+
+              edgeCounts.set(idA, countA + 1);
+              edgeCounts.set(idB, countB + 1);
+            }
+          }
+        }
+      }
+
+      // Sort by similarity (highest first) and limit total edges
+      edges.sort((a, b) => b.similarity - a.similarity);
+
+      logger.debug('[ClusteringService] Found similarity edges', {
+        fileCount: fileIds.length,
+        edgeCount: edges.length
+      });
+
+      return edges;
+    } catch (error) {
+      logger.error('[ClusteringService] Failed to find similarity edges:', error);
+      return [];
+    }
   }
 }
 

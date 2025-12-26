@@ -298,8 +298,10 @@ class SearchService {
         const rrfContribution = 1 / (k + rank + 1);
         rrfScores.set(id, (rrfScores.get(id) || 0) + rrfContribution);
 
-        // Keep the best metadata
-        if (!resultData.has(id)) {
+        // Prefer vector search metadata (has current file names) over BM25 (may have old names)
+        // Vector search uses ChromaDB which is updated when files are organized
+        const existing = resultData.get(id);
+        if (!existing || (result.source === 'vector' && existing.source !== 'vector')) {
           resultData.set(id, result);
         }
       }
