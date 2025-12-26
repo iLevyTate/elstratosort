@@ -3,6 +3,8 @@ const FolderMatchingService = require('../services/FolderMatchingService');
 const {
   getInstance: getParallelEmbeddingService
 } = require('../services/ParallelEmbeddingService');
+const { SearchService } = require('../services/SearchService');
+const { ClusteringService } = require('../services/ClusteringService');
 const path = require('path');
 const { SUPPORTED_IMAGE_EXTENSIONS } = require('../../shared/constants');
 const { BATCH, TIMEOUTS, LIMITS } = require('../../shared/performanceConstants');
@@ -18,6 +20,38 @@ function registerEmbeddingsIpc({
   // Use ChromaDB singleton instance
   const chromaDbService = getChromaDB();
   const folderMatcher = new FolderMatchingService(chromaDbService);
+
+  // SearchService will be initialized lazily when needed
+  let searchService = null;
+  let clusteringService = null;
+
+  function getSearchService() {
+    if (!searchService) {
+      const serviceIntegration = getServiceIntegration && getServiceIntegration();
+      const historyService = serviceIntegration?.analysisHistory;
+      const embeddingService = getParallelEmbeddingService();
+
+      searchService = new SearchService({
+        chromaDbService,
+        analysisHistoryService: historyService,
+        parallelEmbeddingService: embeddingService
+      });
+    }
+    return searchService;
+  }
+
+  function getClusteringService() {
+    if (!clusteringService) {
+      const serviceIntegration = getServiceIntegration && getServiceIntegration();
+      const ollamaService = serviceIntegration?.ollamaService;
+
+      clusteringService = new ClusteringService({
+        chromaDbService,
+        ollamaService
+      });
+    }
+    return clusteringService;
+  }
 
   // CRITICAL FIX: Track initialization state to prevent race conditions
   let initializationPromise = null;
@@ -71,6 +105,20 @@ function registerEmbeddingsIpc({
 
           logger.info('[SEMANTIC] Initialization complete');
           isInitialized = true;
+
+          // Warm up search service in background (non-blocking)
+          // This pre-builds the BM25 index for faster first search
+          setImmediate(() => {
+            try {
+              const searchSvc = getSearchService();
+              searchSvc.warmUp({ buildBM25: true, warmChroma: false }).catch((warmErr) => {
+                logger.debug('[SEMANTIC] Search warm-up skipped:', warmErr.message);
+              });
+            } catch (warmErr) {
+              logger.debug('[SEMANTIC] Search warm-up init skipped:', warmErr.message);
+            }
+          });
+
           return; // Success - exit retry loop
         } catch (error) {
           logger.warn(`[SEMANTIC] Initialization attempt ${attempt} failed:`, error.message);
@@ -699,6 +747,223 @@ function registerEmbeddingsIpc({
           error: e.message,
           timeout: e.message.includes('timeout')
         };
+      }
+    })
+  );
+
+  // ============================================================================
+  // Hybrid Search Handlers
+  // ============================================================================
+
+  /**
+   * Perform hybrid search combining BM25 keyword search with vector similarity
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.EMBEDDINGS.HYBRID_SEARCH,
+    withErrorLogging(logger, async (event, { query, options = {} } = {}) => {
+      try {
+        await ensureInitialized();
+      } catch (initError) {
+        return {
+          success: false,
+          error: 'ChromaDB is not available.',
+          unavailable: true
+        };
+      }
+      if (!isInitialized) {
+        return {
+          success: false,
+          error: 'ChromaDB initialization pending.',
+          pending: true
+        };
+      }
+
+      try {
+        const service = getSearchService();
+        const result = await service.hybridSearch(query, options);
+        return result;
+      } catch (e) {
+        logger.error('[EMBEDDINGS] Hybrid search failed:', e);
+        return { success: false, error: e.message };
+      }
+    })
+  );
+
+  /**
+   * Rebuild the BM25 keyword search index
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.EMBEDDINGS.REBUILD_BM25_INDEX,
+    withErrorLogging(logger, async () => {
+      try {
+        const service = getSearchService();
+        const result = await service.rebuildIndex();
+        return result;
+      } catch (e) {
+        logger.error('[EMBEDDINGS] Rebuild BM25 index failed:', e);
+        return { success: false, error: e.message };
+      }
+    })
+  );
+
+  /**
+   * Get the current search index status
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.EMBEDDINGS.GET_SEARCH_STATUS,
+    withErrorLogging(logger, async () => {
+      try {
+        const service = getSearchService();
+        return { success: true, status: service.getIndexStatus() };
+      } catch (e) {
+        logger.error('[EMBEDDINGS] Get search status failed:', e);
+        return { success: false, error: e.message };
+      }
+    })
+  );
+
+  // ============================================================================
+  // Multi-Hop Expansion Handlers
+  // ============================================================================
+
+  /**
+   * Find similar files with multi-hop expansion
+   * Explores neighbors of neighbors with decay scoring
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.EMBEDDINGS.FIND_MULTI_HOP,
+    withErrorLogging(logger, async (event, { seedIds, options = {} } = {}) => {
+      try {
+        await ensureInitialized();
+      } catch (initError) {
+        return {
+          success: false,
+          error: 'ChromaDB is not available.',
+          unavailable: true
+        };
+      }
+      if (!isInitialized) {
+        return {
+          success: false,
+          error: 'ChromaDB initialization pending.',
+          pending: true
+        };
+      }
+
+      try {
+        if (!Array.isArray(seedIds) || seedIds.length === 0) {
+          return { success: false, error: 'seedIds must be a non-empty array' };
+        }
+
+        const validIds = seedIds
+          .filter((id) => typeof id === 'string' && id.length > 0)
+          .slice(0, 10); // Limit to 10 seeds for performance
+
+        if (validIds.length === 0) {
+          return { success: false, error: 'No valid seedIds provided' };
+        }
+
+        const results = await folderMatcher.findMultiHopNeighbors(validIds, options);
+        return { success: true, results };
+      } catch (e) {
+        logger.error('[EMBEDDINGS] Multi-hop expansion failed:', e);
+        return { success: false, error: e.message };
+      }
+    })
+  );
+
+  // ============================================================================
+  // Clustering Handlers (placeholder for ClusteringService)
+  // ============================================================================
+
+  /**
+   * Compute semantic clusters of files
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.EMBEDDINGS.COMPUTE_CLUSTERS,
+    withErrorLogging(logger, async (event, { k = 'auto', generateLabels = true } = {}) => {
+      try {
+        await ensureInitialized();
+      } catch (initError) {
+        return {
+          success: false,
+          error: 'ChromaDB is not available.',
+          unavailable: true
+        };
+      }
+      if (!isInitialized) {
+        return {
+          success: false,
+          error: 'ChromaDB initialization pending.',
+          pending: true
+        };
+      }
+
+      try {
+        const service = getClusteringService();
+        const result = await service.computeClusters(k);
+
+        // Optionally generate LLM labels for clusters
+        if (result.success && generateLabels && result.clusters.length > 0) {
+          await service.generateClusterLabels();
+          // Update result with labels
+          result.clusters = service.getClustersForGraph();
+        }
+
+        return result;
+      } catch (e) {
+        logger.error('[EMBEDDINGS] Cluster computation failed:', e);
+        return { success: false, error: e.message };
+      }
+    })
+  );
+
+  /**
+   * Get computed clusters
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.EMBEDDINGS.GET_CLUSTERS,
+    withErrorLogging(logger, async () => {
+      try {
+        const service = getClusteringService();
+        const clusters = service.getClustersForGraph();
+        const crossClusterEdges = service.findCrossClusterEdges(0.5);
+
+        return {
+          success: true,
+          clusters,
+          crossClusterEdges,
+          stale: service.isClustersStale()
+        };
+      } catch (e) {
+        logger.error('[EMBEDDINGS] Get clusters failed:', e);
+        return { success: false, error: e.message };
+      }
+    })
+  );
+
+  /**
+   * Get members of a specific cluster
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.EMBEDDINGS.GET_CLUSTER_MEMBERS,
+    withErrorLogging(logger, async (event, { clusterId } = {}) => {
+      try {
+        if (typeof clusterId !== 'number') {
+          return { success: false, error: 'clusterId must be a number' };
+        }
+
+        const service = getClusteringService();
+        const members = service.getClusterMembers(clusterId);
+
+        return {
+          success: true,
+          clusterId,
+          members
+        };
+      } catch (e) {
+        logger.error('[EMBEDDINGS] Get cluster members failed:', e);
+        return { success: false, error: e.message };
       }
     })
   );

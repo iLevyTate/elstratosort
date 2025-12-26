@@ -5,7 +5,6 @@ import 'reactflow/dist/style.css';
 import {
   ExternalLink,
   FolderOpen,
-  Plus,
   RefreshCw,
   Search as SearchIcon,
   Sparkles,
@@ -14,7 +13,10 @@ import {
   List,
   HelpCircle,
   FileText,
-  MessageSquare
+  MessageSquare,
+  LayoutGrid,
+  Layers,
+  GitBranch
 } from 'lucide-react';
 
 import Modal from '../Modal';
@@ -24,6 +26,8 @@ import { logger } from '../../../shared/logger';
 import { safeBasename } from '../../utils/pathUtils';
 import { formatScore, scoreToOpacity, clamp01 } from '../../utils/scoreUtils';
 import { makeQueryNodeId, defaultNodePosition } from '../../utils/graphUtils';
+import { elkLayout, clusterRadialLayout, clusterExpansionLayout } from '../../utils/elkLayout';
+import ClusterNode from './ClusterNode';
 
 logger.setContext('UnifiedSearchModal');
 
@@ -122,7 +126,8 @@ QueryNode.propTypes = {
 // Node types for ReactFlow
 const nodeTypes = {
   fileNode: FileNode,
-  queryNode: QueryNode
+  queryNode: QueryNode,
+  clusterNode: ClusterNode
 };
 
 // ============================================================================
@@ -344,6 +349,18 @@ export default function UnifiedSearchModal({
   const [debouncedWithinQuery, setDebouncedWithinQuery] = useState('');
   const [graphStatus, setGraphStatus] = useState('');
 
+  // Layout state
+  const [autoLayout, setAutoLayout] = useState(true);
+  const [isLayouting, setIsLayouting] = useState(false);
+
+  // Multi-hop expansion state
+  const [hopCount, setHopCount] = useState(1);
+  const [decayFactor, setDecayFactor] = useState(0.7);
+
+  // Clustering state
+  const [showClusters, setShowClusters] = useState(false);
+  const [isComputingClusters, setIsComputingClusters] = useState(false);
+
   // Refs
   const lastSearchRef = useRef(0);
   const withinReqRef = useRef(0);
@@ -370,6 +387,15 @@ export default function UnifiedSearchModal({
     setWithinQuery('');
     setDebouncedWithinQuery('');
     setGraphStatus('');
+    // Layout state
+    setAutoLayout(true);
+    setIsLayouting(false);
+    // Multi-hop state
+    setHopCount(1);
+    setDecayFactor(0.7);
+    // Clustering state
+    setShowClusters(false);
+    setIsComputingClusters(false);
   }, [isOpen, initialTab]);
 
   // ============================================================================
@@ -576,6 +602,223 @@ export default function UnifiedSearchModal({
     };
   }, []);
 
+  /**
+   * Apply ELK layout to current graph nodes and edges
+   */
+  const applyLayout = useCallback(async () => {
+    if (nodes.length === 0) return;
+
+    setIsLayouting(true);
+    setGraphStatus('Applying layout...');
+
+    try {
+      const layoutedNodes = await elkLayout(nodes, edges, {
+        direction: 'RIGHT',
+        spacing: 80,
+        layerSpacing: 120
+      });
+
+      setNodes(layoutedNodes);
+      setGraphStatus('Layout applied');
+    } catch (error) {
+      logger.error('[Graph] Layout failed:', error);
+      setGraphStatus('Layout failed');
+    } finally {
+      setIsLayouting(false);
+    }
+  }, [nodes, edges]);
+
+  /**
+   * Load and display semantic clusters
+   */
+  const loadClusters = useCallback(async () => {
+    setIsComputingClusters(true);
+    setGraphStatus('Computing clusters...');
+    setError('');
+
+    try {
+      // First compute clusters
+      const computeResp = await window.electronAPI?.embeddings?.computeClusters?.('auto');
+      if (!computeResp || computeResp.success !== true) {
+        throw new Error(computeResp?.error || 'Failed to compute clusters');
+      }
+
+      // Get clusters for display
+      const clustersResp = await window.electronAPI?.embeddings?.getClusters?.();
+      if (!clustersResp || clustersResp.success !== true) {
+        throw new Error(clustersResp?.error || 'Failed to get clusters');
+      }
+
+      const clusters = clustersResp.clusters || [];
+      const crossClusterEdges = clustersResp.crossClusterEdges || [];
+
+      if (clusters.length === 0) {
+        setGraphStatus('No clusters found');
+        return;
+      }
+
+      // Create cluster nodes
+      const clusterNodes = clusters.map((cluster, idx) => ({
+        id: cluster.id,
+        type: 'clusterNode',
+        position: defaultNodePosition(idx),
+        data: {
+          kind: 'cluster',
+          label: cluster.label,
+          memberCount: cluster.memberCount,
+          memberIds: cluster.memberIds,
+          expanded: false
+        },
+        draggable: true
+      }));
+
+      // Create cross-cluster edges
+      const clusterEdges = crossClusterEdges.map((edge) => ({
+        id: `cross:${edge.source}->${edge.target}`,
+        source: edge.source,
+        target: edge.target,
+        type: 'default',
+        animated: true,
+        style: {
+          stroke: '#9ca3af',
+          strokeWidth: 1.5,
+          strokeDasharray: '5,5'
+        },
+        data: { kind: 'cross_cluster', weight: edge.similarity }
+      }));
+
+      // Update graph
+      setNodes(clusterNodes);
+      setEdges(clusterEdges);
+      setShowClusters(true);
+      setGraphStatus(`${clusters.length} clusters found`);
+
+      // Apply radial layout for better cluster visualization
+      if (clusterNodes.length > 0) {
+        try {
+          const layoutedNodes = clusterRadialLayout(clusterNodes, clusterEdges, {
+            centerX: 400,
+            centerY: 300,
+            radius: Math.min(250, 80 + clusterNodes.length * 30)
+          });
+          setNodes(layoutedNodes);
+        } catch (layoutError) {
+          logger.warn('[Graph] Cluster layout failed:', layoutError);
+        }
+      }
+    } catch (e) {
+      setError(e?.message || 'Failed to load clusters');
+      setGraphStatus('');
+    } finally {
+      setIsComputingClusters(false);
+    }
+  }, []);
+
+  /**
+   * Expand a cluster to show its members with current file names
+   */
+  const expandCluster = useCallback(
+    async (clusterId, memberIds) => {
+      if (!Array.isArray(memberIds) || memberIds.length === 0) return;
+
+      setGraphStatus('Expanding cluster...');
+
+      try {
+        // Get cluster node for layout calculation
+        const clusterNode = nodes.find((n) => n.id === clusterId);
+
+        // Fetch actual file metadata to get current names (not original names)
+        let membersWithMetadata = [];
+        try {
+          // Extract numeric cluster ID from the string ID (e.g., "cluster:0" -> 0)
+          const numericClusterId = parseInt(clusterId.replace('cluster:', ''), 10);
+          const memberResp =
+            await window.electronAPI?.embeddings?.getClusterMembers?.(numericClusterId);
+
+          if (memberResp?.success && Array.isArray(memberResp.members)) {
+            membersWithMetadata = memberResp.members;
+          }
+        } catch (fetchErr) {
+          logger.warn('[Graph] Failed to fetch cluster members metadata:', fetchErr);
+        }
+
+        // Build a map of id -> metadata for quick lookup
+        const metadataMap = new Map(membersWithMetadata.map((m) => [m.id, m.metadata || {}]));
+
+        // Create file nodes with proper current names from metadata
+        const memberNodes = memberIds.map((id) => {
+          const metadata = metadataMap.get(id) || {};
+          // Use metadata.name first (current organized name), fallback to path extraction
+          const currentName =
+            metadata.name ||
+            safeBasename(metadata.path) ||
+            safeBasename(id) ||
+            id.split('/').pop() ||
+            id.split('\\').pop() ||
+            id;
+
+          return {
+            id,
+            type: 'fileNode',
+            position: { x: 0, y: 0 }, // Will be set by layout
+            data: {
+              kind: 'file',
+              label: currentName,
+              path: metadata.path || id
+            },
+            draggable: true
+          };
+        });
+
+        // Apply expansion layout to position nodes nicely
+        const layoutedMemberNodes = clusterExpansionLayout(clusterNode, memberNodes, {
+          offsetX: 280,
+          spacing: 65,
+          fanAngle: Math.PI / 2.5
+        });
+
+        // Create edges from cluster to members
+        const memberEdges = memberIds.map((id) => ({
+          id: `cluster:${clusterId}->${id}`,
+          source: clusterId,
+          target: id,
+          type: 'default',
+          animated: false,
+          style: { stroke: '#f59e0b', strokeWidth: 1.5 },
+          data: { kind: 'cluster_member' }
+        }));
+
+        // Add to existing graph
+        setNodes((prev) => {
+          const existingIds = new Set(prev.map((n) => n.id));
+          const newNodes = layoutedMemberNodes.filter((n) => !existingIds.has(n.id));
+
+          // Mark cluster as expanded
+          const updated = prev.map((n) => {
+            if (n.id === clusterId) {
+              return { ...n, data: { ...n.data, expanded: true } };
+            }
+            return n;
+          });
+
+          return [...updated, ...newNodes];
+        });
+
+        setEdges((prev) => {
+          const existingIds = new Set(prev.map((e) => e.id));
+          const newEdges = memberEdges.filter((e) => !existingIds.has(e.id));
+          return [...prev, ...newEdges];
+        });
+
+        setGraphStatus(`Expanded: +${layoutedMemberNodes.length} files`);
+      } catch (e) {
+        setError(e?.message || 'Failed to expand cluster');
+        setGraphStatus('');
+      }
+    },
+    [nodes]
+  );
+
   const runGraphSearch = useCallback(async () => {
     const q = query.trim();
     if (q.length < 2) return;
@@ -661,11 +904,46 @@ export default function UnifiedSearchModal({
 
       setSelectedNodeId(results[0]?.id || queryNodeId);
       setGraphStatus(`${results.length} result${results.length === 1 ? '' : 's'}`);
+
+      // Apply auto-layout if enabled
+      if (autoLayout && nextNodes.length > 1) {
+        setGraphStatus('Applying layout...');
+        try {
+          // Get the final nodes from state for layout
+          const finalNodes = addMode
+            ? (() => {
+                const map = new Map(nodes.map((n) => [n.id, n]));
+                nextNodes.forEach((n) => {
+                  if (!map.has(n.id)) map.set(n.id, n);
+                });
+                return Array.from(map.values());
+              })()
+            : nextNodes;
+
+          const finalEdges = addMode
+            ? (() => {
+                const map = new Map(edges.map((e) => [e.id, e]));
+                nextEdges.forEach((e) => map.set(e.id, e));
+                return Array.from(map.values());
+              })()
+            : nextEdges;
+
+          const layoutedNodes = await elkLayout(finalNodes, finalEdges, {
+            direction: 'RIGHT',
+            spacing: 80,
+            layerSpacing: 120
+          });
+          setNodes(layoutedNodes);
+          setGraphStatus(`${results.length} result${results.length === 1 ? '' : 's'} (laid out)`);
+        } catch (layoutError) {
+          logger.warn('[Graph] Auto-layout failed:', layoutError);
+        }
+      }
     } catch (e) {
       setGraphStatus('');
       setError(e?.message || 'Search failed');
     }
-  }, [query, defaultTopK, addMode, upsertFileNode]);
+  }, [query, defaultTopK, addMode, upsertFileNode, autoLayout, nodes, edges]);
 
   const expandFromSelected = useCallback(async () => {
     const seed = selectedNode;
@@ -740,11 +1018,42 @@ export default function UnifiedSearchModal({
       });
 
       setGraphStatus(`Expanded: +${results.length}`);
+
+      // Apply auto-layout if enabled
+      if (autoLayout && nextNodes.length > 0) {
+        setGraphStatus('Applying layout...');
+        try {
+          // Get the final nodes and edges for layout
+          const finalNodes = (() => {
+            const map = new Map(nodes.map((n) => [n.id, n]));
+            nextNodes.forEach((n) => {
+              if (!map.has(n.id)) map.set(n.id, n);
+            });
+            return Array.from(map.values());
+          })();
+
+          const finalEdges = (() => {
+            const map = new Map(edges.map((e) => [e.id, e]));
+            nextEdges.forEach((e) => map.set(e.id, e));
+            return Array.from(map.values());
+          })();
+
+          const layoutedNodes = await elkLayout(finalNodes, finalEdges, {
+            direction: 'RIGHT',
+            spacing: 80,
+            layerSpacing: 120
+          });
+          setNodes(layoutedNodes);
+          setGraphStatus(`Expanded: +${results.length} (laid out)`);
+        } catch (layoutError) {
+          logger.warn('[Graph] Auto-layout after expand failed:', layoutError);
+        }
+      }
     } catch (e) {
       setGraphStatus('');
       setError(e?.message || 'Expand failed');
     }
-  }, [selectedNode, upsertFileNode]);
+  }, [selectedNode, upsertFileNode, autoLayout, nodes, edges]);
 
   // Debounce within-graph query
   useEffect(() => {
@@ -909,15 +1218,29 @@ export default function UnifiedSearchModal({
     });
   }, []);
 
-  // Double-click on a file node to expand it
+  // Double-click on a node to expand it (file or cluster)
   const onNodeDoubleClick = useCallback(
     (_, node) => {
-      if (!node?.id || node?.data?.kind !== 'file') return;
-      setSelectedNodeId(node.id);
-      // Trigger expansion
-      expandFromSelected();
+      if (!node?.id) return;
+
+      const kind = node?.data?.kind;
+
+      // Handle cluster node double-click
+      if (kind === 'cluster') {
+        const memberIds = node?.data?.memberIds;
+        if (Array.isArray(memberIds) && memberIds.length > 0) {
+          expandCluster(node.id, memberIds);
+        }
+        return;
+      }
+
+      // Handle file node double-click
+      if (kind === 'file') {
+        setSelectedNodeId(node.id);
+        expandFromSelected();
+      }
     },
-    [expandFromSelected]
+    [expandFromSelected, expandCluster]
   );
 
   // No-op handler for edge changes to prevent ReactFlow from syncing edges back
@@ -1033,14 +1356,33 @@ export default function UnifiedSearchModal({
                 {searchResults.length === 0 && !error ? (
                   <div className="text-sm text-system-gray-500 py-6 text-center">
                     {debouncedQuery && debouncedQuery.length >= 2 ? (
-                      'No matches found.'
-                    ) : (
                       <div className="flex flex-col items-center gap-2">
-                        <HelpCircle className="w-8 h-8 text-system-gray-300" />
-                        <span>Enter a query to search across your indexed files.</span>
+                        <SearchIcon className="w-8 h-8 text-system-gray-300" />
+                        <span>No matches found for &ldquo;{debouncedQuery}&rdquo;</span>
                         <span className="text-xs text-system-gray-400">
-                          Tip: Describe what you are looking for in natural language.
+                          Try different keywords or check if files are indexed.
                         </span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-3">
+                        <HelpCircle className="w-8 h-8 text-system-gray-300" />
+                        <div>
+                          <div className="font-medium mb-1">Semantic Search</div>
+                          <span>Find files by meaning, not just keywords.</span>
+                        </div>
+                        <div className="text-xs text-system-gray-400 max-w-xs space-y-1">
+                          <div>
+                            <strong>Examples:</strong>
+                          </div>
+                          <div className="italic">tax documents from 2024</div>
+                          <div className="italic">photos of family vacation</div>
+                          <div className="italic">project proposal for client</div>
+                        </div>
+                        {stats?.files === 0 && (
+                          <div className="mt-2 text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
+                            No files indexed yet. Build embeddings first.
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1156,29 +1498,118 @@ export default function UnifiedSearchModal({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-2 border-t border-system-gray-200">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={expandFromSelected}
-                  disabled={!selectedNode || selectedKind !== 'file'}
-                  title="Find similar files to the selected node"
-                >
-                  <Plus className="h-4 w-4" /> Expand
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setNodes([]);
-                    setEdges([]);
-                    setSelectedNodeId(null);
-                    setError('');
-                    setGraphStatus('');
-                  }}
-                >
-                  Clear
-                </Button>
+              {/* Layout Controls */}
+              <div className="pt-2 border-t border-system-gray-200">
+                <div className="text-xs font-semibold text-system-gray-500 uppercase tracking-wider mb-2">
+                  Layout
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs text-system-gray-600 flex items-center gap-2 select-none cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoLayout}
+                      onChange={(e) => setAutoLayout(e.target.checked)}
+                      className="rounded"
+                    />
+                    Auto-layout
+                  </label>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={applyLayout}
+                    disabled={nodes.length === 0 || isLayouting}
+                    title="Re-apply automatic layout to all nodes"
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                    {isLayouting ? 'Laying out...' : 'Layout'}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Multi-hop Expansion Controls */}
+              <div className="pt-2 border-t border-system-gray-200">
+                <div className="text-xs font-semibold text-system-gray-500 uppercase tracking-wider mb-2">
+                  Expansion
+                </div>
+                <div className="flex items-center gap-3 mb-2">
+                  <label className="text-xs text-system-gray-600 flex items-center gap-2">
+                    <span>Hops:</span>
+                    <select
+                      value={hopCount}
+                      onChange={(e) => setHopCount(Number(e.target.value))}
+                      className="text-xs border border-system-gray-200 rounded px-2 py-1"
+                    >
+                      <option value={1}>1</option>
+                      <option value={2}>2</option>
+                      <option value={3}>3</option>
+                    </select>
+                  </label>
+                  <label className="text-xs text-system-gray-600 flex items-center gap-2">
+                    <span>Decay:</span>
+                    <select
+                      value={decayFactor}
+                      onChange={(e) => setDecayFactor(Number(e.target.value))}
+                      className="text-xs border border-system-gray-200 rounded px-2 py-1"
+                    >
+                      <option value={0.5}>0.5</option>
+                      <option value={0.6}>0.6</option>
+                      <option value={0.7}>0.7</option>
+                      <option value={0.8}>0.8</option>
+                      <option value={0.9}>0.9</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={expandFromSelected}
+                    disabled={!selectedNode || selectedKind !== 'file'}
+                    title="Find similar files to the selected node"
+                  >
+                    <GitBranch className="h-4 w-4" /> Expand
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setNodes([]);
+                      setEdges([]);
+                      setSelectedNodeId(null);
+                      setError('');
+                      setGraphStatus('');
+                      setShowClusters(false);
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </div>
+
+              {/* Clustering Controls */}
+              <div className="pt-2 border-t border-system-gray-200">
+                <div className="text-xs font-semibold text-system-gray-500 uppercase tracking-wider mb-2">
+                  Clustering
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <Button
+                    variant={showClusters ? 'primary' : 'secondary'}
+                    size="sm"
+                    onClick={loadClusters}
+                    disabled={isComputingClusters}
+                    title="Compute and display semantic clusters of similar files"
+                  >
+                    <Layers className="h-4 w-4" />
+                    {isComputingClusters
+                      ? 'Computing...'
+                      : showClusters
+                        ? 'Refresh Clusters'
+                        : 'Show Clusters'}
+                  </Button>
+                </div>
+                <div className="mt-1 text-xs text-system-gray-400">
+                  Group similar files into clusters. Double-click to expand.
+                </div>
               </div>
 
               {graphStatus && <div className="text-xs text-system-gray-600">{graphStatus}</div>}
@@ -1190,12 +1621,31 @@ export default function UnifiedSearchModal({
                 <div className="flex flex-col items-center justify-center h-full text-center p-8">
                   <Network className="w-12 h-12 text-system-gray-300 mb-3" />
                   <div className="text-sm font-medium text-system-gray-600 mb-1">
-                    Graph is empty
+                    Start Exploring
                   </div>
-                  <div className="text-xs text-system-gray-400 max-w-xs mb-3">
-                    Search for files to add them as nodes.
+                  <div className="text-xs text-system-gray-400 max-w-sm mb-4">
+                    Discover relationships between your files using semantic similarity.
                   </div>
-                  <div className="text-xs text-system-gray-400 max-w-xs space-y-1">
+
+                  {/* Quick start options */}
+                  <div className="flex flex-col gap-2 mb-4 w-full max-w-xs">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={loadClusters}
+                      disabled={isComputingClusters || !stats?.files}
+                      className="w-full justify-center"
+                    >
+                      <Layers className="h-4 w-4" />
+                      {isComputingClusters ? 'Computing...' : 'Auto-discover clusters'}
+                    </Button>
+                    <div className="text-[10px] text-system-gray-400">
+                      or search above to add specific files
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-system-gray-400 max-w-xs space-y-1 border-t border-system-gray-200 pt-3">
+                    <div className="font-medium text-system-gray-500 mb-1">Tips:</div>
                     <div>
                       <strong>Click</strong> a node to select it
                     </div>

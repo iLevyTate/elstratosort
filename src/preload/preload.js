@@ -660,7 +660,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
       secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.FIND_SIMILAR, {
         fileId,
         topK
-      })
+      }),
+    // Hybrid search (BM25 + vector with RRF)
+    hybridSearch: (query, options = {}) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.HYBRID_SEARCH, {
+        query,
+        options
+      }),
+    rebuildBM25Index: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REBUILD_BM25_INDEX),
+    getSearchStatus: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.GET_SEARCH_STATUS),
+    // Multi-hop expansion
+    findMultiHop: (seedIds, options = {}) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.FIND_MULTI_HOP, {
+        seedIds,
+        options
+      }),
+    // Clustering
+    computeClusters: (k = 'auto') =>
+      secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.COMPUTE_CLUSTERS, { k }),
+    getClusters: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.GET_CLUSTERS),
+    getClusterMembers: (clusterId) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.GET_CLUSTER_MEMBERS, { clusterId })
   },
 
   // Organization Suggestions
@@ -708,7 +728,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateThresholds: (thresholds) =>
       secureIPC.safeInvoke(IPC_CHANNELS.ORGANIZE.UPDATE_THRESHOLDS, {
         thresholds
-      })
+      }),
+    // Cluster-based organization
+    clusterBatch: (files, smartFolders) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.ORGANIZE.CLUSTER_BATCH, { files, smartFolders }),
+    identifyOutliers: (files) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.ORGANIZE.IDENTIFY_OUTLIERS, { files }),
+    getClusterSuggestions: (file, smartFolders) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.ORGANIZE.GET_CLUSTER_SUGGESTIONS, { file, smartFolders })
   },
 
   // Undo/Redo System
