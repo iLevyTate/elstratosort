@@ -954,7 +954,8 @@ function registerEmbeddingsIpc({
         }
 
         const service = getClusteringService();
-        const members = service.getClusterMembers(clusterId);
+        // Now async - fetches fresh metadata from ChromaDB
+        const members = await service.getClusterMembers(clusterId);
 
         return {
           success: true,
@@ -966,6 +967,37 @@ function registerEmbeddingsIpc({
         return { success: false, error: e.message };
       }
     })
+  );
+
+  /**
+   * Get similarity edges between files for graph visualization
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.EMBEDDINGS.GET_SIMILARITY_EDGES,
+    withErrorLogging(
+      logger,
+      async (event, { fileIds, threshold = 0.5, maxEdgesPerNode = 3 } = {}) => {
+        try {
+          if (!Array.isArray(fileIds) || fileIds.length < 2) {
+            return { success: true, edges: [] };
+          }
+
+          const service = getClusteringService();
+          const edges = await service.findFileSimilarityEdges(fileIds, {
+            threshold,
+            maxEdgesPerNode
+          });
+
+          return {
+            success: true,
+            edges
+          };
+        } catch (e) {
+          logger.error('[EMBEDDINGS] Get similarity edges failed:', e);
+          return { success: false, error: e.message, edges: [] };
+        }
+      }
+    )
   );
 
   // Cleanup on app quit - FIX #15: Use once() to prevent multiple listener registration

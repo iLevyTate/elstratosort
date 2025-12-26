@@ -28,6 +28,7 @@ import { formatScore, scoreToOpacity, clamp01 } from '../../utils/scoreUtils';
 import { makeQueryNodeId, defaultNodePosition } from '../../utils/graphUtils';
 import { elkLayout, clusterRadialLayout, clusterExpansionLayout } from '../../utils/elkLayout';
 import ClusterNode from './ClusterNode';
+import SimilarityEdge from './SimilarityEdge';
 
 logger.setContext('UnifiedSearchModal');
 
@@ -128,6 +129,11 @@ const nodeTypes = {
   fileNode: FileNode,
   queryNode: QueryNode,
   clusterNode: ClusterNode
+};
+
+// Edge types for ReactFlow
+const edgeTypes = {
+  similarity: SimilarityEdge
 };
 
 // ============================================================================
@@ -584,9 +590,15 @@ export default function UnifiedSearchModal({
   const upsertFileNode = useCallback((result, preferredPosition) => {
     const id = result?.id;
     if (!id) return null;
-    const path = result?.metadata?.path || '';
-    const name = result?.metadata?.name || safeBasename(path) || id;
+    const metadata = result?.metadata || {};
+    const path = metadata.path || '';
+    const name = metadata.name || safeBasename(path) || id;
     const score = typeof result?.score === 'number' ? result.score : undefined;
+
+    // Include tags, category, subject for edge tooltips
+    const tags = Array.isArray(metadata.tags) ? metadata.tags : [];
+    const category = metadata.category || '';
+    const subject = metadata.subject || '';
 
     return {
       id,
@@ -596,7 +608,10 @@ export default function UnifiedSearchModal({
         kind: 'file',
         label: name,
         path,
-        score
+        score,
+        tags,
+        category,
+        subject
       },
       draggable: true
     };
@@ -764,7 +779,11 @@ export default function UnifiedSearchModal({
             data: {
               kind: 'file',
               label: currentName,
-              path: metadata.path || id
+              path: metadata.path || id,
+              // Include metadata for edge tooltips
+              tags: Array.isArray(metadata.tags) ? metadata.tags : [],
+              category: metadata.category || '',
+              subject: metadata.subject || ''
             },
             draggable: true
           };
@@ -939,6 +958,59 @@ export default function UnifiedSearchModal({
           logger.warn('[Graph] Auto-layout failed:', layoutError);
         }
       }
+
+      // Fetch and add similarity edges between file nodes
+      const fileNodeIds = nextNodes.filter((n) => n.type === 'fileNode').map((n) => n.id);
+
+      if (fileNodeIds.length >= 2) {
+        try {
+          const simEdgesResp = await window.electronAPI?.embeddings?.getSimilarityEdges?.(
+            fileNodeIds,
+            { threshold: 0.5, maxEdgesPerNode: 2 }
+          );
+
+          if (simEdgesResp?.success && Array.isArray(simEdgesResp.edges)) {
+            // Build a map of node data for tooltip info
+            const nodeDataMap = new Map();
+            nextNodes.forEach((n) => {
+              if (n.type === 'fileNode') {
+                nodeDataMap.set(n.id, {
+                  label: n.data?.label || '',
+                  tags: n.data?.tags || [],
+                  category: n.data?.category || '',
+                  subject: n.data?.subject || ''
+                });
+              }
+            });
+
+            const similarityEdges = simEdgesResp.edges.map((e) => ({
+              id: e.id,
+              source: e.source,
+              target: e.target,
+              type: 'similarity', // Use custom edge component
+              animated: false,
+              data: {
+                kind: 'similarity',
+                similarity: e.similarity,
+                sourceData: nodeDataMap.get(e.source) || {},
+                targetData: nodeDataMap.get(e.target) || {}
+              }
+            }));
+
+            if (similarityEdges.length > 0) {
+              setEdges((prev) => {
+                const existingIds = new Set(prev.map((e) => e.id));
+                const newEdges = similarityEdges.filter((e) => !existingIds.has(e.id));
+                if (newEdges.length === 0) return prev;
+                return [...prev, ...newEdges];
+              });
+              setGraphStatus((prev) => `${prev} • ${similarityEdges.length} connections`);
+            }
+          }
+        } catch (simErr) {
+          logger.debug('[Graph] Failed to fetch similarity edges:', simErr);
+        }
+      }
     } catch (e) {
       setGraphStatus('');
       setError(e?.message || 'Search failed');
@@ -965,6 +1037,14 @@ export default function UnifiedSearchModal({
       const nextNodes = [];
       const nextEdges = [];
 
+      // Get seed node data for tooltips
+      const seedNodeData = {
+        label: seed.data?.label || '',
+        tags: seed.data?.tags || [],
+        category: seed.data?.category || '',
+        subject: seed.data?.subject || ''
+      };
+
       results.forEach((r, idx) => {
         const pos = {
           x: seedPos.x + 280,
@@ -973,14 +1053,27 @@ export default function UnifiedSearchModal({
         const node = upsertFileNode(r, pos);
         if (!node) return;
         nextNodes.push(node);
+
+        // Get target node data for tooltip
+        const targetNodeData = {
+          label: node.data?.label || '',
+          tags: node.data?.tags || [],
+          category: node.data?.category || '',
+          subject: node.data?.subject || ''
+        };
+
         nextEdges.push({
           id: `e:${seedId}->${node.id}`,
           source: seedId,
           target: node.id,
-          type: 'default',
+          type: 'similarity', // Use custom edge component
           animated: false,
-          style: { stroke: '#3b82f6', strokeWidth: 1.5 },
-          data: { kind: 'similarity', weight: r.score }
+          data: {
+            kind: 'similarity',
+            similarity: r.score || 0,
+            sourceData: seedNodeData,
+            targetData: targetNodeData
+          }
         });
       });
 
@@ -1662,6 +1755,7 @@ export default function UnifiedSearchModal({
                   nodes={rfNodes}
                   edges={edges}
                   nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
                   onNodesChange={onNodesChange}
                   onEdgesChange={onEdgesChange}
                   onNodeClick={onNodeClick}
