@@ -157,7 +157,8 @@ const IPC_CHANNELS = {
     // Clustering
     COMPUTE_CLUSTERS: 'embeddings-compute-clusters',
     GET_CLUSTERS: 'embeddings-get-clusters',
-    GET_CLUSTER_MEMBERS: 'embeddings-get-cluster-members'
+    GET_CLUSTER_MEMBERS: 'embeddings-get-cluster-members',
+    GET_SIMILARITY_EDGES: 'embeddings-get-similarity-edges'
   },
 
   // Ollama
