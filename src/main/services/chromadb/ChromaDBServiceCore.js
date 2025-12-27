@@ -968,7 +968,10 @@ class ChromaDBServiceCore extends EventEmitter {
 
   async resetFolders() {
     await this.initialize();
-    this.folderCollection = await resetFoldersOp({ client: this.client });
+    this.folderCollection = await resetFoldersOp({
+      client: this.client,
+      embeddingFunction: explicitEmbeddingsOnlyEmbeddingFunction
+    });
   }
 
   // ============== File Operations ==============
@@ -1365,4 +1368,4 @@ class ChromaDBServiceCore extends EventEmitter {
   }
 }
 
-module.exports = { ChromaDBServiceCore };
+module.exports = { ChromaDBServiceCore, explicitEmbeddingsOnlyEmbeddingFunction };

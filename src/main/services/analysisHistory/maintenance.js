@@ -144,10 +144,10 @@ async function removeExpiredEntries(
 
 /**
  * Migrate history to new schema version (placeholder for future)
- * @param {Object} history - History object
+ * @param {Object} _history - History object (unused until migration logic is implemented)
  */
 // eslint-disable-next-line no-unused-vars
-async function migrateHistory(history) {
+async function migrateHistory(_history) {
   // Future migration logic for schema changes
   logger.debug('[AnalysisHistoryService] Schema migration not yet implemented');
 }

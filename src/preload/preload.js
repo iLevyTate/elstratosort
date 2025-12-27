@@ -647,11 +647,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     rebuildFiles: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REBUILD_FILES),
     clearStore: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.CLEAR_STORE),
     getStats: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.GET_STATS),
-    search: (query, topK = 20) =>
-      secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.SEARCH, {
+    // Enhanced search with hybrid BM25 + vector fusion
+    // Options: { topK, mode: 'hybrid'|'vector'|'bm25', minScore }
+    search: (query, options = {}) => {
+      const { topK = 20, mode = 'hybrid', minScore } = options;
+      return secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.SEARCH, {
         query,
-        topK
-      }),
+        topK,
+        mode,
+        ...(typeof minScore === 'number' && { minScore })
+      });
+    },
     scoreFiles: (query, fileIds) =>
       secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.SCORE_FILES, {
         query,
@@ -662,12 +668,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         fileId,
         topK
       }),
-    // Hybrid search (BM25 + vector with RRF)
-    hybridSearch: (query, options = {}) =>
-      secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.HYBRID_SEARCH, {
-        query,
-        options
-      }),
+    // NOTE: hybridSearch removed - use search() with mode: 'hybrid' instead
     rebuildBM25Index: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REBUILD_BM25_INDEX),
     getSearchStatus: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.GET_SEARCH_STATUS),
     // Multi-hop expansion
@@ -927,5 +928,3 @@ contextBridge.exposeInMainWorld('electronAPI', {
 // Legacy compatibility layer removed - use window.electronAPI instead
 
 log.info('Secure context bridge exposed with structured API');
-
-module.exports = { SecureIPCManager };

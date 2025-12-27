@@ -532,14 +532,16 @@ async function getAllFolders({ folderCollection }) {
  *
  * @param {Object} params - Parameters
  * @param {Object} params.client - ChromaDB client
+ * @param {Object} [params.embeddingFunction] - Embedding function to prevent DefaultEmbeddingFunction instantiation
  * @returns {Promise<Object>} New folder collection
  */
-async function resetFolders({ client }) {
+async function resetFolders({ client, embeddingFunction }) {
   try {
     await client.deleteCollection({ name: 'folder_embeddings' });
 
     const folderCollection = await client.createCollection({
       name: 'folder_embeddings',
+      embeddingFunction,
       metadata: {
         description: 'Smart folder embeddings for categorization',
         hnsw_space: 'cosine',
