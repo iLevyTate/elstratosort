@@ -607,6 +607,7 @@ describe('Embeddings/Semantic IPC', () => {
         fs.promises.rename = jest.fn(async (...args) => {
           fsOperations.push({ op: 'rename', args });
           if (originalRename) return originalRename.apply(this, args);
+          return undefined;
         });
       }
 
@@ -688,6 +689,7 @@ describe('Embeddings/Semantic IPC', () => {
         fs.promises.rename = jest.fn(async (...args) => {
           fsOperations.push({ op: 'rename', args });
           if (originalRename) return originalRename.apply(this, args);
+          return undefined;
         });
       }
 

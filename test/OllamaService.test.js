@@ -18,7 +18,6 @@ jest.mock('../src/shared/logger', () => ({
 // Mock ollama utils
 jest.mock('../src/main/ollamaUtils', () => ({
   loadOllamaConfig: jest.fn().mockResolvedValue(true),
-  saveOllamaConfig: jest.fn().mockResolvedValue(true),
   getOllama: jest.fn(),
   getOllamaHost: jest.fn().mockReturnValue('http://localhost:11434'),
   getOllamaModel: jest.fn().mockReturnValue('llama2'),
@@ -78,7 +77,6 @@ describe('OllamaService', () => {
   let mockOllama;
   let MockOllama;
   const {
-    saveOllamaConfig,
     getOllama,
     getOllamaHost,
     getOllamaModel,
@@ -150,7 +148,6 @@ describe('OllamaService', () => {
       expect(setOllamaModel).toHaveBeenCalledWith('mistral');
       expect(setOllamaVisionModel).toHaveBeenCalledWith('bakllava');
       expect(setOllamaEmbeddingModel).toHaveBeenCalledWith('mxbai-embed-large');
-      expect(saveOllamaConfig).toHaveBeenCalled();
     });
 
     test('should update partial config', async () => {
@@ -162,7 +159,6 @@ describe('OllamaService', () => {
       expect(setOllamaModel).toHaveBeenCalledWith('llama3');
       expect(setOllamaHost).not.toHaveBeenCalled();
       expect(setOllamaVisionModel).not.toHaveBeenCalled();
-      expect(saveOllamaConfig).toHaveBeenCalled();
     });
 
     test('should handle update errors gracefully', async () => {
