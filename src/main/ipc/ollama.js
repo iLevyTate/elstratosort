@@ -3,14 +3,14 @@ const { withErrorLogging, withValidation } = require('./ipcWrappers');
 const { optionalUrl: optionalUrlSchema } = require('./validationSchemas');
 const { SERVICE_URLS } = require('../../shared/configDefaults');
 const { normalizeOllamaUrl } = require('../ollamaUtils');
-const { URL_PATTERN } = require('../../shared/validationConstants');
+const { LENIENT_URL_PATTERN } = require('../../shared/validationConstants');
 const { categorizeModels } = require('../../shared/modelCategorization');
 let z;
 
 function isValidOllamaUrl(url) {
   if (!url || typeof url !== 'string') return false;
-  // Use shared URL_PATTERN from validationConstants to avoid duplicate regex definitions
-  return URL_PATTERN.test(url.trim());
+  // Use lenient URL pattern that allows URLs with or without protocol
+  return LENIENT_URL_PATTERN.test(url.trim());
 }
 
 // Note: normalizeOllamaUrl is imported from shared ollamaUtils module

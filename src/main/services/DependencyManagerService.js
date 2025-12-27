@@ -27,6 +27,7 @@ const {
 } = require('../utils/ollamaDetection');
 const { checkPythonInstallation } = require('../services/startup/preflightChecks');
 const { isChromaDBRunning } = require('../services/startup/chromaService');
+const { getChromaUrl } = require('../../shared/config/chromaDefaults');
 
 logger.setContext('DependencyManager');
 
@@ -261,9 +262,7 @@ class DependencyManagerService {
         pythonModuleInstalled: Boolean(chromaModuleInstalled),
         running: Boolean(chromaRunning),
         external: Boolean(process.env.CHROMA_SERVER_URL),
-        serverUrl:
-          process.env.CHROMA_SERVER_URL ||
-          `${process.env.CHROMA_SERVER_PROTOCOL || 'http'}://${process.env.CHROMA_SERVER_HOST || '127.0.0.1'}:${process.env.CHROMA_SERVER_PORT || 8000}`
+        serverUrl: getChromaUrl()
       },
       ollama: {
         installed: Boolean(ollama?.installed),

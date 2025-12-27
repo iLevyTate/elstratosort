@@ -189,7 +189,6 @@ async function handleBatchOrganize({
   const batchStartTime = Date.now();
   let shouldRollback = false;
   let rollbackReason = null;
-  let dbSyncWarning = null;
 
   try {
     const svc = getServiceIntegration();
@@ -357,9 +356,6 @@ async function handleBatchOrganize({
         getServiceIntegration,
         log
       );
-
-      // Check for database sync warnings
-      dbSyncWarning = await getDbSyncWarning(results, batchId, log);
     }
   } catch (error) {
     // Log the error - don't silently swallow it
@@ -406,8 +402,7 @@ async function handleBatchOrganize({
     failCount,
     completedOperations: completedOperations.length,
     summary: `Processed ${operation.operations.length} files: ${successCount} successful, ${failCount} failed`,
-    batchId,
-    ...(dbSyncWarning && { warning: dbSyncWarning })
+    batchId
   };
 }
 
@@ -637,16 +632,6 @@ async function recordUndoAndUpdateDatabase(
     }
   }
 }
-
-/**
- * Get database sync warning if applicable
- * Note: Currently a placeholder - returns null
- */
-// eslint-disable-next-line no-unused-vars
-async function getDbSyncWarning(_results, _batchId, _log) {
-  return null;
-}
-
 module.exports = {
   handleBatchOrganize,
   computeFileChecksum,

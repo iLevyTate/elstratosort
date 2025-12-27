@@ -16,8 +16,7 @@ const {
   setOllamaVisionModel,
   setOllamaEmbeddingModel,
   setOllamaHost,
-  loadOllamaConfig,
-  saveOllamaConfig
+  loadOllamaConfig
 } = require('../ollamaUtils');
 const { withOllamaRetry } = require('../utils/ollamaApiRetry');
 const { getInstance: getOllamaClient } = require('./OllamaClient');
@@ -214,7 +213,6 @@ class OllamaService {
         this._notifyModelChange('embedding', previousEmbeddingModel, embedModel);
       }
 
-      await saveOllamaConfig();
       logger.info('[OllamaService] Configuration updated');
       return { success: true };
     } catch (error) {
