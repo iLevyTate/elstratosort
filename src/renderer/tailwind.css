@@ -150,7 +150,10 @@
     -webkit-app-region: no-drag;
   }
 
-  /* Legacy aliases - use .container-responsive instead */
+  /* @deprecated - Legacy container aliases, will be removed in future release.
+   * Use .container-responsive instead.
+   * These aliases are maintained for backward compatibility only.
+   */
   .content-container,
   .container-enhanced,
   .container-centered,
@@ -218,7 +221,9 @@
     @apply shadow-md border-border-strong/60;
   }
 
-  /* Legacy alias - use .surface-card instead */
+  /* @deprecated - Legacy alias, will be removed in future release.
+   * Use .surface-card instead.
+   */
   .surface-quiet {
     @apply surface-card;
   }
@@ -232,7 +237,9 @@
     @apply rounded-glass;
   }
 
-  /* Legacy aliases - use .glass-panel with custom bg if needed */
+  /* @deprecated - Legacy glass aliases, will be removed in future release.
+   * Use .glass-panel with custom bg if needed.
+   */
   .glass-card,
   .glass-subtle,
   .glass-medium,
@@ -322,7 +329,9 @@
     @apply btn-base bg-stratosort-danger text-white shadow-md hover:shadow-lg hover:-translate-y-0.5;
   }
 
-  /* Legacy alias - use .btn-ghost instead */
+  /* @deprecated - Legacy alias, will be removed in future release.
+   * Use .btn-ghost instead.
+   */
   .btn-ghost-minimal {
     @apply btn-ghost;
   }
@@ -404,7 +413,9 @@
     color: #1d4ed8;
   }
 
-  /* Legacy toast-enhanced for backwards compatibility */
+  /* @deprecated - Legacy toast alias, will be removed in future release.
+   * Use .toast-compact instead.
+   */
   .toast-enhanced {
     @apply toast-compact;
   }
@@ -460,7 +471,9 @@
     @apply bg-stratosort-blue;
   }
 
-  /* Legacy aliases - use .status-chip.success/warning/error/info instead */
+  /* @deprecated - Legacy status aliases, will be removed in future release.
+   * Use .status-chip with .success/.warning/.error/.info modifiers instead.
+   */
   .status-pill {
     @apply status-chip;
   }
