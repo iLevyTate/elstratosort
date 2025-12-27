@@ -22,6 +22,7 @@ const {
 const { withOllamaRetry } = require('../utils/ollamaApiRetry');
 const { getInstance: getOllamaClient } = require('./OllamaClient');
 const { buildOllamaOptions } = require('./PerformanceService');
+const { categorizeModels } = require('../../shared/modelCategorization');
 
 /**
  * Centralized service for Ollama operations
@@ -37,6 +38,41 @@ class OllamaService {
   constructor() {
     this.initialized = false;
     this._ollamaClient = null;
+    this._modelChangeCallbacks = new Set();
+    this._previousEmbeddingModel = null;
+  }
+
+  /**
+   * Subscribe to model change events
+   * @param {Function} callback - Called with {type, previousModel, newModel} when model changes
+   * @returns {Function} Unsubscribe function
+   */
+  onModelChange(callback) {
+    if (typeof callback !== 'function') {
+      throw new Error('onModelChange requires a function callback');
+    }
+    this._modelChangeCallbacks.add(callback);
+    return () => this._modelChangeCallbacks.delete(callback);
+  }
+
+  /**
+   * Notify all subscribers of a model change
+   * @param {string} type - Model type ('embedding', 'text', 'vision')
+   * @param {string} previousModel - Previous model name
+   * @param {string} newModel - New model name
+   */
+  _notifyModelChange(type, previousModel, newModel) {
+    if (previousModel === newModel) return;
+
+    logger.info('[OllamaService] Model changed', { type, from: previousModel, to: newModel });
+
+    for (const callback of this._modelChangeCallbacks) {
+      try {
+        callback({ type, previousModel, newModel });
+      } catch (error) {
+        logger.error('[OllamaService] Error in model change callback:', error.message);
+      }
+    }
   }
 
   async initialize() {
@@ -83,25 +119,26 @@ class OllamaService {
 
     // Add detailed stats from OllamaClient if available
     if (this._ollamaClient) {
-      const clientHealth = this._ollamaClient.getHealthStatus();
-      const clientStats = this._ollamaClient.getStats();
+      // Use optional chaining to prevent null access errors
+      const clientHealth = this._ollamaClient.getHealthStatus?.() || {};
+      const clientStats = this._ollamaClient.getStats?.() || {};
 
       return {
         ...basicHealth,
         resilientClient: {
-          isHealthy: clientHealth.isHealthy,
-          activeRequests: clientHealth.activeRequests,
-          queuedRequests: clientHealth.queuedRequests,
-          offlineQueueSize: clientHealth.offlineQueueSize,
-          consecutiveFailures: clientHealth.consecutiveFailures,
-          lastHealthCheck: clientHealth.lastHealthCheck
+          isHealthy: clientHealth.isHealthy ?? false,
+          activeRequests: clientHealth.activeRequests ?? 0,
+          queuedRequests: clientHealth.queuedRequests ?? 0,
+          offlineQueueSize: clientHealth.offlineQueueSize ?? 0,
+          consecutiveFailures: clientHealth.consecutiveFailures ?? 0,
+          lastHealthCheck: clientHealth.lastHealthCheck ?? null
         },
         stats: {
-          totalRequests: clientStats.totalRequests,
-          successfulRequests: clientStats.successfulRequests,
-          failedRequests: clientStats.failedRequests,
-          retriedRequests: clientStats.retriedRequests,
-          avgLatencyMs: clientStats.avgLatencyMs
+          totalRequests: clientStats.totalRequests ?? 0,
+          successfulRequests: clientStats.successfulRequests ?? 0,
+          failedRequests: clientStats.failedRequests ?? 0,
+          retriedRequests: clientStats.retriedRequests ?? 0,
+          avgLatencyMs: clientStats.avgLatencyMs ?? 0
         }
       };
     }
@@ -141,14 +178,40 @@ class OllamaService {
   async updateConfig(config) {
     await this.initialize();
     try {
+      // Track previous models for change notification
+      const previousTextModel = getOllamaModel();
+      const previousVisionModel = getOllamaVisionModel();
+      const previousEmbeddingModel = getOllamaEmbeddingModel();
+
       if (config.host) await setOllamaHost(config.host);
-      if (config.textModel) await setOllamaModel(config.textModel);
-      if (config.visionModel) await setOllamaVisionModel(config.visionModel);
-      const SAFE_EMBED_MODEL = 'mxbai-embed-large';
+
+      if (config.textModel) {
+        await setOllamaModel(config.textModel);
+        this._notifyModelChange('text', previousTextModel, config.textModel);
+      }
+
+      if (config.visionModel) {
+        await setOllamaVisionModel(config.visionModel);
+        this._notifyModelChange('vision', previousVisionModel, config.visionModel);
+      }
+
+      // Allow both embeddinggemma (new default) and mxbai-embed-large (legacy)
+      const ALLOWED_EMBED_MODELS = ['embeddinggemma', 'mxbai-embed-large'];
       if (config.embeddingModel) {
-        const embedModel =
-          config.embeddingModel === SAFE_EMBED_MODEL ? SAFE_EMBED_MODEL : SAFE_EMBED_MODEL;
+        const embedModel = ALLOWED_EMBED_MODELS.includes(config.embeddingModel)
+          ? config.embeddingModel
+          : 'embeddinggemma'; // Default to new model
+
+        if (!ALLOWED_EMBED_MODELS.includes(config.embeddingModel)) {
+          logger.warn('[OllamaService] Rejected invalid embedding model', {
+            requested: config.embeddingModel,
+            allowed: ALLOWED_EMBED_MODELS,
+            usingDefault: embedModel
+          });
+        }
+
         await setOllamaEmbeddingModel(embedModel);
+        this._notifyModelChange('embedding', previousEmbeddingModel, embedModel);
       }
 
       await saveOllamaConfig();
@@ -222,26 +285,8 @@ class OllamaService {
       ]);
       const models = response?.models || [];
 
-      // Categorize models
-      const categories = {
-        text: [],
-        vision: [],
-        embedding: []
-      };
-
-      models.forEach((model) => {
-        const name = model.name || model;
-        const lowerName = name.toLowerCase();
-
-        // Categorize based on model name patterns
-        if (lowerName.includes('embed') || lowerName.includes('mxbai')) {
-          categories.embedding.push(name);
-        } else if (lowerName.includes('llava') || lowerName.includes('vision')) {
-          categories.vision.push(name);
-        } else {
-          categories.text.push(name);
-        }
-      });
+      // Use shared categorization utility (handles sorting)
+      const categories = categorizeModels(models);
 
       return {
         success: true,
@@ -616,6 +661,7 @@ module.exports = {
   getStats: defaultInstance.getStats.bind(defaultInstance),
   getClient: defaultInstance.getClient.bind(defaultInstance),
   shutdown: defaultInstance.shutdown.bind(defaultInstance),
+  onModelChange: defaultInstance.onModelChange.bind(defaultInstance),
   // Factory functions for DI
   OllamaService,
   getInstance,

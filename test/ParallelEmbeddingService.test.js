@@ -199,7 +199,7 @@ describe('ParallelEmbeddingService', () => {
       const result = await service.embedText('test');
 
       expect(result.model).toBe('fallback');
-      expect(result.vector).toHaveLength(1024);
+      expect(result.vector).toHaveLength(768); // embeddinggemma default dimension
       expect(result.vector.every((v) => v === 0)).toBe(true);
     });
 

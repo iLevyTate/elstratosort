@@ -1,49 +1,13 @@
-const { withErrorLogging, withValidation } = require('./ipcWrappers');
+const {
+  withErrorLogging,
+  withValidation,
+  successResponse,
+  errorResponse,
+  canceledResponse
+} = require('./ipcWrappers');
 const { app, dialog } = require('electron');
-const { getConfigurableLimits } = require('../../shared/settingsValidation');
+const { getConfigurableLimits, sanitizeSettings } = require('../../shared/settingsValidation');
 const fs = require('fs').promises;
-const { sanitizeSettings } = require('../../shared/settingsValidation');
-
-/**
- * Standardized IPC response format
- * @typedef {Object} IpcResponse
- * @property {boolean} success - Whether the operation succeeded
- * @property {string} [error] - Error message if failed
- * @property {boolean} [canceled] - True if user canceled a dialog
- * @property {string[]} [warnings] - Validation or other warnings
- */
-
-/**
- * Create a standardized success response
- * @param {Object} data - Response data to include
- * @param {string[]} [warnings] - Optional warnings
- * @returns {IpcResponse}
- */
-function successResponse(data = {}, warnings = []) {
-  const response = { success: true, ...data };
-  if (warnings && warnings.length > 0) {
-    response.warnings = warnings;
-  }
-  return response;
-}
-
-/**
- * Create a standardized error response
- * @param {string} error - Error message
- * @param {Object} [extras] - Additional fields (e.g., validationErrors)
- * @returns {IpcResponse}
- */
-function errorResponse(error, extras = {}) {
-  return { success: false, error, ...extras };
-}
-
-/**
- * Create a standardized canceled response
- * @returns {IpcResponse}
- */
-function canceledResponse() {
-  return { success: false, canceled: true };
-}
 
 // Import centralized security configuration
 const { SETTINGS_VALIDATION, PROTOTYPE_POLLUTION_KEYS } = require('../../shared/securityConfig');
@@ -216,6 +180,79 @@ function validateImportedSettings(settings, logger) {
   return sanitized;
 }
 
+/**
+ * Internal helper to handle settings save logic
+ * Extracted to avoid duplication between Zod and non-Zod code paths
+ * @param {Object} settings - Settings to save
+ * @param {Object} deps - Dependencies
+ * @returns {Promise<Object>} IPC response
+ */
+async function handleSettingsSaveCore(settings, deps) {
+  const {
+    settingsService,
+    setOllamaHost,
+    setOllamaModel,
+    setOllamaVisionModel,
+    setOllamaEmbeddingModel,
+    onSettingsChanged,
+    logger
+  } = deps;
+
+  try {
+    const normalizedInput =
+      settings && typeof settings === 'object' ? sanitizeSettings(settings) : {};
+    const saveResult = await settingsService.save(normalizedInput);
+    const merged = saveResult.settings || saveResult; // Backward compatibility
+    const validationWarnings = saveResult.validationWarnings || [];
+
+    await applySettingsToServices(merged, {
+      setOllamaHost,
+      setOllamaModel,
+      setOllamaVisionModel,
+      setOllamaEmbeddingModel,
+      logger
+    });
+    logger.info('[SETTINGS] Saved settings');
+
+    // Enhanced settings propagation with error logging
+    let propagationSuccess = true;
+    try {
+      if (typeof onSettingsChanged === 'function') {
+        await onSettingsChanged(merged);
+        logger.info('[SETTINGS] Settings change notification sent successfully');
+      } else if (onSettingsChanged !== undefined && onSettingsChanged !== null) {
+        logger.warn('[SETTINGS] onSettingsChanged is not a function:', typeof onSettingsChanged);
+      }
+    } catch (error) {
+      propagationSuccess = false;
+      logger.error('[SETTINGS] Settings change notification failed:', error);
+    }
+
+    return {
+      success: true,
+      settings: merged,
+      propagationSuccess,
+      validationWarnings
+    };
+  } catch (error) {
+    logger.error('Failed to save settings:', error);
+
+    const response = {
+      success: false,
+      error: error.message
+    };
+
+    if (error.validationErrors) {
+      response.validationErrors = error.validationErrors;
+    }
+    if (error.validationWarnings) {
+      response.validationWarnings = error.validationWarnings;
+    }
+
+    return response;
+  }
+}
+
 function registerSettingsIpc({
   ipcMain,
   IPC_CHANNELS,
@@ -283,130 +320,27 @@ function registerSettingsIpc({
         })
         .partial()
     : null;
+  // Dependencies for save handler (captured in closure)
+  const saveDeps = {
+    settingsService,
+    setOllamaHost,
+    setOllamaModel,
+    setOllamaVisionModel,
+    setOllamaEmbeddingModel,
+    onSettingsChanged,
+    logger
+  };
+
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS.SAVE,
     z && settingsSchema
       ? withValidation(logger, settingsSchema, async (event, settings) => {
           void event;
-          try {
-            const normalizedInput =
-              settings && typeof settings === 'object' ? sanitizeSettings(settings) : {};
-            // Fixed: Handle validation results from SettingsService
-            const saveResult = await settingsService.save(normalizedInput);
-            const merged = saveResult.settings || saveResult; // Backward compatibility
-            const validationWarnings = saveResult.validationWarnings || [];
-
-            await applySettingsToServices(merged, {
-              setOllamaHost,
-              setOllamaModel,
-              setOllamaVisionModel,
-              setOllamaEmbeddingModel,
-              logger
-            });
-            logger.info('[SETTINGS] Saved settings');
-
-            // Fixed: Enhanced settings propagation with error logging
-            let propagationSuccess = true;
-            try {
-              if (typeof onSettingsChanged === 'function') {
-                await onSettingsChanged(merged);
-                logger.info('[SETTINGS] Settings change notification sent successfully');
-              } else if (onSettingsChanged !== undefined && onSettingsChanged !== null) {
-                logger.warn(
-                  '[SETTINGS] onSettingsChanged is not a function:',
-                  typeof onSettingsChanged
-                );
-              }
-            } catch (error) {
-              propagationSuccess = false;
-              logger.error('[SETTINGS] Settings change notification failed:', error);
-            }
-
-            return {
-              success: true,
-              settings: merged,
-              propagationSuccess,
-              validationWarnings
-            };
-          } catch (error) {
-            logger.error('Failed to save settings:', error);
-
-            // Include validation errors if available
-            const response = {
-              success: false,
-              error: error.message
-            };
-
-            if (error.validationErrors) {
-              response.validationErrors = error.validationErrors;
-            }
-            if (error.validationWarnings) {
-              response.validationWarnings = error.validationWarnings;
-            }
-
-            return response;
-          }
+          return handleSettingsSaveCore(settings, saveDeps);
         })
       : withErrorLogging(logger, async (event, settings) => {
           void event;
-          try {
-            const normalizedInput =
-              settings && typeof settings === 'object' ? sanitizeSettings(settings) : {};
-            // Fixed: Handle validation results from SettingsService
-            const saveResult = await settingsService.save(normalizedInput);
-            const merged = saveResult.settings || saveResult; // Backward compatibility
-            const validationWarnings = saveResult.validationWarnings || [];
-
-            await applySettingsToServices(merged, {
-              setOllamaHost,
-              setOllamaModel,
-              setOllamaVisionModel,
-              setOllamaEmbeddingModel,
-              logger
-            });
-            logger.info('[SETTINGS] Saved settings');
-
-            // Fixed: Enhanced settings propagation with error logging
-            let propagationSuccess = true;
-            try {
-              if (typeof onSettingsChanged === 'function') {
-                await onSettingsChanged(merged);
-                logger.info('[SETTINGS] Settings change notification sent successfully');
-              } else if (onSettingsChanged !== undefined && onSettingsChanged !== null) {
-                logger.warn(
-                  '[SETTINGS] onSettingsChanged is not a function:',
-                  typeof onSettingsChanged
-                );
-              }
-            } catch (error) {
-              propagationSuccess = false;
-              logger.error('[SETTINGS] Settings change notification failed:', error);
-            }
-
-            return {
-              success: true,
-              settings: merged,
-              propagationSuccess,
-              validationWarnings
-            };
-          } catch (error) {
-            logger.error('Failed to save settings:', error);
-
-            // Include validation errors if available
-            const response = {
-              success: false,
-              error: error.message
-            };
-
-            if (error.validationErrors) {
-              response.validationErrors = error.validationErrors;
-            }
-            if (error.validationWarnings) {
-              response.validationWarnings = error.validationWarnings;
-            }
-
-            return response;
-          }
+          return handleSettingsSaveCore(settings, saveDeps);
         })
   );
 

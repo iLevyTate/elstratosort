@@ -1,5 +1,5 @@
 const { getInstance: getChromaDB } = require('../services/chromadb');
-const FolderMatchingService = require('../services/FolderMatchingService');
+const { getInstance: getFolderMatcher } = require('../services/FolderMatchingService');
 const {
   getInstance: getParallelEmbeddingService
 } = require('../services/ParallelEmbeddingService');
@@ -8,7 +8,8 @@ const { ClusteringService } = require('../services/ClusteringService');
 const path = require('path');
 const { SUPPORTED_IMAGE_EXTENSIONS } = require('../../shared/constants');
 const { BATCH, TIMEOUTS, LIMITS } = require('../../shared/performanceConstants');
-const { withErrorLogging } = require('./ipcWrappers');
+const { withErrorLogging, withChromaInit } = require('./ipcWrappers');
+const { cosineSimilarity } = require('../../shared/vectorMath');
 
 function registerEmbeddingsIpc({
   ipcMain,
@@ -17,9 +18,10 @@ function registerEmbeddingsIpc({
   getCustomFolders,
   getServiceIntegration
 }) {
-  // Use ChromaDB singleton instance
+  // Use ChromaDB and FolderMatcher singleton instances
+  // FIX: Use singleton pattern instead of creating duplicate instance
   const chromaDbService = getChromaDB();
-  const folderMatcher = new FolderMatchingService(chromaDbService);
+  const folderMatcher = getFolderMatcher();
 
   // SearchService will be initialized lazily when needed
   let searchService = null;
@@ -53,21 +55,45 @@ function registerEmbeddingsIpc({
     return clusteringService;
   }
 
-  // CRITICAL FIX: Track initialization state to prevent race conditions
-  let initializationPromise = null;
-  let isInitialized = false;
+  // CRITICAL FIX: Use proper state machine to prevent race conditions
+  // State machine prevents concurrent re-initialization attempts
+  const INIT_STATES = {
+    PENDING: 'pending',
+    IN_PROGRESS: 'in_progress',
+    COMPLETED: 'completed',
+    FAILED: 'failed'
+  };
+
+  let initState = INIT_STATES.PENDING;
+  let initPromise = null;
 
   /**
    * Ensures services are initialized before IPC handlers execute
-   * FIX: Added retry logic and better error handling for ChromaDB startup race condition
+   * FIX: Uses state machine to prevent race conditions during initialization
    * @returns {Promise<void>}
    */
   async function ensureInitialized() {
-    // FIX: Consistent return values - all paths return Promise<void>
-    if (isInitialized) return Promise.resolve();
-    if (initializationPromise) return initializationPromise;
+    // Already initialized successfully
+    if (initState === INIT_STATES.COMPLETED) {
+      return Promise.resolve();
+    }
 
-    initializationPromise = (async () => {
+    // Previously failed - allow retry by resetting state
+    if (initState === INIT_STATES.FAILED) {
+      logger.info('[SEMANTIC] Previous initialization failed, retrying...');
+      initState = INIT_STATES.PENDING;
+      initPromise = null;
+    }
+
+    // Initialization in progress - wait for it
+    if (initState === INIT_STATES.IN_PROGRESS && initPromise) {
+      return initPromise;
+    }
+
+    // Start new initialization
+    initState = INIT_STATES.IN_PROGRESS;
+
+    initPromise = (async () => {
       const MAX_RETRIES = 5;
       const RETRY_DELAY_BASE = 2000; // 2 seconds base delay
 
@@ -104,7 +130,7 @@ function registerEmbeddingsIpc({
           }
 
           logger.info('[SEMANTIC] Initialization complete');
-          isInitialized = true;
+          initState = INIT_STATES.COMPLETED;
 
           // Warm up search service in background (non-blocking)
           // This pre-builds the BM25 index for faster first search
@@ -127,12 +153,18 @@ function registerEmbeddingsIpc({
             // Exponential backoff with jitter
             const delay = RETRY_DELAY_BASE * Math.pow(2, attempt - 1) + Math.random() * 1000;
             logger.info(`[SEMANTIC] Retrying in ${Math.round(delay)}ms...`);
-            await new Promise((resolve) => setTimeout(resolve, delay));
+            await new Promise((resolve) => {
+              const timeoutId = setTimeout(resolve, delay);
+              // Prevent timer from keeping process alive
+              if (timeoutId && typeof timeoutId.unref === 'function') {
+                timeoutId.unref();
+              }
+            });
           } else {
             logger.error(
               '[SEMANTIC] All initialization attempts failed. ChromaDB features will be unavailable.'
             );
-            initializationPromise = null; // Allow retry on next explicit call
+            initState = INIT_STATES.FAILED;
             // Don't throw - allow the app to continue in degraded mode
             return;
           }
@@ -140,7 +172,7 @@ function registerEmbeddingsIpc({
       }
     })();
 
-    return initializationPromise;
+    return initPromise;
   }
 
   // FIX: Removed arbitrary setTimeout - handlers now trigger initialization on-demand
@@ -160,6 +192,17 @@ function registerEmbeddingsIpc({
     }, 1000); // 1 second delay for pre-warming, handlers use retries if called earlier
   });
 
+  // Helper config for handlers that need ChromaDB initialization
+  const chromaInitConfig = {
+    ensureInit: ensureInitialized,
+    isInitRef: () => initState === INIT_STATES.COMPLETED,
+    logger
+  };
+
+  // Factory to create handlers with both error logging and chroma init
+  const createChromaHandler = (handler) =>
+    withErrorLogging(logger, withChromaInit({ ...chromaInitConfig, handler }));
+
   /**
    * Rebuild folder embeddings from current smart folders
    * SAFE: Only resets the 'folder_embeddings' collection (not the entire DB directory).
@@ -167,28 +210,7 @@ function registerEmbeddingsIpc({
    */
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.REBUILD_FOLDERS,
-    withErrorLogging(logger, async () => {
-      // CRITICAL FIX: Wait for initialization before executing
-      try {
-        await ensureInitialized();
-      } catch (initError) {
-        logger.warn('[EMBEDDINGS] ChromaDB not available:', initError.message);
-        return {
-          success: false,
-          error: 'ChromaDB is not available. Please ensure the ChromaDB server is running.',
-          unavailable: true
-        };
-      }
-
-      // FIX: Check if initialization succeeded
-      if (!isInitialized) {
-        return {
-          success: false,
-          error: 'ChromaDB initialization pending. Please try again in a few seconds.',
-          pending: true
-        };
-      }
-
+    createChromaHandler(async () => {
       try {
         const smartFolders = getCustomFolders().filter((f) => f && f.name);
         // SAFE: resetFolders() only deletes/recreates the collection, not the DB directory
@@ -244,28 +266,7 @@ function registerEmbeddingsIpc({
    */
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.REBUILD_FILES,
-    withErrorLogging(logger, async () => {
-      // CRITICAL FIX: Wait for initialization before executing
-      try {
-        await ensureInitialized();
-      } catch (initError) {
-        logger.warn('[EMBEDDINGS] ChromaDB not available:', initError.message);
-        return {
-          success: false,
-          error: 'ChromaDB is not available. Please ensure the ChromaDB server is running.',
-          unavailable: true
-        };
-      }
-
-      // FIX: Check if initialization succeeded
-      if (!isInitialized) {
-        return {
-          success: false,
-          error: 'ChromaDB initialization pending. Please try again in a few seconds.',
-          pending: true
-        };
-      }
-
+    createChromaHandler(async () => {
       try {
         const serviceIntegration = getServiceIntegration && getServiceIntegration();
         const historyService = serviceIntegration?.analysisHistory;
@@ -390,25 +391,7 @@ function registerEmbeddingsIpc({
 
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.CLEAR_STORE,
-    withErrorLogging(logger, async () => {
-      // CRITICAL FIX: Wait for initialization before executing
-      try {
-        await ensureInitialized();
-      } catch (initError) {
-        return {
-          success: false,
-          error: 'ChromaDB is not available.',
-          unavailable: true
-        };
-      }
-      if (!isInitialized) {
-        return {
-          success: false,
-          error: 'ChromaDB initialization pending.',
-          pending: true
-        };
-      }
-
+    createChromaHandler(async () => {
       try {
         await chromaDbService.resetAll();
         return { success: true };
@@ -421,25 +404,7 @@ function registerEmbeddingsIpc({
   // New endpoint for getting vector DB statistics
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.GET_STATS,
-    withErrorLogging(logger, async () => {
-      // CRITICAL FIX: Wait for initialization before executing
-      try {
-        await ensureInitialized();
-      } catch (initError) {
-        return {
-          success: false,
-          error: 'ChromaDB is not available.',
-          unavailable: true
-        };
-      }
-      if (!isInitialized) {
-        return {
-          success: false,
-          error: 'ChromaDB initialization pending.',
-          pending: true
-        };
-      }
-
+    createChromaHandler(async () => {
       try {
         const stats = await chromaDbService.getStats();
 
@@ -484,25 +449,7 @@ function registerEmbeddingsIpc({
   // New endpoint for finding similar documents
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.FIND_SIMILAR,
-    withErrorLogging(logger, async (event, { fileId, topK = 10 }) => {
-      // CRITICAL FIX: Wait for initialization before executing
-      try {
-        await ensureInitialized();
-      } catch (initError) {
-        return {
-          success: false,
-          error: 'ChromaDB is not available.',
-          unavailable: true
-        };
-      }
-      if (!isInitialized) {
-        return {
-          success: false,
-          error: 'ChromaDB initialization pending.',
-          pending: true
-        };
-      }
-
+    createChromaHandler(async (event, { fileId, topK = 10 }) => {
       // HIGH PRIORITY FIX: Add timeout and validation (addresses HIGH-11)
       const QUERY_TIMEOUT = TIMEOUTS.SEMANTIC_QUERY;
       const MAX_TOP_K = LIMITS.MAX_TOP_K;
@@ -559,25 +506,7 @@ function registerEmbeddingsIpc({
   // Global semantic search (query -> ranked files)
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.SEARCH,
-    withErrorLogging(logger, async (event, { query, topK = 20 } = {}) => {
-      // CRITICAL FIX: Wait for initialization before executing
-      try {
-        await ensureInitialized();
-      } catch (initError) {
-        return {
-          success: false,
-          error: 'ChromaDB is not available.',
-          unavailable: true
-        };
-      }
-      if (!isInitialized) {
-        return {
-          success: false,
-          error: 'ChromaDB initialization pending.',
-          pending: true
-        };
-      }
-
+    createChromaHandler(async (event, { query, topK = 20 } = {}) => {
       const QUERY_TIMEOUT = TIMEOUTS.SEMANTIC_QUERY;
       const MAX_TOP_K = LIMITS.MAX_TOP_K;
 
@@ -633,45 +562,10 @@ function registerEmbeddingsIpc({
     })
   );
 
-  function cosineSimilarity(a, b) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || b.length === 0) return 0;
-    const len = Math.min(a.length, b.length);
-    let dot = 0;
-    let normA = 0;
-    let normB = 0;
-    for (let i = 0; i < len; i += 1) {
-      const av = Number(a[i]) || 0;
-      const bv = Number(b[i]) || 0;
-      dot += av * bv;
-      normA += av * av;
-      normB += bv * bv;
-    }
-    if (normA === 0 || normB === 0) return 0;
-    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-  }
-
   // Score a subset of file IDs against a query (for "search within graph")
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.SCORE_FILES,
-    withErrorLogging(logger, async (event, { query, fileIds } = {}) => {
-      // CRITICAL FIX: Wait for initialization before executing
-      try {
-        await ensureInitialized();
-      } catch (initError) {
-        return {
-          success: false,
-          error: 'ChromaDB is not available.',
-          unavailable: true
-        };
-      }
-      if (!isInitialized) {
-        return {
-          success: false,
-          error: 'ChromaDB initialization pending.',
-          pending: true
-        };
-      }
-
+    createChromaHandler(async (event, { query, fileIds } = {}) => {
       const QUERY_TIMEOUT = TIMEOUTS.SEMANTIC_QUERY;
 
       try {
@@ -760,24 +654,7 @@ function registerEmbeddingsIpc({
    */
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.HYBRID_SEARCH,
-    withErrorLogging(logger, async (event, { query, options = {} } = {}) => {
-      try {
-        await ensureInitialized();
-      } catch (initError) {
-        return {
-          success: false,
-          error: 'ChromaDB is not available.',
-          unavailable: true
-        };
-      }
-      if (!isInitialized) {
-        return {
-          success: false,
-          error: 'ChromaDB initialization pending.',
-          pending: true
-        };
-      }
-
+    createChromaHandler(async (event, { query, options = {} } = {}) => {
       try {
         const service = getSearchService();
         const result = await service.hybridSearch(query, options);
@@ -832,24 +709,7 @@ function registerEmbeddingsIpc({
    */
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.FIND_MULTI_HOP,
-    withErrorLogging(logger, async (event, { seedIds, options = {} } = {}) => {
-      try {
-        await ensureInitialized();
-      } catch (initError) {
-        return {
-          success: false,
-          error: 'ChromaDB is not available.',
-          unavailable: true
-        };
-      }
-      if (!isInitialized) {
-        return {
-          success: false,
-          error: 'ChromaDB initialization pending.',
-          pending: true
-        };
-      }
-
+    createChromaHandler(async (event, { seedIds, options = {} } = {}) => {
       try {
         if (!Array.isArray(seedIds) || seedIds.length === 0) {
           return { success: false, error: 'seedIds must be a non-empty array' };
@@ -881,24 +741,7 @@ function registerEmbeddingsIpc({
    */
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.COMPUTE_CLUSTERS,
-    withErrorLogging(logger, async (event, { k = 'auto', generateLabels = true } = {}) => {
-      try {
-        await ensureInitialized();
-      } catch (initError) {
-        return {
-          success: false,
-          error: 'ChromaDB is not available.',
-          unavailable: true
-        };
-      }
-      if (!isInitialized) {
-        return {
-          success: false,
-          error: 'ChromaDB initialization pending.',
-          pending: true
-        };
-      }
-
+    createChromaHandler(async (event, { k = 'auto', generateLabels = true } = {}) => {
       try {
         const service = getClusteringService();
         const result = await service.computeClusters(k);

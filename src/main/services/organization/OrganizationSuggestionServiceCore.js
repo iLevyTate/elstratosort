@@ -77,11 +77,24 @@ class OrganizationSuggestionServiceCore {
     settingsService,
     clusteringService,
     config = {}
-  }) {
+  } = {}) {
+    // Validate required dependencies
+    if (!chromaDbService) {
+      throw new Error('OrganizationSuggestionServiceCore requires chromaDbService dependency');
+    }
+    if (!folderMatchingService) {
+      throw new Error(
+        'OrganizationSuggestionServiceCore requires folderMatchingService dependency'
+      );
+    }
+    if (!settingsService) {
+      throw new Error('OrganizationSuggestionServiceCore requires settingsService dependency');
+    }
+
     this.chromaDb = chromaDbService;
     this.folderMatcher = folderMatchingService;
     this.settings = settingsService;
-    this.clustering = clusteringService || null;
+    this.clustering = clusteringService || null; // Optional dependency
 
     // Configuration
     this.config = {

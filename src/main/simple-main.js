@@ -521,9 +521,9 @@ app.whenReady().then(async () => {
 
     // Verify AI models on startup (only if Ollama is running)
     if (startupResult?.services?.ollama?.success) {
-      // Use ModelManager which is now the single source of truth for model verification
-      const ModelManager = require('./services/ModelManager');
-      const modelManager = new ModelManager();
+      // Use ModelManager singleton which is now the single source of truth for model verification
+      const { getInstance: getModelManager } = require('./services/ModelManager');
+      const modelManager = getModelManager();
       // Ensure we have a working model selected
       try {
         await modelManager.ensureWorkingModel();

@@ -9,6 +9,7 @@
 
 const { logger } = require('../../shared/logger');
 const { cosineSimilarity, squaredEuclideanDistance } = require('../../shared/vectorMath');
+const { getOllamaModel } = require('../ollamaUtils');
 
 logger.setContext('ClusteringService');
 
@@ -31,8 +32,13 @@ class ClusteringService {
    * @param {Object} dependencies.ollamaService - Ollama service for label generation
    */
   constructor({ chromaDbService, ollamaService }) {
+    // Validate required dependency
+    if (!chromaDbService) {
+      throw new Error('ClusteringService requires chromaDbService dependency');
+    }
+
     this.chromaDb = chromaDbService;
-    this.ollama = ollamaService;
+    this.ollama = ollamaService; // Optional - label generation will be skipped if null
 
     // Cached cluster data
     this.clusters = [];
@@ -417,7 +423,7 @@ Respond with ONLY the label, nothing else. Examples: "Financial Documents", "Pro
 
             try {
               const response = await this.ollama.analyzeText(prompt, {
-                model: 'llama3.2:latest',
+                model: getOllamaModel() || 'qwen3:0.6b',
                 maxTokens: 20
               });
 

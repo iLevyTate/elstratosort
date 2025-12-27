@@ -462,27 +462,33 @@ const ALL_SUPPORTED_EXTENSIONS = [
   ...SUPPORTED_ARCHIVE_EXTENSIONS
 ];
 
-// AI Model configurations - Optimized for speed with smallest available models
+// AI Model configurations - Ultra-lightweight models for accessibility
+// Total download: ~2.3GB (vs previous ~8GB = 71% reduction)
 const DEFAULT_AI_MODELS = {
-  TEXT_ANALYSIS: 'llama3.2:latest', // 2.0GB - Fastest text model
-  IMAGE_ANALYSIS: 'llava:latest', // 4.7GB - Vision capable model
-  FALLBACK_MODELS: ['llama3.2:latest', 'gemma3:4b', 'llama3', 'mistral', 'phi3']
+  TEXT_ANALYSIS: 'qwen3:0.6b', // 523MB - Ultra-fast, 40K context, 119 languages
+  IMAGE_ANALYSIS: 'smolvlm2:2.2b', // ~1.5GB - Smallest VLM, video+image support
+  EMBEDDING: 'embeddinggemma', // 308MB - Google's best-in-class, 768 dims, <15ms
+  FALLBACK_MODELS: ['qwen3:0.6b', 'llama3.2:latest', 'gemma2:2b', 'phi3', 'mistral']
 };
 
 // AI defaults centralized for analyzers
 const AI_DEFAULTS = {
   TEXT: {
-    MODEL: 'llama3.2:latest',
+    MODEL: 'qwen3:0.6b',
     HOST: SERVICE_URLS.OLLAMA_HOST,
     MAX_CONTENT_LENGTH: 12000,
     TEMPERATURE: 0.1,
     MAX_TOKENS: 800
   },
   IMAGE: {
-    MODEL: 'llava:latest',
+    MODEL: 'smolvlm2:2.2b',
     HOST: SERVICE_URLS.OLLAMA_HOST,
     TEMPERATURE: 0.2,
     MAX_TOKENS: 1000
+  },
+  EMBEDDING: {
+    MODEL: 'embeddinggemma',
+    DIMENSIONS: 768 // Different from previous mxbai-embed-large (1024)
   }
 };
 

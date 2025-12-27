@@ -280,12 +280,7 @@ function DiscoverPhase() {
       (changedSettings) => {
         logger.info('Settings changed externally:', Object.keys(changedSettings));
         if (changedSettings.ollamaHost && !isAnalyzing) {
-          addNotification(
-            'Ollama settings updated. New analyses will use the updated configuration.',
-            'info',
-            3000,
-            'settings-changed'
-          );
+          addNotification('Ollama settings saved', 'info', 2000, 'settings-changed');
         }
       },
       [isAnalyzing, addNotification]
@@ -328,23 +323,13 @@ function DiscoverPhase() {
 
     const twoMinutes = 2 * 60 * 1000;
     if (current === 0 && total > 0 && timeSinceActivity > twoMinutes) {
-      addNotification(
-        'Analysis stalled with no progress - auto-resetting',
-        'warning',
-        5000,
-        'analysis-stalled'
-      );
+      addNotification('Analysis paused. Restarting...', 'info', 3000, 'analysis-stalled');
       resetAnalysisState('Analysis stalled with no progress after 2 minutes');
       return;
     }
 
     if (timeSinceActivity > TIMEOUTS.ANALYSIS_LOCK) {
-      addNotification(
-        'Detected stuck analysis state - auto-resetting',
-        'warning',
-        5000,
-        'analysis-auto-reset'
-      );
+      addNotification('Analysis timed out. Ready to retry.', 'info', 3000, 'analysis-auto-reset');
       resetAnalysisState('Stuck analysis state after 5 minutes of inactivity');
     }
   }, [isAnalyzing, analysisProgress, addNotification, resetAnalysisState]);

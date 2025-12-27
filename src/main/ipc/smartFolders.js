@@ -5,6 +5,7 @@ const { getOllama } = require('../ollamaUtils');
 const { enhanceSmartFolderWithLLM } = require('../services/SmartFoldersLLMService');
 const { withErrorLogging } = require('./ipcWrappers');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
+const { cosineSimilarity } = require('../../shared/vectorMath');
 
 // Import centralized security configuration
 const { getDangerousPaths, ALLOWED_APP_PATHS } = require('../../shared/securityConfig');
@@ -151,7 +152,7 @@ function registerSmartFoldersIpc({
           const ollama = getOllama();
           const perfOptions = await buildOllamaOptions('embeddings');
           // Use configured embedding model instead of hardcoded value
-          const embeddingModel = getOllamaEmbeddingModel() || 'mxbai-embed-large';
+          const embeddingModel = getOllamaEmbeddingModel() || 'embeddinggemma';
           // Use the newer embed() API with 'input' parameter (embeddings() with 'prompt' is deprecated)
           const queryEmbedding = await ollama.embed({
             model: embeddingModel,
@@ -189,7 +190,7 @@ function registerSmartFoldersIpc({
             const genPerf = await buildOllamaOptions('text');
             const prompt = `You are ranking folders for organizing a file. Given this description:\n"""${text}"""\nFolders:\n${smartFolders.map((f, i) => `${i + 1}. ${f.name} - ${f.description || ''}`).join('\n')}\nReturn JSON: { "index": <1-based best folder index>, "reason": "..." }`;
             const resp = await ollama.generate({
-              model: getOllamaModel() || 'llama3.2:latest',
+              model: getOllamaModel() || 'qwen3:0.6b',
               prompt,
               format: 'json',
               options: { ...genPerf, temperature: 0.1, num_predict: 200 }
@@ -811,20 +812,3 @@ function registerSmartFoldersIpc({
 }
 
 module.exports = registerSmartFoldersIpc;
-
-// Local utility
-function cosineSimilarity(a, b) {
-  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return 0;
-  let dot = 0,
-    na = 0,
-    nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  // Prevent division by zero for zero vectors
-  const denominator = Math.sqrt(na) * Math.sqrt(nb);
-  if (denominator === 0) return 0;
-  return dot / denominator;
-}

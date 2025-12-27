@@ -57,9 +57,6 @@ class ParallelEmbeddingService {
     this.initialRetryDelayMs = options.initialRetryDelayMs || 1000;
     this.maxRetryDelayMs = options.maxRetryDelayMs || 10000;
 
-    // Cache for embedding model name
-    this._cachedModelName = null;
-
     logger.info('[ParallelEmbeddingService] Initialized', {
       concurrencyLimit: this.concurrencyLimit,
       maxRetries: this.maxRetries
@@ -228,8 +225,8 @@ class ParallelEmbeddingService {
         retryable: isRetryableError(error)
       });
 
-      // FIX: Use configurable embedding dimension instead of hardcoded 1024
-      const embeddingDimension = getConfig('ANALYSIS.embeddingDimension', 1024);
+      // FIX: Use configurable embedding dimension - default 768 for embeddinggemma
+      const embeddingDimension = getConfig('ANALYSIS.embeddingDimension', 768);
       return {
         vector: new Array(embeddingDimension).fill(0),
         model: 'fallback'
@@ -472,9 +469,6 @@ class ParallelEmbeddingService {
     this.waitQueue = [];
     this.activeRequests = 0;
 
-    // Reset cached data
-    this._cachedModelName = null;
-
     logger.info('[ParallelEmbeddingService] Shutdown complete');
   }
 
@@ -508,7 +502,13 @@ class ParallelEmbeddingService {
       if (await this.isServiceHealthy()) {
         return true;
       }
-      await new Promise((resolve) => setTimeout(resolve, checkIntervalMs));
+      await new Promise((resolve) => {
+        const timeoutId = setTimeout(resolve, checkIntervalMs);
+        // Prevent timer from keeping Node.js process alive during wait
+        if (timeoutId && typeof timeoutId.unref === 'function') {
+          timeoutId.unref();
+        }
+      });
     }
 
     logger.warn('[ParallelEmbeddingService] Timeout waiting for Ollama service');

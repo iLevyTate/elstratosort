@@ -1,9 +1,26 @@
 /**
- * Atomic File Operations System
+ * Atomic File Operations System (Full Transaction Support)
  *
  * Provides transactional file operations with rollback capabilities
  * to prevent data loss during file organization. Addresses the safety
  * concerns identified in the architectural analysis.
+ *
+ * USE THIS MODULE FOR:
+ * - Multi-file operations that must succeed or fail together
+ * - File moves/copies that need rollback on failure
+ * - Complex transactions with state journaling
+ * - Backup-and-replace patterns with integrity checking
+ *
+ * USE atomicFile.js INSTEAD FOR:
+ * - Simple JSON persistence (settings, config files, state)
+ * - Single-file write operations
+ * - Cases where you don't need transaction rollback
+ *
+ * Key features:
+ * - Transaction journaling for crash recovery
+ * - Automatic rollback on failure
+ * - SHA256 integrity verification
+ * - Orphaned operation cleanup
  */
 
 const fs = require('fs').promises;

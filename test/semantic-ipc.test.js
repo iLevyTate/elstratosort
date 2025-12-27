@@ -9,24 +9,25 @@ describe('Embeddings/Semantic IPC', () => {
 
   test('REBUILD_FOLDERS calls embedding upsert for custom folders', async () => {
     jest.resetModules();
-    const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
+    const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
     // IMPROVED BEHAVIOR: Now uses batch operations for better performance
     // Track batch upserts instead of individual upsertFolderEmbedding calls
     const batchUpserts = [];
-    jest.doMock('../src/main/services/FolderMatchingService', () =>
-      jest.fn().mockImplementation(() => ({
-        // New batch processing requires embedText method
-        // eslint-disable-next-line no-unused-vars
-        embedText: jest.fn(async (_text) => ({
-          vector: [0.1, 0.2, 0.3],
-          model: 'mxbai-embed-large'
-        })),
-        generateFolderId: jest.fn((f) => f.id || `folder-${f.name}`),
-        upsertFolderEmbedding: jest.fn(async (f) => f),
-        upsertFileEmbedding: jest.fn(async () => {}),
-        initialize: jest.fn()
-      }))
-    );
+    const mockFolderMatcher = {
+      // New batch processing requires embedText method
+      // eslint-disable-next-line no-unused-vars
+      embedText: jest.fn(async (_text) => ({
+        vector: [0.1, 0.2, 0.3],
+        model: 'mxbai-embed-large'
+      })),
+      generateFolderId: jest.fn((f) => f.id || `folder-${f.name}`),
+      upsertFolderEmbedding: jest.fn(async (f) => f),
+      upsertFileEmbedding: jest.fn(async () => {}),
+      initialize: jest.fn()
+    };
+    jest.doMock('../src/main/services/FolderMatchingService', () => ({
+      getInstance: () => mockFolderMatcher
+    }));
     jest.doMock('../src/main/services/ChromaDBService', () => ({
       getInstance: () => ({
         initialize: jest.fn(async () => {}),
@@ -84,25 +85,26 @@ describe('Embeddings/Semantic IPC', () => {
 
   test('REBUILD_FILES rebuilds vectors from analysis history', async () => {
     jest.resetModules();
-    const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
+    const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
     // IMPROVED BEHAVIOR: Now uses batch operations for better performance
     const inserted = [];
-    jest.doMock('../src/main/services/FolderMatchingService', () =>
-      jest.fn().mockImplementation(() => ({
-        // New batch processing requires embedText method
-        // eslint-disable-next-line no-unused-vars
-        embedText: jest.fn(async (_text) => ({
-          vector: [0.1, 0.2, 0.3],
-          model: 'mxbai-embed-large'
-        })),
-        generateFolderId: jest.fn((f) => f.id || `folder-${f.name}`),
-        upsertFolderEmbedding: jest.fn(async () => {}),
-        upsertFileEmbedding: jest.fn(async (id, summary) => {
-          inserted.push({ id, summary });
-        }),
-        initialize: jest.fn()
-      }))
-    );
+    const mockFolderMatcher = {
+      // New batch processing requires embedText method
+      // eslint-disable-next-line no-unused-vars
+      embedText: jest.fn(async (_text) => ({
+        vector: [0.1, 0.2, 0.3],
+        model: 'mxbai-embed-large'
+      })),
+      generateFolderId: jest.fn((f) => f.id || `folder-${f.name}`),
+      upsertFolderEmbedding: jest.fn(async () => {}),
+      upsertFileEmbedding: jest.fn(async (id, summary) => {
+        inserted.push({ id, summary });
+      }),
+      initialize: jest.fn()
+    };
+    jest.doMock('../src/main/services/FolderMatchingService', () => ({
+      getInstance: () => mockFolderMatcher
+    }));
     jest.doMock('../src/main/services/ChromaDBService', () => ({
       getInstance: () => ({
         initialize: jest.fn(async () => {}),
@@ -171,7 +173,7 @@ describe('Embeddings/Semantic IPC', () => {
 
   test('CLEAR_STORE calls resetAll successfully', async () => {
     jest.resetModules();
-    const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
+    const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
     // Mock ChromaDBService to ensure resetAll is called
     const resetAllCalls = [];
     jest.doMock('../src/main/services/ChromaDBService', () => ({
@@ -221,12 +223,12 @@ describe('Embeddings/Semantic IPC', () => {
   describe('GET_STATS handler', () => {
     test('returns stats with needsFileEmbeddingRebuild flag when files=0 and history>0', async () => {
       jest.resetModules();
-      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
-      jest.doMock('../src/main/services/FolderMatchingService', () =>
-        jest.fn().mockImplementation(() => ({
+      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
+      jest.doMock('../src/main/services/FolderMatchingService', () => ({
+        getInstance: () => ({
           initialize: jest.fn(async () => {})
-        }))
-      );
+        })
+      }));
       jest.doMock('../src/main/services/ChromaDBService', () => ({
         getInstance: () => ({
           initialize: jest.fn(async () => {}),
@@ -290,12 +292,12 @@ describe('Embeddings/Semantic IPC', () => {
 
     test('returns needsFileEmbeddingRebuild=false when files exist', async () => {
       jest.resetModules();
-      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
-      jest.doMock('../src/main/services/FolderMatchingService', () =>
-        jest.fn().mockImplementation(() => ({
+      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
+      jest.doMock('../src/main/services/FolderMatchingService', () => ({
+        getInstance: () => ({
           initialize: jest.fn(async () => {})
-        }))
-      );
+        })
+      }));
       jest.doMock('../src/main/services/ChromaDBService', () => ({
         getInstance: () => ({
           initialize: jest.fn(async () => {}),
@@ -357,12 +359,12 @@ describe('Embeddings/Semantic IPC', () => {
 
     test('returns needsFileEmbeddingRebuild=false when no analysis history', async () => {
       jest.resetModules();
-      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
-      jest.doMock('../src/main/services/FolderMatchingService', () =>
-        jest.fn().mockImplementation(() => ({
+      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
+      jest.doMock('../src/main/services/FolderMatchingService', () => ({
+        getInstance: () => ({
           initialize: jest.fn(async () => {})
-        }))
-      );
+        })
+      }));
       jest.doMock('../src/main/services/ChromaDBService', () => ({
         getInstance: () => ({
           initialize: jest.fn(async () => {}),
@@ -418,12 +420,12 @@ describe('Embeddings/Semantic IPC', () => {
 
     test('handles analysisHistory.getStatistics fallback', async () => {
       jest.resetModules();
-      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
-      jest.doMock('../src/main/services/FolderMatchingService', () =>
-        jest.fn().mockImplementation(() => ({
+      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
+      jest.doMock('../src/main/services/FolderMatchingService', () => ({
+        getInstance: () => ({
           initialize: jest.fn(async () => {})
-        }))
-      );
+        })
+      }));
       jest.doMock('../src/main/services/ChromaDBService', () => ({
         getInstance: () => ({
           initialize: jest.fn(async () => {}),
@@ -486,12 +488,12 @@ describe('Embeddings/Semantic IPC', () => {
 
     test('handles analysisHistory errors gracefully', async () => {
       jest.resetModules();
-      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
-      jest.doMock('../src/main/services/FolderMatchingService', () =>
-        jest.fn().mockImplementation(() => ({
+      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
+      jest.doMock('../src/main/services/FolderMatchingService', () => ({
+        getInstance: () => ({
           initialize: jest.fn(async () => {})
-        }))
-      );
+        })
+      }));
       jest.doMock('../src/main/services/ChromaDBService', () => ({
         getInstance: () => ({
           initialize: jest.fn(async () => {}),
@@ -556,20 +558,20 @@ describe('Embeddings/Semantic IPC', () => {
   describe('REBUILD_FOLDERS and REBUILD_FILES safety', () => {
     test('REBUILD_FOLDERS only calls resetFolders (collection reset), not DB directory operations', async () => {
       jest.resetModules();
-      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
+      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
       const resetFoldersCalls = [];
       const fsOperations = [];
 
-      jest.doMock('../src/main/services/FolderMatchingService', () =>
-        jest.fn().mockImplementation(() => ({
+      jest.doMock('../src/main/services/FolderMatchingService', () => ({
+        getInstance: () => ({
           embedText: jest.fn(async () => ({
             vector: [0.1, 0.2, 0.3],
             model: 'mxbai-embed-large'
           })),
           generateFolderId: jest.fn((f) => f.id || `folder-${f.name}`),
           initialize: jest.fn()
-        }))
-      );
+        })
+      }));
 
       jest.doMock('../src/main/services/ChromaDBService', () => ({
         getInstance: () => ({
@@ -637,20 +639,20 @@ describe('Embeddings/Semantic IPC', () => {
 
     test('REBUILD_FILES only calls resetFiles (collection reset), not DB directory operations', async () => {
       jest.resetModules();
-      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn() };
+      const logger = { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
       const resetFilesCalls = [];
       const fsOperations = [];
 
-      jest.doMock('../src/main/services/FolderMatchingService', () =>
-        jest.fn().mockImplementation(() => ({
+      jest.doMock('../src/main/services/FolderMatchingService', () => ({
+        getInstance: () => ({
           embedText: jest.fn(async () => ({
             vector: [0.1, 0.2, 0.3],
             model: 'mxbai-embed-large'
           })),
           generateFolderId: jest.fn((f) => f.id || `folder-${f.name}`),
           initialize: jest.fn()
-        }))
-      );
+        })
+      }));
 
       jest.doMock('../src/main/services/ChromaDBService', () => ({
         getInstance: () => ({

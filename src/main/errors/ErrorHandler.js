@@ -159,35 +159,57 @@ class ErrorHandler {
   }
 
   /**
-   * Parse error to extract useful information
+   * Parse error to extract useful information with user-friendly messages
    */
   parseError(error) {
     const errorInfo = {
       type: ERROR_TYPES.UNKNOWN,
-      message: 'An unexpected error occurred',
+      message: 'Something went wrong. Please try again.',
       details: {},
       stack: error?.stack
     };
 
     if (error instanceof Error) {
-      errorInfo.message = error.message;
-
-      // Determine error type using centralized error classifier
+      // Determine error type and provide actionable messages
       // Note: AI/Ollama check comes before network check because Ollama connection
       // errors should be classified as AI_UNAVAILABLE, not NETWORK_ERROR
       if (isNotFoundError(error)) {
         errorInfo.type = ERROR_TYPES.FILE_NOT_FOUND;
-        errorInfo.message = 'File or directory not found';
+        errorInfo.message = 'Could not find the file or folder. It may have been moved or deleted.';
       } else if (isPermissionError(error)) {
         errorInfo.type = ERROR_TYPES.PERMISSION_DENIED;
-        errorInfo.message = 'Permission denied';
+        errorInfo.message =
+          'Access denied. Check that you have permission to access this location.';
       } else if (error.message.includes('AI') || error.message.includes('Ollama')) {
         errorInfo.type = ERROR_TYPES.AI_UNAVAILABLE;
-        errorInfo.message = 'AI service is unavailable';
+        // Provide specific guidance based on the error
+        if (error.message.includes('ECONNREFUSED') || error.message.includes('connection')) {
+          errorInfo.message =
+            'Cannot connect to Ollama. Make sure Ollama is running (ollama serve).';
+        } else if (error.message.includes('model')) {
+          errorInfo.message =
+            'AI model not available. Check Settings to ensure your model is installed.';
+        } else {
+          errorInfo.message =
+            'AI service unavailable. Check that Ollama is running and configured in Settings.';
+        }
       } else if (isNetworkError(error)) {
         errorInfo.type = ERROR_TYPES.NETWORK_ERROR;
-        errorInfo.message = 'Network connection error';
+        if (error.message.includes('timeout')) {
+          errorInfo.message =
+            'Request timed out. The AI model may be loading or your system is busy.';
+        } else {
+          errorInfo.message = 'Connection issue. Check your network and Ollama status.';
+        }
+      } else {
+        // Keep original message if it's user-friendly, otherwise provide generic
+        const msg = error.message || '';
+        // Check if message is already user-friendly (contains actionable language)
+        if (msg.length < 100 && !msg.includes('undefined') && !msg.includes('null')) {
+          errorInfo.message = msg;
+        }
       }
+      errorInfo.details = { originalMessage: error.message };
     }
 
     return errorInfo;

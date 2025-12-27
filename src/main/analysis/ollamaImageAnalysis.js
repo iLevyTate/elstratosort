@@ -132,8 +132,9 @@ Analyze this image:`;
         timeoutId = setTimeout(() => {
           try {
             abortController.abort();
-          } catch {
-            // ignore
+          } catch (abortErr) {
+            // Intentionally ignored: abort may fail if request already completed
+            logger.debug('[IMAGE-ANALYSIS] Abort signal error (non-fatal):', abortErr?.message);
           }
           reject(new Error(`Image analysis timeout after ${timeoutMs}ms`));
         }, timeoutMs);

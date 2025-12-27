@@ -5,7 +5,7 @@ const FolderMatchingService = require('./FolderMatchingService');
 const OrganizationSuggestionService = require('./organization');
 const AutoOrganizeService = require('./autoOrganize');
 const EmbeddingCache = require('./EmbeddingCache');
-const { container, ServiceIds } = require('./ServiceContainer');
+const { container, ServiceIds, SHUTDOWN_ORDER } = require('./ServiceContainer');
 const { logger } = require('../../shared/logger');
 logger.setContext('ServiceIntegration');
 
@@ -292,10 +292,11 @@ class ServiceIntegration {
     if (!this.initialized) return;
 
     try {
-      logger.info('[ServiceIntegration] Starting shutdown...');
+      logger.info('[ServiceIntegration] Starting coordinated shutdown...');
 
-      // Use the container's shutdown which handles all registered services
-      await container.shutdown();
+      // Use the container's shutdown with explicit shutdown order
+      // This ensures dependent services are stopped before their dependencies
+      await container.shutdown(SHUTDOWN_ORDER);
 
       // Clear all service references
       this.analysisHistory = null;

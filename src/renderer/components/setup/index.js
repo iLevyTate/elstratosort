@@ -14,18 +14,18 @@ export default function FirstRunWizard({ onComplete }) {
 
   const models = [
     {
-      id: 'llama3.2:latest',
-      label: 'Text model (llama3.2:latest)',
+      id: 'qwen3:0.6b',
+      label: 'Text model (qwen3:0.6b)',
       defaultChecked: true
     },
     {
-      id: 'llava:latest',
-      label: 'Vision model (llava:latest)',
+      id: 'smolvlm2:2.2b',
+      label: 'Vision model (smolvlm2:2.2b)',
       defaultChecked: true
     },
     {
-      id: 'mxbai-embed-large',
-      label: 'Embeddings (mxbai-embed-large)',
+      id: 'embeddinggemma',
+      label: 'Embeddings (embeddinggemma)',
       defaultChecked: true
     }
   ];

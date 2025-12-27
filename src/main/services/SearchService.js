@@ -37,7 +37,18 @@ class SearchService {
    * @param {Object} dependencies.analysisHistoryService - Analysis history for document data
    * @param {Object} dependencies.parallelEmbeddingService - Embedding service for query vectors
    */
-  constructor({ chromaDbService, analysisHistoryService, parallelEmbeddingService }) {
+  constructor({ chromaDbService, analysisHistoryService, parallelEmbeddingService } = {}) {
+    // Validate required dependencies
+    if (!chromaDbService) {
+      throw new Error('SearchService requires chromaDbService dependency');
+    }
+    if (!analysisHistoryService) {
+      throw new Error('SearchService requires analysisHistoryService dependency');
+    }
+    if (!parallelEmbeddingService) {
+      throw new Error('SearchService requires parallelEmbeddingService dependency');
+    }
+
     this.chromaDb = chromaDbService;
     this.history = analysisHistoryService;
     this.embedding = parallelEmbeddingService;

@@ -123,7 +123,16 @@ jest.mock('../src/shared/validationConstants', () => ({
 // Mock IPC wrappers
 jest.mock('../src/main/ipc/ipcWrappers', () => ({
   withErrorLogging: (logger, handler) => handler,
-  withValidation: (logger, schema, handler) => handler
+  withValidation: (logger, schema, handler) => handler,
+  successResponse: (data = {}, warnings = []) => {
+    const response = { success: true, ...data };
+    if (warnings && warnings.length > 0) {
+      response.warnings = warnings;
+    }
+    return response;
+  },
+  errorResponse: (error, extras = {}) => ({ success: false, error, ...extras }),
+  canceledResponse: () => ({ success: false, canceled: true })
 }));
 
 // Mock zod - return null to use the fallback path without validation

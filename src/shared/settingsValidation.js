@@ -82,8 +82,10 @@ const VALIDATION_RULES = {
     minLength: 1,
     maxLength: 200,
     required: false,
-    // Lock to the vetted embedding model to keep vector dimensions consistent
-    enum: ['mxbai-embed-large']
+    // Supported embedding models - NOTE: changing models requires re-embedding (dimension mismatch)
+    // embeddinggemma: 768 dims (default), mxbai-embed-large: 1024 dims, nomic-embed-text: 768 dims
+    // all-minilm: 384 dims, bge-large: 1024 dims
+    enum: ['embeddinggemma', 'mxbai-embed-large', 'nomic-embed-text', 'all-minilm', 'bge-large']
   },
   autoUpdateOllama: {
     type: 'boolean',

@@ -4,6 +4,7 @@ const { optionalUrl: optionalUrlSchema } = require('./validationSchemas');
 const { SERVICE_URLS } = require('../../shared/configDefaults');
 const { normalizeOllamaUrl } = require('../ollamaUtils');
 const { URL_PATTERN } = require('../../shared/validationConstants');
+const { categorizeModels } = require('../../shared/modelCategorization');
 let z;
 
 function isValidOllamaUrl(url) {
@@ -32,67 +33,7 @@ function registerOllamaIpc({
   getOllamaEmbeddingModel,
   getOllamaHost
 }) {
-  // Comprehensive patterns for model categorization
-  // Vision models: Models that can process images
-  const VISION_MODEL_PATTERNS = [
-    /llava/i, // LLaVA family (llava, llava-llama3, llava-phi3, etc.)
-    /bakllava/i, // BakLLaVA
-    /moondream/i, // Moondream vision model
-    /vision/i, // Any model with "vision" in name
-    /llama.*vision/i, // Llama vision variants
-    /gemma.*vision/i, // Gemma vision variants
-    /-v\b/i, // Models ending with -v (like minicpm-v)
-    /minicpm-v/i, // MiniCPM-V
-    /cogvlm/i, // CogVLM
-    /qwen.*vl/i, // Qwen-VL
-    /internvl/i, // InternVL
-    /yi-vl/i, // Yi-VL
-    /deepseek-vl/i, // DeepSeek-VL
-    /clip/i, // CLIP models
-    /blip/i, // BLIP models
-    /sam\b/i // SAM (Segment Anything)
-  ];
-
-  // Embedding models: Models for generating text embeddings
-  const EMBEDDING_MODEL_PATTERNS = [
-    /embed/i, // Any model with "embed" in name
-    /embedding/i, // Any model with "embedding" in name
-    /mxbai-embed/i, // MxBai embedding models
-    /nomic-embed/i, // Nomic embedding models
-    /all-minilm/i, // All-MiniLM models
-    /\bbge\b/i, // BGE embedding models
-    /e5-/i, // E5 embedding models
-    /gte-/i, // GTE embedding models
-    /stella/i, // Stella embedding models
-    /snowflake-arctic-embed/i, // Snowflake Arctic Embed
-    /paraphrase/i // Paraphrase models (typically embeddings)
-  ];
-
-  /**
-   * Categorize a model by its name
-   * @param {string} modelName - The model name to categorize
-   * @returns {'vision' | 'embedding' | 'text'} The category
-   */
-  function categorizeModel(modelName) {
-    const name = modelName || '';
-
-    // Check vision patterns first (more specific)
-    for (const pattern of VISION_MODEL_PATTERNS) {
-      if (pattern.test(name)) {
-        return 'vision';
-      }
-    }
-
-    // Check embedding patterns
-    for (const pattern of EMBEDDING_MODEL_PATTERNS) {
-      if (pattern.test(name)) {
-        return 'embedding';
-      }
-    }
-
-    // Default to text model
-    return 'text';
-  }
+  // Model categorization is now handled by shared/modelCategorization.js
 
   ipcMain.handle(
     IPC_CHANNELS.OLLAMA.GET_MODELS,
@@ -101,18 +42,10 @@ function registerOllamaIpc({
         const ollama = getOllama();
         const response = await ollama.list();
         const models = response.models || [];
-        const categories = { text: [], vision: [], embedding: [] };
 
-        for (const m of models) {
-          const name = m.name || '';
-          const category = categorizeModel(name);
-          categories[category].push(name);
-        }
+        // Use shared categorization utility (handles sorting)
+        const categories = categorizeModels(models);
 
-        // Sort each category alphabetically for consistent display
-        categories.text.sort((a, b) => a.localeCompare(b));
-        categories.vision.sort((a, b) => a.localeCompare(b));
-        categories.embedding.sort((a, b) => a.localeCompare(b));
         // Ensure we update health on every models fetch
         systemAnalytics.ollamaHealth = {
           status: 'healthy',

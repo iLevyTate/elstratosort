@@ -5,6 +5,7 @@
 
 const { SERVICE_URLS } = require('./configDefaults');
 const { CONCURRENCY } = require('./performanceConstants');
+const { DEFAULT_AI_MODELS } = require('./constants');
 
 const DEFAULT_SETTINGS = {
   // UI
@@ -18,11 +19,11 @@ const DEFAULT_SETTINGS = {
   launchOnStartup: false,
   // Organization Confidence Threshold (files must meet this confidence to be auto-organized)
   confidenceThreshold: 0.75,
-  // AI
+  // AI - model defaults imported from constants.js for single source of truth
   ollamaHost: SERVICE_URLS.OLLAMA_HOST,
-  textModel: 'llama3.2:latest',
-  visionModel: 'llava:latest',
-  embeddingModel: 'mxbai-embed-large',
+  textModel: DEFAULT_AI_MODELS.TEXT_ANALYSIS,
+  visionModel: DEFAULT_AI_MODELS.IMAGE_ANALYSIS,
+  embeddingModel: DEFAULT_AI_MODELS.EMBEDDING,
   // Dependency lifecycle management (user consent required)
   autoUpdateOllama: false,
   autoUpdateChromaDb: false,

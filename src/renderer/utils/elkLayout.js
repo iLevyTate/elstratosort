@@ -7,6 +7,7 @@
  */
 
 import ELK from 'elkjs/lib/elk.bundled.js';
+import { logger } from '../../shared/logger';
 
 // Single ELK instance - layout is CPU-intensive but elkjs handles it efficiently
 const elk = new ELK();
@@ -93,9 +94,7 @@ export async function elkLayout(nodes, edges, options = {}) {
     const startTime = performance.now();
 
     if (nodes.length >= LARGE_GRAPH_THRESHOLD) {
-      console.warn(
-        `[elkLayout] Large graph detected (${nodes.length} nodes), layout may take time`
-      );
+      logger.warn(`[elkLayout] Large graph detected (${nodes.length} nodes), layout may take time`);
     }
 
     const layout = await elk.layout(elkGraph);
@@ -103,14 +102,14 @@ export async function elkLayout(nodes, edges, options = {}) {
 
     // Log performance for monitoring
     if (duration > 100 || nodes.length >= LARGE_GRAPH_THRESHOLD) {
-      console.log(
+      logger.debug(
         `[elkLayout] Layout completed in ${duration.toFixed(1)}ms for ${nodes.length} nodes`
       );
     }
 
     return applyElkPositions(nodes, layout.children);
   } catch (error) {
-    console.error('[elkLayout] Layout failed:', error);
+    logger.error('[elkLayout] Layout failed:', { error: error.message });
     // Return original nodes if layout fails
     return nodes;
   }

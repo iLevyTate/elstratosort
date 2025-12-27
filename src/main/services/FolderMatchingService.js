@@ -13,11 +13,12 @@ const { buildOllamaOptions } = require('./PerformanceService');
  * These are the default dimensions for common embedding models
  */
 const EMBEDDING_DIMENSIONS = {
+  embeddinggemma: 768, // New default - Google's best-in-class
   'nomic-embed-text': 768,
   'mxbai-embed-large': 1024,
   'all-minilm': 384,
   'bge-large': 1024,
-  default: 1024 // Fallback for unknown models
+  default: 768 // Updated fallback for new default model
 };
 
 /**
@@ -174,9 +175,21 @@ class FolderMatchingService {
           ? response.embeddings[0]
           : [];
       const expectedDim = getEmbeddingDimension(model);
-      if (vector.length < expectedDim) {
-        vector = vector.concat(new Array(expectedDim - vector.length).fill(0));
-      } else if (vector.length > expectedDim) {
+      const actualDim = vector.length;
+
+      // Warn on dimension mismatch - this indicates model config may be wrong
+      if (actualDim !== expectedDim && actualDim > 0) {
+        logger.warn('[FolderMatchingService] Embedding dimension mismatch detected', {
+          model,
+          expected: expectedDim,
+          actual: actualDim,
+          action: actualDim < expectedDim ? 'padding' : 'truncating'
+        });
+      }
+
+      if (actualDim < expectedDim) {
+        vector = vector.concat(new Array(expectedDim - actualDim).fill(0));
+      } else if (actualDim > expectedDim) {
         vector = vector.slice(0, expectedDim);
       }
 
@@ -1031,5 +1044,20 @@ function createWithDefaults(options = {}) {
   return new FolderMatchingService(getChromaDB(), options);
 }
 
+// Singleton factory pattern for DI container support
+const { createSingletonHelpers } = require('../../shared/singletonFactory');
+
+const { getInstance, registerWithContainer, resetInstance } = createSingletonHelpers({
+  ServiceClass: FolderMatchingService,
+  serviceId: 'FOLDER_MATCHING',
+  serviceName: 'FolderMatchingService',
+  containerPath: './ServiceContainer',
+  shutdownMethod: 'shutdown',
+  createFactory: (options = {}) => createWithDefaults(options)
+});
+
 module.exports = FolderMatchingService;
 module.exports.createWithDefaults = createWithDefaults;
+module.exports.getInstance = getInstance;
+module.exports.registerWithContainer = registerWithContainer;
+module.exports.resetInstance = resetInstance;
