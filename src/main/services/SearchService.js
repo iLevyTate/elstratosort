@@ -9,23 +9,30 @@
 
 const lunr = require('lunr');
 const { logger } = require('../../shared/logger');
+const { THRESHOLDS, TIMEOUTS, SEARCH } = require('../../shared/performanceConstants');
 
 logger.setContext('SearchService');
 
 /**
- * Reciprocal Rank Fusion constant
- * Higher values give more weight to top results
+ * Minimum score threshold for results (filters low-quality matches)
+ * Uses MIN_SIMILARITY_SCORE from performanceConstants
  */
-const RRF_K = 60;
+const MIN_RESULT_SCORE = THRESHOLDS.MIN_SIMILARITY_SCORE;
 
 /**
- * Default search options
+ * Vector search timeout before falling back to BM25
+ */
+const VECTOR_SEARCH_TIMEOUT = TIMEOUTS.SEMANTIC_QUERY;
+
+/**
+ * Default search options (from performanceConstants.SEARCH)
  */
 const DEFAULT_OPTIONS = {
-  topK: 20,
+  topK: SEARCH.DEFAULT_TOP_K,
   mode: 'hybrid', // 'vector', 'bm25', 'hybrid'
-  vectorWeight: 0.6,
-  bm25Weight: 0.4
+  vectorWeight: SEARCH.VECTOR_WEIGHT,
+  bm25Weight: SEARCH.BM25_WEIGHT,
+  minScore: MIN_RESULT_SCORE // Minimum score threshold
 };
 
 class SearchService {
@@ -288,19 +295,57 @@ class SearchService {
   }
 
   /**
-   * Combine results using Reciprocal Rank Fusion
+   * Normalize scores to [0, 1] range using min-max scaling
+   *
+   * @param {Array} results - Array of results with scores
+   * @returns {Array} Results with normalized scores
+   */
+  _normalizeScores(results) {
+    if (!results || results.length === 0) return results;
+
+    const scores = results.map((r) => r.score || 0);
+    const minScore = Math.min(...scores);
+    const maxScore = Math.max(...scores);
+    const range = maxScore - minScore;
+
+    // If all scores are the same, return with score 1.0
+    if (range === 0) {
+      return results.map((r) => ({ ...r, score: 1.0, originalScore: r.score }));
+    }
+
+    return results.map((r) => ({
+      ...r,
+      score: (r.score - minScore) / range,
+      originalScore: r.score
+    }));
+  }
+
+  /**
+   * Combine results using Reciprocal Rank Fusion with score normalization
    *
    * RRF formula: score(d) = sum(1 / (k + rank_i(d)))
+   * Enhanced with optional weighted score blending for better ranking
    *
    * @param {Array<Array>} resultSets - Arrays of ranked results
    * @param {number} k - RRF constant (default: 60)
+   * @param {Object} options - Fusion options
+   * @param {boolean} options.normalizeScores - Whether to normalize source scores (default: true)
+   * @param {boolean} options.useScoreBlending - Blend original scores with RRF (default: true)
    * @returns {Array} Fused and re-ranked results
    */
-  reciprocalRankFusion(resultSets, k = RRF_K) {
+  reciprocalRankFusion(resultSets, k = SEARCH.RRF_K, options = {}) {
+    const { normalizeScores = true, useScoreBlending = true } = options;
+
     const rrfScores = new Map();
+    const originalScores = new Map(); // Track original scores for blending
     const resultData = new Map();
 
-    for (const results of resultSets) {
+    // Normalize scores within each result set for fair comparison
+    const normalizedSets = normalizeScores
+      ? resultSets.map((set) => this._normalizeScores(set))
+      : resultSets;
+
+    for (const results of normalizedSets) {
       for (let rank = 0; rank < results.length; rank++) {
         const result = results[rank];
         const id = result.id;
@@ -308,6 +353,12 @@ class SearchService {
         // RRF score contribution
         const rrfContribution = 1 / (k + rank + 1);
         rrfScores.set(id, (rrfScores.get(id) || 0) + rrfContribution);
+
+        // Track normalized scores for blending
+        if (useScoreBlending) {
+          const currentMax = originalScores.get(id) || 0;
+          originalScores.set(id, Math.max(currentMax, result.score || 0));
+        }
 
         // Prefer vector search metadata (has current file names) over BM25 (may have old names)
         // Vector search uses ChromaDB which is updated when files are organized
@@ -318,14 +369,29 @@ class SearchService {
       }
     }
 
+    // Normalize RRF scores to [0, 1]
+    const rrfValues = Array.from(rrfScores.values());
+    const maxRrf = Math.max(...rrfValues, SEARCH.MIN_EPSILON);
+
     // Sort by RRF score
     const fusedResults = Array.from(rrfScores.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([id, rrfScore]) => {
         const original = resultData.get(id) || {};
+        const normalizedRrf = rrfScore / maxRrf;
+
+        // Blend RRF with original score for better ranking
+        let finalScore = normalizedRrf;
+        if (useScoreBlending && originalScores.has(id)) {
+          const origScore = originalScores.get(id);
+          finalScore =
+            SEARCH.RRF_NORMALIZED_WEIGHT * normalizedRrf + SEARCH.RRF_ORIGINAL_WEIGHT * origScore;
+        }
+
         return {
           id,
-          score: rrfScore,
+          score: finalScore,
+          rrfScore: normalizedRrf,
           metadata: original.metadata || {},
           sources: original.source ? [original.source] : ['fused']
         };
@@ -335,14 +401,61 @@ class SearchService {
   }
 
   /**
+   * Execute vector search with timeout, falling back to empty results on timeout
+   *
+   * @param {string} query - Search query
+   * @param {number} topK - Number of results
+   * @param {number} timeout - Timeout in milliseconds
+   * @returns {Promise<{results: Array, timedOut: boolean}>}
+   */
+  async _vectorSearchWithTimeout(query, topK, timeout = VECTOR_SEARCH_TIMEOUT) {
+    try {
+      const result = await Promise.race([
+        this.vectorSearch(query, topK).then((results) => ({ results, timedOut: false })),
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ results: [], timedOut: true }), timeout)
+        )
+      ]);
+      return result;
+    } catch (error) {
+      logger.warn('[SearchService] Vector search error, falling back:', error.message);
+      return { results: [], timedOut: false, error: error.message };
+    }
+  }
+
+  /**
+   * Filter results by minimum score threshold
+   *
+   * @param {Array} results - Search results
+   * @param {number} minScore - Minimum score threshold
+   * @returns {Array} Filtered results
+   */
+  _filterByScore(results, minScore) {
+    if (!minScore || minScore <= 0) return results;
+    return results.filter((r) => (r.score || 0) >= minScore);
+  }
+
+  /**
    * Perform hybrid search combining BM25 and vector search
+   *
+   * Features:
+   * - Score normalization before RRF fusion
+   * - Timeout fallback to BM25-only on vector search timeout
+   * - Minimum score filtering for quality control
    *
    * @param {string} query - Search query
    * @param {Object} options - Search options
+   * @param {number} options.topK - Number of results (default: 20)
+   * @param {string} options.mode - Search mode: 'hybrid', 'vector', 'bm25' (default: 'hybrid')
+   * @param {number} options.minScore - Minimum score threshold (default: 0.5)
    * @returns {Promise<{success: boolean, results: Array, mode: string}>}
    */
   async hybridSearch(query, options = {}) {
-    const { topK = DEFAULT_OPTIONS.topK, mode = DEFAULT_OPTIONS.mode } = options;
+    const {
+      topK = DEFAULT_OPTIONS.topK,
+      mode = DEFAULT_OPTIONS.mode,
+      minScore = DEFAULT_OPTIONS.minScore
+    } = options;
 
     if (!query || typeof query !== 'string' || query.trim().length < 2) {
       return { success: false, results: [], error: 'Query too short' };
@@ -357,19 +470,37 @@ class SearchService {
       // Handle different search modes
       if (mode === 'bm25') {
         const results = this.bm25Search(query, topK);
-        return { success: true, results, mode: 'bm25' };
+        const filtered = this._filterByScore(results, minScore);
+        return { success: true, results: filtered, mode: 'bm25' };
       }
 
       if (mode === 'vector') {
         const results = await this.vectorSearch(query, topK);
-        return { success: true, results, mode: 'vector' };
+        const filtered = this._filterByScore(results, minScore);
+        return { success: true, results: filtered, mode: 'vector' };
       }
 
-      // Hybrid mode: combine both search types
-      const [vectorResults, bm25Results] = await Promise.all([
-        this.vectorSearch(query, topK * 2),
-        Promise.resolve(this.bm25Search(query, topK * 2))
-      ]);
+      // Hybrid mode: combine both search types with timeout protection
+      const bm25Results = this.bm25Search(query, topK * 2);
+      const { results: vectorResults, timedOut } = await this._vectorSearchWithTimeout(
+        query,
+        topK * 2
+      );
+
+      // If vector search timed out, use BM25-only with degraded mode indicator
+      if (timedOut) {
+        logger.warn('[SearchService] Vector search timed out, using BM25-only fallback');
+        const filtered = this._filterByScore(bm25Results.slice(0, topK), minScore);
+        return {
+          success: true,
+          results: filtered,
+          mode: 'bm25-fallback',
+          meta: {
+            vectorTimedOut: true,
+            bm25Count: bm25Results.length
+          }
+        };
+      }
 
       // Log search results for debugging
       logger.debug('[SearchService] Hybrid search results:', {
@@ -377,21 +508,44 @@ class SearchService {
         bm25Count: bm25Results.length
       });
 
-      // Fuse results using RRF
+      // Fuse results using enhanced RRF with score normalization
       const fusedResults = this.reciprocalRankFusion([vectorResults, bm25Results]);
+
+      // Apply minimum score filter to fused results
+      const filteredResults = this._filterByScore(fusedResults.slice(0, topK), minScore);
 
       return {
         success: true,
-        results: fusedResults.slice(0, topK),
+        results: filteredResults,
         mode: 'hybrid',
         meta: {
           vectorCount: vectorResults.length,
           bm25Count: bm25Results.length,
-          fusedCount: fusedResults.length
+          fusedCount: fusedResults.length,
+          filteredCount: filteredResults.length,
+          minScoreApplied: minScore
         }
       };
     } catch (error) {
       logger.error('[SearchService] Hybrid search failed:', error);
+
+      // Last resort: try BM25-only on complete failure
+      try {
+        const bm25Results = this.bm25Search(query, topK);
+        if (bm25Results.length > 0) {
+          logger.info('[SearchService] Falling back to BM25-only after hybrid failure');
+          const filtered = this._filterByScore(bm25Results, minScore);
+          return {
+            success: true,
+            results: filtered,
+            mode: 'bm25-fallback',
+            meta: { hybridError: error.message }
+          };
+        }
+      } catch (bm25Error) {
+        logger.error('[SearchService] BM25 fallback also failed:', bm25Error);
+      }
+
       return {
         success: false,
         results: [],

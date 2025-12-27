@@ -7,7 +7,13 @@ const { SearchService } = require('../services/SearchService');
 const { ClusteringService } = require('../services/ClusteringService');
 const path = require('path');
 const { SUPPORTED_IMAGE_EXTENSIONS } = require('../../shared/constants');
-const { BATCH, TIMEOUTS, LIMITS } = require('../../shared/performanceConstants');
+const {
+  BATCH,
+  TIMEOUTS,
+  LIMITS,
+  SEARCH,
+  THRESHOLDS
+} = require('../../shared/performanceConstants');
 const { withErrorLogging, withChromaInit } = require('./ipcWrappers');
 const { cosineSimilarity } = require('../../shared/vectorMath');
 
@@ -351,13 +357,16 @@ function registerEmbeddingsIpc({
             // Generate embedding
             const { vector, model } = await folderMatcher.embedText(summary);
 
+            // Use renamed name if available, otherwise fall back to original basename
+            const displayName = entry.organization?.newName || path.basename(filePath);
+
             filePayloads.push({
               id: fileId,
               vector,
               model,
               meta: {
                 path: filePath,
-                name: path.basename(filePath),
+                name: displayName,
                 type: isImage ? 'image' : 'document'
               },
               updatedAt: new Date().toISOString()
@@ -449,7 +458,7 @@ function registerEmbeddingsIpc({
   // New endpoint for finding similar documents
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.FIND_SIMILAR,
-    createChromaHandler(async (event, { fileId, topK = 10 }) => {
+    createChromaHandler(async (event, { fileId, topK = SEARCH.DEFAULT_TOP_K_SIMILAR }) => {
       // HIGH PRIORITY FIX: Add timeout and validation (addresses HIGH-11)
       const QUERY_TIMEOUT = TIMEOUTS.SEMANTIC_QUERY;
       const MAX_TOP_K = LIMITS.MAX_TOP_K;
@@ -504,62 +513,67 @@ function registerEmbeddingsIpc({
   );
 
   // Global semantic search (query -> ranked files)
+  // Uses SearchService.hybridSearch for combined BM25 + vector search with RRF fusion
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDINGS.SEARCH,
-    createChromaHandler(async (event, { query, topK = 20 } = {}) => {
-      const QUERY_TIMEOUT = TIMEOUTS.SEMANTIC_QUERY;
-      const MAX_TOP_K = LIMITS.MAX_TOP_K;
-
-      try {
-        const cleanQuery = typeof query === 'string' ? query.trim() : '';
-        if (!cleanQuery) {
-          return { success: false, error: 'Query is required' };
-        }
-        if (cleanQuery.length < 2 || cleanQuery.length > 2000) {
-          return { success: false, error: 'Query length must be between 2 and 2000 characters' };
-        }
-
-        // Validate topK parameter
-        if (!Number.isInteger(topK) || topK < 1 || topK > MAX_TOP_K) {
-          return {
-            success: false,
-            error: `topK must be between 1 and ${MAX_TOP_K}`
-          };
-        }
-
-        // Create timeout promise
-        let timeoutId;
-        const timeoutPromise = new Promise((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error('Query timeout exceeded')), QUERY_TIMEOUT);
-        });
+    createChromaHandler(
+      async (event, { query, topK = SEARCH.DEFAULT_TOP_K, mode = 'hybrid', minScore } = {}) => {
+        const MAX_TOP_K = LIMITS.MAX_TOP_K;
 
         try {
-          const results = await Promise.race([
-            (async () => {
-              const embeddingService = getParallelEmbeddingService();
-              const { vector } = await embeddingService.embedText(cleanQuery);
-              return chromaDbService.querySimilarFiles(vector, topK);
-            })(),
-            timeoutPromise
-          ]);
+          const cleanQuery = typeof query === 'string' ? query.trim() : '';
+          if (!cleanQuery) {
+            return { success: false, error: 'Query is required' };
+          }
+          if (cleanQuery.length < 2 || cleanQuery.length > 2000) {
+            return { success: false, error: 'Query length must be between 2 and 2000 characters' };
+          }
 
-          return { success: true, results };
-        } finally {
-          if (timeoutId) clearTimeout(timeoutId);
+          // Validate topK parameter
+          if (!Number.isInteger(topK) || topK < 1 || topK > MAX_TOP_K) {
+            return {
+              success: false,
+              error: `topK must be between 1 and ${MAX_TOP_K}`
+            };
+          }
+
+          // Use SearchService for hybrid BM25 + vector search with quality filtering
+          const service = getSearchService();
+          const searchOptions = {
+            topK,
+            mode, // 'hybrid', 'vector', or 'bm25'
+            ...(typeof minScore === 'number' && { minScore })
+          };
+
+          const result = await service.hybridSearch(cleanQuery, searchOptions);
+
+          if (!result.success) {
+            return {
+              success: false,
+              error: result.error || 'Search failed'
+            };
+          }
+
+          return {
+            success: true,
+            results: result.results,
+            mode: result.mode,
+            meta: result.meta
+          };
+        } catch (e) {
+          logger.error('[EMBEDDINGS] Search failed:', {
+            topK,
+            error: e.message,
+            timeout: e.message.includes('timeout')
+          });
+          return {
+            success: false,
+            error: e.message,
+            timeout: e.message.includes('timeout')
+          };
         }
-      } catch (e) {
-        logger.error('[EMBEDDINGS] Search failed:', {
-          topK,
-          error: e.message,
-          timeout: e.message.includes('timeout')
-        });
-        return {
-          success: false,
-          error: e.message,
-          timeout: e.message.includes('timeout')
-        };
       }
-    })
+    )
   );
 
   // Score a subset of file IDs against a query (for "search within graph")
@@ -649,22 +663,9 @@ function registerEmbeddingsIpc({
   // Hybrid Search Handlers
   // ============================================================================
 
-  /**
-   * Perform hybrid search combining BM25 keyword search with vector similarity
-   */
-  ipcMain.handle(
-    IPC_CHANNELS.EMBEDDINGS.HYBRID_SEARCH,
-    createChromaHandler(async (event, { query, options = {} } = {}) => {
-      try {
-        const service = getSearchService();
-        const result = await service.hybridSearch(query, options);
-        return result;
-      } catch (e) {
-        logger.error('[EMBEDDINGS] Hybrid search failed:', e);
-        return { success: false, error: e.message };
-      }
-    })
-  );
+  // NOTE: HYBRID_SEARCH handler removed - use SEARCH handler instead
+  // The SEARCH handler now uses SearchService.hybridSearch() internally
+  // with full support for mode: 'hybrid' | 'vector' | 'bm25'
 
   /**
    * Rebuild the BM25 keyword search index
@@ -743,6 +744,17 @@ function registerEmbeddingsIpc({
     IPC_CHANNELS.EMBEDDINGS.COMPUTE_CLUSTERS,
     createChromaHandler(async (event, { k = 'auto', generateLabels = true } = {}) => {
       try {
+        // Validate k parameter
+        if (k !== 'auto') {
+          const numK = Number(k);
+          if (!Number.isInteger(numK) || numK < 1 || numK > 100) {
+            return {
+              success: false,
+              error: "k must be 'auto' or an integer between 1 and 100"
+            };
+          }
+        }
+
         const service = getClusteringService();
         const result = await service.computeClusters(k);
 
@@ -770,7 +782,7 @@ function registerEmbeddingsIpc({
       try {
         const service = getClusteringService();
         const clusters = service.getClustersForGraph();
-        const crossClusterEdges = service.findCrossClusterEdges(0.5);
+        const crossClusterEdges = service.findCrossClusterEdges(THRESHOLDS.SIMILARITY_EDGE_DEFAULT);
 
         return {
           success: true,
@@ -819,16 +831,52 @@ function registerEmbeddingsIpc({
     IPC_CHANNELS.EMBEDDINGS.GET_SIMILARITY_EDGES,
     withErrorLogging(
       logger,
-      async (event, { fileIds, threshold = 0.5, maxEdgesPerNode = 3 } = {}) => {
+      async (
+        event,
+        {
+          fileIds,
+          threshold = THRESHOLDS.SIMILARITY_EDGE_DEFAULT,
+          maxEdgesPerNode = THRESHOLDS.SIMILARITY_EDGE_MAX_PER_NODE
+        } = {}
+      ) => {
         try {
           if (!Array.isArray(fileIds) || fileIds.length < 2) {
             return { success: true, edges: [] };
           }
 
+          // Validate threshold (should be between 0 and 1)
+          const numThreshold = Number(threshold);
+          if (isNaN(numThreshold) || numThreshold < 0 || numThreshold > 1) {
+            return {
+              success: false,
+              error: 'threshold must be a number between 0 and 1',
+              edges: []
+            };
+          }
+
+          // Validate maxEdgesPerNode (should be a positive integer)
+          const numMaxEdges = Number(maxEdgesPerNode);
+          if (!Number.isInteger(numMaxEdges) || numMaxEdges < 1 || numMaxEdges > 20) {
+            return {
+              success: false,
+              error: 'maxEdgesPerNode must be an integer between 1 and 20',
+              edges: []
+            };
+          }
+
+          // Filter and limit fileIds
+          const validIds = fileIds
+            .filter((id) => typeof id === 'string' && id.length > 0 && id.length < 2048)
+            .slice(0, 500); // Limit to 500 files for performance
+
+          if (validIds.length < 2) {
+            return { success: true, edges: [] };
+          }
+
           const service = getClusteringService();
-          const edges = await service.findFileSimilarityEdges(fileIds, {
-            threshold,
-            maxEdgesPerNode
+          const edges = await service.findFileSimilarityEdges(validIds, {
+            threshold: numThreshold,
+            maxEdgesPerNode: numMaxEdges
           });
 
           return {

@@ -2,7 +2,12 @@
  * ELK.js layout utility for ReactFlow graph visualization
  * Provides intelligent hierarchical graph layout with proper spacing
  *
- * Performance: Uses Web Worker for graphs with 50+ nodes to prevent UI blocking
+ * Performance optimizations:
+ * - Debounced layout requests to prevent rapid re-layouts
+ * - Request deduplication to avoid redundant computations
+ * - Progressive rendering hints for large graphs
+ * - Batched position updates
+ *
  * @see https://github.com/kieler/elkjs#web-workers
  */
 
@@ -14,6 +19,14 @@ const elk = new ELK();
 
 // Threshold for when to log performance warnings
 const LARGE_GRAPH_THRESHOLD = 100;
+
+// Threshold for "very large" graphs that need special handling
+const VERY_LARGE_GRAPH_THRESHOLD = 200;
+
+// Debounce tracking for layout requests
+let pendingLayoutPromise = null;
+let layoutDebounceTimer = null;
+const LAYOUT_DEBOUNCE_MS = 150;
 
 /**
  * Node size configuration for different node types
@@ -113,6 +126,143 @@ export async function elkLayout(nodes, edges, options = {}) {
     // Return original nodes if layout fails
     return nodes;
   }
+}
+
+/**
+ * Debounced version of elkLayout that prevents rapid re-layouts
+ * Coalesces multiple layout requests into a single execution
+ *
+ * Benefits:
+ * - Prevents UI jank from rapid search queries
+ * - Deduplicates redundant layout requests
+ * - Returns same promise for concurrent calls
+ *
+ * @param {Array} nodes - ReactFlow nodes
+ * @param {Array} edges - ReactFlow edges
+ * @param {Object} options - Layout options
+ * @param {number} options.debounceMs - Debounce delay (default: 150ms)
+ * @returns {Promise<Array>} Nodes with updated positions
+ */
+export function debouncedElkLayout(nodes, edges, options = {}) {
+  const { debounceMs = LAYOUT_DEBOUNCE_MS, ...layoutOptions } = options;
+
+  return new Promise((resolve) => {
+    // Clear any pending debounce timer
+    if (layoutDebounceTimer) {
+      clearTimeout(layoutDebounceTimer);
+    }
+
+    // Set up debounced execution
+    layoutDebounceTimer = setTimeout(async () => {
+      layoutDebounceTimer = null;
+
+      // If there's already a layout in progress, wait for it
+      if (pendingLayoutPromise) {
+        try {
+          const result = await pendingLayoutPromise;
+          resolve(result);
+          return;
+        } catch {
+          // Fall through to new layout
+        }
+      }
+
+      // Execute the layout
+      pendingLayoutPromise = elkLayout(nodes, edges, layoutOptions);
+
+      try {
+        const result = await pendingLayoutPromise;
+        resolve(result);
+      } catch (error) {
+        logger.error('[elkLayout] Debounced layout failed:', error);
+        resolve(nodes); // Return original nodes on error
+      } finally {
+        pendingLayoutPromise = null;
+      }
+    }, debounceMs);
+  });
+}
+
+/**
+ * Cancel any pending debounced layout
+ * Useful when component unmounts or user cancels operation
+ */
+export function cancelPendingLayout() {
+  if (layoutDebounceTimer) {
+    clearTimeout(layoutDebounceTimer);
+    layoutDebounceTimer = null;
+  }
+  pendingLayoutPromise = null;
+}
+
+/**
+ * Smart layout that automatically chooses the best strategy
+ * based on graph size and complexity
+ *
+ * @param {Array} nodes - ReactFlow nodes
+ * @param {Array} edges - ReactFlow edges
+ * @param {Object} options - Layout options
+ * @param {boolean} options.progressive - Enable progressive rendering for large graphs
+ * @returns {Promise<{nodes: Array, isPartial: boolean, totalNodes: number}>}
+ */
+export async function smartLayout(nodes, edges, options = {}) {
+  const { progressive = true, maxInitialNodes = 50, ...layoutOptions } = options;
+
+  if (!nodes || nodes.length === 0) {
+    return { nodes, isPartial: false, totalNodes: 0 };
+  }
+
+  const totalNodes = nodes.length;
+
+  // For very large graphs with progressive enabled, layout only important nodes first
+  if (progressive && totalNodes > VERY_LARGE_GRAPH_THRESHOLD) {
+    logger.info(`[elkLayout] Progressive layout for ${totalNodes} nodes`);
+
+    // Sort nodes by importance (score, or if no score, keep original order)
+    const sortedNodes = [...nodes].sort((a, b) => {
+      const scoreA = a.data?.score || a.data?.withinScore || 0;
+      const scoreB = b.data?.score || b.data?.withinScore || 0;
+      return scoreB - scoreA;
+    });
+
+    // Take top N nodes for initial layout
+    const initialNodes = sortedNodes.slice(0, maxInitialNodes);
+    const initialNodeIds = new Set(initialNodes.map((n) => n.id));
+
+    // Filter edges to only include those between initial nodes
+    const initialEdges = edges.filter(
+      (e) => initialNodeIds.has(e.source) && initialNodeIds.has(e.target)
+    );
+
+    // Layout initial nodes
+    const layoutedInitial = await elkLayout(initialNodes, initialEdges, layoutOptions);
+
+    // For remaining nodes, position them in a grid below the laid out nodes
+    const remainingNodes = sortedNodes.slice(maxInitialNodes);
+    const bounds = getLayoutBounds(layoutedInitial);
+    const gridStartY = bounds.maxY + 100;
+    const gridColumns = 5;
+    const gridSpacing = { x: 200, y: 80 };
+
+    const layoutedRemaining = remainingNodes.map((node, index) => ({
+      ...node,
+      position: {
+        x: (index % gridColumns) * gridSpacing.x,
+        y: gridStartY + Math.floor(index / gridColumns) * gridSpacing.y
+      }
+    }));
+
+    return {
+      nodes: [...layoutedInitial, ...layoutedRemaining],
+      isPartial: true,
+      totalNodes,
+      layoutedCount: initialNodes.length
+    };
+  }
+
+  // For smaller graphs, do full layout
+  const layoutedNodes = await elkLayout(nodes, edges, layoutOptions);
+  return { nodes: layoutedNodes, isPartial: false, totalNodes };
 }
 
 /**
@@ -343,3 +493,6 @@ export function clusterExpansionLayout(clusterNode, memberNodes, options = {}) {
 }
 
 export default elkLayout;
+
+// Also export the new functions
+export { LARGE_GRAPH_THRESHOLD, VERY_LARGE_GRAPH_THRESHOLD };

@@ -19,14 +19,22 @@ import {
   GitBranch
 } from 'lucide-react';
 
-import Modal from '../Modal';
+import Modal, { ConfirmModal } from '../Modal';
 import { Button, Input } from '../ui';
 import { TIMEOUTS } from '../../../shared/performanceConstants';
 import { logger } from '../../../shared/logger';
 import { safeBasename } from '../../utils/pathUtils';
 import { formatScore, scoreToOpacity, clamp01 } from '../../utils/scoreUtils';
 import { makeQueryNodeId, defaultNodePosition } from '../../utils/graphUtils';
-import { elkLayout, clusterRadialLayout, clusterExpansionLayout } from '../../utils/elkLayout';
+import {
+  elkLayout,
+  debouncedElkLayout,
+  cancelPendingLayout,
+  smartLayout,
+  clusterRadialLayout,
+  clusterExpansionLayout,
+  LARGE_GRAPH_THRESHOLD
+} from '../../utils/elkLayout';
 import ClusterNode from './ClusterNode';
 import SimilarityEdge from './SimilarityEdge';
 
@@ -146,11 +154,18 @@ function ResultRow({ result, isSelected, onSelect, onOpen, onReveal, onCopyPath 
   const type = result?.metadata?.type || '';
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(result)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(result);
+        }
+      }}
       className={`
-        w-full text-left rounded-xl border p-3 transition-colors
+        w-full text-left rounded-xl border p-3 transition-colors cursor-pointer
         ${isSelected ? 'border-stratosort-blue bg-stratosort-blue/5' : 'border-border-soft bg-white/70 hover:bg-white'}
       `}
     >
@@ -196,7 +211,7 @@ function ResultRow({ result, isSelected, onSelect, onOpen, onReveal, onCopyPath 
           </Button>
         </div>
       ) : null}
-    </button>
+    </div>
   );
 }
 
@@ -367,6 +382,9 @@ export default function UnifiedSearchModal({
   const [showClusters, setShowClusters] = useState(false);
   const [isComputingClusters, setIsComputingClusters] = useState(false);
 
+  // Confirmation modal state
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
   // Refs
   const lastSearchRef = useRef(0);
   const withinReqRef = useRef(0);
@@ -376,7 +394,11 @@ export default function UnifiedSearchModal({
   // ============================================================================
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      // Cancel any pending layout operations when modal closes
+      cancelPendingLayout();
+      return () => {};
+    }
     setActiveTab(initialTab);
     setQuery('');
     setDebouncedQuery('');
@@ -402,6 +424,9 @@ export default function UnifiedSearchModal({
     // Clustering state
     setShowClusters(false);
     setIsComputingClusters(false);
+
+    // Cleanup pending layouts on unmount
+    return () => cancelPendingLayout();
   }, [isOpen, initialTab]);
 
   // ============================================================================
@@ -422,7 +447,8 @@ export default function UnifiedSearchModal({
       } else {
         setStats(null);
       }
-    } catch {
+    } catch (e) {
+      logger.warn('Failed to load embedding stats', { error: e?.message });
       setStats(null);
     } finally {
       setIsLoadingStats(false);
@@ -533,7 +559,11 @@ export default function UnifiedSearchModal({
       setError('');
 
       try {
-        const response = await window.electronAPI?.embeddings?.search?.(q, defaultTopK);
+        // Use hybrid search with options
+        const response = await window.electronAPI?.embeddings?.search?.(q, {
+          topK: defaultTopK,
+          mode: 'hybrid'
+        });
         if (cancelled) return;
         if (lastSearchRef.current !== requestId) return;
 
@@ -846,7 +876,11 @@ export default function UnifiedSearchModal({
     setGraphStatus('Searching...');
 
     try {
-      const resp = await window.electronAPI?.embeddings?.search?.(q, defaultTopK);
+      // Use hybrid search with options
+      const resp = await window.electronAPI?.embeddings?.search?.(q, {
+        topK: defaultTopK,
+        mode: 'hybrid'
+      });
       if (!resp || resp.success !== true) {
         throw new Error(resp?.error || 'Search failed');
       }
@@ -924,7 +958,7 @@ export default function UnifiedSearchModal({
       setSelectedNodeId(results[0]?.id || queryNodeId);
       setGraphStatus(`${results.length} result${results.length === 1 ? '' : 's'}`);
 
-      // Apply auto-layout if enabled
+      // Apply auto-layout if enabled (debounced to prevent rapid re-layouts)
       if (autoLayout && nextNodes.length > 1) {
         setGraphStatus('Applying layout...');
         try {
@@ -947,13 +981,34 @@ export default function UnifiedSearchModal({
               })()
             : nextEdges;
 
-          const layoutedNodes = await elkLayout(finalNodes, finalEdges, {
-            direction: 'RIGHT',
-            spacing: 80,
-            layerSpacing: 120
-          });
+          // Use smart layout for large graphs (progressive rendering)
+          // Use debounced layout for smaller graphs
+          let layoutedNodes;
+          if (finalNodes.length > LARGE_GRAPH_THRESHOLD) {
+            const result = await smartLayout(finalNodes, finalEdges, {
+              direction: 'RIGHT',
+              spacing: 80,
+              layerSpacing: 120,
+              progressive: true
+            });
+            layoutedNodes = result.nodes;
+            if (result.isPartial) {
+              setGraphStatus(
+                `${results.length} results (${result.layoutedCount} laid out, ${finalNodes.length - result.layoutedCount} in grid)`
+              );
+            }
+          } else {
+            layoutedNodes = await debouncedElkLayout(finalNodes, finalEdges, {
+              direction: 'RIGHT',
+              spacing: 80,
+              layerSpacing: 120,
+              debounceMs: 150
+            });
+          }
           setNodes(layoutedNodes);
-          setGraphStatus(`${results.length} result${results.length === 1 ? '' : 's'} (laid out)`);
+          if (finalNodes.length <= LARGE_GRAPH_THRESHOLD) {
+            setGraphStatus(`${results.length} result${results.length === 1 ? '' : 's'} (laid out)`);
+          }
         } catch (layoutError) {
           logger.warn('[Graph] Auto-layout failed:', layoutError);
         }
@@ -1023,10 +1078,17 @@ export default function UnifiedSearchModal({
     const seedId = seed.id;
 
     setError('');
-    setGraphStatus('Expanding...');
+    setGraphStatus(`Expanding (${hopCount} hop${hopCount > 1 ? 's' : ''})...`);
 
     try {
-      const resp = await window.electronAPI?.embeddings?.findSimilar?.(seedId, 10);
+      // Use multi-hop expansion when hopCount > 1, otherwise use findSimilar for single hop
+      const resp =
+        hopCount > 1
+          ? await window.electronAPI?.embeddings?.findMultiHop?.([seedId], {
+              hops: hopCount,
+              decay: decayFactor
+            })
+          : await window.electronAPI?.embeddings?.findSimilar?.(seedId, 10);
       if (!resp || resp.success !== true) {
         throw new Error(resp?.error || 'Expand failed');
       }
@@ -1112,7 +1174,7 @@ export default function UnifiedSearchModal({
 
       setGraphStatus(`Expanded: +${results.length}`);
 
-      // Apply auto-layout if enabled
+      // Apply auto-layout if enabled (debounced)
       if (autoLayout && nextNodes.length > 0) {
         setGraphStatus('Applying layout...');
         try {
@@ -1131,10 +1193,12 @@ export default function UnifiedSearchModal({
             return Array.from(map.values());
           })();
 
-          const layoutedNodes = await elkLayout(finalNodes, finalEdges, {
+          // Use debounced layout for expansion
+          const layoutedNodes = await debouncedElkLayout(finalNodes, finalEdges, {
             direction: 'RIGHT',
             spacing: 80,
-            layerSpacing: 120
+            layerSpacing: 120,
+            debounceMs: 100 // Shorter debounce for explicit user action
           });
           setNodes(layoutedNodes);
           setGraphStatus(`Expanded: +${results.length} (laid out)`);
@@ -1146,7 +1210,7 @@ export default function UnifiedSearchModal({
       setGraphStatus('');
       setError(e?.message || 'Expand failed');
     }
-  }, [selectedNode, upsertFileNode, autoLayout, nodes, edges]);
+  }, [selectedNode, upsertFileNode, autoLayout, nodes, edges, hopCount, decayFactor]);
 
   // Debounce within-graph query
   useEffect(() => {
@@ -1666,13 +1730,12 @@ export default function UnifiedSearchModal({
                     variant="ghost"
                     size="sm"
                     onClick={() => {
-                      setNodes([]);
-                      setEdges([]);
-                      setSelectedNodeId(null);
-                      setError('');
-                      setGraphStatus('');
-                      setShowClusters(false);
+                      if (nodes.length > 0) {
+                        setShowClearConfirm(true);
+                      }
                     }}
+                    disabled={nodes.length === 0}
+                    title={nodes.length === 0 ? 'Nothing to clear' : 'Clear all nodes from graph'}
                   >
                     Clear
                   </Button>
@@ -1822,6 +1885,25 @@ export default function UnifiedSearchModal({
           </div>
         )}
       </div>
+
+      {/* Clear confirmation modal */}
+      <ConfirmModal
+        isOpen={showClearConfirm}
+        onClose={() => setShowClearConfirm(false)}
+        onConfirm={() => {
+          setNodes([]);
+          setEdges([]);
+          setSelectedNodeId(null);
+          setError('');
+          setGraphStatus('');
+          setShowClusters(false);
+        }}
+        title="Clear Graph?"
+        message="This will remove all nodes and connections from your exploration. This cannot be undone."
+        confirmText="Clear Graph"
+        cancelText="Cancel"
+        variant="warning"
+      />
     </Modal>
   );
 }
