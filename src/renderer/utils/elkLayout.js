@@ -368,38 +368,6 @@ export function radialLayout(centerNode, childNodes, options = {}) {
 }
 
 /**
- * Layout nodes in a force-directed manner (simpler than ELK force)
- * Good for quick layouts without full ELK overhead
- *
- * @param {Array} nodes - ReactFlow nodes
- * @param {Array} edges - ReactFlow edges
- * @param {Object} options - Layout options
- * @returns {Promise<Array>} Nodes with updated positions
- */
-export async function forceLayout(nodes, edges, options = {}) {
-  return elkLayout(nodes, edges, {
-    ...options,
-    algorithm: 'force'
-  });
-}
-
-/**
- * Layout nodes using stress minimization
- * Good for preserving relative distances
- *
- * @param {Array} nodes - ReactFlow nodes
- * @param {Array} edges - ReactFlow edges
- * @param {Object} options - Layout options
- * @returns {Promise<Array>} Nodes with updated positions
- */
-export async function stressLayout(nodes, edges, options = {}) {
-  return elkLayout(nodes, edges, {
-    ...options,
-    algorithm: 'stress'
-  });
-}
-
-/**
  * Layout clusters in a circular/radial pattern
  * Good for visualizing cluster relationships
  *

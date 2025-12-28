@@ -234,7 +234,7 @@ const NavActions = memo(function NavActions({ onSettingsClick }) {
         type="button"
         onClick={isWidgetOpen ? closeWidget : openWidget}
         className={`
-          h-9 w-9 rounded-lg flex items-center justify-center
+          h-9 px-3 rounded-lg flex items-center justify-center gap-2
           text-system-gray-500 hover:text-stratosort-blue
           bg-white/80 hover:bg-white border border-system-gray-200 hover:border-stratosort-blue/30
           shadow-sm hover:shadow-md
@@ -242,10 +242,14 @@ const NavActions = memo(function NavActions({ onSettingsClick }) {
           focus:outline-none focus-visible:ring-2 focus-visible:ring-stratosort-blue focus-visible:ring-offset-2
           ${isWidgetOpen ? 'bg-stratosort-blue/10 border-stratosort-blue/50 text-stratosort-blue' : ''}
         `}
-        aria-label={isWidgetOpen ? 'Close Search Widget' : 'Open Search Widget'}
-        title={isWidgetOpen ? 'Close Search Widget' : 'Open Search Widget'}
+        aria-label={isWidgetOpen ? 'Close Search Widget' : 'Open Search Widget (Ctrl+K)'}
+        title={isWidgetOpen ? 'Close Search Widget' : 'Search files (Ctrl+K)'}
       >
-        <SearchIcon className="h-5 w-5" />
+        <SearchIcon className="h-4 w-4" />
+        <span className="text-xs font-medium hidden sm:inline">Search</span>
+        <kbd className="hidden md:inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-system-gray-100 rounded text-[10px] font-mono text-system-gray-500">
+          {isMac ? '⌘' : 'Ctrl+'}K
+        </kbd>
       </button>
       <button
         type="button"
