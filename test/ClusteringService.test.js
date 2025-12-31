@@ -241,7 +241,7 @@ describe('ClusteringService', () => {
       expect(centroids[1]).toEqual([0, 1.5, 0]);
     });
 
-    test('handles empty clusters', () => {
+    test('handles empty clusters by reinitializing with farthest point', () => {
       const files = [{ embedding: [1, 0, 0] }, { embedding: [2, 0, 0] }];
       const assignments = [0, 0]; // All in cluster 0, cluster 1 is empty
       // updateCentroids modifies centroids in place
@@ -254,8 +254,9 @@ describe('ClusteringService', () => {
 
       expect(centroids).toHaveLength(2);
       expect(centroids[0]).toEqual([1.5, 0, 0]);
-      // Empty cluster keeps its current value (zeros in this case)
-      expect(centroids[1]).toEqual([0, 0, 0]);
+      // Empty cluster is reinitialized with the point farthest from its assigned centroid
+      // Both files have equal distance (0.5) from centroid [1.5,0,0], so first one (file 0) is used
+      expect(centroids[1]).toEqual([1, 0, 0]);
     });
   });
 
@@ -380,14 +381,15 @@ describe('ClusteringService', () => {
       expect(service.clusterLabels.get(1)).toBe('Cluster 2');
     });
 
-    test('returns error when ollama is null', async () => {
+    test('uses fallback labels when ollama is null', async () => {
       service.ollama = null;
 
       const result = await service.generateClusterLabels();
 
-      // Should return error when ollama is not available
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Ollama service not available');
+      // Should still succeed with fallback labels when ollama is not available
+      expect(result.success).toBe(true);
+      expect(service.clusterLabels.get(0)).toBe('Cluster 1');
+      expect(service.clusterLabels.get(1)).toBe('Cluster 2');
     });
   });
 
