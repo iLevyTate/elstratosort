@@ -1,3 +1,6 @@
+// FIX: Load environment variables from .env file before anything else
+require('dotenv').config();
+
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -267,8 +270,10 @@ const { registerAllIpc } = require('./ipc');
 
 // Prevent multiple instances
 const gotTheLock = app.requestSingleInstanceLock();
+console.log('[DEBUG] Single instance lock:', gotTheLock);
 
 if (!gotTheLock) {
+  console.log('[DEBUG] Failed to get lock, quitting');
   app.quit();
 } else {
   const secondInstanceHandler = (_event, argv) => {
@@ -323,6 +328,10 @@ if (!gotTheLock) {
 
 // Initialize services after app is ready
 app.whenReady().then(async () => {
+  // FIX: Create a referenced interval to keep the event loop alive during startup
+  // This prevents premature exit when async operations use unreferenced timeouts
+  const startupKeepalive = setInterval(() => {}, 1000);
+
   try {
     // Initialize error handler and logging
     await errorHandler.initialize();
@@ -629,6 +638,8 @@ app.whenReady().then(async () => {
     }
 
     createWindow();
+    // FIX: Clear keepalive now that window is created and keeping event loop alive
+    clearInterval(startupKeepalive);
     handleSettingsChanged(initialSettings);
 
     // Run first-time setup in background (non-blocking)
@@ -791,6 +802,8 @@ app.whenReady().then(async () => {
     // Still create window even if startup fails - allow degraded mode
     logger.warn('[STARTUP] Creating window in degraded mode due to startup errors');
     createWindow();
+    // FIX: Clear keepalive now that window is created and keeping event loop alive
+    clearInterval(startupKeepalive);
   }
 });
 

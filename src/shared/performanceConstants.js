@@ -80,7 +80,11 @@ const TIMEOUTS = {
   GLOBAL_ANALYSIS: 10 * 60 * 1000, // 10 minutes - max total analysis time
   HEARTBEAT_INTERVAL: 30000, // 30 seconds - progress heartbeat during analysis
   STALE_ACTIVITY: 15 * 60 * 1000, // 15 minutes - activity considered stale
-  METRICS_BROADCAST: 30000 // 30 seconds - system metrics broadcast to renderer
+  METRICS_BROADCAST: 30000, // 30 seconds - system metrics broadcast to renderer
+  // FIX: Centralized UI timing constants (previously hardcoded)
+  WIDGET_AUTO_SHOW: 1500, // Delay before auto-showing floating widgets
+  EMBEDDING_CHECK: 1000, // Delay before checking embeddings status
+  STUCK_ANALYSIS_CHECK: 2 * 60 * 1000 // 2 minutes - analysis considered stuck
 };
 
 const RETRY = {

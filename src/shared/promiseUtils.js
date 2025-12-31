@@ -29,11 +29,7 @@ logger.setContext('PromiseUtils');
  */
 function delay(ms) {
   return new Promise((resolve) => {
-    const timeoutId = setTimeout(resolve, ms);
-    // Allow process to exit even if timeout is pending
-    if (timeoutId.unref) {
-      timeoutId.unref();
-    }
+    setTimeout(resolve, ms);
   });
 }
 
@@ -81,10 +77,7 @@ function withTimeout(fnOrPromise, timeoutMs, operationName = 'Operation') {
       timeoutId = setTimeout(() => {
         reject(new Error(`${operationName} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      // Allow process to exit even if timeout is pending
-      if (timeoutId.unref) {
-        timeoutId.unref();
-      }
+      // FIX: Removed unref() that prevented timeouts from firing during startup
     });
     return { timeoutPromise, timeoutId };
   };
@@ -600,9 +593,6 @@ function createTimeoutRace(timeoutMs, message = 'Operation timed out') {
     }, timeoutMs);
 
     // Allow process to exit
-    if (timeoutId.unref) {
-      timeoutId.unref();
-    }
   });
 
   const cleanup = () => {

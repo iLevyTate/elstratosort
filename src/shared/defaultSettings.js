@@ -13,6 +13,8 @@ const DEFAULT_SETTINGS = {
   notifications: true,
   // Behavior
   defaultSmartFolderLocation: 'Documents',
+  // Last browsed path - remembers the last folder opened in file dialogs
+  lastBrowsedPath: null,
   maxConcurrentAnalysis: CONCURRENCY.DEFAULT_WORKERS,
   autoOrganize: false,
   backgroundMode: false,

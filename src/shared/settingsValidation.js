@@ -44,6 +44,11 @@ const VALIDATION_RULES = {
     maxLength: 500,
     required: false
   },
+  lastBrowsedPath: {
+    type: 'string',
+    maxLength: 1000,
+    required: false
+  },
   maxConcurrentAnalysis: {
     type: 'number',
     min: 1,

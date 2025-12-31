@@ -76,7 +76,8 @@ function sanitizeLogData(data) {
 
 class ErrorHandler {
   constructor() {
-    this.logPath = path.join(app.getPath('userData'), 'logs');
+    // FIX: Defer getting logPath until app is ready
+    this.logPath = null;
     this.currentLogFile = null;
     this.errorQueue = [];
     this.isInitialized = false;
@@ -84,6 +85,9 @@ class ErrorHandler {
 
   async initialize() {
     try {
+      // FIX: Set logPath here when app is ready (not in constructor)
+      this.logPath = path.join(app.getPath('userData'), 'logs');
+
       // Create logs directory
       await fs.mkdir(this.logPath, { recursive: true });
 
@@ -313,7 +317,9 @@ class ErrorHandler {
 
     try {
       const logLine = `${JSON.stringify(logEntry)}\n`;
-      await fs.appendFile(this.currentLogFile, logLine);
+      // FIX: Use sync version to avoid async issues during startup
+      const fsSync = require('fs');
+      fsSync.appendFileSync(this.currentLogFile, logLine);
     } catch (error) {
       logger.error('Failed to write to log file:', { error: error.message });
     }
@@ -342,17 +348,19 @@ class ErrorHandler {
    */
   async cleanupLogs(daysToKeep = 7) {
     try {
-      const files = await fs.readdir(this.logPath);
+      // FIX: Use sync operations to avoid async issues during startup
+      const fsSync = require('fs');
+      const files = fsSync.readdirSync(this.logPath);
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 
       for (const file of files) {
         if (file.startsWith('stratosort-') && file.endsWith('.log')) {
           const filePath = path.join(this.logPath, file);
-          const stats = await fs.stat(filePath);
+          const stats = fsSync.statSync(filePath);
 
           if (stats.mtime < cutoffDate) {
-            await fs.unlink(filePath);
+            fsSync.unlinkSync(filePath);
             await this.log('info', `Cleaned up old log file: ${file}`);
           }
         }

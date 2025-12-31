@@ -720,7 +720,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
         fileIds,
         threshold: options.threshold,
         maxEdgesPerNode: options.maxEdgesPerNode
-      })
+      }),
+    // Get fresh file metadata from ChromaDB (for current paths after moves)
+    getFileMetadata: (fileIds) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.GET_FILE_METADATA, { fileIds }),
+    // Find near-duplicate files based on embedding similarity
+    findDuplicates: (options) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.FIND_DUPLICATES, options || {})
   },
 
   // Organization Suggestions
@@ -865,6 +871,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onOperationError: (callback) => secureIPC.safeOn('operation-error', callback),
     onOperationComplete: (callback) => secureIPC.safeOn('operation-complete', callback),
     onOperationFailed: (callback) => secureIPC.safeOn('operation-failed', callback),
+    // File operation events (move/delete) for search index invalidation
+    onFileOperationComplete: (callback) => secureIPC.safeOn('file-operation-complete', callback),
     // Send error report to main process (uses send, not invoke)
     sendError: (errorData) => {
       try {
