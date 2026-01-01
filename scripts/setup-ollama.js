@@ -43,7 +43,7 @@ const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
 // Ultra-lightweight models for accessibility (~2.3GB total vs previous ~8GB)
 const ESSENTIAL_MODELS = {
   text: ['qwen3:0.6b', 'llama3.2:latest', 'gemma2:2b', 'phi3:mini'], // 523MB - Ultra-fast, 40K context
-  vision: ['smolvlm2:2.2b', 'moondream:latest', 'llava:latest'], // ~1.5GB - Smallest VLM
+  vision: ['gemma3:latest', 'moondream:latest', 'llava:latest'], // Gemma 3 is multimodal (4B+ support vision)
   embedding: ['embeddinggemma:latest', 'mxbai-embed-large:latest', 'nomic-embed-text:latest'] // 308MB - Google's best, 768 dims
 };
 
