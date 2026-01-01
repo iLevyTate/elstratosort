@@ -84,7 +84,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   const [settings, setSettings] = useState({
     ollamaHost: SERVICE_URLS.OLLAMA_HOST,
     textModel: 'qwen3:0.6b',
-    visionModel: 'smolvlm2:2.2b',
+    visionModel: 'gemma3:latest', // Gemma 3 is multimodal (4B+ support vision)
     embeddingModel: DEFAULT_EMBED_MODEL,
     maxConcurrentAnalysis: 3,
     autoOrganize: false,
@@ -316,25 +316,21 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   }, [settings, addNotification, handleToggleSettings]);
 
   // Auto-save settings on change (debounced)
-  const autoSaveSettings = useDebouncedCallback(
-    async () => {
-      try {
-        const normalizedSettings = sanitizeSettings(settings);
-        const res = await window.electronAPI.settings.save(normalizedSettings);
-        if (res?.settings && typeof res.settings === 'object') {
-          skipAutoSaveRef.current = true;
-          setSettings((prev) => ({ ...prev, ...res.settings }));
-        }
-      } catch (error) {
-        logger.error('Auto-save settings failed', {
-          error: error.message,
-          stack: error.stack
-        });
+  const autoSaveSettings = useDebouncedCallback(async () => {
+    try {
+      const normalizedSettings = sanitizeSettings(settings);
+      const res = await window.electronAPI.settings.save(normalizedSettings);
+      if (res?.settings && typeof res.settings === 'object') {
+        skipAutoSaveRef.current = true;
+        setSettings((prev) => ({ ...prev, ...res.settings }));
       }
-    },
-    800,
-    [settings]
-  );
+    } catch (error) {
+      logger.error('Auto-save settings failed', {
+        error: error.message,
+        stack: error.stack
+      });
+    }
+  }, 800);
 
   useEffect(() => {
     if (isApiAvailable && settingsLoaded) {

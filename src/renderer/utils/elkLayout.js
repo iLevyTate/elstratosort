@@ -28,6 +28,11 @@ let pendingLayoutPromise = null;
 let layoutDebounceTimer = null;
 const LAYOUT_DEBOUNCE_MS = 150;
 
+// FIX: Track pending promise resolvers to prevent memory leaks
+// When a new layout request supersedes an old one, we resolve the old promises
+// with the current nodes to prevent them from hanging indefinitely
+let pendingResolvers = [];
+
 /**
  * Node size configuration for different node types
  */
@@ -147,20 +152,34 @@ export function debouncedElkLayout(nodes, edges, options = {}) {
   const { debounceMs = LAYOUT_DEBOUNCE_MS, ...layoutOptions } = options;
 
   return new Promise((resolve) => {
+    // FIX: Resolve any previously pending promises with current nodes
+    // This prevents memory leaks from promises that would never resolve
+    if (pendingResolvers.length > 0) {
+      pendingResolvers.forEach((prevResolve) => prevResolve(nodes));
+      pendingResolvers = [];
+    }
+
     // Clear any pending debounce timer
     if (layoutDebounceTimer) {
       clearTimeout(layoutDebounceTimer);
     }
 
+    // FIX: Track this resolver in case it gets superseded
+    pendingResolvers.push(resolve);
+
     // Set up debounced execution
     layoutDebounceTimer = setTimeout(async () => {
       layoutDebounceTimer = null;
+
+      // FIX: Clear pending resolvers since we're about to resolve them
+      const resolversToNotify = [...pendingResolvers];
+      pendingResolvers = [];
 
       // If there's already a layout in progress, wait for it
       if (pendingLayoutPromise) {
         try {
           const result = await pendingLayoutPromise;
-          resolve(result);
+          resolversToNotify.forEach((r) => r(result));
           return;
         } catch {
           // Fall through to new layout
@@ -172,10 +191,10 @@ export function debouncedElkLayout(nodes, edges, options = {}) {
 
       try {
         const result = await pendingLayoutPromise;
-        resolve(result);
+        resolversToNotify.forEach((r) => r(result));
       } catch (error) {
         logger.error('[elkLayout] Debounced layout failed:', error);
-        resolve(nodes); // Return original nodes on error
+        resolversToNotify.forEach((r) => r(nodes)); // Return original nodes on error
       } finally {
         pendingLayoutPromise = null;
       }
@@ -191,6 +210,12 @@ export function cancelPendingLayout() {
   if (layoutDebounceTimer) {
     clearTimeout(layoutDebounceTimer);
     layoutDebounceTimer = null;
+  }
+  // FIX: Resolve pending promises with empty array to prevent memory leaks
+  // Callers should handle the case where layout returns no nodes
+  if (pendingResolvers.length > 0) {
+    pendingResolvers.forEach((r) => r([]));
+    pendingResolvers = [];
   }
   pendingLayoutPromise = null;
 }

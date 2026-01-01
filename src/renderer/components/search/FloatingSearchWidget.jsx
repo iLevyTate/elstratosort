@@ -11,7 +11,9 @@ import { isMac } from '../../utils/platform';
 const FloatingSearchWidget = ({ isOpen, onClose, onOpenSearch, onOpenGraph }) => {
   const [position, setPosition] = useState({ x: 20, y: 100 });
   const [isDragging, setIsDragging] = useState(false);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  // FIX: Use ref instead of state for dragOffset to prevent useEffect re-runs during drag
+  // This prevents event listener churn when dragOffset changes
+  const dragOffsetRef = useRef({ x: 0, y: 0 });
   const widgetRef = useRef(null);
   const dragStartRef = useRef(null);
 
@@ -50,10 +52,11 @@ const FloatingSearchWidget = ({ isOpen, onClose, onOpenSearch, onOpenGraph }) =>
 
     const rect = widgetRef.current?.getBoundingClientRect();
     if (rect) {
-      setDragOffset({
+      // FIX: Use ref instead of setState to avoid triggering useEffect re-run
+      dragOffsetRef.current = {
         x: e.clientX - rect.left,
         y: e.clientY - rect.top
-      });
+      };
     }
 
     dragStartRef.current = { x: e.clientX, y: e.clientY };
@@ -66,8 +69,9 @@ const FloatingSearchWidget = ({ isOpen, onClose, onOpenSearch, onOpenGraph }) =>
     const handleMouseMove = (e) => {
       if (!dragStartRef.current) return;
 
-      const newX = e.clientX - dragOffset.x;
-      const newY = e.clientY - dragOffset.y;
+      // FIX: Use ref to access dragOffset to avoid adding it to deps
+      const newX = e.clientX - dragOffsetRef.current.x;
+      const newY = e.clientY - dragOffsetRef.current.y;
 
       // Constrain to viewport
       const maxX = window.innerWidth - (widgetRef.current?.offsetWidth || 320);
@@ -94,7 +98,8 @@ const FloatingSearchWidget = ({ isOpen, onClose, onOpenSearch, onOpenGraph }) =>
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, dragOffset, savePosition]);
+    // FIX: Removed dragOffset from deps since we now use a ref
+  }, [isDragging, savePosition]);
 
   if (!isOpen) return null;
 

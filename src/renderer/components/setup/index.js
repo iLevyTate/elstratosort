@@ -19,8 +19,8 @@ export default function FirstRunWizard({ onComplete }) {
       defaultChecked: true
     },
     {
-      id: 'smolvlm2:2.2b',
-      label: 'Vision model (smolvlm2:2.2b)',
+      id: 'gemma3:latest',
+      label: 'Vision model (gemma3:latest)',
       defaultChecked: true
     },
     {
@@ -167,7 +167,7 @@ export default function FirstRunWizard({ onComplete }) {
 }
 
 FirstRunWizard.propTypes = {
-  onComplete: PropTypes.func
+  onComplete: PropTypes.func.isRequired
 };
 
 export { default as SmartFolderItem } from './SmartFolderItem';
