@@ -650,7 +650,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       secureIPC.safeInvoke(IPC_CHANNELS.SMART_FOLDERS.MATCH, {
         text,
         smartFolders: folders
-      })
+      }),
+    resetToDefaults: () => secureIPC.safeInvoke(IPC_CHANNELS.SMART_FOLDERS.RESET_TO_DEFAULTS)
   },
 
   // Analysis

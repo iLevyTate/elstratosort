@@ -1,11 +1,36 @@
 const { Ollama } = require('ollama');
-const { withErrorLogging, withValidation } = require('./ipcWrappers');
+const { withErrorLogging, withValidation, safeHandle } = require('./ipcWrappers');
 const { optionalUrl: optionalUrlSchema } = require('./validationSchemas');
 const { SERVICE_URLS } = require('../../shared/configDefaults');
 const { normalizeOllamaUrl } = require('../ollamaUtils');
 const { LENIENT_URL_PATTERN } = require('../../shared/validationConstants');
 const { categorizeModels } = require('../../shared/modelCategorization');
+const { TIMEOUTS } = require('../../shared/performanceConstants');
 let z;
+
+/**
+ * FIX: CRITICAL - Helper to add timeout to Ollama API calls in IPC handlers
+ * Previously, IPC handlers called Ollama directly without timeout, potentially hanging the main process
+ * @param {Promise} promise - The promise to wrap with timeout
+ * @param {number} timeoutMs - Timeout in milliseconds
+ * @param {string} operation - Operation name for error message
+ * @returns {Promise} - Promise that rejects if timeout is exceeded
+ */
+async function withOllamaTimeout(promise, timeoutMs, operation) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${operation} timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    return result;
+  } finally {
+    // FIX: Clear timeout on success or error to prevent timer leak
+    clearTimeout(timeoutId);
+  }
+}
 
 function isValidOllamaUrl(url) {
   if (!url || typeof url !== 'string') return false;
@@ -35,12 +60,18 @@ function registerOllamaIpc({
 }) {
   // Model categorization is now handled by shared/modelCategorization.js
 
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.OLLAMA.GET_MODELS,
     withErrorLogging(logger, async () => {
       try {
         const ollama = getOllama();
-        const response = await ollama.list();
+        // FIX: Add timeout to prevent main process hang if Ollama is unresponsive
+        const response = await withOllamaTimeout(
+          ollama.list(),
+          TIMEOUTS.MODEL_DISCOVERY,
+          'Get models'
+        );
         const models = response.models || [];
 
         // Use shared categorization utility (handles sorting)
@@ -102,7 +133,12 @@ function registerOllamaIpc({
             const testUrl = normalizeOllamaUrl(hostUrl);
 
             const testOllama = new Ollama({ host: testUrl });
-            const response = await testOllama.list();
+            // FIX: Add timeout to prevent main process hang during connection test
+            const response = await withOllamaTimeout(
+              testOllama.list(),
+              TIMEOUTS.API_REQUEST,
+              'Test connection'
+            );
             systemAnalytics.ollamaHealth = {
               status: 'healthy',
               host: testUrl,
@@ -143,7 +179,12 @@ function registerOllamaIpc({
             }
 
             const testOllama = new Ollama({ host: testUrl });
-            const response = await testOllama.list();
+            // FIX: Add timeout to prevent main process hang during connection test
+            const response = await withOllamaTimeout(
+              testOllama.list(),
+              TIMEOUTS.API_REQUEST,
+              'Test connection'
+            );
             systemAnalytics.ollamaHealth = {
               status: 'healthy',
               host: testUrl,
@@ -175,10 +216,11 @@ function registerOllamaIpc({
             };
           }
         });
-  ipcMain.handle(IPC_CHANNELS.OLLAMA.TEST_CONNECTION, testConnectionHandler);
+  safeHandle(ipcMain, IPC_CHANNELS.OLLAMA.TEST_CONNECTION, testConnectionHandler);
 
   // Pull models (best-effort, returns status per model)
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.OLLAMA.PULL_MODELS,
     withErrorLogging(logger, async (_event, models = []) => {
       try {
@@ -218,12 +260,18 @@ function registerOllamaIpc({
   );
 
   // Delete a model
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.OLLAMA.DELETE_MODEL,
     withErrorLogging(logger, async (_event, model) => {
       try {
         const ollama = getOllama();
-        await ollama.delete({ model });
+        // FIX: Add timeout to prevent main process hang during model deletion
+        await withOllamaTimeout(
+          ollama.delete({ model }),
+          TIMEOUTS.API_REQUEST_SLOW,
+          'Delete model'
+        );
         return { success: true };
       } catch (error) {
         logger.error('[IPC] Delete model failed]:', error);

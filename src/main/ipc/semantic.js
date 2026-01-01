@@ -6,7 +6,7 @@ const {
 const { SearchService } = require('../services/SearchService');
 const { ClusteringService } = require('../services/ClusteringService');
 const path = require('path');
-const { SUPPORTED_IMAGE_EXTENSIONS } = require('../../shared/constants');
+const { SUPPORTED_IMAGE_EXTENSIONS, AI_DEFAULTS } = require('../../shared/constants');
 const {
   BATCH,
   TIMEOUTS,
@@ -14,8 +14,80 @@ const {
   SEARCH,
   THRESHOLDS
 } = require('../../shared/performanceConstants');
-const { withErrorLogging, withChromaInit } = require('./ipcWrappers');
+const { withErrorLogging, withChromaInit, safeHandle } = require('./ipcWrappers');
 const { cosineSimilarity } = require('../../shared/vectorMath');
+const { getOllamaEmbeddingModel, getOllama } = require('../ollamaUtils');
+
+/**
+ * Verify embedding model is available in Ollama
+ * @param {Object} logger - Logger instance
+ * @returns {Promise<{available: boolean, model: string, error?: string}>}
+ */
+async function verifyEmbeddingModelAvailable(logger) {
+  const model = getOllamaEmbeddingModel() || AI_DEFAULTS.EMBEDDING.MODEL;
+
+  try {
+    const ollama = getOllama();
+    const response = await ollama.list();
+    const models = response?.models || [];
+
+    // Check if the configured model (or a variant) is installed
+    const modelNames = models.map((m) => m.name?.toLowerCase() || '');
+    const normalizedModel = model.toLowerCase();
+
+    // Check for exact match or prefix match (e.g., "embeddinggemma:latest" matches "embeddinggemma")
+    const isAvailable = modelNames.some(
+      (name) =>
+        name === normalizedModel ||
+        name.startsWith(`${normalizedModel}:`) ||
+        normalizedModel.startsWith(name.split(':')[0])
+    );
+
+    if (!isAvailable) {
+      // Try fallback models
+      const fallbackModels = AI_DEFAULTS.EMBEDDING.FALLBACK_MODELS || [];
+      for (const fallback of fallbackModels) {
+        const normalizedFallback = fallback.toLowerCase();
+        const fallbackAvailable = modelNames.some(
+          (name) =>
+            name === normalizedFallback ||
+            name.startsWith(`${normalizedFallback}:`) ||
+            normalizedFallback.startsWith(name.split(':')[0])
+        );
+        if (fallbackAvailable) {
+          logger.info('[EMBEDDINGS] Primary model not found, using fallback', {
+            primary: model,
+            fallback,
+            availableModels: modelNames.slice(0, 10)
+          });
+          return { available: true, model: fallback };
+        }
+      }
+
+      logger.error('[EMBEDDINGS] No embedding model available', {
+        configured: model,
+        fallbacks: fallbackModels,
+        availableModels: modelNames.slice(0, 10)
+      });
+
+      return {
+        available: false,
+        model,
+        error: `Embedding model "${model}" not installed. Install it with: ollama pull ${model}`,
+        availableModels: modelNames.slice(0, 10)
+      };
+    }
+
+    return { available: true, model };
+  } catch (error) {
+    logger.error('[EMBEDDINGS] Failed to verify embedding model:', error.message);
+    return {
+      available: false,
+      model,
+      error: `Cannot connect to Ollama: ${error.message}. Make sure Ollama is running.`
+    };
+  }
+}
 
 // Module-level reference to SearchService for cross-module access
 let _searchServiceRef = null;
@@ -261,15 +333,40 @@ function registerEmbeddingsIpc({
    * SAFE: Only resets the 'folder_embeddings' collection (not the entire DB directory).
    * This is a user-controlled, intentional rebuild that preserves all other data.
    */
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.REBUILD_FOLDERS,
     createChromaHandler(async () => {
       try {
+        // FIX: Verify embedding model is available before starting
+        const modelCheck = await verifyEmbeddingModelAvailable(logger);
+        if (!modelCheck.available) {
+          return {
+            success: false,
+            error: modelCheck.error,
+            errorCode: 'MODEL_NOT_AVAILABLE',
+            model: modelCheck.model,
+            availableModels: modelCheck.availableModels
+          };
+        }
+
         const smartFolders = getCustomFolders().filter((f) => f && f.name);
+
+        if (smartFolders.length === 0) {
+          return {
+            success: true,
+            folders: 0,
+            message: 'No smart folders to embed'
+          };
+        }
+
         // SAFE: resetFolders() only deletes/recreates the collection, not the DB directory
         await chromaDbService.resetFolders();
 
-        // Optimization: Batch process folder embeddings
+        // Track successes and failures
+        const results = { success: 0, failed: 0, errors: [] };
+
+        // Process folder embeddings with error tracking
         const folderPayloads = await Promise.all(
           smartFolders.map(async (folder) => {
             try {
@@ -278,6 +375,7 @@ function registerEmbeddingsIpc({
               const { vector, model } = await folderMatcher.embedText(folderText);
               const folderId = folder.id || folderMatcher.generateFolderId(folder);
 
+              results.success++;
               return {
                 id: folderId,
                 name: folder.name,
@@ -288,6 +386,11 @@ function registerEmbeddingsIpc({
                 updatedAt: new Date().toISOString()
               };
             } catch (error) {
+              results.failed++;
+              results.errors.push({
+                folder: folder.name,
+                error: error.message
+              });
               logger.warn(
                 '[EMBEDDINGS] Failed to generate folder embedding:',
                 folder.name,
@@ -300,13 +403,35 @@ function registerEmbeddingsIpc({
 
         const validPayloads = folderPayloads.filter((p) => p !== null);
 
-        // Optimization: Use batch upsert instead of individual operations
-        const count = await chromaDbService.batchUpsertFolders(validPayloads);
+        // Only upsert if we have valid payloads
+        let upsertedCount = 0;
+        if (validPayloads.length > 0) {
+          upsertedCount = await chromaDbService.batchUpsertFolders(validPayloads);
+        }
 
-        return { success: true, folders: count };
+        // Return detailed status
+        const allFailed = results.success === 0 && results.failed > 0;
+        return {
+          success: !allFailed,
+          folders: upsertedCount,
+          total: smartFolders.length,
+          succeeded: results.success,
+          failed: results.failed,
+          errors: results.errors.slice(0, 5), // Limit error details
+          model: modelCheck.model,
+          message: allFailed
+            ? `All ${results.failed} folder embeddings failed. Check Ollama connection.`
+            : results.failed > 0
+              ? `${results.success} folders embedded, ${results.failed} failed`
+              : `Successfully embedded ${results.success} folders`
+        };
       } catch (e) {
         logger.error('[EMBEDDINGS] Rebuild folders failed:', e);
-        return { success: false, error: e.message };
+        return {
+          success: false,
+          error: e.message,
+          errorCode: e.code || 'REBUILD_FAILED'
+        };
       }
     })
   );
@@ -317,17 +442,31 @@ function registerEmbeddingsIpc({
    * This rebuilds the semantic search index from existing analysis history without
    * re-analyzing files. User-controlled and intentional.
    */
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.REBUILD_FILES,
     createChromaHandler(async () => {
       try {
+        // FIX: Verify embedding model is available before starting
+        const modelCheck = await verifyEmbeddingModelAvailable(logger);
+        if (!modelCheck.available) {
+          return {
+            success: false,
+            error: modelCheck.error,
+            errorCode: 'MODEL_NOT_AVAILABLE',
+            model: modelCheck.model,
+            availableModels: modelCheck.availableModels
+          };
+        }
+
         const serviceIntegration = getServiceIntegration && getServiceIntegration();
         const historyService = serviceIntegration?.analysisHistory;
 
         if (!historyService?.getRecentAnalysis) {
           return {
             success: false,
-            error: 'Analysis history service unavailable'
+            error: 'Analysis history service unavailable',
+            errorCode: 'HISTORY_SERVICE_UNAVAILABLE'
           };
         }
 
@@ -339,7 +478,16 @@ function registerEmbeddingsIpc({
           logger.warn('[EMBEDDINGS] getRecentAnalysis returned non-array:', typeof allEntries);
           return {
             success: false,
-            error: 'Failed to load analysis history - invalid data format'
+            error: 'Failed to load analysis history - invalid data format',
+            errorCode: 'INVALID_HISTORY_FORMAT'
+          };
+        }
+
+        if (allEntries.length === 0) {
+          return {
+            success: true,
+            files: 0,
+            message: 'No analysis history to embed. Analyze some files first.'
           };
         }
 
@@ -347,7 +495,10 @@ function registerEmbeddingsIpc({
           typeof getCustomFolders === 'function' ? getCustomFolders() : []
         ).filter((f) => f && f.name);
 
-        // Optimization: Batch process folder embeddings
+        // Track results for folders
+        const folderResults = { success: 0, failed: 0 };
+
+        // Process folder embeddings (silently continue on failure)
         if (smartFolders.length > 0) {
           const folderPayloads = await Promise.all(
             smartFolders.map(async (folder) => {
@@ -357,6 +508,7 @@ function registerEmbeddingsIpc({
                 const { vector, model } = await folderMatcher.embedText(folderText);
                 const folderId = folder.id || folderMatcher.generateFolderId(folder);
 
+                folderResults.success++;
                 return {
                   id: folderId,
                   name: folder.name,
@@ -367,6 +519,7 @@ function registerEmbeddingsIpc({
                   updatedAt: new Date().toISOString()
                 };
               } catch (error) {
+                folderResults.failed++;
                 logger.warn('[EMBEDDINGS] Failed to generate folder embedding:', folder.name);
                 return null;
               }
@@ -374,14 +527,19 @@ function registerEmbeddingsIpc({
           );
 
           const validFolderPayloads = folderPayloads.filter((p) => p !== null);
-          await chromaDbService.batchUpsertFolders(validFolderPayloads);
+          if (validFolderPayloads.length > 0) {
+            await chromaDbService.batchUpsertFolders(validFolderPayloads);
+          }
         }
 
         // SAFE: resetFiles() only deletes/recreates the collection, not the DB directory
         // This rebuilds the search index from analysis history without re-analyzing files
         await chromaDbService.resetFiles();
 
-        // Optimization: Batch process file embeddings
+        // Track results for files
+        const fileResults = { success: 0, failed: 0, errors: [] };
+
+        // Process file embeddings with proper error tracking
         const filePayloads = [];
         for (const entry of allEntries) {
           try {
@@ -400,6 +558,16 @@ function registerEmbeddingsIpc({
             ]
               .filter(Boolean)
               .join('\n');
+
+            // Skip empty summaries
+            if (!summary.trim()) {
+              fileResults.failed++;
+              fileResults.errors.push({
+                file: path.basename(filePath),
+                error: 'No content to embed'
+              });
+              continue;
+            }
 
             // Generate embedding
             const { vector, model } = await folderMatcher.embedText(summary);
@@ -429,13 +597,20 @@ function registerEmbeddingsIpc({
               },
               updatedAt: new Date().toISOString()
             });
+            fileResults.success++;
           } catch (e) {
+            fileResults.failed++;
+            const fileName = entry.originalPath ? path.basename(entry.originalPath) : 'unknown';
+            fileResults.errors.push({
+              file: fileName,
+              error: e.message
+            });
             logger.warn('[EMBEDDINGS] Failed to prepare file entry:', e.message);
             // continue on individual entry failure
           }
         }
 
-        // Optimization: Batch upsert all files at once (in chunks for large datasets)
+        // Batch upsert all files at once (in chunks for large datasets)
         const BATCH_SIZE = BATCH.SEMANTIC_BATCH_SIZE;
         let rebuilt = 0;
         for (let i = 0; i < filePayloads.length; i += BATCH_SIZE) {
@@ -448,15 +623,39 @@ function registerEmbeddingsIpc({
           }
         }
 
-        return { success: true, files: rebuilt };
+        // Return detailed status
+        const allFailed = fileResults.success === 0 && allEntries.length > 0;
+        return {
+          success: !allFailed,
+          files: rebuilt,
+          total: allEntries.length,
+          succeeded: fileResults.success,
+          failed: fileResults.failed,
+          errors: fileResults.errors.slice(0, 5), // Limit error details
+          folders: {
+            succeeded: folderResults.success,
+            failed: folderResults.failed
+          },
+          model: modelCheck.model,
+          message: allFailed
+            ? `All ${fileResults.failed} file embeddings failed. Check Ollama connection.`
+            : fileResults.failed > 0
+              ? `${fileResults.success} files embedded, ${fileResults.failed} failed`
+              : `Successfully embedded ${fileResults.success} files`
+        };
       } catch (e) {
         logger.error('[EMBEDDINGS] Rebuild files failed:', e);
-        return { success: false, error: e.message };
+        return {
+          success: false,
+          error: e.message,
+          errorCode: e.code || 'REBUILD_FAILED'
+        };
       }
     })
   );
 
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.CLEAR_STORE,
     createChromaHandler(async () => {
       try {
@@ -469,7 +668,8 @@ function registerEmbeddingsIpc({
   );
 
   // New endpoint for getting vector DB statistics
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.GET_STATS,
     createChromaHandler(async () => {
       try {
@@ -514,7 +714,8 @@ function registerEmbeddingsIpc({
   );
 
   // New endpoint for finding similar documents
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.FIND_SIMILAR,
     createChromaHandler(async (event, { fileId, topK = SEARCH.DEFAULT_TOP_K_SIMILAR }) => {
       // HIGH PRIORITY FIX: Add timeout and validation (addresses HIGH-11)
@@ -572,7 +773,8 @@ function registerEmbeddingsIpc({
 
   // Global semantic search (query -> ranked files)
   // Uses SearchService.hybridSearch for combined BM25 + vector search with RRF fusion
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.SEARCH,
     createChromaHandler(
       async (event, { query, topK = SEARCH.DEFAULT_TOP_K, mode = 'hybrid', minScore } = {}) => {
@@ -635,7 +837,8 @@ function registerEmbeddingsIpc({
   );
 
   // Score a subset of file IDs against a query (for "search within graph")
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.SCORE_FILES,
     createChromaHandler(async (event, { query, fileIds } = {}) => {
       const QUERY_TIMEOUT = TIMEOUTS.SEMANTIC_QUERY;
@@ -728,7 +931,8 @@ function registerEmbeddingsIpc({
   /**
    * Rebuild the BM25 keyword search index
    */
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.REBUILD_BM25_INDEX,
     withErrorLogging(logger, async () => {
       try {
@@ -745,7 +949,8 @@ function registerEmbeddingsIpc({
   /**
    * Get the current search index status
    */
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.GET_SEARCH_STATUS,
     withErrorLogging(logger, async () => {
       try {
@@ -766,7 +971,8 @@ function registerEmbeddingsIpc({
    * Find similar files with multi-hop expansion
    * Explores neighbors of neighbors with decay scoring
    */
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.FIND_MULTI_HOP,
     createChromaHandler(async (event, { seedIds, options = {} } = {}) => {
       try {
@@ -798,7 +1004,8 @@ function registerEmbeddingsIpc({
   /**
    * Compute semantic clusters of files
    */
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.COMPUTE_CLUSTERS,
     createChromaHandler(async (event, { k = 'auto', generateLabels = true } = {}) => {
       try {
@@ -834,7 +1041,8 @@ function registerEmbeddingsIpc({
   /**
    * Get computed clusters
    */
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.GET_CLUSTERS,
     withErrorLogging(logger, async () => {
       try {
@@ -858,7 +1066,8 @@ function registerEmbeddingsIpc({
   /**
    * Get members of a specific cluster
    */
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.GET_CLUSTER_MEMBERS,
     withErrorLogging(logger, async (event, { clusterId } = {}) => {
       try {
@@ -885,7 +1094,8 @@ function registerEmbeddingsIpc({
   /**
    * Get similarity edges between files for graph visualization
    */
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.GET_SIMILARITY_EDGES,
     withErrorLogging(
       logger,
@@ -953,7 +1163,8 @@ function registerEmbeddingsIpc({
    * Get fresh file metadata from ChromaDB
    * Used to get current file paths after files have been moved/organized
    */
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.GET_FILE_METADATA,
     withErrorLogging(logger, async (event, { fileIds } = {}) => {
       try {
@@ -1002,7 +1213,8 @@ function registerEmbeddingsIpc({
    * Find near-duplicate files across the indexed collection
    * Groups files with high semantic similarity (>=0.9 by default)
    */
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.EMBEDDINGS.FIND_DUPLICATES,
     withErrorLogging(logger, async (event, { threshold = 0.9, maxResults = 50 } = {}) => {
       try {

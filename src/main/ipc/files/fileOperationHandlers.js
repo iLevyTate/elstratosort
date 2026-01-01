@@ -9,7 +9,7 @@
 const path = require('path');
 const fs = require('fs').promises;
 const { ACTION_TYPES } = require('../../../shared/constants');
-const { withErrorLogging, withValidation } = require('../ipcWrappers');
+const { withErrorLogging, withValidation, safeHandle } = require('../ipcWrappers');
 const { logger } = require('../../../shared/logger');
 const { handleBatchOrganize } = require('./batchOrganizeHandler');
 const { z, schemas } = require('../validationSchemas');
@@ -417,10 +417,11 @@ function registerFileOperationHandlers({
       ? withValidation(log, operationSchema, baseHandler)
       : withErrorLogging(log, baseHandler);
 
-  ipcMain.handle(IPC_CHANNELS.FILES.PERFORM_OPERATION, performOperationHandler);
+  safeHandle(ipcMain, IPC_CHANNELS.FILES.PERFORM_OPERATION, performOperationHandler);
 
   // Delete file handler
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.FILES.DELETE_FILE,
     withErrorLogging(log, async (event, filePath) => {
       try {
@@ -518,7 +519,8 @@ function registerFileOperationHandlers({
   );
 
   // Copy file handler
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.FILES.COPY_FILE,
     withErrorLogging(log, async (event, sourcePath, destinationPath) => {
       try {

@@ -4,7 +4,7 @@
  * Handles file organization operations including auto-organize,
  * batch organize, and organization statistics.
  */
-const { createHandler, createErrorResponse } = require('./ipcWrappers');
+const { createHandler, createErrorResponse, safeHandle } = require('./ipcWrappers');
 const { schemas } = require('./validationSchemas');
 const { logger } = require('../../shared/logger');
 const { isNotFoundError } = require('../../shared/errorClassifier');
@@ -73,7 +73,8 @@ function registerOrganizeIpc({ ipcMain, IPC_CHANNELS, getServiceIntegration, get
   const getOrganizeService = () => getServiceIntegration()?.autoOrganizeService;
 
   // Auto-organize files with AI suggestions
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.ORGANIZE.AUTO,
     createHandler({
       logger,
@@ -151,7 +152,8 @@ function registerOrganizeIpc({ ipcMain, IPC_CHANNELS, getServiceIntegration, get
   );
 
   // Batch organize with auto-approval
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.ORGANIZE.BATCH,
     createHandler({
       logger,
@@ -227,7 +229,8 @@ function registerOrganizeIpc({ ipcMain, IPC_CHANNELS, getServiceIntegration, get
   );
 
   // Process new file (for auto-organize on download)
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.ORGANIZE.PROCESS_NEW,
     createHandler({
       logger,
@@ -261,7 +264,8 @@ function registerOrganizeIpc({ ipcMain, IPC_CHANNELS, getServiceIntegration, get
   );
 
   // Get organization statistics
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.ORGANIZE.GET_STATS,
     createHandler({
       logger,
@@ -292,7 +296,8 @@ function registerOrganizeIpc({ ipcMain, IPC_CHANNELS, getServiceIntegration, get
   );
 
   // Update confidence thresholds
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.ORGANIZE.UPDATE_THRESHOLDS,
     createHandler({
       logger,
@@ -325,7 +330,8 @@ function registerOrganizeIpc({ ipcMain, IPC_CHANNELS, getServiceIntegration, get
   // ============================================================================
 
   // Cluster batch organize - organize files grouped by semantic clusters
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.ORGANIZE.CLUSTER_BATCH,
     createHandler({
       logger,
@@ -404,7 +410,8 @@ function registerOrganizeIpc({ ipcMain, IPC_CHANNELS, getServiceIntegration, get
   );
 
   // Identify outliers - find files that don't fit well into any cluster
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.ORGANIZE.IDENTIFY_OUTLIERS,
     createHandler({
       logger,
@@ -476,7 +483,8 @@ function registerOrganizeIpc({ ipcMain, IPC_CHANNELS, getServiceIntegration, get
   );
 
   // Get cluster-based suggestions for a single file
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.ORGANIZE.GET_CLUSTER_SUGGESTIONS,
     createHandler({
       logger,

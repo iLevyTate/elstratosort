@@ -119,12 +119,22 @@ const createMainWindow = require('./core/createWindow');
 // Application menu is now handled by ./core/applicationMenu
 // createApplicationMenu is imported and called with getMainWindow callback
 
+// FIX: Mutex to prevent concurrent window creation (race condition fix)
+let _windowCreationPromise = null;
+
 function createWindow() {
+  // FIX: If window creation is already in progress, return the existing promise
+  if (_windowCreationPromise) {
+    logger.debug('[WINDOW] createWindow() already in progress, waiting...');
+    return _windowCreationPromise;
+  }
+
   logger.debug('[WINDOW] createWindow() called');
 
   // HIGH-2 FIX: Use event-driven window state manager instead of nested setTimeout
   const { restoreWindow, ensureWindowOnScreen } = require('./core/windowState');
 
+  // FIX: Check for existing window BEFORE setting mutex to avoid holding lock unnecessarily
   if (mainWindow && !mainWindow.isDestroyed()) {
     logger.debug('[WINDOW] Window already exists, restoring state...');
 
@@ -136,9 +146,57 @@ function createWindow() {
     // Ensure window is on screen (handle multi-monitor issues)
     ensureWindowOnScreen(mainWindow);
 
-    return;
+    return Promise.resolve();
   }
 
+  // FIX: Set mutex for window creation - will be cleared once window is ready or on error
+  _windowCreationPromise = new Promise((resolve) => {
+    try {
+      // Double-check after acquiring mutex (another call might have created window)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        logger.debug('[WINDOW] Window created by concurrent call, using existing');
+        _windowCreationPromise = null;
+        resolve();
+        return;
+      }
+
+      _createWindowInternal();
+
+      // Wait for window to be ready before releasing mutex
+      if (mainWindow) {
+        mainWindow.once('ready-to-show', () => {
+          logger.debug('[WINDOW] Window ready, releasing creation mutex');
+          _windowCreationPromise = null;
+          resolve();
+        });
+
+        // Also handle error case - release mutex after timeout
+        setTimeout(() => {
+          if (_windowCreationPromise) {
+            logger.warn('[WINDOW] Window creation timeout, releasing mutex');
+            _windowCreationPromise = null;
+            resolve();
+          }
+        }, 10000);
+      } else {
+        _windowCreationPromise = null;
+        resolve();
+      }
+    } catch (error) {
+      logger.error('[WINDOW] Error creating window:', error);
+      _windowCreationPromise = null;
+      resolve();
+    }
+  });
+
+  return _windowCreationPromise;
+}
+
+/**
+ * Internal window creation logic (extracted for mutex wrapper)
+ * @private
+ */
+function _createWindowInternal() {
   // No existing window, create a new one
   mainWindow = createMainWindow();
 

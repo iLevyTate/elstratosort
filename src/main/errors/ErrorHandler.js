@@ -109,17 +109,14 @@ class ErrorHandler {
   }
 
   setupGlobalHandlers() {
-    // Handle uncaught exceptions
-    process.on('uncaughtException', (error) => {
-      this.handleCriticalError('Uncaught Exception', error);
-    });
+    // NOTE: process.on('uncaughtException') and process.on('unhandledRejection')
+    // are handled by lifecycle.js with proper cleanup. Do NOT register them here
+    // to avoid duplicate handlers which cause:
+    // 1. Double logging of errors
+    // 2. Memory leaks from untracked listeners
+    // 3. Conflicting error handling logic
 
-    // Handle unhandled promise rejections
-    process.on('unhandledRejection', (reason) => {
-      this.handleCriticalError('Unhandled Promise Rejection', reason);
-    });
-
-    // Handle Electron errors
+    // Handle Electron-specific errors only (these are not in lifecycle.js)
     app.on('render-process-gone', (event, webContents, details) => {
       this.handleCriticalError('Renderer Process Crashed', details);
     });

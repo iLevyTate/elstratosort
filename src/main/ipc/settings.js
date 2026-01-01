@@ -3,7 +3,8 @@ const {
   withValidation,
   successResponse,
   errorResponse,
-  canceledResponse
+  canceledResponse,
+  safeHandle
 } = require('./ipcWrappers');
 const { app, dialog } = require('electron');
 const { getConfigurableLimits, sanitizeSettings } = require('../../shared/settingsValidation');
@@ -281,7 +282,8 @@ function registerSettingsIpc({
   setOllamaEmbeddingModel,
   onSettingsChanged
 }) {
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SETTINGS.GET,
     withErrorLogging(logger, async () => {
       try {
@@ -295,7 +297,8 @@ function registerSettingsIpc({
   );
 
   // Fixed: Add endpoint to get configurable limits
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SETTINGS.GET_CONFIGURABLE_LIMITS,
     withErrorLogging(logger, async () => {
       try {
@@ -358,7 +361,8 @@ function registerSettingsIpc({
     logger
   };
 
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SETTINGS.SAVE,
     z && settingsSchema
       ? withValidation(logger, settingsSchema, async (event, settings) => {
@@ -372,7 +376,8 @@ function registerSettingsIpc({
   );
 
   // Fixed: Add config export handler
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SETTINGS.EXPORT,
     withErrorLogging(logger, async (event, exportPath) => {
       void event;
@@ -433,7 +438,8 @@ function registerSettingsIpc({
   );
 
   // Fixed: Add config import handler
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SETTINGS.IMPORT,
     withErrorLogging(logger, async (event, importPath) => {
       void event;
@@ -526,7 +532,8 @@ function registerSettingsIpc({
   );
 
   // Fixed: Add backup management handlers
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SETTINGS.CREATE_BACKUP,
     withErrorLogging(logger, async () => {
       try {
@@ -543,7 +550,8 @@ function registerSettingsIpc({
     })
   );
 
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SETTINGS.LIST_BACKUPS,
     withErrorLogging(logger, async () => {
       try {
@@ -556,7 +564,8 @@ function registerSettingsIpc({
     })
   );
 
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SETTINGS.RESTORE_BACKUP,
     withErrorLogging(logger, async (event, backupPath) => {
       void event;
@@ -597,7 +606,8 @@ function registerSettingsIpc({
     })
   );
 
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SETTINGS.DELETE_BACKUP,
     withErrorLogging(logger, async (event, backupPath) => {
       void event;

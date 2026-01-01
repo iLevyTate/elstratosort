@@ -3,7 +3,7 @@ const fs = require('fs').promises;
 const { app } = require('electron');
 const { getOllama } = require('../ollamaUtils');
 const { enhanceSmartFolderWithLLM } = require('../services/SmartFoldersLLMService');
-const { withErrorLogging } = require('./ipcWrappers');
+const { withErrorLogging, safeHandle } = require('./ipcWrappers');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
 const { cosineSimilarity } = require('../../shared/vectorMath');
 const { isNotFoundError } = require('../../shared/errorClassifier');
@@ -88,7 +88,8 @@ function registerSmartFoldersIpc({
   getOllamaEmbeddingModel,
   scanDirectory
 }) {
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SMART_FOLDERS.GET,
     withErrorLogging(logger, async () => {
       try {
@@ -139,7 +140,8 @@ function registerSmartFoldersIpc({
     })
   );
 
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SMART_FOLDERS.GET_CUSTOM,
     withErrorLogging(logger, async () => {
       const customFolders = getCustomFolders();
@@ -149,7 +151,8 @@ function registerSmartFoldersIpc({
   );
 
   // Smart folder matching using embeddings/LLM with fallbacks
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SMART_FOLDERS.MATCH,
     withErrorLogging(logger, async (event, payload) => {
       try {
@@ -251,7 +254,8 @@ function registerSmartFoldersIpc({
     })
   );
 
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SMART_FOLDERS.SAVE,
     withErrorLogging(logger, async (event, folders) => {
       try {
@@ -261,6 +265,29 @@ function registerSmartFoldersIpc({
             error: 'Folders must be an array',
             errorCode: ERROR_CODES.INVALID_INPUT
           };
+
+        // FIX: Prevent saving empty array - at minimum Uncategorized must exist
+        if (folders.length === 0) {
+          logger.warn('[SMART-FOLDERS] Rejecting save of empty folders array');
+          return {
+            success: false,
+            error: 'Cannot save empty folders list. At least one folder is required.',
+            errorCode: ERROR_CODES.INVALID_INPUT
+          };
+        }
+
+        // FIX: Ensure Uncategorized folder is always preserved
+        const hasUncategorized = folders.some(
+          (f) => f.isDefault && f.name?.toLowerCase() === 'uncategorized'
+        );
+        if (!hasUncategorized) {
+          logger.warn('[SMART-FOLDERS] Rejecting save without Uncategorized folder');
+          return {
+            success: false,
+            error: 'The Uncategorized default folder cannot be removed.',
+            errorCode: ERROR_CODES.INVALID_INPUT
+          };
+        }
 
         // Ensure all folder paths exist as physical directories
         for (const folder of folders) {
@@ -315,7 +342,8 @@ function registerSmartFoldersIpc({
     })
   );
 
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SMART_FOLDERS.UPDATE_CUSTOM,
     withErrorLogging(logger, async (event, folders) => {
       try {
@@ -325,6 +353,29 @@ function registerSmartFoldersIpc({
             error: 'Folders must be an array',
             errorCode: ERROR_CODES.INVALID_INPUT
           };
+
+        // FIX: Prevent saving empty array - at minimum Uncategorized must exist
+        if (folders.length === 0) {
+          logger.warn('[SMART-FOLDERS] Rejecting update with empty folders array');
+          return {
+            success: false,
+            error: 'Cannot save empty folders list. At least one folder is required.',
+            errorCode: ERROR_CODES.INVALID_INPUT
+          };
+        }
+
+        // FIX: Ensure Uncategorized folder is always preserved
+        const hasUncategorized = folders.some(
+          (f) => f.isDefault && f.name?.toLowerCase() === 'uncategorized'
+        );
+        if (!hasUncategorized) {
+          logger.warn('[SMART-FOLDERS] Rejecting update without Uncategorized folder');
+          return {
+            success: false,
+            error: 'The Uncategorized default folder cannot be removed.',
+            errorCode: ERROR_CODES.INVALID_INPUT
+          };
+        }
 
         // Ensure all folder paths exist as physical directories
         for (const folder of folders) {
@@ -379,7 +430,8 @@ function registerSmartFoldersIpc({
     })
   );
 
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SMART_FOLDERS.EDIT,
     withErrorLogging(logger, async (event, folderId, updatedFolder) => {
       try {
@@ -503,7 +555,8 @@ function registerSmartFoldersIpc({
     })
   );
 
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SMART_FOLDERS.DELETE,
     withErrorLogging(logger, async (event, folderId) => {
       try {
@@ -521,6 +574,18 @@ function registerSmartFoldersIpc({
             error: 'Folder not found',
             errorCode: ERROR_CODES.FOLDER_NOT_FOUND
           };
+
+        // FIX: Prevent deleting the Uncategorized default folder
+        const folderToDelete = customFolders[folderIndex];
+        if (folderToDelete.isDefault && folderToDelete.name?.toLowerCase() === 'uncategorized') {
+          logger.warn('[SMART-FOLDERS] Rejecting deletion of Uncategorized folder');
+          return {
+            success: false,
+            error: 'The Uncategorized default folder cannot be deleted.',
+            errorCode: ERROR_CODES.INVALID_INPUT
+          };
+        }
+
         const originalFolders = [...customFolders];
         const deletedFolder = customFolders[folderIndex];
         try {
@@ -573,7 +638,8 @@ function registerSmartFoldersIpc({
   );
 
   // Create/add new smart folder with LLM enhancement
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SMART_FOLDERS.ADD,
     withErrorLogging(logger, async (event, folder) => {
       try {
@@ -787,7 +853,8 @@ function registerSmartFoldersIpc({
   );
 
   // Scan folder structure
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.SMART_FOLDERS.SCAN_STRUCTURE,
     withErrorLogging(logger, async (event, rootPath) => {
       try {
@@ -827,6 +894,33 @@ function registerSmartFoldersIpc({
       } catch (error) {
         logger.error('[FOLDER-SCAN] Error scanning folder structure:', error);
         return { success: false, error: error.message };
+      }
+    })
+  );
+
+  // Reset smart folders to defaults
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.SMART_FOLDERS.RESET_TO_DEFAULTS,
+    withErrorLogging(logger, async () => {
+      try {
+        logger.info('[SMART-FOLDERS] Resetting to default smart folders');
+        const { resetToDefaultFolders } = require('../core/customFolders');
+        const defaultFolders = await resetToDefaultFolders();
+        setCustomFolders(defaultFolders);
+        logger.info('[SMART-FOLDERS] Reset complete, created', defaultFolders.length, 'folders');
+        return {
+          success: true,
+          folders: defaultFolders,
+          message: `Reset to ${defaultFolders.length} default smart folders`
+        };
+      } catch (error) {
+        logger.error('[ERROR] Failed to reset smart folders:', error);
+        return {
+          success: false,
+          error: error.message,
+          errorCode: ERROR_CODES.RESET_FAILED
+        };
       }
     })
   );

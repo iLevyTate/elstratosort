@@ -13,7 +13,7 @@ const {
   SUPPORTED_IMAGE_EXTENSIONS,
   SUPPORTED_ARCHIVE_EXTENSIONS
 } = require('../../../shared/constants');
-const { withErrorLogging } = require('../ipcWrappers');
+const { withErrorLogging, safeHandle } = require('../ipcWrappers');
 const { logger } = require('../../../shared/logger');
 const SettingsService = require('../../services/SettingsService');
 
@@ -159,7 +159,8 @@ function registerFileSelectionHandlers({
   const { app } = require('electron');
 
   // Select directory handler
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.FILES.SELECT_DIRECTORY,
     withErrorLogging(log, async () => {
       log.debug('[FILE-SELECTION] Select directory handler called');
@@ -194,7 +195,8 @@ function registerFileSelectionHandlers({
   );
 
   // Get documents path handler
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.FILES.GET_DOCUMENTS_PATH,
     withErrorLogging(log, async () => {
       log.debug('[FILE-SELECTION] Get documents path handler called');
@@ -209,7 +211,8 @@ function registerFileSelectionHandlers({
   );
 
   // Get file stats handler
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.FILES.GET_FILE_STATS,
     withErrorLogging(log, async (_event, filePath) => {
       log.debug('[FILE-SELECTION] Get file stats handler called for:', filePath);
@@ -237,7 +240,8 @@ function registerFileSelectionHandlers({
   );
 
   // Get files in directory handler
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.FILES.GET_FILES_IN_DIRECTORY,
     withErrorLogging(log, async (_event, dirPath) => {
       log.debug('[FILE-SELECTION] Get files in directory handler called for:', dirPath);
@@ -261,7 +265,8 @@ function registerFileSelectionHandlers({
   );
 
   // Select files handler
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.FILES.SELECT,
     withErrorLogging(log, async () => {
       log.info('[MAIN-FILE-SELECT] ===== FILE SELECTION HANDLER CALLED =====');

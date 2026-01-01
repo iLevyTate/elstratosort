@@ -495,11 +495,41 @@ function registerHandlers({ ipcMain, logger, handlers, context = 'IPC' }) {
   }
 }
 
+/**
+ * Safe wrapper for ipcMain.handle that registers with the IPC registry.
+ * Use this instead of ipcMain.handle() directly to ensure proper cleanup.
+ *
+ * @param {Object} ipcMain - Electron ipcMain instance
+ * @param {string} channel - IPC channel name
+ * @param {Function} handler - Handler function
+ */
+function safeHandle(ipcMain, channel, handler) {
+  const { registerHandler } = require('../core/ipcRegistry');
+  registerHandler(ipcMain, channel, handler);
+}
+
+/**
+ * Safe wrapper for ipcMain.on that registers with the IPC registry.
+ * Use this instead of ipcMain.on() directly to ensure proper cleanup.
+ *
+ * @param {Object} ipcMain - Electron ipcMain instance
+ * @param {string} channel - IPC channel name
+ * @param {Function} listener - Listener function
+ */
+function safeOn(ipcMain, channel, listener) {
+  const { registerListener } = require('../core/ipcRegistry');
+  registerListener(ipcMain, channel, listener);
+}
+
 // Export Zod instance for convenience (if available)
 module.exports = {
   // Primary exports
   createHandler,
   registerHandlers,
+
+  // Safe IPC registration (uses registry for cleanup)
+  safeHandle,
+  safeOn,
 
   // Individual wrappers for backwards compatibility
   withErrorLogging,

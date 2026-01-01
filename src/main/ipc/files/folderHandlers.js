@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const os = require('os');
 const { app } = require('electron');
-const { withErrorLogging } = require('../ipcWrappers');
+const { withErrorLogging, safeHandle } = require('../ipcWrappers');
 const { logger } = require('../../../shared/logger');
 const { validateFileOperationPath } = require('../../../shared/pathSanitization');
 const {
@@ -32,7 +32,8 @@ logger.setContext('IPC:Files:Folders');
  */
 function registerFolderHandlers({ ipcMain, IPC_CHANNELS, shell }) {
   // Create folder directly
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.FILES.CREATE_FOLDER_DIRECT,
     withErrorLogging(logger, async (event, fullPath) => {
       try {
@@ -135,7 +136,8 @@ function registerFolderHandlers({ ipcMain, IPC_CHANNELS, shell }) {
   );
 
   // Open folder in file explorer
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.FILES.OPEN_FOLDER,
     withErrorLogging(logger, async (event, folderPath) => {
       try {
@@ -188,7 +190,8 @@ function registerFolderHandlers({ ipcMain, IPC_CHANNELS, shell }) {
   );
 
   // Delete empty folder
-  ipcMain.handle(
+  safeHandle(
+    ipcMain,
     IPC_CHANNELS.FILES.DELETE_FOLDER,
     withErrorLogging(logger, async (event, fullPath) => {
       // FIX: Add null check for fullPath parameter
