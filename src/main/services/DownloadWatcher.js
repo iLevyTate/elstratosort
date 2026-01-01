@@ -645,6 +645,14 @@ class DownloadWatcher {
         result = await this.analyzeDocumentFile(filePath, folderCategories);
       }
     } catch (e) {
+      // FIX: Handle TOCTOU race during analysis - file may have been deleted
+      if (isNotFoundError(e)) {
+        logger.debug(
+          '[DOWNLOAD-WATCHER] File disappeared during analysis (TOCTOU race):',
+          filePath
+        );
+        return;
+      }
       logger.error('[DOWNLOAD-WATCHER] Analysis failed', {
         filePath,
         error: e.message
@@ -695,6 +703,11 @@ class DownloadWatcher {
       }
       showOrganizedNotification(baseName, destFolder.name, confidencePercent, notificationsEnabled);
     } catch (e) {
+      // FIX: Handle TOCTOU race gracefully - file may have been deleted between check and move
+      if (isNotFoundError(e)) {
+        logger.debug('[DOWNLOAD-WATCHER] File disappeared before move (TOCTOU race):', filePath);
+        return;
+      }
       logger.error('[DOWNLOAD-WATCHER] Failed to move file', {
         source: filePath,
         destination: destFolder.path,
@@ -790,6 +803,15 @@ class DownloadWatcher {
         throw renameError;
       }
     }
+  }
+
+  /**
+   * Shutdown handler for DI container compatibility
+   * Alias for stop() to support container.shutdown() pattern
+   * @returns {void}
+   */
+  shutdown() {
+    this.stop();
   }
 
   resolveDestinationFolder(result, folders) {

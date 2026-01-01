@@ -100,14 +100,39 @@ class ClusteringService {
       const embeddings = result.embeddings || [];
       const metadatas = result.metadatas || [];
 
+      // FIX: Track expected dimension to detect mismatches from mixed embedding models
+      let expectedDim = null;
+      let skippedCount = 0;
+
       for (let i = 0; i < ids.length; i++) {
         if (embeddings[i] && embeddings[i].length > 0) {
+          // FIX: Validate dimension consistency
+          if (expectedDim === null) {
+            expectedDim = embeddings[i].length;
+          } else if (embeddings[i].length !== expectedDim) {
+            logger.warn('[ClusteringService] Skipping file with mismatched embedding dimension', {
+              fileId: ids[i],
+              expected: expectedDim,
+              actual: embeddings[i].length
+            });
+            skippedCount++;
+            continue;
+          }
+
           files.push({
             id: ids[i],
             embedding: embeddings[i],
             metadata: metadatas[i] || {}
           });
         }
+      }
+
+      if (skippedCount > 0) {
+        logger.warn('[ClusteringService] Skipped files due to dimension mismatch', {
+          skipped: skippedCount,
+          kept: files.length,
+          expectedDim
+        });
       }
 
       return files;
@@ -888,7 +913,20 @@ Respond with ONLY the label, nothing else. Examples: "Financial Documents", "Pro
    * @returns {Promise<Object>} Object with duplicate groups and metadata
    */
   async findNearDuplicates(options = {}) {
-    const { threshold = 0.9, maxResults = 50 } = options;
+    // FIX: HIGH - Enforce minimum threshold to prevent resource exhaustion
+    // Low thresholds (e.g., 0.1) would match nearly all files, causing OOM
+    const MIN_SAFE_THRESHOLD = 0.7;
+    const MAX_PAIRS_LIMIT = 10000; // Prevent memory exhaustion from unbounded pairs
+
+    const { threshold: requestedThreshold = 0.9, maxResults = 50 } = options;
+    const threshold = Math.max(requestedThreshold, MIN_SAFE_THRESHOLD);
+
+    if (requestedThreshold < MIN_SAFE_THRESHOLD) {
+      logger.warn('[ClusteringService] Threshold increased to minimum safe value', {
+        requested: requestedThreshold,
+        enforced: threshold
+      });
+    }
 
     try {
       await this.chromaDb.initialize();
@@ -926,9 +964,22 @@ Respond with ONLY the label, nothing else. Examples: "Financial Documents", "Pro
       // Find all high-similarity pairs
       const duplicatePairs = [];
       const ids = Array.from(embeddings.keys());
+      let pairsLimitReached = false;
 
-      for (let i = 0; i < ids.length; i++) {
+      // FIX: HIGH - Add early exit when max pairs limit is reached
+      outerLoop: for (let i = 0; i < ids.length; i++) {
         for (let j = i + 1; j < ids.length; j++) {
+          // Check pairs limit before processing
+          if (duplicatePairs.length >= MAX_PAIRS_LIMIT) {
+            pairsLimitReached = true;
+            logger.warn('[ClusteringService] Duplicate detection capped at MAX_PAIRS_LIMIT', {
+              limit: MAX_PAIRS_LIMIT,
+              filesProcessed: i,
+              totalFiles: ids.length
+            });
+            break outerLoop;
+          }
+
           const idA = ids[i];
           const idB = ids[j];
           const embA = embeddings.get(idA);
@@ -1017,14 +1068,20 @@ Respond with ONLY the label, nothing else. Examples: "Financial Documents", "Pro
       logger.info('[ClusteringService] Found near-duplicates', {
         pairCount: duplicatePairs.length,
         groupCount: limitedGroups.length,
-        totalDuplicates
+        totalDuplicates,
+        pairsLimitReached
       });
 
       return {
         success: true,
         groups: limitedGroups,
         totalDuplicates,
-        threshold
+        threshold,
+        // FIX: Include warning if results were truncated
+        truncated: pairsLimitReached,
+        warning: pairsLimitReached
+          ? `Results truncated: exceeded ${MAX_PAIRS_LIMIT} pairs limit. Consider increasing threshold.`
+          : undefined
       };
     } catch (error) {
       logger.error('[ClusteringService] Failed to find near-duplicates:', error);

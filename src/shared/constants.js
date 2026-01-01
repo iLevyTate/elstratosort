@@ -89,7 +89,8 @@ const IPC_CHANNELS = {
     ADD: 'add-smart-folder',
     EDIT: 'edit-smart-folder',
     DELETE: 'delete-smart-folder',
-    MATCH: 'match-smart-folder'
+    MATCH: 'match-smart-folder',
+    RESET_TO_DEFAULTS: 'reset-smart-folders-to-defaults'
   },
 
   // Analysis
@@ -462,7 +463,7 @@ const ALL_SUPPORTED_EXTENSIONS = [
 // Total download: ~2.3GB (vs previous ~8GB = 71% reduction)
 const DEFAULT_AI_MODELS = {
   TEXT_ANALYSIS: 'qwen3:0.6b', // 523MB - Ultra-fast, 40K context, 119 languages
-  IMAGE_ANALYSIS: 'smolvlm2:2.2b', // ~1.5GB - Smallest VLM, video+image support
+  IMAGE_ANALYSIS: 'gemma3:latest', // Gemma 3 - Google's multimodal vision-language model
   EMBEDDING: 'embeddinggemma', // 308MB - Google's best-in-class, 768 dims, <15ms
   FALLBACK_MODELS: ['qwen3:0.6b', 'llama3.2:latest', 'gemma2:2b', 'phi3', 'mistral']
 };
@@ -477,14 +478,24 @@ const AI_DEFAULTS = {
     MAX_TOKENS: 800
   },
   IMAGE: {
-    MODEL: 'smolvlm2:2.2b',
+    MODEL: 'gemma3:latest', // Gemma 3 is multimodal (4B+ variants support vision)
     HOST: SERVICE_URLS.OLLAMA_HOST,
     TEMPERATURE: 0.2,
     MAX_TOKENS: 1000
   },
   EMBEDDING: {
     MODEL: 'embeddinggemma',
-    DIMENSIONS: 768 // Different from previous mxbai-embed-large (1024)
+    DIMENSIONS: 768, // Different from previous mxbai-embed-large (1024)
+    // FIX: Fallback chain for embedding models (in order of preference)
+    // Used when primary model is not available on the Ollama server
+    FALLBACK_MODELS: [
+      'embeddinggemma', // 768 dims - Google's default
+      'mxbai-embed-large', // 1024 dims - High quality
+      'nomic-embed-text', // 768 dims - Good general purpose
+      'all-minilm', // 384 dims - Fast, smaller
+      'bge-large', // 1024 dims - Chinese & English
+      'snowflake-arctic-embed' // 1024 dims - High quality
+    ]
   }
 };
 

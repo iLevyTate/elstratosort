@@ -509,6 +509,7 @@ const ServiceIds = {
   FOLDER_MATCHING: 'folderMatching',
   ORGANIZATION_SUGGESTION: 'organizationSuggestion',
   AUTO_ORGANIZE: 'autoOrganize',
+  CLUSTERING: 'clustering', // FIX: Added as separate DI entry to avoid circular dependency
 
   // State services
   ANALYSIS_HISTORY: 'analysisHistory',
@@ -531,6 +532,7 @@ const SHUTDOWN_ORDER = [
   // First: High-level services that use other services
   ServiceIds.AUTO_ORGANIZE,
   ServiceIds.ORGANIZATION_SUGGESTION,
+  ServiceIds.CLUSTERING, // FIX: HIGH - Added to shutdown order (was missing, causing improper cleanup)
   ServiceIds.PARALLEL_EMBEDDING,
   ServiceIds.FOLDER_MATCHING,
   // Second: Core infrastructure services

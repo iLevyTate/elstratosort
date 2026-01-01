@@ -59,6 +59,11 @@ class ServiceIntegration {
     this.autoOrganizeService = null;
     this.initialized = false;
 
+    // FIX: Add initialization mutex to prevent race conditions
+    // Multiple concurrent initialize() calls would previously both pass the
+    // if (this.initialized) check and run in parallel, causing undefined behavior
+    this._initPromise = null;
+
     // Reference to the container for external access
     this.container = container;
   }
@@ -73,10 +78,31 @@ class ServiceIntegration {
    * @returns {Promise<{initialized: string[], errors: Array<{service: string, error: string}>, skipped: string[]}>}
    */
   async initialize() {
+    // FIX: Return existing initialization promise if one is in progress
+    // This prevents race conditions when multiple calls happen concurrently
+    if (this._initPromise) {
+      return this._initPromise;
+    }
+
     if (this.initialized) {
       return { initialized: [], errors: [], skipped: [], alreadyInitialized: true };
     }
 
+    // FIX: Store the initialization promise so concurrent calls can await it
+    this._initPromise = this._doInitialize();
+    try {
+      return await this._initPromise;
+    } finally {
+      // Clear the promise after initialization completes (success or failure)
+      this._initPromise = null;
+    }
+  }
+
+  /**
+   * Internal initialization implementation
+   * @private
+   */
+  async _doInitialize() {
     logger.info('[ServiceIntegration] Starting initialization...');
 
     // Register core services with the container

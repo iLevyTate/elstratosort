@@ -57,6 +57,7 @@ const TIMEOUTS = {
   DATABASE_INIT: 15000,
   MODEL_LOAD: 60000,
   MODEL_DISCOVERY: 5000, // Model discovery/list timeout
+  EMBEDDING_REQUEST: 30000, // FIX: Per-request timeout for embedding calls to prevent indefinite hangs
   DELAY_MICRO: 50, // Very short delays for race condition prevention
   DELAY_TINY: 5, // Minimal delay for inter-file processing
   DELAY_MINI: 10, // Small delay for inter-batch processing
@@ -64,6 +65,7 @@ const TIMEOUTS = {
   DELAY_MEDIUM: 500,
   DELAY_BATCH: 100, // Short delay for batch operations
   DELAY_LOCK_RETRY: 400, // Delay before retrying lock acquisition
+  MUTEX_ACQUIRE: 30000, // FIX: Maximum wait time for mutex acquisition to prevent deadlock
   DELAY_NOTIFICATION: 1500,
   SIGKILL_VERIFY: 100, // Delay to verify SIGKILL termination
   CLEANUP_DELAY: 60000, // Delay before cleanup operations (e.g., temp file removal)

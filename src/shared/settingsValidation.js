@@ -17,6 +17,7 @@ const {
   extractBaseUrl,
   hasProtocol
 } = require('./urlUtils');
+const { isValidEmbeddingModel } = require('./modelCategorization');
 
 /**
  * Shared URL validation regex (from validationConstants)
@@ -98,10 +99,12 @@ const VALIDATION_RULES = {
     minLength: 1,
     maxLength: 200,
     required: false,
-    // Supported embedding models - NOTE: changing models requires re-embedding (dimension mismatch)
-    // embeddinggemma: 768 dims (default), mxbai-embed-large: 1024 dims, nomic-embed-text: 768 dims
-    // all-minilm: 384 dims, bge-large: 1024 dims
-    enum: ['embeddinggemma', 'mxbai-embed-large', 'nomic-embed-text', 'all-minilm', 'bge-large']
+    // Pattern-based validation using modelCategorization.js
+    // NOTE: changing models requires re-embedding (dimension mismatch)
+    // Common models: embeddinggemma (768), mxbai-embed-large (1024), nomic-embed-text (768)
+    validator: isValidEmbeddingModel,
+    validatorMessage:
+      'embeddingModel must be a valid embedding model (e.g., embeddinggemma, mxbai-embed-large, nomic-embed-text)'
   },
   autoUpdateOllama: {
     type: 'boolean',
@@ -238,8 +241,15 @@ function validateSetting(key, value, rule) {
     return errors;
   }
 
-  // Enum validation
-  if (rule.enum && !rule.enum.includes(value)) {
+  // Custom validator function (takes precedence over enum)
+  if (rule.validator && typeof rule.validator === 'function') {
+    if (!rule.validator(value)) {
+      const message = rule.validatorMessage || `${key} failed custom validation`;
+      errors.push(message);
+    }
+  }
+  // Enum validation (only if no custom validator)
+  else if (rule.enum && !rule.enum.includes(value)) {
     errors.push(`${key} must be one of [${rule.enum.join(', ')}], got "${value}"`);
   }
 

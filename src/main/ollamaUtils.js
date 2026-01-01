@@ -207,14 +207,16 @@ async function loadOllamaConfig(applySideEffects = true) {
             const http = require('http');
             const https = require('https');
             const isHttps = ollamaHost.startsWith('https://');
-            const agent = isHttps
+            // FIX: Destroy old agent to prevent socket leaks, and update currentHttpAgent
+            destroyCurrentAgent();
+            currentHttpAgent = isHttps
               ? new https.Agent({ keepAlive: true, maxSockets: 10 })
               : new http.Agent({ keepAlive: true, maxSockets: 10 });
             ollamaInstance = new Ollama({
               host: ollamaHost,
               fetch: (url, opts = {}) => {
                 return (global.fetch || require('node-fetch'))(url, {
-                  agent,
+                  agent: currentHttpAgent,
                   ...opts
                 });
               }

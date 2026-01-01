@@ -160,10 +160,13 @@ class ModelManager {
       );
     }
 
-    // Special cases
+    // Special cases for vision models
+    // Note: gemma3 (4B+) IS a multimodal vision model as of March 2025
     if (
       modelName.includes('llava') ||
       modelName.includes('vision') ||
+      modelName.includes('smolvlm') ||
+      modelName.includes('moondream') ||
       modelName.includes('gemma3')
     ) {
       capabilities.vision = true;

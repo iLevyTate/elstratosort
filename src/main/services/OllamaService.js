@@ -56,21 +56,38 @@ class OllamaService {
 
   /**
    * Notify all subscribers of a model change
+   * FIX: Made async to properly await callback promises
    * @param {string} type - Model type ('embedding', 'text', 'vision')
    * @param {string} previousModel - Previous model name
    * @param {string} newModel - New model name
    */
-  _notifyModelChange(type, previousModel, newModel) {
+  async _notifyModelChange(type, previousModel, newModel) {
     if (previousModel === newModel) return;
 
     logger.info('[OllamaService] Model changed', { type, from: previousModel, to: newModel });
 
-    for (const callback of this._modelChangeCallbacks) {
-      try {
-        callback({ type, previousModel, newModel });
-      } catch (error) {
-        logger.error('[OllamaService] Error in model change callback:', error.message);
-      }
+    // FIX: Use Promise.allSettled to await all callbacks including async ones
+    // Previously, async callbacks were not awaited, causing race conditions
+    // where dependent operations (like ChromaDB reset) weren't complete before
+    // the caller continued.
+    const results = await Promise.allSettled(
+      Array.from(this._modelChangeCallbacks).map(async (callback) => {
+        try {
+          await callback({ type, previousModel, newModel });
+        } catch (error) {
+          logger.error('[OllamaService] Error in model change callback:', error.message);
+          throw error; // Re-throw so allSettled records it as rejected
+        }
+      })
+    );
+
+    // Log any failures for debugging
+    const failures = results.filter((r) => r.status === 'rejected');
+    if (failures.length > 0) {
+      logger.warn('[OllamaService] Some model change callbacks failed', {
+        total: results.length,
+        failed: failures.length
+      });
     }
   }
 
@@ -186,22 +203,38 @@ class OllamaService {
 
       if (config.textModel) {
         await setOllamaModel(config.textModel);
-        this._notifyModelChange('text', previousTextModel, config.textModel);
+        // FIX: Await async notification to ensure callbacks complete
+        await this._notifyModelChange('text', previousTextModel, config.textModel);
       }
 
       if (config.visionModel) {
         await setOllamaVisionModel(config.visionModel);
-        this._notifyModelChange('vision', previousVisionModel, config.visionModel);
+        // FIX: Await async notification to ensure callbacks complete
+        await this._notifyModelChange('vision', previousVisionModel, config.visionModel);
       }
 
-      // Allow both embeddinggemma (new default) and mxbai-embed-large (legacy)
-      const ALLOWED_EMBED_MODELS = ['embeddinggemma', 'mxbai-embed-large'];
-      if (config.embeddingModel) {
-        const embedModel = ALLOWED_EMBED_MODELS.includes(config.embeddingModel)
-          ? config.embeddingModel
-          : 'embeddinggemma'; // Default to new model
+      // FIX: Expanded allowlist to include all known embedding models
+      // This allows users to use any model they have installed from popular options
+      const ALLOWED_EMBED_MODELS = [
+        'embeddinggemma', // Google's embedding model (768 dim)
+        'mxbai-embed-large', // Mixed Bread AI (1024 dim)
+        'nomic-embed-text', // Nomic AI (768 dim)
+        'all-minilm', // Sentence Transformers (384 dim)
+        'bge-large', // BAAI (1024 dim)
+        'snowflake-arctic-embed', // Snowflake (1024 dim)
+        'gte' // Alibaba GTE models (various dims)
+      ];
 
-        if (!ALLOWED_EMBED_MODELS.includes(config.embeddingModel)) {
+      if (config.embeddingModel) {
+        // Check if model is in allowlist or matches a known prefix
+        const normalizedModel = config.embeddingModel.toLowerCase();
+        const isAllowed =
+          ALLOWED_EMBED_MODELS.includes(config.embeddingModel) ||
+          ALLOWED_EMBED_MODELS.some((allowed) => normalizedModel.includes(allowed.toLowerCase()));
+
+        const embedModel = isAllowed ? config.embeddingModel : 'embeddinggemma';
+
+        if (!isAllowed) {
           logger.warn('[OllamaService] Rejected invalid embedding model', {
             requested: config.embeddingModel,
             allowed: ALLOWED_EMBED_MODELS,
@@ -210,7 +243,9 @@ class OllamaService {
         }
 
         await setOllamaEmbeddingModel(embedModel);
-        this._notifyModelChange('embedding', previousEmbeddingModel, embedModel);
+        // FIX: Await async notification to ensure callbacks complete (critical for embedding model
+        // changes since ChromaDB collections need to be reset before continuing)
+        await this._notifyModelChange('embedding', previousEmbeddingModel, embedModel);
       }
 
       logger.info('[OllamaService] Configuration updated');
@@ -368,13 +403,78 @@ class OllamaService {
   }
 
   /**
-   * Generate embeddings for text
+   * Generate embeddings for text with fallback model chain
+   * FIX: Implements robust fallback logic when primary model is not available
    */
   async generateEmbedding(text, options = {}) {
+    const { AI_DEFAULTS } = require('../../shared/constants');
+    const primaryModel = options.model || getOllamaEmbeddingModel() || AI_DEFAULTS.EMBEDDING.MODEL;
+
+    // If skipFallback is true or a specific model was requested, don't use fallback chain
+    if (options.skipFallback || options.model) {
+      return this._generateEmbeddingWithModel(text, primaryModel, options);
+    }
+
+    // FIX: Build fallback chain - start with configured model, then fallbacks
+    const fallbackModels = AI_DEFAULTS.EMBEDDING.FALLBACK_MODELS || [primaryModel];
+    const modelChain = [primaryModel];
+
+    // Add fallback models that aren't already the primary
+    for (const model of fallbackModels) {
+      if (!modelChain.includes(model)) {
+        modelChain.push(model);
+      }
+    }
+
+    // Try each model in the chain
+    const errors = [];
+    for (const model of modelChain) {
+      try {
+        const result = await this._generateEmbeddingWithModel(text, model, options);
+        if (result.success) {
+          // Log if we used a fallback
+          if (model !== primaryModel) {
+            logger.info(
+              `[OllamaService] Using fallback embedding model: ${model} (primary: ${primaryModel})`
+            );
+          }
+          return result;
+        }
+        errors.push({ model, error: result.error });
+      } catch (error) {
+        // Check if error indicates model not found (should try fallback)
+        const isModelNotFound = /not found|does not exist|unknown model/i.test(error.message);
+        errors.push({ model, error: error.message });
+
+        if (!isModelNotFound) {
+          // For non-model-not-found errors, log and continue to next model
+          logger.warn(
+            `[OllamaService] Embedding with ${model} failed, trying next:`,
+            error.message
+          );
+        }
+      }
+    }
+
+    // All models failed - aggregate errors
+    const errorSummary = errors.map((e) => `${e.model}: ${e.error}`).join('; ');
+    logger.error('[OllamaService] All embedding models failed:', errorSummary);
+    return {
+      success: false,
+      error: `All embedding models failed: ${errorSummary}`,
+      attemptedModels: modelChain,
+      errors
+    };
+  }
+
+  /**
+   * Generate embedding with a specific model (internal helper)
+   * @private
+   */
+  async _generateEmbeddingWithModel(text, model, options = {}) {
     return withOllamaRetry(
       async () => {
         const ollama = getOllama();
-        const model = options.model || getOllamaEmbeddingModel();
         const perfOptions = await buildOllamaOptions('embeddings');
         const mergedOptions = { ...perfOptions, ...(options.ollamaOptions || {}) };
 
@@ -393,19 +493,21 @@ class OllamaService {
 
         return {
           success: true,
-          embedding
+          embedding,
+          model // Include which model was used
         };
       },
       {
         operation: 'generateEmbedding',
-        maxRetries: 3
+        maxRetries: options.maxRetries ?? 3
       }
     ).catch((error) => {
       // Final error handling after retries exhausted
-      logger.error('[OllamaService] Failed to generate embedding:', error);
+      logger.error(`[OllamaService] Failed to generate embedding with ${model}:`, error.message);
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        model
       };
     });
   }
@@ -509,7 +611,9 @@ class OllamaService {
   async batchGenerateEmbeddings(items, options = {}) {
     await this.initialize();
 
-    const model = options.model || getOllamaEmbeddingModel();
+    // FIX: Add fallback to default embedding model when none configured
+    const { AI_DEFAULTS } = require('../../shared/constants');
+    const model = options.model || getOllamaEmbeddingModel() || AI_DEFAULTS.EMBEDDING.MODEL;
     const startTime = Date.now();
 
     // Use OllamaClient if available for resilient batch processing

@@ -11,13 +11,14 @@
  * Vision models: Models that can process images
  */
 const VISION_MODEL_PATTERNS = [
+  /\bgemma3\b/i, // Gemma 3 (4B+ are multimodal vision models)
   /smolvlm/i, // SmolVLM family (default)
   /llava/i, // LLaVA family (llava, llava-llama3, llava-phi3, etc.)
   /bakllava/i, // BakLLaVA
   /moondream/i, // Moondream vision model
   /vision/i, // Any model with "vision" in name
   /llama.*vision/i, // Llama vision variants
-  /gemma.*vision/i, // Gemma vision variants
+  /gemma.*vision/i, // Gemma vision variants (legacy pattern)
   /-v\b/i, // Models ending with -v (like minicpm-v)
   /minicpm-v/i, // MiniCPM-V
   /cogvlm/i, // CogVLM
@@ -72,6 +73,7 @@ const MODEL_CATEGORY_PREFIXES = {
     'deepseek'
   ],
   vision: [
+    'gemma3', // Gemma 3 4B+ are multimodal vision models
     'smolvlm2',
     'smolvlm',
     'moondream',
@@ -197,6 +199,46 @@ function matchesCategoryPrefix(modelName, category) {
   return prefixes.some((prefix) => lowerName.startsWith(prefix.toLowerCase()));
 }
 
+/**
+ * Validate if a model name is a valid embedding model.
+ * Uses pattern-based matching to support any embedding model that follows
+ * common naming conventions (e.g., embeddinggemma, mxbai-embed-large, nomic-embed-text).
+ *
+ * @param {string} modelName - The model name to validate
+ * @returns {boolean} True if the model is recognized as a valid embedding model
+ */
+function isValidEmbeddingModel(modelName) {
+  if (!modelName || typeof modelName !== 'string') {
+    return false;
+  }
+  const name = modelName.trim();
+  if (name.length === 0) {
+    return false;
+  }
+  // Check against embedding patterns
+  return EMBEDDING_MODEL_PATTERNS.some((pattern) => pattern.test(name));
+}
+
+/**
+ * Validate if a model name is a valid vision model.
+ * Uses pattern-based matching to support any vision model that follows
+ * common naming conventions (e.g., llava, moondream, smolvlm).
+ *
+ * @param {string} modelName - The model name to validate
+ * @returns {boolean} True if the model is recognized as a valid vision model
+ */
+function isValidVisionModel(modelName) {
+  if (!modelName || typeof modelName !== 'string') {
+    return false;
+  }
+  const name = modelName.trim();
+  if (name.length === 0) {
+    return false;
+  }
+  // Check against vision patterns
+  return VISION_MODEL_PATTERNS.some((pattern) => pattern.test(name));
+}
+
 module.exports = {
   VISION_MODEL_PATTERNS,
   EMBEDDING_MODEL_PATTERNS,
@@ -204,5 +246,7 @@ module.exports = {
   FALLBACK_MODEL_PREFERENCES,
   categorizeModel,
   categorizeModels,
-  matchesCategoryPrefix
+  matchesCategoryPrefix,
+  isValidEmbeddingModel,
+  isValidVisionModel
 };

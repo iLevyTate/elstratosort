@@ -26,6 +26,25 @@ class ProcessingStateService {
     // Track consecutive save failures for error monitoring
     this._consecutiveSaveFailures = 0;
     this._maxConsecutiveFailures = 3;
+    // FIX: Track last save error so callers can check if save failed
+    this._lastSaveError = null;
+  }
+
+  /**
+   * Get last save error (null if last save succeeded)
+   * FIX: Allows callers to check if saves are working without breaking the silent-failure pattern
+   * @returns {Error|null}
+   */
+  getLastSaveError() {
+    return this._lastSaveError;
+  }
+
+  /**
+   * Check if saves are healthy (no recent failures)
+   * @returns {boolean}
+   */
+  isSaveHealthy() {
+    return this._consecutiveSaveFailures === 0;
   }
 
   async ensureParentDirectory(filePath) {
@@ -191,9 +210,13 @@ class ProcessingStateService {
       .then(() => saveOperation())
       .then(() => {
         this._consecutiveSaveFailures = 0;
+        // FIX: Clear last error on success so callers can check save health
+        this._lastSaveError = null;
       })
       .catch((err) => {
         this._consecutiveSaveFailures++;
+        // FIX: Store error so callers can check if save failed via getLastSaveError()
+        this._lastSaveError = err;
         logger.error('[ProcessingStateService] Save failed:', {
           error: err?.message,
           consecutiveFailures: this._consecutiveSaveFailures
@@ -203,6 +226,8 @@ class ProcessingStateService {
             '[ProcessingStateService] CRITICAL: Multiple consecutive save failures - state persistence may be compromised'
           );
         }
+        // NOTE: Error is intentionally NOT re-thrown to maintain backward compatibility.
+        // Callers can use getLastSaveError() or isSaveHealthy() to check save status.
       });
 
     return this._writeLock;
