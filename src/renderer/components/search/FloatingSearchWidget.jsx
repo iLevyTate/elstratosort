@@ -8,7 +8,7 @@ import { isMac } from '../../utils/platform';
  * FloatingSearchWidget - A draggable floating widget for quick access to semantic search
  * Similar to notification system but draggable and always accessible
  */
-const FloatingSearchWidget = ({ isOpen, onClose, onOpenSearch }) => {
+function FloatingSearchWidget({ isOpen, onClose, onOpenSearch }) {
   const [position, setPosition] = useState({ x: 20, y: 100 });
   const [isDragging, setIsDragging] = useState(false);
   // FIX: Use ref instead of state for dragOffset to prevent useEffect re-runs during drag
@@ -156,7 +156,7 @@ const FloatingSearchWidget = ({ isOpen, onClose, onOpenSearch }) => {
       </div>
     </div>
   );
-};
+}
 
 FloatingSearchWidget.propTypes = {
   isOpen: PropTypes.bool.isRequired,

@@ -2,6 +2,7 @@ const { BrowserWindow, shell, app } = require('electron');
 const path = require('path');
 const { logger } = require('../../shared/logger');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
+
 logger.setContext('CreateWindow');
 const windowStateKeeper = require('electron-window-state');
 const { isDevelopment, getEnvBool, SERVICE_URLS } = require('../../shared/configDefaults');
@@ -113,7 +114,7 @@ function createMainWindow() {
     minWidth: 800,
     minHeight: 600,
     // Frameless chrome with platform-sensitive styling
-    frame: isMac ? true : false,
+    frame: !!isMac,
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
     ...(isMac ? { trafficLightPosition: { x: 16, y: 16 } } : {}),
     backgroundColor: '#f8fafc', // Align with glass morphism surface-muted tone
