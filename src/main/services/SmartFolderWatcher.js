@@ -555,6 +555,22 @@ class SmartFolderWatcher {
       if (dropped) {
         this.stats.queueDropped++;
         this._queueDropsSinceLog++;
+
+        // FIX P1-2: Notify user about dropped items so they know analysis was skipped
+        // We rate limit this notification to avoid spamming
+        const now = Date.now();
+        if (
+          this.notificationService &&
+          (!this._lastDropNotification || now - this._lastDropNotification > 60000)
+        ) {
+          this.notificationService
+            .notifyWatcherError(
+              'High Load',
+              `Analysis queue full. Some files (e.g. ${path.basename(dropped.filePath)}) were skipped to maintain performance.`
+            )
+            .catch(() => {});
+          this._lastDropNotification = now;
+        }
       }
 
       const now = Date.now();
@@ -888,6 +904,20 @@ class SmartFolderWatcher {
     } catch (error) {
       // Non-fatal - embedding failure shouldn't block analysis
       logger.warn('[SMART-FOLDER-WATCHER] Failed to embed file:', filePath, error.message);
+
+      // FIX: Notify user about search index failure
+      if (
+        this.notificationService &&
+        typeof this.notificationService.notifyWatcherError === 'function'
+      ) {
+        // Use fire-and-forget to not block
+        this.notificationService
+          .notifyWatcherError(
+            'Smart Folders',
+            `Search indexing failed for ${path.basename(filePath)}: ${error.message}`
+          )
+          .catch(() => {});
+      }
     }
   }
 

@@ -469,7 +469,15 @@ async function querySimilarFiles({ queryEmbedding, topK = 10, fileCollection }) 
       });
     }
 
-    return matches.sort((a, b) => b.score - a.score);
+    const sorted = matches.sort((a, b) => b.score - a.score);
+    logger.debug('[FileOps] Top file matches', {
+      top: sorted.slice(0, 3).map((m) => ({
+        score: m.score?.toFixed?.(3),
+        id: m.id?.split(/[\\/]/).pop()
+      }))
+    });
+
+    return sorted;
   } catch (error) {
     logger.error('[FileOps] Failed to query similar files:', error);
     return [];

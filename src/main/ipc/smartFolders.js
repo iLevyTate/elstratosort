@@ -88,19 +88,44 @@ function sanitizeFolderPath(inputPath) {
   return normalized;
 }
 
-function registerSmartFoldersIpc({
-  ipcMain,
-  IPC_CHANNELS,
-  logger,
-  getCustomFolders,
-  setCustomFolders,
-  saveCustomFolders,
-  buildOllamaOptions,
-  getOllamaModel,
-  getOllamaEmbeddingModel,
-  scanDirectory,
-  getSmartFolderWatcher // FIX: Changed from instance to getter function to resolve race condition
-}) {
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
+
+function registerSmartFoldersIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    // Handling the case where getSmartFolderWatcher might be passed in legacy params
+    // but createFromLegacyParams doesn't explicitly handle it in the 'set' methods
+    // unless we add it or just extract it from params if it's there.
+    // However, the new pattern is to derive it from serviceIntegration.
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { getCustomFolders, setCustomFolders, saveCustomFolders, scanDirectory } =
+    container.folders;
+  const { getOllamaModel, getOllamaEmbeddingModel, buildOllamaOptions } = container.ollama;
+  const { getServiceIntegration } = container;
+
+  // Derive getSmartFolderWatcher from serviceIntegration if not provided
+  // (In legacy mode, it might have been passed directly, but we want to move away from that)
+  // Actually, registerAllIpc passes a custom function.
+  // If I use IpcServiceContext, I should replicate that logic here.
+
+  const getSmartFolderWatcher = () => {
+    if (getServiceIntegration) {
+      const serviceIntegration = getServiceIntegration();
+      return serviceIntegration?.smartFolderWatcher || null;
+    }
+    // Fallback for legacy params if it was passed directly (though createFromLegacyParams doesn't store it)
+    // If servicesOrParams is object and has getSmartFolderWatcher, use it?
+    if (servicesOrParams.getSmartFolderWatcher) {
+      return servicesOrParams.getSmartFolderWatcher();
+    }
+    return null;
+  };
+
   safeHandle(
     ipcMain,
     IPC_CHANNELS.SMART_FOLDERS.GET,

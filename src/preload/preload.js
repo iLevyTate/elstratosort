@@ -926,6 +926,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     getConfigurableLimits: () =>
       secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET_CONFIGURABLE_LIMITS),
+    getLogsInfo: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET_LOGS_INFO),
+    openLogsFolder: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.OPEN_LOGS_FOLDER),
     export: async (exportPath) => {
       const result = await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.EXPORT, exportPath);
       return throwIfFailed(result, {

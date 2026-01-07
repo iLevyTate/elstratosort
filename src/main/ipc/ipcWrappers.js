@@ -22,6 +22,7 @@ const {
   ERROR_CODES
 } = require('../../shared/errorHandlingUtils');
 const { logger } = require('../../shared/logger');
+const { validateEventPayload, hasEventSchema } = require('../../shared/ipcEventSchemas');
 
 // Try to load zod for validation
 let z;
@@ -197,9 +198,9 @@ function withErrorLogging(logger, fn, options = {}) {
       try {
         logger?.error?.(`[${context}] Handler error:`, error);
       } catch (logError) {
-        // Fallback: If logger itself fails, use console.error as last resort
-        // eslint-disable-next-line no-console
-        console.error('Failed to log IPC error:', logError);
+        // If logging itself fails, do not fall back to console.* here to avoid bypassing
+        // our logging policy and to prevent recursive error loops in edge cases.
+        void logError;
       }
       throw error;
     }
@@ -521,6 +522,88 @@ function safeOn(ipcMain, channel, listener) {
   registerListener(ipcMain, channel, listener);
 }
 
+/**
+ * Safe wrapper for webContents.send() that validates event payloads.
+ * Use this instead of webContents.send() directly to ensure type safety.
+ *
+ * Validation is non-blocking: invalid payloads are logged but still sent
+ * to avoid breaking existing functionality during migration.
+ *
+ * @param {Object} webContents - Electron webContents instance
+ * @param {string} channel - IPC channel name
+ * @param {*} data - Payload to send
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.strict=false] - If true, don't send on validation failure
+ * @returns {boolean} Whether the send was attempted (false only in strict mode on failure)
+ *
+ * @example
+ * // Basic usage
+ * safeSend(mainWindow.webContents, 'operation-progress', { current: 1, total: 10 });
+ *
+ * @example
+ * // Strict mode (won't send if validation fails)
+ * safeSend(win.webContents, 'notification', data, { strict: true });
+ */
+function safeSend(webContents, channel, data, options = {}) {
+  const { strict = false } = options;
+
+  // Validate if schema exists for this channel
+  if (hasEventSchema(channel)) {
+    const { valid, error } = validateEventPayload(channel, data);
+
+    if (!valid) {
+      logger.warn(`[IPC Event] Validation failed for '${channel}':`, {
+        error: error?.flatten ? error.flatten() : String(error),
+        data: typeof data === 'object' ? Object.keys(data) : typeof data
+      });
+
+      if (strict) {
+        logger.error(
+          `[IPC Event] Blocking send for '${channel}' due to validation failure (strict mode)`
+        );
+        return false;
+      }
+      // In non-strict mode, log but continue sending
+    }
+  }
+
+  // Send the event
+  try {
+    webContents.send(channel, data);
+    return true;
+  } catch (sendError) {
+    logger.error(`[IPC Event] Failed to send '${channel}':`, sendError);
+    return false;
+  }
+}
+
+/**
+ * Safe wrapper that gets the main window and sends if available.
+ * Handles common patterns of checking window existence before send.
+ *
+ * @param {Function} getMainWindow - Function that returns main window
+ * @param {string} channel - IPC channel name
+ * @param {*} data - Payload to send
+ * @param {Object} [options] - Options passed to safeSend
+ * @returns {boolean} Whether the send was attempted
+ *
+ * @example
+ * safeSendToMain(getMainWindow, 'notification', { message: 'Hello' });
+ */
+function safeSendToMain(getMainWindow, channel, data, options = {}) {
+  try {
+    const win = typeof getMainWindow === 'function' ? getMainWindow() : getMainWindow;
+    if (!win || win.isDestroyed()) {
+      logger.debug(`[IPC Event] Cannot send '${channel}': window not available`);
+      return false;
+    }
+    return safeSend(win.webContents, channel, data, options);
+  } catch (error) {
+    logger.error(`[IPC Event] Error in safeSendToMain for '${channel}':`, error);
+    return false;
+  }
+}
+
 // Export Zod instance for convenience (if available)
 module.exports = {
   // Primary exports
@@ -530,6 +613,10 @@ module.exports = {
   // Safe IPC registration (uses registry for cleanup)
   safeHandle,
   safeOn,
+
+  // Safe event sending with validation
+  safeSend,
+  safeSendToMain,
 
   // Individual wrappers for backwards compatibility
   withErrorLogging,

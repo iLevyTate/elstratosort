@@ -1,8 +1,8 @@
 const os = require('os');
 const { getOllama, getOllamaEmbeddingModel } = require('../ollamaUtils');
-const { buildOllamaOptions } = require('./PerformanceService');
 const { logger } = require('../../shared/logger');
-const { withOllamaRetry, isRetryableError } = require('../utils/ollamaApiRetry');
+const { isRetryableError } = require('../utils/ollamaApiRetry');
+const { getInstance: getOllamaService } = require('./OllamaService');
 
 logger.setContext('ParallelEmbeddingService');
 
@@ -201,47 +201,48 @@ class ParallelEmbeddingService {
    * @returns {Promise<{vector: number[], model: string}>}
    */
   async _embedTextWithRetry(text) {
-    // FIX: Add fallback to default embedding model when none configured
-    const { AI_DEFAULTS } = require('../../shared/constants');
-    const model = getOllamaEmbeddingModel() || AI_DEFAULTS.EMBEDDING.MODEL;
-
+    // FIX: Delegate to OllamaService for consistent model resolution and fallback logic
+    // This ensures ingestion uses the same logic as search
     try {
-      const result = await withOllamaRetry(
-        async () => {
-          const ollama = getOllama();
-          const perfOptions = await buildOllamaOptions('embeddings');
-          // Use the newer embed() API with 'input' parameter (embeddings() with 'prompt' is deprecated)
-          const response = await ollama.embed({
-            model,
-            input: text || '',
-            options: { ...perfOptions }
-          });
-          // embed() returns embeddings array; extract first vector
-          const vector =
-            Array.isArray(response.embeddings) && response.embeddings.length > 0
-              ? response.embeddings[0]
-              : [];
-          return { vector, model };
-        },
-        {
-          operation: 'ParallelEmbeddingService.embedText',
-          maxRetries: this.maxRetries,
-          initialDelay: this.initialRetryDelayMs,
-          maxDelay: this.maxRetryDelayMs,
-          jitterFactor: 0.3 // Add jitter to prevent thundering herd
-        }
-      );
+      const ollamaService = getOllamaService();
 
-      return result;
+      // Pass retry configuration to OllamaService
+      const options = {
+        maxRetries: this.maxRetries,
+        initialDelay: this.initialRetryDelayMs,
+        maxDelay: this.maxRetryDelayMs
+      };
+
+      const result = await ollamaService.generateEmbedding(text, options);
+
+      // Normalize shape to { vector, model, success } expected by callers
+      if (result && result.success) {
+        const normalized = {
+          success: true,
+          vector: result.embedding || result.vector || [],
+          model: result.model || 'fallback'
+        };
+        logger.debug('[ParallelEmbeddingService] Embedding generated', {
+          model: normalized.model,
+          dim: Array.isArray(normalized.vector) ? normalized.vector.length : 0
+        });
+        return normalized;
+      }
+
+      // Propagate structured failure for upstream handling
+      const err = new Error(result?.error || 'Embedding failed');
+      err.code = 'EMBEDDING_FAILED';
+      logger.warn('[ParallelEmbeddingService] Embedding failed', {
+        model: result?.model,
+        error: err.message
+      });
+      throw err;
     } catch (error) {
-      logger.error('[ParallelEmbeddingService] Embedding failed after retries', {
+      logger.error('[ParallelEmbeddingService] Embedding failed via OllamaService', {
         error: error.message,
         retryable: isRetryableError(error)
       });
 
-      // FIX: Throw error instead of returning zero vector
-      // Zero vectors are useless for semantic search and pollute the database
-      // Callers should handle the error and skip failed items
       const embeddingError = new Error(`Embedding failed: ${error.message}`);
       embeddingError.code = 'EMBEDDING_FAILED';
       embeddingError.originalError = error;
@@ -290,14 +291,11 @@ class ParallelEmbeddingService {
       try {
         // FIX: Check if model changed during batch - early exit if detected
         const currentModel = getOllamaEmbeddingModel() || AI_DEFAULTS.EMBEDDING.MODEL;
-        if (currentModel !== batchModel && !modelChangedDuringBatch) {
+        if (currentModel !== batchModel) {
           modelChangedDuringBatch = true;
-          logger.warn('[ParallelEmbeddingService] Model changed during batch operation', {
-            batchModel,
-            currentModel,
-            itemsProcessed: completedCount,
-            totalItems: items.length
-          });
+          const errorMsg = `Model changed during batch operation (started with ${batchModel}, now ${currentModel}). Aborting batch to prevent vector dimension mismatch.`;
+          logger.error('[ParallelEmbeddingService] ' + errorMsg);
+          throw new Error(errorMsg);
         }
 
         const { vector, model } = await this.embedText(item.text);

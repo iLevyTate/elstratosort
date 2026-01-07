@@ -4,10 +4,21 @@
  * Handles retrieval and management of file analysis history.
  * Demonstrates the service check pattern with various fallback responses.
  */
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { createHandler, createErrorResponse, safeHandle } = require('./ipcWrappers');
 const { schemas } = require('./validationSchemas');
 
-function registerAnalysisHistoryIpc({ ipcMain, IPC_CHANNELS, logger, getServiceIntegration }) {
+function registerAnalysisHistoryIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { getServiceIntegration } = container;
+
   const context = 'AnalysisHistory';
 
   // Helper to get analysis history service

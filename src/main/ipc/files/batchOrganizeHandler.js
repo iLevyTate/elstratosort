@@ -9,6 +9,7 @@
 
 const path = require('path');
 const fs = require('fs').promises;
+const { app } = require('electron');
 const crypto = require('crypto');
 const { ACTION_TYPES, PROCESSING_LIMITS } = require('../../../shared/constants');
 const { LIMITS } = require('../../../shared/performanceConstants');
@@ -226,7 +227,10 @@ async function handleBatchOrganize({
       };
     }
 
-    log.info(`[FILE-OPS] Starting batch operation ${batchId} with ${totalOperations} files`);
+    log.info(`[FILE-OPS] Starting batch operation ${batchId} with ${totalOperations} files`, {
+      batchId,
+      totalOperations
+    });
 
     // Process each operation
     for (let i = 0; i < batch.operations.length; i += 1) {
@@ -252,6 +256,15 @@ async function handleBatchOrganize({
       }
 
       try {
+        const opStart = Date.now();
+        log.debug('[FILE-OPS] Operation start', {
+          batchId,
+          index: i,
+          source: op.source,
+          destination: op.destination,
+          resumed: op.status === 'done'
+        });
+
         await getServiceIntegration()?.processingState?.markOrganizeOpStarted(batchId, i);
 
         if (!op.source || !op.destination) {
@@ -276,6 +289,13 @@ async function handleBatchOrganize({
         // Use validated paths
         op.source = sourceValidation.normalizedPath;
         op.destination = destValidation.normalizedPath;
+
+        log.debug('[FILE-OPS] Paths validated', {
+          batchId,
+          index: i,
+          source: op.source,
+          destination: op.destination
+        });
 
         // Ensure destination directory exists
         const destDir = path.dirname(op.destination);
@@ -305,6 +325,14 @@ async function handleBatchOrganize({
         }
         op.destination = moveResult.destination;
 
+        log.info('[FILE-OPS] Move completed', {
+          batchId,
+          index: i,
+          source: op.source,
+          destination: op.destination,
+          durationMs: Date.now() - opStart
+        });
+
         // Post-move verification: ensure destination exists and source is gone
         await verifyMoveCompletion(op.source, op.destination, log);
 
@@ -326,6 +354,13 @@ async function handleBatchOrganize({
           operation: op.type || 'move'
         });
         successCount++;
+
+        log.debug('[FILE-OPS] Operation success', {
+          batchId,
+          index: i,
+          source: op.source,
+          destination: op.destination
+        });
 
         // Send progress to renderer
         const win = getMainWindow();
@@ -365,6 +400,15 @@ async function handleBatchOrganize({
           critical: isCriticalError
         });
         failCount++;
+
+        log.warn('[FILE-OPS] Operation failed', {
+          batchId,
+          index: i,
+          source: op.source,
+          destination: op.destination,
+          error: error.message,
+          critical: isCriticalError
+        });
 
         if (shouldRollback) break;
       }
@@ -545,7 +589,37 @@ async function executeRollback(
   batchId,
   log
 ) {
-  log.warn(`[FILE-OPS] Executing rollback for batch ${batchId}`);
+  log.warn(`[FILE-OPS] Executing rollback for batch ${batchId}`, {
+    batchId,
+    completedCount: completedOperations.length,
+    failCount,
+    reason: rollbackReason
+  });
+
+  // FIX P0-1: Persist recovery manifest before starting rollback
+  // This allows recovery if the app crashes during rollback
+  let recoveryPath = null;
+  try {
+    const userDataPath = app.getPath('userData');
+    const recoveryDir = path.join(userDataPath, 'recovery');
+    await fs.mkdir(recoveryDir, { recursive: true });
+
+    recoveryPath = path.join(recoveryDir, `rollback_${batchId}.json`);
+    const recoveryManifest = {
+      batchId,
+      timestamp: new Date().toISOString(),
+      reason: rollbackReason,
+      status: 'pending',
+      operations: completedOperations, // These need to be reversed (dest -> source)
+      results: []
+    };
+
+    await fs.writeFile(recoveryPath, JSON.stringify(recoveryManifest, null, 2));
+    log.info(`[FILE-OPS] Recovery manifest saved to ${recoveryPath}`);
+  } catch (err) {
+    log.error(`[FILE-OPS] Failed to save recovery manifest: ${err.message}`);
+    // Continue with rollback even if persistence fails
+  }
 
   const rollbackResults = [];
   let rollbackSuccessCount = 0;
@@ -568,6 +642,9 @@ async function executeRollback(
       }
       rollbackSuccessCount++;
       rollbackResults.push({ success: true, file: completedOp.source });
+
+      // Update manifest with progress (optional, maybe too slow to do every file?
+      // Doing it every file is safest but slow. Let's do it on failure or end.)
     } catch (rollbackError) {
       rollbackFailCount++;
       rollbackResults.push({
@@ -577,6 +654,33 @@ async function executeRollback(
       });
     }
   }
+
+  // Update recovery manifest status
+  if (recoveryPath) {
+    try {
+      if (rollbackFailCount === 0) {
+        // success, delete manifest
+        await fs.unlink(recoveryPath);
+        log.info(`[FILE-OPS] Rollback successful, recovery manifest deleted`);
+      } else {
+        // update manifest with results so we know what failed
+        const recoveryManifest = JSON.parse(await fs.readFile(recoveryPath, 'utf8'));
+        recoveryManifest.status = 'partial_failure';
+        recoveryManifest.results = rollbackResults;
+        await fs.writeFile(recoveryPath, JSON.stringify(recoveryManifest, null, 2));
+        log.warn(`[FILE-OPS] Rollback had failures, manifest updated at ${recoveryPath}`);
+      }
+    } catch (err) {
+      log.warn(`[FILE-OPS] Failed to update recovery manifest: ${err.message}`);
+    }
+  }
+
+  log.warn('[FILE-OPS] Rollback summary', {
+    batchId,
+    rollbackSuccessCount,
+    rollbackFailCount,
+    completed: completedOperations.length
+  });
 
   return {
     success: false,
@@ -676,6 +780,12 @@ async function recordUndoAndUpdateDatabase(
       const changes = successfulResults.map((r) => ({ oldPath: r.source, newPath: r.destination }));
       if (changes.length > 0) {
         embeddingQueue.updateByFilePaths?.(changes);
+        log.debug('[FILE-OPS] Embedding queue paths updated', {
+          batchId,
+          count: changes.length
+        });
+      } else {
+        log.debug('[FILE-OPS] Embedding queue update skipped (no changes)', { batchId });
       }
     } catch (error) {
       log.debug('[FILE-OPS] Embedding queue path update skipped', {
@@ -686,8 +796,9 @@ async function recordUndoAndUpdateDatabase(
 
     // Update analysis history entries with new paths for BM25 search
     try {
-      const { getInstance: getAnalysisHistory } = require('../../services/analysisHistory');
-      const analysisHistoryService = getAnalysisHistory();
+      // FIX: analysisHistory module exports the class directly, not getInstance.
+      // Use service integration to access the singleton instance.
+      const analysisHistoryService = getServiceIntegration()?.analysisHistory;
 
       if (analysisHistoryService?.updateEntryPaths) {
         const successfulResults = results.filter((r) => r.success && r.source && r.destination);
@@ -705,7 +816,13 @@ async function recordUndoAndUpdateDatabase(
             updated: updateResult.updated,
             notFound: updateResult.notFound
           });
+        } else {
+          log.debug('[FILE-OPS] Analysis history path update skipped (no successes)', { batchId });
         }
+      } else {
+        log.debug('[FILE-OPS] Analysis history service not available for path updates', {
+          batchId
+        });
       }
     } catch (error) {
       log.warn('[FILE-OPS] Error updating analysis history paths', {
@@ -714,6 +831,12 @@ async function recordUndoAndUpdateDatabase(
       });
     }
   }
+
+  log.debug('[FILE-OPS] Undo/DB update complete', {
+    batchId,
+    successCount,
+    updatedPaths: results.filter((r) => r.success && r.source && r.destination).length
+  });
 }
 module.exports = {
   handleBatchOrganize,

@@ -1,3 +1,4 @@
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const path = require('path');
 const { getInstance: getChromaDB } = require('../services/chromadb');
 const { getInstance: getFolderMatcher } = require('../services/FolderMatchingService');
@@ -137,13 +138,18 @@ function setClusteringServiceInstance(service) {
   _clusteringServiceRef = service;
 }
 
-function registerEmbeddingsIpc({
-  ipcMain,
-  IPC_CHANNELS,
-  logger,
-  getCustomFolders,
-  getServiceIntegration
-}) {
+function registerEmbeddingsIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { getCustomFolders } = container.folders;
+  const { getServiceIntegration } = container;
+
   // Use ChromaDB and FolderMatcher singleton instances
   // FIX: Use singleton pattern instead of creating duplicate instance
   const chromaDbService = getChromaDB();

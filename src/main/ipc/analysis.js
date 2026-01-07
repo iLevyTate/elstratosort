@@ -1,3 +1,4 @@
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { performance } = require('perf_hooks');
 const { withErrorLogging, withValidation, safeHandle } = require('./ipcWrappers');
 const { safeFilePath } = require('../utils/safeAccess');
@@ -21,17 +22,19 @@ try {
   z = null;
 }
 
-function registerAnalysisIpc({
-  ipcMain,
-  IPC_CHANNELS,
-  logger,
-  tesseract,
-  systemAnalytics,
-  analyzeDocumentFile,
-  analyzeImageFile,
-  getServiceIntegration,
-  getCustomFolders
-}) {
+function registerAnalysisIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { analyzeDocumentFile, analyzeImageFile, tesseract } = container.analysis;
+  const { systemAnalytics, getServiceIntegration } = container;
+  const { getCustomFolders } = container.folders;
+
   const stringSchema = z ? z.string().min(1) : null;
   const LOG_PREFIX = '[IPC-ANALYSIS]';
 

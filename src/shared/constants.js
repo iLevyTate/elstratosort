@@ -143,7 +143,10 @@ const IPC_CHANNELS = {
     CREATE_BACKUP: 'settings-create-backup',
     LIST_BACKUPS: 'settings-list-backups',
     RESTORE_BACKUP: 'settings-restore-backup',
-    DELETE_BACKUP: 'settings-delete-backup'
+    DELETE_BACKUP: 'settings-delete-backup',
+    // Troubleshooting / diagnostics
+    GET_LOGS_INFO: 'get-logs-info',
+    OPEN_LOGS_FOLDER: 'open-logs-folder'
   },
 
   // Embeddings / Semantic Matching

@@ -13,15 +13,24 @@ const { validateFileOperationPath } = require('../../../shared/pathSanitization'
 
 logger.setContext('IPC:Files:Shell');
 
+const { IpcServiceContext, createFromLegacyParams } = require('../IpcServiceContext');
+
 /**
  * Register shell operation IPC handlers
  *
- * @param {Object} params - Registration parameters
- * @param {Object} params.ipcMain - Electron IPC main
- * @param {Object} params.IPC_CHANNELS - IPC channel constants
- * @param {Object} params.shell - Electron shell module
+ * @param {IpcServiceContext|Object} servicesOrParams - Service context or legacy parameters
  */
-function registerShellHandlers({ ipcMain, IPC_CHANNELS, shell }) {
+function registerShellHandlers(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS } = container.core;
+  const { shell } = container.electron;
+
   // Open file with default application
   safeHandle(
     ipcMain,

@@ -9,6 +9,7 @@ const path = require('path');
 const { ERROR_TYPES } = require('../../shared/constants');
 const { logger } = require('../../shared/logger');
 const { parseJsonLines } = require('../../shared/safeJsonOps');
+const { safeSend } = require('../ipc/ipcWrappers');
 const {
   isNotFoundError,
   isPermissionError,
@@ -16,6 +17,39 @@ const {
 } = require('../../shared/errorClassifier');
 
 logger.setContext('ErrorHandler');
+
+/**
+ * Extract a compact, user-friendly summary of Electron "process gone" details.
+ * @param {any} details
+ * @returns {string}
+ */
+function summarizeProcessGoneDetails(details) {
+  if (!details || typeof details !== 'object') return '';
+
+  const parts = [];
+  if (details.type) parts.push(`type=${String(details.type)}`);
+  if (details.reason) parts.push(`reason=${String(details.reason)}`);
+  if (typeof details.exitCode === 'number') parts.push(`exitCode=${details.exitCode}`);
+  if (details.serviceName) parts.push(`serviceName=${String(details.serviceName)}`);
+  if (details.name) parts.push(`name=${String(details.name)}`);
+
+  return parts.join(', ');
+}
+
+/**
+ * Normalize unknown error-like values into a consistent log payload.
+ * @param {any} err
+ * @returns {{ errorText?: string, stack?: string, details?: any }}
+ */
+function normalizeErrorForLogging(err) {
+  if (!err) return {};
+  if (err instanceof Error) {
+    return { errorText: err.toString(), stack: err.stack };
+  }
+
+  // Electron often passes plain objects (e.g., { type, reason, exitCode }) for crash events.
+  return { details: err };
+}
 
 /**
  * Sanitize sensitive data from log messages
@@ -84,7 +118,11 @@ class ErrorHandler {
     this.isInitialized = false;
   }
 
-  async initialize() {
+  /**
+   * Initialize error handler and configure log file location.
+   * @param {{ logFilePath?: string }} [options]
+   */
+  async initialize(options = {}) {
     try {
       // FIX: Set logPath here when app is ready (not in constructor)
       this.logPath = path.join(app.getPath('userData'), 'logs');
@@ -94,7 +132,12 @@ class ErrorHandler {
 
       // Set up log file
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      this.currentLogFile = path.join(this.logPath, `stratosort-${timestamp}.log`);
+      this.currentLogFile =
+        options.logFilePath || path.join(this.logPath, `stratosort-${timestamp}.log`);
+
+      // Ensure the shared logger writes to the same log file (single source of truth).
+      // Use optional chaining so unit tests can mock logger without full surface area.
+      logger?.enableFileLogging?.(this.currentLogFile, { format: 'jsonl' });
 
       // Set up global error handlers
       this.setupGlobalHandlers();
@@ -119,11 +162,40 @@ class ErrorHandler {
 
     // Handle Electron-specific errors only (these are not in lifecycle.js)
     app.on('render-process-gone', (event, webContents, details) => {
-      this.handleCriticalError('Renderer Process Crashed', details);
+      const summary = summarizeProcessGoneDetails(details);
+      const message = summary
+        ? `Renderer Process Crashed (${summary})`
+        : 'Renderer Process Crashed';
+
+      const urlSafe = (() => {
+        try {
+          return webContents?.getURL?.();
+        } catch {
+          return undefined;
+        }
+      })();
+
+      this.handleCriticalError(message, {
+        details,
+        webContentsId: webContents?.id,
+        url: urlSafe
+      });
     });
 
     app.on('child-process-gone', (event, details) => {
-      this.handleCriticalError('Child Process Crashed', details);
+      // Electron can often recover from GPU process restarts. We already log GPU exits in
+      // ./core/gpuConfig, so avoid forcing a full app quit for that case.
+      if (details?.type === 'GPU') {
+        const summary = summarizeProcessGoneDetails(details);
+        this.log('warning', summary ? `GPU Process Exited (${summary})` : 'GPU Process Exited', {
+          details
+        });
+        return;
+      }
+
+      const summary = summarizeProcessGoneDetails(details);
+      const message = summary ? `Child Process Crashed (${summary})` : 'Child Process Crashed';
+      this.handleCriticalError(message, { details });
     });
   }
 
@@ -240,16 +312,10 @@ class ErrorHandler {
    * Handle critical errors that may crash the app
    */
   async handleCriticalError(message, error) {
+    const normalized = normalizeErrorForLogging(error);
     logger.error('[CRITICAL ERROR]', {
       message,
-      error: error?.toString(),
-      stack: error?.stack
-    });
-
-    // Log to file
-    await this.log('critical', message, {
-      error: error?.toString(),
-      stack: error?.stack
+      ...normalized
     });
 
     // Show error dialog
@@ -275,8 +341,8 @@ class ErrorHandler {
     const mainWindow = BrowserWindow.getFocusedWindow();
 
     if (mainWindow && !mainWindow.isDestroyed()) {
-      // Send to renderer process
-      mainWindow.webContents.send('app:error', {
+      // Send to renderer process with validated payload
+      safeSend(mainWindow.webContents, 'app:error', {
         message,
         type,
         timestamp: new Date().toISOString()
@@ -301,25 +367,13 @@ class ErrorHandler {
     const sanitizedData = sanitizeLogData(data);
     const sanitizedMessage = sanitizeLogData(message);
 
-    if (!this.isInitialized) {
-      logger.log(level, `[${level.toUpperCase()}] ${sanitizedMessage}`, sanitizedData);
-      return;
-    }
-
-    const logEntry = {
-      timestamp: new Date().toISOString(),
-      level: level.toUpperCase(),
-      message: sanitizedMessage,
-      data: sanitizedData
-    };
-
+    // Route everything through the shared logger (it handles console + JSONL file output).
+    // We keep this method async for backwards compatibility with existing call sites.
     try {
-      const logLine = `${JSON.stringify(logEntry)}\n`;
-      // FIX: Use sync version to avoid async issues during startup
-      const fsSync = require('fs');
-      fsSync.appendFileSync(this.currentLogFile, logLine);
-    } catch (error) {
-      logger.error('Failed to write to log file:', { error: error.message });
+      logger.log(level, sanitizedMessage, sanitizedData);
+    } catch (e) {
+      // Avoid recursive failures; best-effort only.
+      void e;
     }
   }
 

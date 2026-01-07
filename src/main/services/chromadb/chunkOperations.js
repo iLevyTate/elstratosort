@@ -150,7 +150,15 @@ async function querySimilarFileChunks({ queryEmbedding, topK = 20, chunkCollecti
       });
     }
 
-    return matches.sort((a, b) => b.score - a.score);
+    const sorted = matches.sort((a, b) => b.score - a.score);
+    logger.debug('[ChunkOps] Top chunk matches', {
+      top: sorted.slice(0, 3).map((m) => ({
+        score: m.score?.toFixed?.(3),
+        id: m.id,
+        fileId: m.metadata?.fileId?.split(/[\\/]/).pop()
+      }))
+    });
+    return sorted;
   } catch (error) {
     logger.error('[ChunkOps] Failed to query similar file chunks:', error);
     return [];

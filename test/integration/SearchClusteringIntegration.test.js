@@ -122,6 +122,7 @@ describe('Search and Clustering Integration', () => {
     // Create mock ChromaDB service (shared singleton)
     mockChromaDb = {
       initialize: jest.fn().mockResolvedValue(undefined),
+      getCollectionDimension: jest.fn().mockResolvedValue(384),
       querySimilarFiles: jest.fn().mockImplementation(async (vector, topK) => {
         // Return results based on vector similarity
         return [

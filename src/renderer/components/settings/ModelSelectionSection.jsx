@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Database, Info } from 'lucide-react';
 import Select from '../ui/Select';
+import Card from '../ui/Card';
+import StatusBadge from '../ui/StatusBadge';
+import SettingRow from './SettingRow';
 
 // Embedding model dimensions - used for dimension change warnings
 const EMBEDDING_DIMENSIONS = {
@@ -41,117 +44,140 @@ function ModelSelectionSection({
   const hasEmbeddingModels = embeddingModelOptions.length > 0;
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {/* Text Model Selection */}
-      <div>
-        <label className="block text-sm font-medium text-system-gray-700 mb-2">
-          Text Model
-          <span className="ml-1 text-xs text-system-gray-500">
-            ({textModelOptions.length} available)
+    <Card className="p-5 border border-system-gray-200 shadow-sm space-y-5">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-system-gray-500">
+            Default AI models
+          </p>
+          <p className="text-sm text-system-gray-600">
+            Choose which Ollama models StratoSort uses for analysis, vision, and embeddings.
+          </p>
+        </div>
+        <StatusBadge variant="info" className="whitespace-nowrap">
+          <span className="flex items-center gap-2">
+            <Database className="w-4 h-4" />
+            Pulled from Ollama
           </span>
-        </label>
-        {hasTextModels ? (
-          <Select
-            value={settings.textModel}
-            onChange={(e) =>
-              setSettings((prev) => ({
-                ...prev,
-                textModel: e.target.value
-              }))
-            }
-          >
-            {textModelOptions.map((model) => (
-              <option key={model} value={model}>
-                {model}
-              </option>
-            ))}
-          </Select>
-        ) : (
-          <div className="text-sm text-system-gray-500 italic p-2 bg-system-gray-50 rounded">
-            No text models found. Pull a model like llama3.2 or mistral.
-          </div>
-        )}
+        </StatusBadge>
       </div>
 
-      {/* Vision Model Selection */}
-      <div>
-        <label className="block text-sm font-medium text-system-gray-700 mb-2">
-          Vision Model
-          <span className="ml-1 text-xs text-system-gray-500">
-            ({visionModelOptions.length} available)
-          </span>
-        </label>
-        {hasVisionModels ? (
-          <Select
-            value={settings.visionModel}
-            onChange={(e) =>
-              setSettings((prev) => ({
-                ...prev,
-                visionModel: e.target.value
-              }))
-            }
-          >
-            {visionModelOptions.map((model) => (
-              <option key={model} value={model}>
-                {model}
-              </option>
-            ))}
-          </Select>
-        ) : (
-          <div className="text-sm text-system-gray-500 italic p-2 bg-system-gray-50 rounded">
-            No vision models found. Pull a model like llava or moondream for image analysis.
-          </div>
-        )}
-      </div>
-
-      {/* Embedding Model Selection */}
-      <div>
-        <label className="block text-sm font-medium text-system-gray-700 mb-2">
-          Embedding Model
-          <span className="ml-1 text-xs text-system-gray-500">
-            ({embeddingModelOptions.length} available)
-          </span>
-        </label>
-        {hasEmbeddingModels ? (
-          <>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {/* Text Model Selection */}
+        <SettingRow
+          layout="col"
+          label="Text Model"
+          description={`${textModelOptions.length} available`}
+          className="h-full"
+        >
+          {hasTextModels ? (
             <Select
-              value={settings.embeddingModel}
-              onChange={(e) => {
-                setEmbeddingModelChanged(true);
+              value={settings.textModel}
+              onChange={(e) =>
                 setSettings((prev) => ({
                   ...prev,
-                  embeddingModel: e.target.value
-                }));
-              }}
+                  textModel: e.target.value
+                }))
+              }
+              className="w-full"
             >
-              {embeddingModelOptions.map((model) => (
+              {textModelOptions.map((model) => (
                 <option key={model} value={model}>
-                  {model} ({EMBEDDING_DIMENSIONS[model] || '?'} dims)
+                  {model}
                 </option>
               ))}
             </Select>
-            <div className="mt-2 text-xs text-system-gray-500">
-              Changing embedding models requires rebuilding embeddings (different models have
-              different vector dimensions and are not compatible).
+          ) : (
+            <div className="text-sm text-system-gray-500 italic p-3 bg-system-gray-50 rounded-lg border border-system-gray-100">
+              No text models found. Pull a model like llama3.2 or mistral.
             </div>
-            {embeddingModelChanged && (
-              <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-md flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                <div className="text-xs text-amber-700">
-                  <span className="font-medium">Embedding model changed.</span> Rebuild embeddings
-                  in AI Configuration to apply. Different models have different dimensions and are
-                  not compatible.
-                </div>
+          )}
+        </SettingRow>
+
+        {/* Vision Model Selection */}
+        <SettingRow
+          layout="col"
+          label="Vision Model"
+          description={`${visionModelOptions.length} available`}
+          className="h-full"
+        >
+          {hasVisionModels ? (
+            <Select
+              value={settings.visionModel}
+              onChange={(e) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  visionModel: e.target.value
+                }))
+              }
+              className="w-full"
+            >
+              {visionModelOptions.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <div className="text-sm text-system-gray-500 italic p-3 bg-system-gray-50 rounded-lg border border-system-gray-100">
+              No vision models found. Pull a model like llava or moondream for image analysis.
+            </div>
+          )}
+        </SettingRow>
+
+        {/* Embedding Model Selection */}
+        <SettingRow
+          layout="col"
+          label="Embedding Model"
+          description={`${embeddingModelOptions.length} available`}
+          className="h-full"
+        >
+          {hasEmbeddingModels ? (
+            <div className="space-y-3">
+              <Select
+                value={settings.embeddingModel}
+                onChange={(e) => {
+                  setEmbeddingModelChanged(true);
+                  setSettings((prev) => ({
+                    ...prev,
+                    embeddingModel: e.target.value
+                  }));
+                }}
+                className="w-full"
+              >
+                {embeddingModelOptions.map((model) => (
+                  <option key={model} value={model}>
+                    {model} ({EMBEDDING_DIMENSIONS[model] || '?'} dims)
+                  </option>
+                ))}
+              </Select>
+
+              <div className="flex items-start gap-2 p-2 bg-system-blue/5 rounded-md border border-system-blue/10">
+                <Info className="w-3.5 h-3.5 text-system-blue/70 mt-0.5 flex-shrink-0" />
+                <p className="text-[11px] text-system-gray-600 leading-tight">
+                  Different models use different vector dimensions. Changing the model requires
+                  rebuilding your embeddings database.
+                </p>
               </div>
-            )}
-          </>
-        ) : (
-          <div className="text-sm text-system-gray-500 italic p-2 bg-system-gray-50 rounded">
-            No embedding models available. Pull embeddinggemma (recommended) or mxbai-embed-large.
-          </div>
-        )}
+
+              {embeddingModelChanged && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div className="text-xs text-amber-700">
+                    <span className="font-medium">Model changed.</span> Rebuild embeddings in AI
+                    Configuration to apply.
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm text-system-gray-500 italic p-3 bg-system-gray-50 rounded-lg border border-system-gray-100">
+              No embedding models available. Pull embeddinggemma (recommended) or mxbai-embed-large.
+            </div>
+          )}
+        </SettingRow>
       </div>
-    </div>
+    </Card>
   );
 }
 

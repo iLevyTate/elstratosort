@@ -306,7 +306,7 @@ class SearchService {
 
   /**
    * Normalize query embedding vector to match the stored collection dimension.
-   * Prevents ChromaDB query errors after embedding model/config changes.
+   * STRICT MODE: Fails if dimensions mismatch to prevent semantic garbage.
    *
    * @param {number[]} vector
    * @param {'files'|'fileChunks'} collectionType
@@ -316,20 +316,27 @@ class SearchService {
     if (!Array.isArray(vector) || vector.length === 0) return null;
     try {
       const expectedDim = await this.chromaDb.getCollectionDimension(collectionType);
-      if (expectedDim == null) return vector; // Empty collection: allow any dimension
-      const normalized = this._padOrTruncateVector(vector, expectedDim);
-      if (normalized && normalized.length !== vector.length) {
-        logger.warn('[SearchService] Normalized query vector dimension for ChromaDB query', {
+
+      // If collection is empty, any dimension is valid
+      if (expectedDim == null) return vector;
+
+      // STRICT CHECK: Fail if dimensions mismatch
+      if (vector.length !== expectedDim) {
+        logger.error('[SearchService] Embedding dimension mismatch - failing vector search', {
           collectionType,
-          expectedDim,
-          actualDim: vector.length
+          expected: expectedDim,
+          actual: vector.length,
+          reason: 'Model mismatch likely'
         });
+        // Return null to signal invalid query vector -> empty results
+        return null;
       }
-      return normalized;
-    } catch (e) {
-      // If dimension check fails, proceed with raw vector (ChromaDB may still accept it)
-      logger.debug('[SearchService] Failed to normalize query vector dimension:', e.message);
+
       return vector;
+    } catch (e) {
+      // If dimension check fails, log and fail safe
+      logger.warn('[SearchService] Failed to validate query vector dimension:', e.message);
+      return null;
     }
   }
 
@@ -353,7 +360,7 @@ class SearchService {
       const results = this.bm25Index.search(safeQuery);
       logger.debug(`[SearchService] BM25 raw results: ${results.length}`);
 
-      return results.slice(0, topK).map((result) => {
+      const mapped = results.slice(0, topK).map((result) => {
         const meta = this.documentMap.get(result.ref) || {};
 
         // Extract matched terms and fields from Lunr matchData for match explanations
@@ -385,6 +392,20 @@ class SearchService {
           }
         };
       });
+
+      if (mapped.length) {
+        logger.debug('[SearchService] BM25 top candidates', {
+          top: mapped.slice(0, 3).map((r) => ({
+            score: r.score?.toFixed?.(3),
+            id: r.id?.split(/[\\/]/).pop(),
+            matchedFields: r.matchDetails?.matchedFields
+          }))
+        });
+      } else {
+        logger.debug('[SearchService] BM25 produced no mapped results');
+      }
+
+      return mapped;
     } catch (error) {
       logger.error('[SearchService] BM25 search failed:', error);
       return [];
@@ -421,8 +442,14 @@ class SearchService {
       }
       logger.debug(`[SearchService] Query embedding generated, dim=${embedResult.vector?.length}`);
 
+      // Normalize/Validate vector against collection dimension
       const queryVector = await this._normalizeQueryVector(embedResult.vector, 'files');
-      if (!queryVector) return [];
+      if (!queryVector) {
+        logger.warn(
+          '[SearchService] Aborting vector search due to invalid/mismatched query vector'
+        );
+        return [];
+      }
 
       // Query ChromaDB
       const chromaResults = await this.chromaDb.querySimilarFiles(queryVector, topK);
@@ -502,17 +529,43 @@ class SearchService {
    */
   async chunkSearch(query, topKFiles = 20, topKChunks = 80) {
     try {
+      // Inspect chunk collection availability and count
+      try {
+        const chunkCollection = this.chromaDb?.fileChunkCollection;
+        if (!chunkCollection) {
+          logger.warn('[SearchService] Chunk collection unavailable; skipping chunk search');
+          return [];
+        }
+        const chunkCount = (await chunkCollection.count?.()) ?? null;
+        if (chunkCount === 0) {
+          logger.warn('[SearchService] Chunk collection empty; no chunk results available');
+          return [];
+        }
+        logger.debug('[SearchService] Chunk collection ready', { chunkCount, topKChunks });
+      } catch (countErr) {
+        logger.debug('[SearchService] Unable to get chunk collection count', {
+          error: countErr.message
+        });
+      }
+
       const embedResult = await this.embedding.embedText(query);
       if (!embedResult || !embedResult.vector) {
         logger.warn('[SearchService] Failed to generate query embedding for chunk search');
         return [];
       }
 
+      // Normalize/Validate vector against collection dimension
       const queryVector = await this._normalizeQueryVector(embedResult.vector, 'fileChunks');
-      if (!queryVector) return [];
+      if (!queryVector) {
+        logger.warn('[SearchService] Aborting chunk search due to invalid/mismatched query vector');
+        return [];
+      }
 
       const chunkResults = await this.chromaDb.querySimilarFileChunks(queryVector, topKChunks);
-      if (!Array.isArray(chunkResults) || chunkResults.length === 0) return [];
+      if (!Array.isArray(chunkResults) || chunkResults.length === 0) {
+        logger.debug('[SearchService] Chunk search returned no results');
+        return [];
+      }
 
       // Aggregate chunk hits into file candidates (max score wins)
       const byFile = new Map();
@@ -768,6 +821,27 @@ class SearchService {
     }
 
     try {
+      // Log collection and index status to aid troubleshooting
+      try {
+        const fileCount = await this.chromaDb?.fileCollection?.count?.();
+        const chunkCount = await this.chromaDb?.fileChunkCollection?.count?.();
+        const bm25Status = this.getIndexStatus();
+        logger.debug('[SearchService] Search preflight status', {
+          fileEmbeddings: fileCount,
+          chunkEmbeddings: chunkCount,
+          bm25Indexed: bm25Status.documentCount,
+          bm25Stale: bm25Status.isStale,
+          topK,
+          minScore,
+          mode,
+          chunkTopK: Number.isInteger(chunkTopK) ? chunkTopK : topK * 6
+        });
+      } catch (statusErr) {
+        logger.debug('[SearchService] Failed to gather preflight status', {
+          error: statusErr.message
+        });
+      }
+
       // Ensure BM25 index is up to date
       if (this.isIndexStale()) {
         await this.buildBM25Index();
@@ -819,6 +893,20 @@ class SearchService {
         bm25Count: bm25Results.length,
         chunkCount: chunkResults.length
       });
+
+      // Quick peek at top scores/ids for troubleshooting (redacted to last path segment)
+      const peek = (arr) =>
+        arr.slice(0, 3).map((r) => ({
+          score: r.score?.toFixed?.(3),
+          id: r.id?.split(/[\\/]/).pop()
+        }));
+      if (vectorResults.length || bm25Results.length || chunkResults.length) {
+        logger.debug('[SearchService] Top candidates preview', {
+          vectorTop: peek(vectorResults),
+          bm25Top: peek(bm25Results),
+          chunkTop: peek(chunkResults)
+        });
+      }
 
       // Normalize scores within each source so weights are comparable
       const normalizedBm25 = this._normalizeScores(bm25Results).map((r) => ({
@@ -1091,6 +1179,77 @@ class SearchService {
       cachedIndexSize: this._serializedIndex?.length || 0,
       documentCount: this.documentMap.size
     };
+  }
+
+  /**
+   * Get embedding health diagnostics
+   * Analyzes ChromaDB state, model distribution, and orphaned entries
+   *
+   * @returns {Promise<Object>} Health report
+   */
+  async getEmbeddingHealth() {
+    try {
+      const stats = await this.chromaDb.getStats();
+      const historyEntries = this.history.analysisHistory?.entries || {};
+      const historyCount = Object.keys(historyEntries).length;
+
+      // Get sample of file embeddings to check model/dimensions
+      const fileSample = [];
+      try {
+        if (this.chromaDb.fileCollection) {
+          const result = await this.chromaDb.fileCollection.peek({ limit: 50 });
+          if (result && result.ids && result.ids.length > 0) {
+            // Reconstruct objects from columnar arrays
+            for (let i = 0; i < result.ids.length; i++) {
+              fileSample.push({
+                id: result.ids[i],
+                embedding: result.embeddings ? result.embeddings[i] : [],
+                metadata: result.metadatas ? result.metadatas[i] : {}
+              });
+            }
+          }
+        }
+      } catch (e) {
+        logger.warn('[SearchService] Failed to peek file embeddings:', e.message);
+      }
+
+      // Analyze models and dimensions
+      const models = {};
+      const dimensions = {};
+
+      fileSample.forEach((item) => {
+        const model = item.metadata?.model || 'unknown';
+        models[model] = (models[model] || 0) + 1;
+
+        const dim = Array.isArray(item.embedding) ? item.embedding.length : 0;
+        if (dim > 0) {
+          dimensions[dim] = (dimensions[dim] || 0) + 1;
+        }
+      });
+
+      // Check for orphans (files in history but not in vector DB)
+      // Note: This is an approximation as history IDs != vector IDs (vector IDs are file paths)
+      // We'll skip precise orphan checking here to avoid perf impact on large libraries
+
+      return {
+        healthy: true,
+        stats: {
+          historyCount,
+          vectorFileCount: stats.files,
+          vectorChunkCount: stats.fileChunks,
+          vectorFolderCount: stats.folders
+        },
+        models,
+        dimensions,
+        sampleSize: fileSample.length
+      };
+    } catch (error) {
+      logger.error('[SearchService] Health check failed:', error);
+      return {
+        healthy: false,
+        error: error.message
+      };
+    }
   }
 
   /**

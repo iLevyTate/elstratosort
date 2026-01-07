@@ -1,3 +1,4 @@
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { Ollama } = require('ollama');
 const { withErrorLogging, withValidation, safeHandle } = require('./ipcWrappers');
 const { optionalUrl: optionalUrlSchema } = require('./validationSchemas');
@@ -47,18 +48,25 @@ try {
   z = null;
 }
 
-function registerOllamaIpc({
-  ipcMain,
-  IPC_CHANNELS,
-  logger,
-  systemAnalytics,
-  getMainWindow,
-  getOllama,
-  getOllamaModel,
-  getOllamaVisionModel,
-  getOllamaEmbeddingModel,
-  getOllamaHost
-}) {
+function registerOllamaIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { systemAnalytics } = container;
+  const { getMainWindow } = container.electron;
+  const {
+    getOllama,
+    getOllamaModel,
+    getOllamaVisionModel,
+    getOllamaEmbeddingModel,
+    getOllamaHost
+  } = container.ollama;
+
   // Model categorization is now handled by shared/modelCategorization.js
 
   safeHandle(

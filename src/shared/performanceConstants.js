@@ -189,7 +189,7 @@ const THRESHOLDS = {
   MEMORY_WARNING_PERCENT: 80,
   DISK_WARNING_PERCENT: 90,
   CPU_WARNING_PERCENT: 85,
-  MIN_SIMILARITY_SCORE: 0.25,
+  MIN_SIMILARITY_SCORE: 0.12,
   MIN_MATCH_CONFIDENCE: 0.6,
   FOLDER_MATCH_CONFIDENCE: 0.55, // Min score for folder categorization
   QUEUE_HIGH_WATERMARK: 0.75,
@@ -213,7 +213,7 @@ const SEARCH = {
   VECTOR_WEIGHT: 0.6,
   BM25_WEIGHT: 0.4,
   // Default topK values by context
-  DEFAULT_TOP_K: 20,
+  DEFAULT_TOP_K: 30,
   DEFAULT_TOP_K_SIMILAR: 10,
   // Minimum epsilon for division safety
   MIN_EPSILON: 0.001

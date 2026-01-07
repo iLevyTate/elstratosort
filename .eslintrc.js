@@ -77,7 +77,9 @@ module.exports = {
     'import/no-import-module-exports': 'off', // Mixed imports/exports are fine
     'import/extensions': 'off', // Flexible extensions
     'no-unused-expressions': 'off', // Expression statements are fine
-    'no-console': 'off', // Console is fine in this app
+    // Task 2.2: Enforce logger usage instead of console
+    // Console is only allowed in logger.js (see override below)
+    'no-console': 'warn',
     'react/forbid-prop-types': 'off', // Any prop types are fine
     'jsx-a11y/control-has-associated-label': 'off', // Not always needed
     'jsx-a11y/no-redundant-roles': 'off', // Explicit roles are fine
@@ -94,11 +96,19 @@ module.exports = {
     'react/sort-comp': 'off', // Flexible method order
     'jsx-a11y/no-autofocus': 'off', // Autofocus is fine
     'jsx-a11y/no-noninteractive-tabindex': 'off', // Tabindex is fine
-    'react-hooks/exhaustive-deps': 'off', // Manual dependency control
+    // Task 2.2: Enforce cleanup patterns for hooks
+    'react-hooks/exhaustive-deps': 'warn',
     'jsx-a11y/role-has-required-aria-props': 'off', // Flexible aria
     'no-sequences': 'off' // Comma operator is valid
   },
   overrides: [
+    // Task 2.2: Allow console in logger.js (it IS the logger implementation)
+    {
+      files: ['**/logger.js', '**/logger.ts'],
+      rules: {
+        'no-console': 'off'
+      }
+    },
     {
       files: ['*.ts', '*.tsx'],
       parser: '@typescript-eslint/parser',
