@@ -250,7 +250,8 @@ describe('ErrorHandler', () => {
 
       await errorHandler.handleError(error, { operation: 'read' });
 
-      expect(mockFsSync.appendFileSync).toHaveBeenCalled();
+      const { logger } = require('../src/shared/logger');
+      expect(logger.log).toHaveBeenCalled();
     });
 
     test('returns parsed error info', async () => {
@@ -266,13 +267,12 @@ describe('ErrorHandler', () => {
   describe('log', () => {
     test('writes to log file when initialized', async () => {
       await errorHandler.initialize();
-      mockFsSync.appendFileSync.mockClear(); // Clear init log call
+      const { logger } = require('../src/shared/logger');
+      logger.log.mockClear(); // Clear init log call
 
       await errorHandler.log('info', 'Test message', { data: 'value' });
 
-      expect(mockFsSync.appendFileSync).toHaveBeenCalled();
-      const logContent = mockFsSync.appendFileSync.mock.calls[0][1];
-      expect(logContent).toContain('Test message');
+      expect(logger.log).toHaveBeenCalled();
     });
 
     test('uses logger when not initialized', async () => {
@@ -283,14 +283,14 @@ describe('ErrorHandler', () => {
       expect(logger.log).toHaveBeenCalled();
     });
 
-    test('handles write errors gracefully', async () => {
+    test('handles logger failures gracefully', async () => {
       await errorHandler.initialize();
-      mockFsSync.appendFileSync.mockImplementationOnce(() => {
-        throw new Error('Write failed');
+      const { logger } = require('../src/shared/logger');
+      logger.log.mockImplementationOnce(() => {
+        throw new Error('Log failed');
       });
 
       await errorHandler.log('info', 'Test message');
-
       // Should not throw
     });
   });

@@ -211,7 +211,7 @@ describe('SearchAutocomplete', () => {
 
       // Focus input and navigate - should not throw
       const input = screen.getByRole('combobox');
-      fireEvent.focus(input);
+      fireEvent.click(input);
       fireEvent.keyDown(input, { key: 'ArrowDown' });
       fireEvent.keyDown(input, { key: 'ArrowDown' });
       fireEvent.keyDown(input, { key: 'ArrowUp' });
@@ -234,7 +234,7 @@ describe('SearchAutocomplete', () => {
       });
 
       const input = screen.getByRole('combobox');
-      fireEvent.focus(input);
+      fireEvent.click(input);
 
       // Wait for suggestions to appear
       await waitFor(() => {
@@ -250,7 +250,7 @@ describe('SearchAutocomplete', () => {
   });
 
   describe('Recent searches', () => {
-    test('shows recent searches when focused with no query', () => {
+    test('shows recent searches when clicked with no query', () => {
       localStorageMock.getItem.mockReturnValue(
         JSON.stringify(['previous search', 'another query'])
       );
@@ -259,7 +259,7 @@ describe('SearchAutocomplete', () => {
       render(<SearchAutocomplete value="" onChange={onChange} />);
 
       const input = screen.getByRole('combobox');
-      fireEvent.focus(input);
+      fireEvent.click(input);
 
       expect(screen.getByText('previous search')).toBeInTheDocument();
       expect(screen.getByText('another query')).toBeInTheDocument();
@@ -273,7 +273,7 @@ describe('SearchAutocomplete', () => {
       render(<SearchAutocomplete value="" onChange={onChange} onSearch={onSearch} />);
 
       const input = screen.getByRole('combobox');
-      fireEvent.focus(input);
+      fireEvent.click(input);
 
       fireEvent.click(screen.getByText('old search'));
 
@@ -287,7 +287,7 @@ describe('SearchAutocomplete', () => {
       render(<SearchAutocomplete value="" onChange={onChange} />);
 
       const input = screen.getByRole('combobox');
-      fireEvent.focus(input);
+      fireEvent.click(input);
 
       // Click the remove button for 'to remove'
       const removeButton = screen.getAllByLabelText('Remove from history')[0];
@@ -313,7 +313,7 @@ describe('SearchAutocomplete', () => {
       });
 
       const input = screen.getByRole('combobox');
-      fireEvent.focus(input);
+      fireEvent.click(input);
 
       await waitFor(() => {
         expect(screen.getByText('95%')).toBeInTheDocument();
@@ -334,7 +334,7 @@ describe('SearchAutocomplete', () => {
       });
 
       const input = screen.getByRole('combobox');
-      fireEvent.focus(input);
+      fireEvent.click(input);
 
       await waitFor(() => {
         // Score 1.5 should be clamped to 1.0 = 100%
@@ -356,7 +356,7 @@ describe('SearchAutocomplete', () => {
       });
 
       const input = screen.getByRole('combobox');
-      fireEvent.focus(input);
+      fireEvent.click(input);
 
       await waitFor(() => {
         // Score -0.5 should be clamped to 0 = 0%
@@ -415,7 +415,7 @@ describe('SearchAutocomplete', () => {
 
       // Focus to show suggestions
       const input = screen.getByRole('combobox');
-      fireEvent.focus(input);
+      fireEvent.click(input);
 
       expect(screen.getByText('recent search')).toBeInTheDocument();
 

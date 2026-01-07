@@ -81,7 +81,7 @@ describe('EmbeddingQueueCore Methods', () => {
       clearDeadLetterQueue: jest.fn(),
       retryDeadLetterItem: jest.fn(),
       retryAllDeadLetterItems: jest.fn(),
-      persistAll: jest.fn(),
+      persistAll: jest.fn().mockResolvedValue(),
       setDeadLetterQueue: jest.fn()
     };
     createFailedItemHandler.mockReturnValue(mockFailedItemHandler);
@@ -284,6 +284,17 @@ describe('EmbeddingQueueCore Methods', () => {
       expect(mockFailedItemHandler.failedItems.has('file:/new/path/a.txt')).toBe(true);
       expect(mockFailedItemHandler.failedItems.has('image:/new/path/a.txt')).toBe(true);
       expect(persistQueueData).toHaveBeenCalled();
+      expect(mockFailedItemHandler.persistAll).toHaveBeenCalled();
+    });
+
+    test('updateByFilePath persists when only failed items are updated', () => {
+      // Clear queue but keep failed items
+      embeddingQueue.queue = [];
+      const updated = embeddingQueue.updateByFilePath('/old/path/a.txt', '/new/path/a.txt');
+
+      expect(updated).toBe(0);
+      expect(mockFailedItemHandler.failedItems.has('file:/new/path/a.txt')).toBe(true);
+      expect(mockFailedItemHandler.persistAll).toHaveBeenCalled();
     });
   });
 

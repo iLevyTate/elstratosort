@@ -100,6 +100,8 @@ describe('Batch Organize Handler', () => {
       error: jest.fn()
     };
 
+    const mockUpdateEntryPaths = jest.fn().mockResolvedValue({ updated: 1, notFound: 0 });
+
     const mockGetServiceIntegration = () => ({
       processingState: {
         createOrLoadOrganizeBatch: jest.fn().mockResolvedValue(null),
@@ -110,7 +112,14 @@ describe('Batch Organize Handler', () => {
       },
       undoRedo: {
         recordAction: jest.fn()
+      },
+      analysisHistory: {
+        updateEntryPaths: mockUpdateEntryPaths
       }
+    });
+
+    beforeEach(() => {
+      mockUpdateEntryPaths.mockClear();
     });
 
     const mockGetMainWindow = () => ({
@@ -177,6 +186,15 @@ describe('Batch Organize Handler', () => {
       expect(result.success).toBe(true);
       expect(result.successCount).toBe(2);
       expect(result.failCount).toBe(0);
+
+      // Verify analysis history update was called with correct paths
+      expect(mockUpdateEntryPaths).toHaveBeenCalled();
+      const calls = mockUpdateEntryPaths.mock.calls[0][0];
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({
+        oldPath: '/src/file1.txt',
+        newPath: '/dest/file1.txt'
+      });
     });
 
     test('handles partial failures', async () => {
