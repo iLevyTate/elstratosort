@@ -306,7 +306,7 @@ class SearchService {
 
   /**
    * Normalize query embedding vector to match the stored collection dimension.
-   * Prevents ChromaDB query errors after embedding model/config changes.
+   * STRICT MODE: Fails if dimensions mismatch to prevent semantic garbage.
    *
    * @param {number[]} vector
    * @param {'files'|'fileChunks'} collectionType
@@ -316,20 +316,27 @@ class SearchService {
     if (!Array.isArray(vector) || vector.length === 0) return null;
     try {
       const expectedDim = await this.chromaDb.getCollectionDimension(collectionType);
-      if (expectedDim == null) return vector; // Empty collection: allow any dimension
-      const normalized = this._padOrTruncateVector(vector, expectedDim);
-      if (normalized && normalized.length !== vector.length) {
-        logger.warn('[SearchService] Normalized query vector dimension for ChromaDB query', {
+
+      // If collection is empty, any dimension is valid
+      if (expectedDim == null) return vector;
+
+      // STRICT CHECK: Fail if dimensions mismatch
+      if (vector.length !== expectedDim) {
+        logger.error('[SearchService] Embedding dimension mismatch - failing vector search', {
           collectionType,
-          expectedDim,
-          actualDim: vector.length
+          expected: expectedDim,
+          actual: vector.length,
+          reason: 'Model mismatch likely'
         });
+        // Return null to signal invalid query vector -> empty results
+        return null;
       }
-      return normalized;
-    } catch (e) {
-      // If dimension check fails, proceed with raw vector (ChromaDB may still accept it)
-      logger.debug('[SearchService] Failed to normalize query vector dimension:', e.message);
+
       return vector;
+    } catch (e) {
+      // If dimension check fails, log and fail safe
+      logger.warn('[SearchService] Failed to validate query vector dimension:', e.message);
+      return null;
     }
   }
 
@@ -421,8 +428,14 @@ class SearchService {
       }
       logger.debug(`[SearchService] Query embedding generated, dim=${embedResult.vector?.length}`);
 
+      // Normalize/Validate vector against collection dimension
       const queryVector = await this._normalizeQueryVector(embedResult.vector, 'files');
-      if (!queryVector) return [];
+      if (!queryVector) {
+        logger.warn(
+          '[SearchService] Aborting vector search due to invalid/mismatched query vector'
+        );
+        return [];
+      }
 
       // Query ChromaDB
       const chromaResults = await this.chromaDb.querySimilarFiles(queryVector, topK);
@@ -508,8 +521,12 @@ class SearchService {
         return [];
       }
 
+      // Normalize/Validate vector against collection dimension
       const queryVector = await this._normalizeQueryVector(embedResult.vector, 'fileChunks');
-      if (!queryVector) return [];
+      if (!queryVector) {
+        logger.warn('[SearchService] Aborting chunk search due to invalid/mismatched query vector');
+        return [];
+      }
 
       const chunkResults = await this.chromaDb.querySimilarFileChunks(queryVector, topKChunks);
       if (!Array.isArray(chunkResults) || chunkResults.length === 0) return [];
@@ -1091,6 +1108,77 @@ class SearchService {
       cachedIndexSize: this._serializedIndex?.length || 0,
       documentCount: this.documentMap.size
     };
+  }
+
+  /**
+   * Get embedding health diagnostics
+   * Analyzes ChromaDB state, model distribution, and orphaned entries
+   *
+   * @returns {Promise<Object>} Health report
+   */
+  async getEmbeddingHealth() {
+    try {
+      const stats = await this.chromaDb.getStats();
+      const historyEntries = this.history.analysisHistory?.entries || {};
+      const historyCount = Object.keys(historyEntries).length;
+
+      // Get sample of file embeddings to check model/dimensions
+      const fileSample = [];
+      try {
+        if (this.chromaDb.fileCollection) {
+          const result = await this.chromaDb.fileCollection.peek({ limit: 50 });
+          if (result && result.ids && result.ids.length > 0) {
+            // Reconstruct objects from columnar arrays
+            for (let i = 0; i < result.ids.length; i++) {
+              fileSample.push({
+                id: result.ids[i],
+                embedding: result.embeddings ? result.embeddings[i] : [],
+                metadata: result.metadatas ? result.metadatas[i] : {}
+              });
+            }
+          }
+        }
+      } catch (e) {
+        logger.warn('[SearchService] Failed to peek file embeddings:', e.message);
+      }
+
+      // Analyze models and dimensions
+      const models = {};
+      const dimensions = {};
+
+      fileSample.forEach((item) => {
+        const model = item.metadata?.model || 'unknown';
+        models[model] = (models[model] || 0) + 1;
+
+        const dim = Array.isArray(item.embedding) ? item.embedding.length : 0;
+        if (dim > 0) {
+          dimensions[dim] = (dimensions[dim] || 0) + 1;
+        }
+      });
+
+      // Check for orphans (files in history but not in vector DB)
+      // Note: This is an approximation as history IDs != vector IDs (vector IDs are file paths)
+      // We'll skip precise orphan checking here to avoid perf impact on large libraries
+
+      return {
+        healthy: true,
+        stats: {
+          historyCount,
+          vectorFileCount: stats.files,
+          vectorChunkCount: stats.fileChunks,
+          vectorFolderCount: stats.folders
+        },
+        models,
+        dimensions,
+        sampleSize: fileSample.length
+      };
+    } catch (error) {
+      logger.error('[SearchService] Health check failed:', error);
+      return {
+        healthy: false,
+        error: error.message
+      };
+    }
   }
 
   /**

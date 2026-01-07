@@ -41,6 +41,14 @@ jest.mock('../src/main/services/PerformanceService', () => ({
   buildOllamaOptions: jest.fn().mockResolvedValue({ num_gpu: -1, main_gpu: 0 })
 }));
 
+// Mock OllamaService
+const mockOllamaServiceInstance = {
+  generateEmbedding: jest.fn().mockResolvedValue({ vector: [0.1, 0.2, 0.3], model: 'test-model' })
+};
+jest.mock('../src/main/services/OllamaService', () => ({
+  getInstance: jest.fn(() => mockOllamaServiceInstance)
+}));
+
 describe('ParallelEmbeddingService', () => {
   let ParallelEmbeddingService;
   let getInstance;
@@ -53,6 +61,11 @@ describe('ParallelEmbeddingService', () => {
     // New API uses embed() with embeddings array response
     mockOllama.embed.mockResolvedValue({ embeddings: [[0.1, 0.2, 0.3]] });
     mockOllama.list.mockResolvedValue({ models: [] });
+    // Reset OllamaService mock to success
+    mockOllamaServiceInstance.generateEmbedding.mockResolvedValue({
+      vector: [0.1, 0.2, 0.3],
+      model: 'mxbai-embed-large'
+    });
 
     const module = require('../src/main/services/ParallelEmbeddingService');
     ParallelEmbeddingService = module.ParallelEmbeddingService;
@@ -191,8 +204,7 @@ describe('ParallelEmbeddingService', () => {
     });
 
     test('throws error on embedding failure', async () => {
-      const { withOllamaRetry } = require('../src/main/utils/ollamaApiRetry');
-      withOllamaRetry.mockRejectedValueOnce(new Error('Ollama error'));
+      mockOllamaServiceInstance.generateEmbedding.mockRejectedValueOnce(new Error('Ollama error'));
 
       const service = new ParallelEmbeddingService();
 
@@ -254,9 +266,8 @@ describe('ParallelEmbeddingService', () => {
     });
 
     test('collects errors for failed items', async () => {
-      const { withOllamaRetry } = require('../src/main/utils/ollamaApiRetry');
-      withOllamaRetry
-        .mockResolvedValueOnce({ embedding: [0.1] })
+      mockOllamaServiceInstance.generateEmbedding
+        .mockResolvedValueOnce({ vector: [0.1], model: 'test' })
         .mockRejectedValueOnce(new Error('Failed'));
 
       const service = new ParallelEmbeddingService();
@@ -280,8 +291,7 @@ describe('ParallelEmbeddingService', () => {
     });
 
     test('respects stopOnError option', async () => {
-      const { withOllamaRetry } = require('../src/main/utils/ollamaApiRetry');
-      withOllamaRetry.mockRejectedValue(new Error('Failed'));
+      mockOllamaServiceInstance.generateEmbedding.mockRejectedValue(new Error('Failed'));
 
       const service = new ParallelEmbeddingService();
 

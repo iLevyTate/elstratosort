@@ -80,6 +80,7 @@ describe('SearchService', () => {
     // Create mock ChromaDB service
     mockChromaDb = {
       initialize: jest.fn().mockResolvedValue(undefined),
+      getCollectionDimension: jest.fn().mockResolvedValue(384),
       querySimilarFiles: jest.fn().mockResolvedValue([
         {
           id: 'doc1',
