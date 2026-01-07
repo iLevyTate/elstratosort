@@ -555,6 +555,22 @@ class SmartFolderWatcher {
       if (dropped) {
         this.stats.queueDropped++;
         this._queueDropsSinceLog++;
+
+        // FIX P1-2: Notify user about dropped items so they know analysis was skipped
+        // We rate limit this notification to avoid spamming
+        const now = Date.now();
+        if (
+          this.notificationService &&
+          (!this._lastDropNotification || now - this._lastDropNotification > 60000)
+        ) {
+          this.notificationService
+            .notifyWatcherError(
+              'High Load',
+              `Analysis queue full. Some files (e.g. ${path.basename(dropped.filePath)}) were skipped to maintain performance.`
+            )
+            .catch(() => {});
+          this._lastDropNotification = now;
+        }
       }
 
       const now = Date.now();

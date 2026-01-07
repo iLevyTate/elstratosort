@@ -20,7 +20,7 @@ function registerSuggestionsIpc(servicesOrParams) {
     container = createFromLegacyParams(servicesOrParams);
   }
 
-  const { ipcMain, IPC_CHANNELS, logger: containerLogger } = container.core;
+  const { ipcMain, IPC_CHANNELS } = container.core;
   const { settingsService } = container.settings;
   const { getCustomFolders } = container.folders;
   const { getServiceIntegration } = container;

@@ -360,7 +360,7 @@ class SearchService {
       const results = this.bm25Index.search(safeQuery);
       logger.debug(`[SearchService] BM25 raw results: ${results.length}`);
 
-      return results.slice(0, topK).map((result) => {
+      const mapped = results.slice(0, topK).map((result) => {
         const meta = this.documentMap.get(result.ref) || {};
 
         // Extract matched terms and fields from Lunr matchData for match explanations
@@ -392,6 +392,20 @@ class SearchService {
           }
         };
       });
+
+      if (mapped.length) {
+        logger.debug('[SearchService] BM25 top candidates', {
+          top: mapped.slice(0, 3).map((r) => ({
+            score: r.score?.toFixed?.(3),
+            id: r.id?.split(/[\\/]/).pop(),
+            matchedFields: r.matchDetails?.matchedFields
+          }))
+        });
+      } else {
+        logger.debug('[SearchService] BM25 produced no mapped results');
+      }
+
+      return mapped;
     } catch (error) {
       logger.error('[SearchService] BM25 search failed:', error);
       return [];
@@ -515,6 +529,25 @@ class SearchService {
    */
   async chunkSearch(query, topKFiles = 20, topKChunks = 80) {
     try {
+      // Inspect chunk collection availability and count
+      try {
+        const chunkCollection = this.chromaDb?.fileChunkCollection;
+        if (!chunkCollection) {
+          logger.warn('[SearchService] Chunk collection unavailable; skipping chunk search');
+          return [];
+        }
+        const chunkCount = (await chunkCollection.count?.()) ?? null;
+        if (chunkCount === 0) {
+          logger.warn('[SearchService] Chunk collection empty; no chunk results available');
+          return [];
+        }
+        logger.debug('[SearchService] Chunk collection ready', { chunkCount, topKChunks });
+      } catch (countErr) {
+        logger.debug('[SearchService] Unable to get chunk collection count', {
+          error: countErr.message
+        });
+      }
+
       const embedResult = await this.embedding.embedText(query);
       if (!embedResult || !embedResult.vector) {
         logger.warn('[SearchService] Failed to generate query embedding for chunk search');
@@ -529,7 +562,10 @@ class SearchService {
       }
 
       const chunkResults = await this.chromaDb.querySimilarFileChunks(queryVector, topKChunks);
-      if (!Array.isArray(chunkResults) || chunkResults.length === 0) return [];
+      if (!Array.isArray(chunkResults) || chunkResults.length === 0) {
+        logger.debug('[SearchService] Chunk search returned no results');
+        return [];
+      }
 
       // Aggregate chunk hits into file candidates (max score wins)
       const byFile = new Map();
@@ -785,6 +821,27 @@ class SearchService {
     }
 
     try {
+      // Log collection and index status to aid troubleshooting
+      try {
+        const fileCount = await this.chromaDb?.fileCollection?.count?.();
+        const chunkCount = await this.chromaDb?.fileChunkCollection?.count?.();
+        const bm25Status = this.getIndexStatus();
+        logger.debug('[SearchService] Search preflight status', {
+          fileEmbeddings: fileCount,
+          chunkEmbeddings: chunkCount,
+          bm25Indexed: bm25Status.documentCount,
+          bm25Stale: bm25Status.isStale,
+          topK,
+          minScore,
+          mode,
+          chunkTopK: Number.isInteger(chunkTopK) ? chunkTopK : topK * 6
+        });
+      } catch (statusErr) {
+        logger.debug('[SearchService] Failed to gather preflight status', {
+          error: statusErr.message
+        });
+      }
+
       // Ensure BM25 index is up to date
       if (this.isIndexStale()) {
         await this.buildBM25Index();
@@ -836,6 +893,20 @@ class SearchService {
         bm25Count: bm25Results.length,
         chunkCount: chunkResults.length
       });
+
+      // Quick peek at top scores/ids for troubleshooting (redacted to last path segment)
+      const peek = (arr) =>
+        arr.slice(0, 3).map((r) => ({
+          score: r.score?.toFixed?.(3),
+          id: r.id?.split(/[\\/]/).pop()
+        }));
+      if (vectorResults.length || bm25Results.length || chunkResults.length) {
+        logger.debug('[SearchService] Top candidates preview', {
+          vectorTop: peek(vectorResults),
+          bm25Top: peek(bm25Results),
+          chunkTop: peek(chunkResults)
+        });
+      }
 
       // Normalize scores within each source so weights are comparable
       const normalizedBm25 = this._normalizeScores(bm25Results).map((r) => ({

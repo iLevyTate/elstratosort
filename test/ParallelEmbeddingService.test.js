@@ -63,6 +63,7 @@ describe('ParallelEmbeddingService', () => {
     mockOllama.list.mockResolvedValue({ models: [] });
     // Reset OllamaService mock to success
     mockOllamaServiceInstance.generateEmbedding.mockResolvedValue({
+      success: true,
       vector: [0.1, 0.2, 0.3],
       model: 'mxbai-embed-large'
     });
@@ -204,7 +205,10 @@ describe('ParallelEmbeddingService', () => {
     });
 
     test('throws error on embedding failure', async () => {
-      mockOllamaServiceInstance.generateEmbedding.mockRejectedValueOnce(new Error('Ollama error'));
+      mockOllamaServiceInstance.generateEmbedding.mockResolvedValueOnce({
+        success: false,
+        error: 'Ollama error'
+      });
 
       const service = new ParallelEmbeddingService();
 
@@ -267,7 +271,7 @@ describe('ParallelEmbeddingService', () => {
 
     test('collects errors for failed items', async () => {
       mockOllamaServiceInstance.generateEmbedding
-        .mockResolvedValueOnce({ vector: [0.1], model: 'test' })
+        .mockResolvedValueOnce({ success: true, vector: [0.1], model: 'mxbai-embed-large' })
         .mockRejectedValueOnce(new Error('Failed'));
 
       const service = new ParallelEmbeddingService();

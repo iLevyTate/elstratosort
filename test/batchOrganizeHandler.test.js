@@ -3,6 +3,13 @@
  * Tests batch file organization with rollback support
  */
 
+// Mock electron
+jest.mock('electron', () => ({
+  app: {
+    getPath: jest.fn().mockReturnValue('/mock/user/data')
+  }
+}));
+
 // Mock logger
 jest.mock('../src/shared/logger', () => ({
   logger: {
@@ -18,7 +25,10 @@ jest.mock('../src/shared/logger', () => ({
 const mockFs = {
   rename: jest.fn().mockResolvedValue(undefined),
   mkdir: jest.fn().mockResolvedValue(undefined),
-  access: jest.fn().mockResolvedValue(undefined)
+  access: jest.fn().mockResolvedValue(undefined),
+  writeFile: jest.fn().mockResolvedValue(undefined),
+  readFile: jest.fn().mockResolvedValue('{}'),
+  unlink: jest.fn().mockResolvedValue(undefined)
 };
 jest.mock('fs', () => ({
   promises: mockFs,
@@ -305,6 +315,34 @@ describe('Batch Organize Handler', () => {
 
       expect(result.success).toBe(false);
       expect(result.rolledBack).toBe(true);
+    });
+
+    test('persists recovery manifest during rollback', async () => {
+      // Setup failure to trigger rollback
+      mockFs.rename.mockResolvedValueOnce(undefined);
+      mockFs.rename.mockRejectedValueOnce({ code: 'ENOSPC', message: 'No space' });
+
+      const operations = [
+        { source: '/src/file1.txt', destination: '/dest/file1.txt' },
+        { source: '/src/file2.txt', destination: '/dest/file2.txt' }
+      ];
+
+      await handleBatchOrganize({
+        operation: { operations },
+        logger: mockLogger,
+        getServiceIntegration: mockGetServiceIntegration,
+        getMainWindow: mockGetMainWindow
+      });
+
+      // Check if recovery file was written
+      expect(mockFs.writeFile).toHaveBeenCalled();
+      const writeCall = mockFs.writeFile.mock.calls[0];
+      expect(writeCall[0]).toContain('recovery');
+      expect(writeCall[0]).toContain('rollback_');
+
+      const manifest = JSON.parse(writeCall[1]);
+      expect(manifest.status).toBe('pending');
+      expect(manifest.operations).toHaveLength(1); // 1 completed op to rollback
     });
 
     test('sends progress to renderer', async () => {

@@ -214,7 +214,29 @@ class ParallelEmbeddingService {
       };
 
       const result = await ollamaService.generateEmbedding(text, options);
-      return result;
+
+      // Normalize shape to { vector, model, success } expected by callers
+      if (result && result.success) {
+        const normalized = {
+          success: true,
+          vector: result.embedding || result.vector || [],
+          model: result.model || 'fallback'
+        };
+        logger.debug('[ParallelEmbeddingService] Embedding generated', {
+          model: normalized.model,
+          dim: Array.isArray(normalized.vector) ? normalized.vector.length : 0
+        });
+        return normalized;
+      }
+
+      // Propagate structured failure for upstream handling
+      const err = new Error(result?.error || 'Embedding failed');
+      err.code = 'EMBEDDING_FAILED';
+      logger.warn('[ParallelEmbeddingService] Embedding failed', {
+        model: result?.model,
+        error: err.message
+      });
+      throw err;
     } catch (error) {
       logger.error('[ParallelEmbeddingService] Embedding failed via OllamaService', {
         error: error.message,
@@ -269,14 +291,11 @@ class ParallelEmbeddingService {
       try {
         // FIX: Check if model changed during batch - early exit if detected
         const currentModel = getOllamaEmbeddingModel() || AI_DEFAULTS.EMBEDDING.MODEL;
-        if (currentModel !== batchModel && !modelChangedDuringBatch) {
+        if (currentModel !== batchModel) {
           modelChangedDuringBatch = true;
-          logger.warn('[ParallelEmbeddingService] Model changed during batch operation', {
-            batchModel,
-            currentModel,
-            itemsProcessed: completedCount,
-            totalItems: items.length
-          });
+          const errorMsg = `Model changed during batch operation (started with ${batchModel}, now ${currentModel}). Aborting batch to prevent vector dimension mismatch.`;
+          logger.error('[ParallelEmbeddingService] ' + errorMsg);
+          throw new Error(errorMsg);
         }
 
         const { vector, model } = await this.embedText(item.text);
