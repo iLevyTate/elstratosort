@@ -9,6 +9,7 @@
 
 const { Notification, BrowserWindow } = require('electron');
 const { logger } = require('../../shared/logger');
+const { safeSend } = require('../ipc/ipcWrappers');
 
 logger.setContext('NotificationService');
 
@@ -86,7 +87,7 @@ class NotificationService {
       const windows = BrowserWindow.getAllWindows();
       for (const win of windows) {
         if (win && !win.isDestroyed()) {
-          win.webContents.send('notification', notification);
+          safeSend(win.webContents, 'notification', notification);
         }
       }
     } catch (error) {

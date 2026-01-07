@@ -540,24 +540,23 @@ class EmbeddingQueue {
   }
 
   /**
-   * Update pending items by file path after a move/rename.
-   * This prevents queued embeddings from being flushed under stale IDs.
-   *
-   * Updates both file: and image: prefixed IDs and also updates failed items.
-   *
+   * Internal helper to update paths in queue and failed items
    * @param {string} oldPath
    * @param {string} newPath
-   * @returns {number} Number of queued items updated
+   * @returns {{queueUpdated: number, failedUpdated: boolean}}
+   * @private
    */
-  updateByFilePath(oldPath, newPath) {
-    if (!oldPath || !newPath) return 0;
+  _updatePath(oldPath, newPath) {
+    if (!oldPath || !newPath) return { queueUpdated: 0, failedUpdated: false };
 
     const idPairs = [
       { oldId: `file:${oldPath}`, newId: `file:${newPath}` },
       { oldId: `image:${oldPath}`, newId: `image:${newPath}` }
     ];
 
-    let updated = 0;
+    let queueUpdated = 0;
+    let failedUpdated = false;
+
     for (const { oldId, newId } of idPairs) {
       // Update main queue items in-place
       for (const item of this.queue) {
@@ -569,7 +568,7 @@ class EmbeddingQueue {
               item.meta.name = path.basename(newPath);
             }
           }
-          updated++;
+          queueUpdated++;
         }
       }
 
@@ -588,16 +587,44 @@ class EmbeddingQueue {
           }
         }
         this._failedItemHandler.failedItems.set(newId, failed);
+        failedUpdated = true;
       }
     }
 
-    if (updated > 0) {
+    return { queueUpdated, failedUpdated };
+  }
+
+  /**
+   * Update pending items by file path after a move/rename.
+   * This prevents queued embeddings from being flushed under stale IDs.
+   *
+   * Updates both file: and image: prefixed IDs and also updates failed items.
+   *
+   * @param {string} oldPath
+   * @param {string} newPath
+   * @returns {number} Number of queued items updated
+   */
+  updateByFilePath(oldPath, newPath) {
+    const { queueUpdated, failedUpdated } = this._updatePath(oldPath, newPath);
+
+    if (queueUpdated > 0) {
       this.persistQueue().catch((err) =>
         logger.warn('[EmbeddingQueue] Failed to persist after path update:', err.message)
       );
     }
 
-    return updated;
+    if (failedUpdated) {
+      this._failedItemHandler
+        .persistAll()
+        .catch((err) =>
+          logger.warn(
+            '[EmbeddingQueue] Failed to persist failed items after path update:',
+            err.message
+          )
+        );
+    }
+
+    return queueUpdated;
   }
 
   /**
@@ -607,12 +634,35 @@ class EmbeddingQueue {
    */
   updateByFilePaths(pathChanges) {
     if (!Array.isArray(pathChanges) || pathChanges.length === 0) return 0;
-    let total = 0;
+
+    let totalQueueUpdated = 0;
+    let anyFailedUpdated = false;
+
     for (const change of pathChanges) {
       if (!change?.oldPath || !change?.newPath) continue;
-      total += this.updateByFilePath(change.oldPath, change.newPath);
+      const { queueUpdated, failedUpdated } = this._updatePath(change.oldPath, change.newPath);
+      totalQueueUpdated += queueUpdated;
+      if (failedUpdated) anyFailedUpdated = true;
     }
-    return total;
+
+    if (totalQueueUpdated > 0) {
+      this.persistQueue().catch((err) =>
+        logger.warn('[EmbeddingQueue] Failed to persist after batch path update:', err.message)
+      );
+    }
+
+    if (anyFailedUpdated) {
+      this._failedItemHandler
+        .persistAll()
+        .catch((err) =>
+          logger.warn(
+            '[EmbeddingQueue] Failed to persist failed items after batch path update:',
+            err.message
+          )
+        );
+    }
+
+    return totalQueueUpdated;
   }
 
   /**

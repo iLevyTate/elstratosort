@@ -39,7 +39,8 @@ const {
   createEmptyIndex,
   generateFileHash,
   updateIndexes,
-  removeFromIndexes
+  removeFromIndexes,
+  updatePathIndexForMove
 } = require('./indexManager');
 
 const { searchAnalysis: searchAnalysisHelper } = require('./search');
@@ -530,6 +531,9 @@ class AnalysisHistoryServiceCore {
         // Check if this entry's original path matches any update
         const update = updateMap.get(entry.originalPath);
         if (update) {
+          // Track old actual path for index update
+          const oldActualPath = entry.organization?.actual || null;
+
           // Update the organization fields
           if (!entry.organization) {
             entry.organization = {};
@@ -539,6 +543,12 @@ class AnalysisHistoryServiceCore {
             entry.organization.newName = update.newName;
             entry.organization.renamed = true;
           }
+
+          // FIX: Update the path index for fast lookups by new path
+          if (this.analysisIndex) {
+            updatePathIndexForMove(this.analysisIndex, entry, oldActualPath, update.newPath);
+          }
+
           updated++;
           updateMap.delete(entry.originalPath); // Remove to track not found
         }
@@ -552,8 +562,9 @@ class AnalysisHistoryServiceCore {
         // Invalidate caches since paths have changed
         clearCachesHelper(this._cache, this);
 
-        // Save to disk
+        // Save to disk (both history and index since we updated path indexes)
         await this.saveHistory();
+        await this.saveIndex();
 
         logger.info(
           `[AnalysisHistoryService] Updated ${updated} entry paths, ${notFound} not found`

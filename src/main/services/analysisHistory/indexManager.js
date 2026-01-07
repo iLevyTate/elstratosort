@@ -83,6 +83,15 @@ function updateIndexes(index, entry) {
     index.pathLookup[normalizedPath] = entry.id;
   }
 
+  // FIX: Also index organization.actual for fast lookups after file moves
+  if (entry.organization?.actual) {
+    index.pathLookup[entry.organization.actual] = entry.id;
+    const normalizedActual = normalizePathForIndex(entry.organization.actual);
+    if (normalizedActual && normalizedActual !== entry.organization.actual) {
+      index.pathLookup[normalizedActual] = entry.id;
+    }
+  }
+
   // Tag index
   if (entry.analysis.tags) {
     entry.analysis.tags.forEach((tag) => {
@@ -169,10 +178,46 @@ function removeFromIndexes(index, entry) {
   }
 }
 
+/**
+ * Update path index when entry's organization.actual changes.
+ * Call this after updateEntryPaths to keep path lookup index in sync.
+ *
+ * @param {Object} index - Analysis index
+ * @param {Object} entry - Entry that was updated
+ * @param {string} oldActualPath - Previous organization.actual path (if any)
+ * @param {string} newActualPath - New organization.actual path
+ */
+function updatePathIndexForMove(index, entry, oldActualPath, newActualPath) {
+  if (!index || !entry) return;
+
+  // Remove old actual path from index (if any)
+  if (oldActualPath) {
+    delete index.pathLookup[oldActualPath];
+    const normalizedOld = normalizePathForIndex(oldActualPath);
+    if (normalizedOld && normalizedOld !== oldActualPath) {
+      delete index.pathLookup[normalizedOld];
+    }
+  }
+
+  // Add new actual path to index
+  if (newActualPath) {
+    index.pathLookup[newActualPath] = entry.id;
+    const normalizedNew = normalizePathForIndex(newActualPath);
+    if (normalizedNew && normalizedNew !== newActualPath) {
+      index.pathLookup[normalizedNew] = entry.id;
+    }
+  }
+
+  // Update timestamp
+  index.updatedAt = new Date().toISOString();
+}
+
 module.exports = {
   createEmptyIndex,
   generateFileHash,
   getSizeRange,
   updateIndexes,
-  removeFromIndexes
+  removeFromIndexes,
+  updatePathIndexForMove,
+  normalizePathForIndex
 };

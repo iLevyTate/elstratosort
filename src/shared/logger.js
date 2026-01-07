@@ -13,6 +13,58 @@ const LOG_LEVELS = {
 
 const LOG_LEVEL_NAMES = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'];
 
+/**
+ * Best-effort redaction for production logs.
+ * We keep this lightweight and dependency-free since it runs in both main/renderer.
+ * @param {string|object} data
+ * @returns {string|object}
+ */
+function sanitizeLogData(data) {
+  // Skip sanitization in development mode
+  if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+    return data;
+  }
+
+  // Strings: redact common absolute path patterns
+  if (typeof data === 'string') {
+    let sanitized = data.replace(
+      /[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*([^\\/:*?"<>|\r\n]+)/g,
+      (_match, filename) => `[REDACTED_PATH]\\${filename}`
+    );
+    sanitized = sanitized.replace(
+      /\/(?:[^/\s]+\/)+([^/\s]+)/g,
+      (_match, filename) => `[REDACTED_PATH]/${filename}`
+    );
+    return sanitized;
+  }
+
+  if (typeof data === 'object' && data !== null) {
+    const sanitized = Array.isArray(data) ? [] : {};
+    for (const [key, value] of Object.entries(data)) {
+      // Special handling for common path-ish keys
+      if (
+        (key === 'path' || key === 'filePath' || key === 'source' || key === 'destination') &&
+        typeof value === 'string'
+      ) {
+        // Keep only trailing segment (works for both Win/Unix)
+        const parts = value.split(/[/\\]/);
+        sanitized[key] = parts[parts.length - 1] || value;
+      } else if (key === 'stack' && typeof value === 'string') {
+        sanitized[key] = sanitizeLogData(value);
+      } else if (typeof value === 'object' && value !== null) {
+        sanitized[key] = sanitizeLogData(value);
+      } else if (typeof value === 'string') {
+        sanitized[key] = sanitizeLogData(value);
+      } else {
+        sanitized[key] = value;
+      }
+    }
+    return sanitized;
+  }
+
+  return data;
+}
+
 class Logger {
   constructor() {
     this.level = LOG_LEVELS.INFO; // Default log level
@@ -20,6 +72,8 @@ class Logger {
     this.enableFile = false;
     this.logFile = null;
     this.context = '';
+    this.fileFormat = 'jsonl'; // 'jsonl' | 'text'
+    this._fileWriteFailed = false;
   }
 
   setLevel(level) {
@@ -34,13 +88,30 @@ class Logger {
     this.context = context;
   }
 
-  enableFileLogging(logFile) {
+  enableFileLogging(logFile, options = {}) {
     this.enableFile = true;
     this.logFile = logFile;
+    this.fileFormat = options.format === 'text' ? 'text' : 'jsonl';
+    this._fileWriteFailed = false;
   }
 
   disableConsoleLogging() {
     this.enableConsole = false;
+  }
+
+  /**
+   * Normalize a level to the numeric LOG_LEVELS form.
+   * Accepts numbers or common strings ("error", "warn", "critical", etc).
+   * @private
+   */
+  normalizeLevel(level) {
+    if (typeof level === 'number') return level;
+    if (typeof level !== 'string') return LOG_LEVELS.INFO;
+
+    const key = level.toUpperCase();
+    if (key === 'CRITICAL') return LOG_LEVELS.ERROR;
+    if (key === 'WARNING') return LOG_LEVELS.WARN;
+    return LOG_LEVELS[key] ?? LOG_LEVELS.INFO;
   }
 
   /**
@@ -99,24 +170,75 @@ class Logger {
     return formattedMessage;
   }
 
-  async writeToFile(formattedMessage) {
+  buildLogEntry(level, message, data) {
+    const timestamp = new Date().toISOString();
+    const levelName = LOG_LEVEL_NAMES[level] || 'UNKNOWN';
+
+    const safeData = sanitizeLogData(data);
+    const safeMessage = sanitizeLogData(message);
+
+    return {
+      timestamp,
+      level: levelName,
+      context: this.context || undefined,
+      message: safeMessage,
+      data: safeData && Object.keys(safeData).length > 0 ? safeData : undefined,
+      pid: typeof process !== 'undefined' ? process.pid : undefined,
+      processType: typeof process !== 'undefined' ? process.type || 'node' : undefined
+    };
+  }
+
+  shouldWriteSync(level) {
+    // Sync write on higher-severity logs to maximize chance it lands on disk before exit/crash.
+    return level <= LOG_LEVELS.WARN;
+  }
+
+  writeToFile(level, entryOrText) {
     if (!this.enableFile || !this.logFile) return;
+    if (this._fileWriteFailed) return;
+
     try {
-      const fs = require('fs').promises;
-      await fs.appendFile(this.logFile, `${formattedMessage}\n`);
+      const fsSync = require('fs');
+      const line =
+        this.fileFormat === 'text'
+          ? `${String(entryOrText)}\n`
+          : `${JSON.stringify(entryOrText)}\n`;
+
+      if (this.shouldWriteSync(level)) {
+        fsSync.appendFileSync(this.logFile, line);
+      } else {
+        // Best-effort async for low-severity logs to reduce impact
+        fsSync.promises.appendFile(this.logFile, line).catch(() => {
+          this._fileWriteFailed = true;
+        });
+      }
     } catch (error) {
-      console.error('Failed to write to log file:', error);
+      // Avoid recursive logging loops; disable file logging after first failure.
+      this._fileWriteFailed = true;
+      // In dev, this is helpful; in prod we keep it silent.
+      if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+        try {
+          // eslint-disable-next-line no-console
+          console.error('Failed to write to log file:', error?.message || error);
+        } catch {
+          // ignore
+        }
+      }
     }
   }
 
   log(level, message, data = {}) {
-    if (level > this.level) return;
+    const normalizedLevel = this.normalizeLevel(level);
+    if (normalizedLevel > this.level) return;
 
-    const formattedMessage = this.formatMessage(level, message, data);
+    const sanitizedData = sanitizeLogData(data);
+    const sanitizedMessage = sanitizeLogData(message);
+
+    const formattedMessage = this.formatMessage(normalizedLevel, sanitizedMessage, sanitizedData);
 
     if (this.enableConsole) {
       try {
-        const consoleMethod = this.getConsoleMethod(level);
+        const consoleMethod = this.getConsoleMethod(normalizedLevel);
         consoleMethod(formattedMessage);
       } catch (error) {
         // Handle EPIPE errors gracefully (broken console pipe)
@@ -132,7 +254,11 @@ class Logger {
     }
 
     if (this.enableFile) {
-      this.writeToFile(formattedMessage);
+      const entry =
+        this.fileFormat === 'text'
+          ? formattedMessage
+          : this.buildLogEntry(normalizedLevel, sanitizedMessage, sanitizedData);
+      this.writeToFile(normalizedLevel, entry);
     }
   }
 
@@ -227,7 +353,12 @@ function createLogger(context) {
   // Create a new logger instance for this context
   // This allows different modules to have independent log levels if needed
   const contextLogger = new Logger();
-  contextLogger.setLevel(logger.level); // Inherit level from singleton
+  // Inherit configuration from singleton so context loggers behave consistently
+  contextLogger.setLevel(logger.level);
+  contextLogger.enableConsole = logger.enableConsole;
+  contextLogger.enableFile = logger.enableFile;
+  contextLogger.logFile = logger.logFile;
+  contextLogger.fileFormat = logger.fileFormat;
   contextLogger.setContext(context);
   return contextLogger;
 }

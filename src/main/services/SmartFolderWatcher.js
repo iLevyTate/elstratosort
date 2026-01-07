@@ -888,6 +888,20 @@ class SmartFolderWatcher {
     } catch (error) {
       // Non-fatal - embedding failure shouldn't block analysis
       logger.warn('[SMART-FOLDER-WATCHER] Failed to embed file:', filePath, error.message);
+
+      // FIX: Notify user about search index failure
+      if (
+        this.notificationService &&
+        typeof this.notificationService.notifyWatcherError === 'function'
+      ) {
+        // Use fire-and-forget to not block
+        this.notificationService
+          .notifyWatcherError(
+            'Smart Folders',
+            `Search indexing failed for ${path.basename(filePath)}: ${error.message}`
+          )
+          .catch(() => {});
+      }
     }
   }
 
