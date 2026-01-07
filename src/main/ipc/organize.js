@@ -4,6 +4,7 @@
  * Handles file organization operations including auto-organize,
  * batch organize, and organization statistics.
  */
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { createHandler, createErrorResponse, safeHandle } = require('./ipcWrappers');
 const { schemas } = require('./validationSchemas');
 const { logger } = require('../../shared/logger');
@@ -66,7 +67,18 @@ async function validateSourceFiles(files) {
   };
 }
 
-function registerOrganizeIpc({ ipcMain, IPC_CHANNELS, getServiceIntegration, getCustomFolders }) {
+function registerOrganizeIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS } = container.core;
+  const { getCustomFolders } = container.folders;
+  const { getServiceIntegration } = container;
+
   const context = 'Organize';
 
   // Helper to get auto-organize service

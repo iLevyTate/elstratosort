@@ -79,190 +79,28 @@ function registerAllIpc(servicesOrParams) {
     );
   }
 
-  // Extract commonly used services for local use
-  const { ipcMain, IPC_CHANNELS, logger } = container.core;
-  const { dialog, shell, getMainWindow } = container.electron || {};
-  const { getCustomFolders, setCustomFolders, saveCustomFolders, scanDirectory } =
-    container.folders || {};
-  const { analyzeDocumentFile, analyzeImageFile, tesseract } = container.analysis || {};
-  const {
-    getOllama,
-    getOllamaModel,
-    getOllamaVisionModel,
-    getOllamaEmbeddingModel,
-    getOllamaHost,
-    setOllamaHost,
-    setOllamaModel,
-    setOllamaVisionModel,
-    setOllamaEmbeddingModel,
-    buildOllamaOptions
-  } = container.ollama || {};
-  const { settingsService, onSettingsChanged } = container.settings || {};
-  const { systemAnalytics } = container;
-  const { getServiceIntegration } = container;
+  const { logger } = container.core;
 
   // Register individual IPC handlers
-  registerFilesIpc({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    dialog,
-    shell,
-    getMainWindow,
-    getServiceIntegration
-  });
-  // FIX: Pass a getter function for SmartFolderWatcher instead of capturing instance at registration time
-  // This resolves the race condition where IPC handlers are registered before the watcher is configured
-  const getSmartFolderWatcher = () => {
-    if (getServiceIntegration) {
-      const serviceIntegration = getServiceIntegration();
-      return serviceIntegration?.smartFolderWatcher || null;
-    }
-    return null;
-  };
+  registerFilesIpc(container);
+  registerSmartFoldersIpc(container);
+  registerUndoRedoIpc(container);
+  registerAnalysisHistoryIpc(container);
+  registerSystemIpc(container);
+  registerOllamaIpc(container);
+  registerAnalysisIpc(container);
+  registerSettingsIpc(container);
+  registerEmbeddingsIpc(container);
+  registerWindowIpc(container);
+  registerChromaDBIpc(container);
+  registerDependenciesIpc(container);
 
-  registerSmartFoldersIpc({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    getCustomFolders,
-    setCustomFolders,
-    saveCustomFolders,
-    buildOllamaOptions,
-    getOllamaModel,
-    getOllamaEmbeddingModel,
-    scanDirectory,
-    getSmartFolderWatcher // Pass getter instead of instance
-  });
-  registerUndoRedoIpc({ ipcMain, IPC_CHANNELS, logger, getServiceIntegration });
-  registerAnalysisHistoryIpc({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    getServiceIntegration
-  });
-  registerSystemIpc({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    systemAnalytics,
-    getServiceIntegration
-  });
-  registerOllamaIpc({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    systemAnalytics,
-    getMainWindow,
-    getOllama,
-    getOllamaModel,
-    getOllamaVisionModel,
-    getOllamaEmbeddingModel,
-    getOllamaHost
-  });
-  registerAnalysisIpc({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    tesseract,
-    systemAnalytics,
-    analyzeDocumentFile,
-    analyzeImageFile,
-    getServiceIntegration,
-    getCustomFolders
-  });
-  registerSettingsIpc({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    settingsService,
-    setOllamaHost,
-    setOllamaModel,
-    setOllamaVisionModel,
-    setOllamaEmbeddingModel,
-    onSettingsChanged
-  });
-  registerEmbeddingsIpc({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    getCustomFolders,
-    getServiceIntegration
-  });
-  registerWindowIpc({ ipcMain, IPC_CHANNELS, logger, getMainWindow });
-  registerChromaDBIpc({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    getMainWindow
-  });
-  registerDependenciesIpc({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    getMainWindow
-  });
+  // Register suggestions and organize handlers
+  // These handlers manage their own service availability checks
+  registerSuggestionsIpc(container);
+  registerOrganizeIpc(container);
 
-  // Register suggestions IPC - ALWAYS register handlers even if services unavailable
-  // Handlers will gracefully handle missing services and return appropriate errors
-  if (getServiceIntegration) {
-    const serviceIntegration = getServiceIntegration();
-
-    // Get services (may be null if ChromaDB unavailable)
-    const chromaDbService = serviceIntegration?.chromaDbService || null;
-    const folderMatchingService = serviceIntegration?.folderMatchingService || null;
-
-    if (!chromaDbService || !folderMatchingService) {
-      logger.warn(
-        '[IPC] Some services unavailable (ChromaDB or FolderMatching), suggestions will have limited functionality'
-      );
-    }
-
-    // CRITICAL FIX: Always register handlers to prevent "No handler registered" errors
-    // Handlers will check for null services and return graceful errors
-    registerSuggestionsIpc({
-      ipcMain,
-      IPC_CHANNELS,
-      chromaDbService,
-      folderMatchingService,
-      settingsService,
-      getCustomFolders
-    });
-
-    // Register organize IPC - ALWAYS register handlers
-    registerOrganizeIpc({
-      ipcMain,
-      IPC_CHANNELS,
-      getServiceIntegration,
-      getCustomFolders
-    });
-
-    logger.info('[IPC] Suggestions and organize handlers registered');
-  } else {
-    // FIX: Register fallback handlers even when services are unavailable
-    // This prevents "No handler registered" errors in the renderer
-    logger.error('[IPC] getServiceIntegration not provided, registering fallback handlers');
-
-    // Register fallback suggestions handlers
-    registerSuggestionsIpc({
-      ipcMain,
-      IPC_CHANNELS,
-      chromaDbService: null,
-      folderMatchingService: null,
-      settingsService: null,
-      getCustomFolders: () => []
-    });
-
-    // Register fallback organize handlers
-    registerOrganizeIpc({
-      ipcMain,
-      IPC_CHANNELS,
-      getServiceIntegration: () => null,
-      getCustomFolders: () => []
-    });
-
-    logger.warn('[IPC] Fallback handlers registered - functionality will be limited');
-  }
+  logger.info('[IPC] All handlers registered via IpcServiceContext');
 }
 
 module.exports = {

@@ -142,7 +142,9 @@ describe('IPC Wrappers', () => {
       expect(mockLogger.error).toHaveBeenCalled();
     });
 
-    test('handles logger failure gracefully', async () => {
+    test('handles logger failure gracefully without falling back to console', async () => {
+      // Per logging policy (Task 2.2), we do NOT fall back to console when logger fails
+      // This prevents bypassing the logging policy and recursive error loops
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
       const brokenLogger = {
         error: jest.fn(() => {
@@ -152,8 +154,12 @@ describe('IPC Wrappers', () => {
       const handler = jest.fn().mockRejectedValue(new Error('Test'));
       const wrapped = withErrorLogging(brokenLogger, handler);
 
+      // Handler error should still propagate
       await expect(wrapped()).rejects.toThrow('Test');
-      expect(consoleSpy).toHaveBeenCalled();
+      // Logger was attempted but failed
+      expect(brokenLogger.error).toHaveBeenCalled();
+      // Console should NOT be called (enforced logging policy)
+      expect(consoleSpy).not.toHaveBeenCalled();
 
       consoleSpy.mockRestore();
     });

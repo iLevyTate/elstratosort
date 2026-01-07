@@ -3,9 +3,20 @@
  *
  * Handles window minimize, maximize, close operations for custom title bar.
  */
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { createHandler, safeHandle } = require('./ipcWrappers');
 
-function registerWindowIpc({ ipcMain, IPC_CHANNELS, logger, getMainWindow }) {
+function registerWindowIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { getMainWindow } = container.electron;
+
   const context = 'Window';
 
   // Helper to get window safely

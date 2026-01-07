@@ -1,3 +1,4 @@
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { createHandler, safeHandle } = require('./ipcWrappers');
 const { getInstance: getDependencyManager } = require('../services/DependencyManagerService');
 const { getStartupManager } = require('../services/startup');
@@ -12,7 +13,17 @@ const { configureServiceStatusEmitter, emitServiceStatusChange } = require('./se
  * Uses singleton DependencyManagerService to prevent concurrent installation
  * race conditions between UI-triggered installs and background setup.
  */
-function registerDependenciesIpc({ ipcMain, IPC_CHANNELS, logger, getMainWindow }) {
+function registerDependenciesIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { getMainWindow } = container.electron;
+
   const safeLogger = logger || {
     info: () => {},
     debug: () => {},

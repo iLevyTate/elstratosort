@@ -4,6 +4,7 @@
  * Handles AI-powered file organization suggestions, feedback recording,
  * and organization strategies.
  */
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { createHandler, createErrorResponse, safeHandle } = require('./ipcWrappers');
 const { schemas } = require('./validationSchemas');
 const OrganizationSuggestionService = require('../services/organization');
@@ -11,14 +12,38 @@ const { logger } = require('../../shared/logger');
 
 logger.setContext('IPC:Suggestions');
 
-function registerSuggestionsIpc({
-  ipcMain,
-  IPC_CHANNELS,
-  chromaDbService,
-  folderMatchingService,
-  settingsService,
-  getCustomFolders
-}) {
+function registerSuggestionsIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger: containerLogger } = container.core;
+  const { settingsService } = container.settings;
+  const { getCustomFolders } = container.folders;
+  const { getServiceIntegration } = container;
+
+  // Retrieve services from integration if available
+  let chromaDbService = null;
+  let folderMatchingService = null;
+
+  // Legacy support: if servicesOrParams has them directly
+  if (!(servicesOrParams instanceof IpcServiceContext)) {
+    chromaDbService = servicesOrParams.chromaDbService;
+    folderMatchingService = servicesOrParams.folderMatchingService;
+  }
+
+  // If not found, try getting from serviceIntegration
+  if ((!chromaDbService || !folderMatchingService) && getServiceIntegration) {
+    const integration = getServiceIntegration();
+    if (integration) {
+      chromaDbService = chromaDbService || integration.chromaDbService;
+      folderMatchingService = folderMatchingService || integration.folderMatchingService;
+    }
+  }
+
   const context = 'Suggestions';
 
   // Initialize the suggestion service (may have null services if ChromaDB unavailable)

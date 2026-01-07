@@ -7,6 +7,7 @@
  * @module ipc/files
  */
 
+const { IpcServiceContext, createFromLegacyParams } = require('../IpcServiceContext');
 const { registerFileSelectionHandlers } = require('./fileSelectionHandlers');
 const { registerFileOperationHandlers } = require('./fileOperationHandlers');
 const { registerFolderHandlers } = require('./folderHandlers');
@@ -23,55 +24,27 @@ const {
 /**
  * Register all file-related IPC handlers
  *
- * @param {Object} params - Registration parameters
- * @param {Object} params.ipcMain - Electron IPC main
- * @param {Object} params.IPC_CHANNELS - IPC channel constants
- * @param {Object} params.logger - Logger instance
- * @param {Object} params.dialog - Electron dialog module
- * @param {Object} params.shell - Electron shell module
- * @param {Function} params.getMainWindow - Function to get main window
- * @param {Function} params.getServiceIntegration - Function to get service integration
+ * @param {IpcServiceContext|Object} servicesOrParams - Service context or legacy parameters
  */
-function registerFilesIpc({
-  ipcMain,
-  IPC_CHANNELS,
-  logger,
-  dialog,
-  shell,
-  getMainWindow,
-  getServiceIntegration
-}) {
+function registerFilesIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
   // Register file selection handlers (SELECT dialog)
-  registerFileSelectionHandlers({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    dialog,
-    getMainWindow
-  });
+  registerFileSelectionHandlers(container);
 
   // Register file operation handlers (PERFORM_OPERATION, DELETE_FILE, COPY_FILE)
-  registerFileOperationHandlers({
-    ipcMain,
-    IPC_CHANNELS,
-    logger,
-    getServiceIntegration,
-    getMainWindow
-  });
+  registerFileOperationHandlers(container);
 
   // Register folder handlers (OPEN_FOLDER, DELETE_FOLDER)
-  registerFolderHandlers({
-    ipcMain,
-    IPC_CHANNELS,
-    shell
-  });
+  registerFolderHandlers(container);
 
   // Register shell handlers (OPEN_FILE, REVEAL_FILE)
-  registerShellHandlers({
-    ipcMain,
-    IPC_CHANNELS,
-    shell
-  });
+  registerShellHandlers(container);
 }
 
 module.exports = registerFilesIpc;

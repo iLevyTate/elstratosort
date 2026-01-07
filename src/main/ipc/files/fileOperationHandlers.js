@@ -435,17 +435,25 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
   };
 }
 
+const { IpcServiceContext, createFromLegacyParams } = require('../IpcServiceContext');
+
 /**
  * Register file operation IPC handlers
+ * @param {IpcServiceContext|Object} servicesOrParams - Service context or legacy parameters
  */
-function registerFileOperationHandlers({
-  ipcMain,
-  IPC_CHANNELS,
-  logger: handlerLogger,
-  getServiceIntegration,
-  getMainWindow
-}) {
-  const log = handlerLogger || logger;
+function registerFileOperationHandlers(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { getMainWindow } = container.electron;
+  const { getServiceIntegration } = container;
+
+  const log = logger || require('../../../shared/logger').logger;
   const baseHandler = createPerformOperationHandler({
     logger: log,
     getServiceIntegration,

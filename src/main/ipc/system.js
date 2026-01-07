@@ -3,16 +3,21 @@
  *
  * Handles system metrics, application statistics, updates, and configuration.
  */
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { createHandler, createErrorResponse, safeHandle } = require('./ipcWrappers');
 const { dump: dumpConfig, validate: validateConfig } = require('../../shared/config/index');
 
-function registerSystemIpc({
-  ipcMain,
-  IPC_CHANNELS,
-  logger,
-  systemAnalytics,
-  getServiceIntegration
-}) {
+function registerSystemIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { systemAnalytics, getServiceIntegration } = container;
+
   const context = 'System';
 
   safeHandle(

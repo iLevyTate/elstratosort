@@ -186,6 +186,35 @@ class IpcServiceContext {
    * @param {string} name - Service name
    * @returns {*} The requested service or null
    */
+  getService(name) {
+    return this.get(name);
+  }
+
+  /**
+   * Get a required service by name - throws if not available
+   * Use this for services that MUST exist for the handler to work.
+   * Fails fast with a clear error instead of silent undefined behavior.
+   *
+   * @param {string} name - Service name
+   * @returns {*} The requested service
+   * @throws {Error} If service is not available
+   */
+  getRequiredService(name) {
+    const service = this.get(name);
+    if (service === null || service === undefined) {
+      throw new Error(
+        `[IpcServiceContext] Required service '${name}' is not available. ` +
+          `Ensure the service is properly initialized before IPC handlers are called.`
+      );
+    }
+    return service;
+  }
+
+  /**
+   * Get a service by name (internal implementation)
+   * @param {string} name - Service name
+   * @returns {*} The requested service or null
+   */
   get(name) {
     switch (name) {
       case 'ipcMain':

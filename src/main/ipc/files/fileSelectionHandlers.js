@@ -144,17 +144,24 @@ function getSupportedExtensions() {
   );
 }
 
+const { IpcServiceContext, createFromLegacyParams } = require('../IpcServiceContext');
+
 /**
  * Register file selection IPC handlers
+ * @param {IpcServiceContext|Object} servicesOrParams - Service context or legacy parameters
  */
-function registerFileSelectionHandlers({
-  ipcMain,
-  IPC_CHANNELS,
-  logger: handlerLogger,
-  dialog,
-  getMainWindow
-}) {
-  const log = handlerLogger || logger;
+function registerFileSelectionHandlers(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { dialog, getMainWindow } = container.electron;
+
+  const log = logger || require('../../../shared/logger').logger;
   const supportedExts = getSupportedExtensions();
   const { app } = require('electron');
 

@@ -686,8 +686,9 @@ async function recordUndoAndUpdateDatabase(
 
     // Update analysis history entries with new paths for BM25 search
     try {
-      const { getInstance: getAnalysisHistory } = require('../../services/analysisHistory');
-      const analysisHistoryService = getAnalysisHistory();
+      // FIX: analysisHistory module exports the class directly, not getInstance.
+      // Use service integration to access the singleton instance.
+      const analysisHistoryService = getServiceIntegration()?.analysisHistory;
 
       if (analysisHistoryService?.updateEntryPaths) {
         const successfulResults = results.filter((r) => r.success && r.source && r.destination);

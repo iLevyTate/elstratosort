@@ -22,15 +22,24 @@ const {
 
 logger.setContext('IPC:Files:Folders');
 
+const { IpcServiceContext, createFromLegacyParams } = require('../IpcServiceContext');
+
 /**
  * Register folder operation IPC handlers
  *
- * @param {Object} params - Registration parameters
- * @param {Object} params.ipcMain - Electron IPC main
- * @param {Object} params.IPC_CHANNELS - IPC channel constants
- * @param {Object} params.shell - Electron shell module
+ * @param {IpcServiceContext|Object} servicesOrParams - Service context or legacy parameters
  */
-function registerFolderHandlers({ ipcMain, IPC_CHANNELS, shell }) {
+function registerFolderHandlers(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS } = container.core;
+  const { shell } = container.electron;
+
   // Create folder directly
   safeHandle(
     ipcMain,

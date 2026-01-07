@@ -4,9 +4,20 @@
  * Handles undo, redo, and action history operations.
  * Demonstrates the service check pattern with fallback responses.
  */
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { createHandler, safeHandle } = require('./ipcWrappers');
 
-function registerUndoRedoIpc({ ipcMain, IPC_CHANNELS, logger, getServiceIntegration }) {
+function registerUndoRedoIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { getServiceIntegration } = container;
+
   const context = 'UndoRedo';
 
   // Helper to get undo/redo service

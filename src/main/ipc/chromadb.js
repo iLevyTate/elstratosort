@@ -9,19 +9,26 @@
  * - Real-time status updates to renderer
  */
 
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { getInstance: getChromaDB } = require('../services/chromadb');
 const { withErrorLogging, safeHandle } = require('./ipcWrappers');
 const { CircuitState } = require('../utils/CircuitBreaker');
 
 /**
  * Register ChromaDB IPC handlers
- * @param {Object} params - Parameters object
- * @param {Object} params.ipcMain - Electron IPC main
- * @param {Object} params.IPC_CHANNELS - IPC channel constants
- * @param {Object} params.logger - Logger instance
- * @param {Function} params.getMainWindow - Get main window function
+ * @param {IpcServiceContext|Object} servicesOrParams - Service context or legacy parameters
  */
-function registerChromaDBIpc({ ipcMain, IPC_CHANNELS, logger, getMainWindow }) {
+function registerChromaDBIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { getMainWindow } = container.electron;
+
   const chromaDbService = getChromaDB();
 
   // Set up event forwarding to renderer

@@ -45,6 +45,9 @@ const { IPC_CHANNELS } = require('../shared/constants');
 // Import path sanitization for security checks
 const { isPathDangerous } = require('../shared/pathSanitization');
 
+// Import IPC wrappers for safe event sending
+const { safeSend } = require('./ipc/ipcWrappers');
+
 // Import services
 const { analyzeDocumentFile } = require('./analysis/ollamaDocumentAnalysis');
 const { analyzeImageFile } = require('./analysis/ollamaImageAnalysis');
@@ -355,7 +358,7 @@ function handleSettingsChanged(settings) {
 }
 
 // ===== IPC HANDLERS =====
-const { registerAllIpc } = require('./ipc');
+const { registerAllIpc, IpcServiceContext } = require('./ipc');
 
 // Prevent multiple instances
 const gotTheLock = app.requestSingleInstanceLock();
@@ -422,19 +425,28 @@ app.whenReady().then(async () => {
   const startupKeepalive = setInterval(() => {}, 1000);
 
   try {
-    // Initialize error handler and logging
-    await errorHandler.initialize();
-
-    // Enable file logging in development for easier debugging
-    if (isDev) {
-      const logPath = path.join(
-        app.getPath('userData'),
-        'logs',
-        `dev-${new Date().toISOString().split('T')[0]}.log`
-      );
-      logger.enableFileLogging(logPath);
-      logger.info('File logging enabled', { logPath });
+    // ---- Logging (best-practice defaults) ----
+    // Use a single JSONL log file per app launch under userData/logs.
+    // In production, we disable console logging by default (can be re-enabled via env var).
+    const logsDir = path.join(app.getPath('userData'), 'logs');
+    await fs.mkdir(logsDir, { recursive: true });
+    const logTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const logFilePath = path.join(logsDir, `stratosort-${logTimestamp}.log`);
+    logger.enableFileLogging(logFilePath, { format: 'jsonl' });
+    if (!isDev && process.env.STRATOSORT_CONSOLE_LOGS !== '1') {
+      logger.disableConsoleLogging();
     }
+    logger.info('[LOGGING] File logging enabled', { logFilePath });
+    logger.info('[DIAGNOSTICS] Runtime info', {
+      appVersion: app.getVersion?.(),
+      platform: process.platform,
+      arch: process.arch,
+      versions: process.versions,
+      userDataPath: app.getPath('userData')
+    });
+
+    // Initialize error handler (uses same log file for consistency)
+    await errorHandler.initialize({ logFilePath });
 
     // Clean up old log files (keep last 7 days)
     await errorHandler.cleanupLogs(7);
@@ -648,36 +660,50 @@ app.whenReady().then(async () => {
       customFolders = folders;
     };
 
-    // Grouped IPC registration (single entry)
-    registerAllIpc({
-      ipcMain,
-      IPC_CHANNELS,
-      logger,
-      dialog,
-      shell,
-      systemAnalytics,
-      getMainWindow,
-      getServiceIntegration,
-      getCustomFolders,
-      setCustomFolders,
-      saveCustomFolders,
-      analyzeDocumentFile,
-      analyzeImageFile,
-      tesseract,
-      getOllama,
-      getOllamaModel,
-      getOllamaVisionModel,
-      getOllamaEmbeddingModel,
-      getOllamaHost,
-      buildOllamaOptions,
-      scanDirectory,
-      settingsService,
-      setOllamaHost,
-      setOllamaModel,
-      setOllamaVisionModel,
-      setOllamaEmbeddingModel,
-      onSettingsChanged: handleSettingsChanged
-    });
+    // Create configured IPC service context
+    const ipcContext = new IpcServiceContext()
+      .setCore({
+        ipcMain,
+        IPC_CHANNELS,
+        logger
+      })
+      .setElectron({
+        dialog,
+        shell,
+        getMainWindow
+      })
+      .setSystemAnalytics(systemAnalytics)
+      .setServiceIntegration(getServiceIntegration)
+      .setFolders({
+        getCustomFolders,
+        setCustomFolders,
+        saveCustomFolders,
+        scanDirectory
+      })
+      .setAnalysis({
+        analyzeDocumentFile,
+        analyzeImageFile,
+        tesseract
+      })
+      .setOllama({
+        getOllama,
+        getOllamaModel,
+        getOllamaVisionModel,
+        getOllamaEmbeddingModel,
+        getOllamaHost,
+        setOllamaHost,
+        setOllamaModel,
+        setOllamaVisionModel,
+        setOllamaEmbeddingModel,
+        buildOllamaOptions
+      })
+      .setSettings({
+        settingsService,
+        onSettingsChanged: handleSettingsChanged
+      });
+
+    // Register all IPC handlers using the context
+    registerAllIpc(ipcContext);
 
     // Configure SmartFolderWatcher with required dependencies
     // This watcher auto-analyzes files added or modified in smart folders
@@ -762,7 +788,7 @@ app.whenReady().then(async () => {
           const win = BrowserWindow.getAllWindows()[0];
           if (!win || win.isDestroyed()) return;
           const metrics = await systemAnalytics.collectMetrics();
-          win.webContents.send('system-metrics', metrics);
+          safeSend(win.webContents, 'system-metrics', metrics);
         } catch (error) {
           logger.error('[METRICS] Failed to collect or send metrics:', error);
         }

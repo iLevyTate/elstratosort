@@ -1,4 +1,5 @@
-const { app, dialog } = require('electron');
+const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
+const { app, dialog, shell } = require('electron');
 const {
   withErrorLogging,
   withValidation,
@@ -358,17 +359,19 @@ async function handleSettingsSaveCore(settings, deps) {
   }
 }
 
-function registerSettingsIpc({
-  ipcMain,
-  IPC_CHANNELS,
-  logger,
-  settingsService,
-  setOllamaHost,
-  setOllamaModel,
-  setOllamaVisionModel,
-  setOllamaEmbeddingModel,
-  onSettingsChanged
-}) {
+function registerSettingsIpc(servicesOrParams) {
+  let container;
+  if (servicesOrParams instanceof IpcServiceContext) {
+    container = servicesOrParams;
+  } else {
+    container = createFromLegacyParams(servicesOrParams);
+  }
+
+  const { ipcMain, IPC_CHANNELS, logger } = container.core;
+  const { settingsService, onSettingsChanged } = container.settings;
+  const { setOllamaHost, setOllamaModel, setOllamaVisionModel, setOllamaEmbeddingModel } =
+    container.ollama;
+
   safeHandle(
     ipcMain,
     IPC_CHANNELS.SETTINGS.GET,
@@ -691,6 +694,43 @@ function registerSettingsIpc({
         logger.error('[SETTINGS] Failed to delete backup:', error);
         return errorResponse(error.message);
       }
+    })
+  );
+
+  // ---- Troubleshooting helpers ----
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.SETTINGS.GET_LOGS_INFO,
+    withErrorLogging(logger, async () => {
+      const logsDir = path.join(app.getPath('userData'), 'logs');
+      return successResponse({
+        logsDir,
+        appVersion: app.getVersion(),
+        platform: process.platform,
+        arch: process.arch
+      });
+    })
+  );
+
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.SETTINGS.OPEN_LOGS_FOLDER,
+    withErrorLogging(logger, async () => {
+      const logsDir = path.join(app.getPath('userData'), 'logs');
+      try {
+        await fs.mkdir(logsDir, { recursive: true });
+      } catch (mkdirErr) {
+        logger.warn('[SETTINGS] Failed to ensure logs directory exists:', mkdirErr?.message);
+      }
+
+      const result = await shell.openPath(logsDir);
+      if (typeof result === 'string' && result.length > 0) {
+        logger.warn('[SETTINGS] Failed to open logs folder:', { logsDir, error: result });
+        return errorResponse(`Failed to open logs folder: ${result}`);
+      }
+
+      logger.info('[SETTINGS] Opened logs folder:', logsDir);
+      return successResponse({ logsDir });
     })
   );
 }

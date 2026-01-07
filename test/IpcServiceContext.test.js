@@ -269,6 +269,69 @@ describe('IpcServiceContext', () => {
     });
   });
 
+  describe('getService', () => {
+    test('is an alias for get()', () => {
+      context.setCore({
+        ipcMain: { handle: 'testHandle' },
+        IPC_CHANNELS: {},
+        logger: {}
+      });
+
+      expect(context.getService('ipcMain')).toEqual(context.get('ipcMain'));
+      expect(context.getService('unknownService')).toBeNull();
+    });
+  });
+
+  describe('getRequiredService', () => {
+    beforeEach(() => {
+      context.setCore({
+        ipcMain: { handle: 'ipcMainHandle' },
+        IPC_CHANNELS: { TEST: 'test-channel' },
+        logger: { info: 'loggerInfo' }
+      });
+    });
+
+    test('returns service when available', () => {
+      const ipcMain = context.getRequiredService('ipcMain');
+      expect(ipcMain).toEqual({ handle: 'ipcMainHandle' });
+    });
+
+    test('throws error for null service', () => {
+      expect(() => context.getRequiredService('unknownService')).toThrow(
+        "[IpcServiceContext] Required service 'unknownService' is not available"
+      );
+    });
+
+    test('throws error for undefined service (missing group)', () => {
+      const emptyContext = new IpcServiceContext();
+
+      expect(() => emptyContext.getRequiredService('ipcMain')).toThrow(
+        "[IpcServiceContext] Required service 'ipcMain' is not available"
+      );
+    });
+
+    test('error message includes service name for debugging', () => {
+      try {
+        context.getRequiredService('settingsService');
+        fail('Should have thrown');
+      } catch (error) {
+        expect(error.message).toContain('settingsService');
+        expect(error.message).toContain('not available');
+        expect(error.message).toContain('properly initialized');
+      }
+    });
+
+    test('works with Ollama config services', () => {
+      context.setOllama({
+        getOllama: 'ollamaGetter',
+        getOllamaHost: 'hostGetter'
+      });
+
+      expect(context.getRequiredService('getOllama')).toBe('ollamaGetter');
+      expect(context.getRequiredService('getOllamaHost')).toBe('hostGetter');
+    });
+  });
+
   describe('validate', () => {
     test('returns valid when core services are present', () => {
       context.setCore({
