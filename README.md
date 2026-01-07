@@ -122,9 +122,20 @@ npm run dev            # Dev mode
 npm run lint           # ESLint
 npm test               # Jest unit/integration
 npm run build          # Production webpack build
-npm run dist           # Create installer
+npm run dist:win       # Create Windows installer (run on Windows)
+npm run dist:mac       # Create macOS installer (run on macOS)
+npm run dist:linux     # Create Linux packages (run on Linux/WSL)
 npm run setup:deps     # Install Ollama + ChromaDB (beta)
 ```
+
+### Building installers
+
+- **Windows (preferred)**: Run the GitHub Actions workflow **“Windows Dist (Manual)”** (Actions →
+  select workflow → Run). Artifacts include the NSIS installer, portable EXE, and blockmap. Locally,
+  run `npm run dist:win` on Windows.
+- **macOS/Linux (optional)**: Build on the target OS with `npm run dist:mac` or
+  `npm run dist:linux`. On Windows, Linux builds may require WSL or Developer Mode to allow
+  symlinks.
 
 ### Contributing
 
