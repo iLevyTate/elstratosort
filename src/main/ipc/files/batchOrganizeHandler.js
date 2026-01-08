@@ -12,10 +12,11 @@ const fs = require('fs').promises;
 const { app } = require('electron');
 const crypto = require('crypto');
 const { ACTION_TYPES, PROCESSING_LIMITS } = require('../../../shared/constants');
-const { LIMITS } = require('../../../shared/performanceConstants');
+const { LIMITS, TIMEOUTS } = require('../../../shared/performanceConstants');
 const { logger } = require('../../../shared/logger');
 const { crossDeviceMove } = require('../../../shared/atomicFileOperations');
 const { validateFileOperationPath } = require('../../../shared/pathSanitization');
+const { withTimeout } = require('../../../shared/promiseUtils');
 // FIX: Import centralized error codes for consistent error handling
 const { ERROR_CODES } = require('../../../shared/errorHandlingUtils');
 
@@ -26,8 +27,44 @@ const isMockFn = (fn) => !!fn && typeof fn === 'function' && fn._isMockFunction;
 
 // Resource limits from centralized constants (prevents config drift)
 const MAX_BATCH_SIZE = PROCESSING_LIMITS.MAX_BATCH_OPERATION_SIZE;
-const MAX_TOTAL_BATCH_TIME = PROCESSING_LIMITS.MAX_BATCH_OPERATION_TIME;
+const MAX_TOTAL_BATCH_TIME = PROCESSING_LIMITS.MAX_TOTAL_BATCH_TIME || 300000; // Default 5 mins if not set
 const { MAX_NUMERIC_RETRIES } = LIMITS;
+
+// Simple p-limit implementation to avoid adding dependency
+const pLimit = (concurrency) => {
+  const queue = [];
+  let activeCount = 0;
+
+  const next = () => {
+    activeCount--;
+    if (queue.length > 0) {
+      queue.shift()();
+    }
+  };
+
+  const run = async (fn, resolve, reject) => {
+    activeCount++;
+    const result = (async () => fn())();
+    resolve(result);
+    try {
+      await result;
+    } catch {
+      // ignore
+    }
+    next();
+  };
+
+  return (fn) => {
+    return new Promise((resolve, reject) => {
+      const task = () => run(fn, resolve, reject);
+      if (activeCount < concurrency) {
+        task();
+      } else {
+        queue.push(task);
+      }
+    });
+  };
+};
 
 /**
  * Compute SHA-256 checksum of a file using streaming
@@ -194,6 +231,7 @@ async function handleBatchOrganize({
   const batchStartTime = Date.now();
   let shouldRollback = false;
   let rollbackReason = null;
+  const processedKeys = new Set(); // For idempotency
 
   try {
     const svc = getServiceIntegration();
@@ -232,18 +270,51 @@ async function handleBatchOrganize({
       totalOperations
     });
 
-    // Process each operation
-    for (let i = 0; i < batch.operations.length; i += 1) {
-      // Check timeout
+    // Fix 8: Parallel execution with concurrency limit
+    const limit = pLimit(5); // Process 5 files concurrently
+
+    const processOperation = async (i) => {
+      // Check if we should abort due to critical error or timeout
+      if (shouldRollback) return;
+
       if (Date.now() - batchStartTime > MAX_TOTAL_BATCH_TIME) {
         log.error(`[FILE-OPS] Batch ${batchId} exceeded maximum time limit`);
-        throw new Error(`Batch timeout exceeded (max: ${MAX_TOTAL_BATCH_TIME / 1000}s)`);
+        // We can't throw to stop other parallel tasks easily, but we can return error
+        // and let them skip via shouldRollback check or timeout check
+        return;
       }
 
       const op = batch.operations[i];
 
+      // Idempotency check
+      // Generate key based on source, destination, and file stats if available (or just paths)
+      // Since we don't have file stats easily here without stat(), we use paths.
+      // Ideally we would include size/mtime but paths should be unique within a batch for moves.
+      const idempotencyKey = crypto
+        .createHash('sha256')
+        .update(`${op.source}:${op.destination}`)
+        .digest('hex');
+
+      if (processedKeys.has(idempotencyKey)) {
+        log.warn('[FILE-OPS] Skipping duplicate operation', {
+          batchId,
+          source: op.source,
+          destination: op.destination
+        });
+        results.push({
+          success: true,
+          source: op.source,
+          destination: op.destination,
+          operation: op.type || 'move',
+          skipped: true,
+          reason: 'duplicate'
+        });
+        return;
+      }
+
       // Skip already completed operations (for resume)
       if (op.status === 'done') {
+        processedKeys.add(idempotencyKey);
         results.push({
           success: true,
           source: op.source,
@@ -252,7 +323,7 @@ async function handleBatchOrganize({
           resumed: true
         });
         successCount++;
-        continue;
+        return;
       }
 
       try {
@@ -290,13 +361,6 @@ async function handleBatchOrganize({
         op.source = sourceValidation.normalizedPath;
         op.destination = destValidation.normalizedPath;
 
-        log.debug('[FILE-OPS] Paths validated', {
-          batchId,
-          index: i,
-          source: op.source,
-          destination: op.destination
-        });
-
         // Ensure destination directory exists
         const destDir = path.dirname(op.destination);
         await fs.mkdir(destDir, { recursive: true });
@@ -305,7 +369,12 @@ async function handleBatchOrganize({
         // TOCTOU fix: removed verifySourceFile pre-check, handle ENOENT from move directly
         let moveResult;
         try {
-          moveResult = await performFileMove(op, log, computeFileChecksum);
+          // Use timeout for file operations to prevent hangs
+          moveResult = await withTimeout(
+            performFileMove(op, log, computeFileChecksum),
+            TIMEOUTS.FILE_COPY,
+            `File move ${path.basename(op.source)}`
+          );
         } catch (moveError) {
           if (moveError.code === 'ENOENT') {
             // Source file disappeared between batch start and this operation
@@ -319,11 +388,12 @@ async function handleBatchOrganize({
               skipped: true
             });
             failCount++;
-            continue;
+            return;
           }
           throw moveError;
         }
         op.destination = moveResult.destination;
+        processedKeys.add(idempotencyKey);
 
         log.info('[FILE-OPS] Move completed', {
           batchId,
@@ -367,7 +437,7 @@ async function handleBatchOrganize({
         if (win && !win.isDestroyed()) {
           win.webContents.send('operation-progress', {
             type: 'batch_organize',
-            current: i + 1,
+            current: successCount + failCount, // Approx progress
             total: batch.operations.length,
             currentFile: path.basename(op.source)
           });
@@ -409,10 +479,11 @@ async function handleBatchOrganize({
           error: error.message,
           critical: isCriticalError
         });
-
-        if (shouldRollback) break;
       }
-    }
+    };
+
+    const promises = batch.operations.map((_, i) => limit(() => processOperation(i)));
+    await Promise.allSettled(promises);
 
     // Execute rollback if needed
     if (shouldRollback && completedOperations.length > 0) {

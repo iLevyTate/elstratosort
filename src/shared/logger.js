@@ -12,6 +12,7 @@ const LOG_LEVELS = {
 };
 
 const LOG_LEVEL_NAMES = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'];
+const { getCorrelationId } = require('./correlationId');
 
 /**
  * Best-effort redaction for production logs.
@@ -231,8 +232,10 @@ class Logger {
     const timestamp = new Date().toISOString();
     const levelName = LOG_LEVEL_NAMES[level] || 'UNKNOWN';
     const contextStr = this.context ? ` [${this.context}]` : '';
+    const correlationId = getCorrelationId();
+    const correlationStr = correlationId ? ` [${correlationId}]` : '';
 
-    let formattedMessage = `${timestamp} ${levelName}${contextStr}: ${message}`;
+    let formattedMessage = `${timestamp} ${levelName}${contextStr}${correlationStr}: ${message}`;
 
     if (data && Object.keys(data).length > 0) {
       try {
@@ -252,11 +255,13 @@ class Logger {
 
     const safeData = sanitizeLogData(data);
     const safeMessage = sanitizeLogData(message);
+    const correlationId = getCorrelationId();
 
     return {
       timestamp,
       level: levelName,
       context: this.context || undefined,
+      correlationId: correlationId || undefined,
       message: safeMessage,
       data: safeData && Object.keys(safeData).length > 0 ? safeData : undefined,
       pid: typeof process !== 'undefined' ? process.pid : undefined,

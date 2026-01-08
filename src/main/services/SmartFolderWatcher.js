@@ -500,6 +500,11 @@ class SmartFolderWatcher {
    * @private
    */
   async _queueFileForAnalysis(filePath, mtime, eventType) {
+    // Fix: Cleanup any existing timeout to prevent memory leaks or race conditions
+    const pending = this.pendingAnalysis.get(filePath);
+    if (pending && pending.timeout) {
+      clearTimeout(pending.timeout);
+    }
     this.pendingAnalysis.delete(filePath);
 
     try {

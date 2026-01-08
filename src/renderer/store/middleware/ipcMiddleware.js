@@ -1,6 +1,10 @@
 import { updateProgress, stopAnalysis } from '../slices/analysisSlice';
 import { updateMetrics, addNotification } from '../slices/systemSlice';
-import { updateFilePathsAfterMove, removeSelectedFile } from '../slices/filesSlice';
+import {
+  updateFilePathsAfterMove,
+  removeSelectedFile,
+  removeSelectedFiles
+} from '../slices/filesSlice';
 import { logger } from '../../../shared/logger';
 import { validateEventPayload, hasEventSchema } from '../../../shared/ipcEventSchemas';
 
@@ -136,10 +140,8 @@ const ipcMiddleware = (store) => {
             })
           );
         } else if (validatedData.operation === 'delete' && validatedData.files) {
-          // Remove deleted files from state
-          validatedData.files.forEach((filePath) => {
-            store.dispatch(removeSelectedFile(filePath));
-          });
+          // Remove deleted files from state using batch action
+          store.dispatch(removeSelectedFiles(validatedData.files));
         }
       });
       if (fileOpCleanup) cleanupFunctions.push(fileOpCleanup);

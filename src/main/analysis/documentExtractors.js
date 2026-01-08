@@ -9,7 +9,8 @@ let XMLParser;
 try {
   // Prefer the full parser when available
   ({ XMLParser } = require('fast-xml-parser'));
-} catch {
+} catch (error) {
+  logger.debug('[EXTRACT] fast-xml-parser not found, using fallback', { error: error.message });
   // Fallback: lightweight internal parser to keep runtime alive when dependency is missing
   ({ XMLParser } = require('./xmlParserFallback'));
 }
@@ -436,7 +437,10 @@ async function extractTextFromDoc(filePath) {
   try {
     const result = await mammoth.extractRawText({ path: filePath });
     return result.value || '';
-  } catch {
+  } catch (error) {
+    logger.debug('[DOC] Mammoth extraction failed, falling back to raw read', {
+      error: error.message
+    });
     return await fs.readFile(filePath, 'utf8');
   }
 }
@@ -673,7 +677,8 @@ async function extractTextFromPptx(filePath) {
             .replace(REGEX_PATTERNS.jsonPunctuation, ' ')
             .replace(REGEX_PATTERNS.whitespace, ' ')
             .trim();
-        } catch {
+        } catch (stringifyError) {
+          logger.debug('[PPTX] JSON stringify failed', { error: stringifyError.message });
           // If stringification fails, try extracting values
           text = Object.values(result)
             .filter((v) => typeof v === 'string' && v.trim())
@@ -761,7 +766,8 @@ function extractPlainTextFromRtf(rtf) {
     // Fixed: RTF control words start with backslash, not bracket
     const noControls = noGroups.replace(REGEX_PATTERNS.rtfControlWords, '');
     return noControls.replace(REGEX_PATTERNS.whitespace, ' ').trim();
-  } catch {
+  } catch (error) {
+    logger.debug('[RTF] Extraction failed', { error: error.message });
     return rtf;
   }
 }
@@ -779,7 +785,8 @@ function extractPlainTextFromHtml(html) {
       .replace(REGEX_PATTERNS.quotEntity, '"')
       .replace(REGEX_PATTERNS.aposEntity, "'");
     return entitiesDecoded.replace(REGEX_PATTERNS.whitespace, ' ').trim();
-  } catch {
+  } catch (error) {
+    logger.debug('[HTML] Plain text extraction failed', { error: error.message });
     return html;
   }
 }
@@ -859,7 +866,8 @@ async function extractTextFromMsg(filePath) {
     const result = await officeParser.parseOfficeAsync(filePath);
     const text = typeof result === 'string' ? result : (result && result.text) || '';
     return text || '';
-  } catch {
+  } catch (error) {
+    logger.debug('[MSG] Extraction failed', { error: error.message });
     return '';
   }
 }
@@ -886,7 +894,8 @@ async function extractTextFromXls(filePath) {
     const result = await officeParser.parseOfficeAsync(filePath);
     const text = typeof result === 'string' ? result : (result && result.text) || '';
     if (text && text.trim()) return text;
-  } catch {
+  } catch (error) {
+    logger.debug('[XLS] Extraction failed', { error: error.message });
     // Fallback to empty string on parse failure
   }
   return '';
@@ -898,7 +907,8 @@ async function extractTextFromPpt(filePath) {
     const result = await officeParser.parseOfficeAsync(filePath);
     const text = typeof result === 'string' ? result : (result && result.text) || '';
     return text || '';
-  } catch {
+  } catch (error) {
+    logger.debug('[PPT] Extraction failed', { error: error.message });
     return '';
   }
 }

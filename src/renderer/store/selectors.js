@@ -120,6 +120,14 @@ export const selectFilesWithAnalysis = createSelector(
       return files; // Return original reference for empty arrays
     }
 
+    // Fix 7: Early exit if no data to merge
+    const hasAnalysis = Array.isArray(analysisResults) && analysisResults.length > 0;
+    const hasStates = fileStates && Object.keys(fileStates).length > 0;
+
+    if (!hasAnalysis && !hasStates) {
+      return files;
+    }
+
     // Create a map for O(1) lookup of analysis results by path
     const analysisMap = new Map();
     if (Array.isArray(analysisResults)) {

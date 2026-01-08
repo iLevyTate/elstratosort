@@ -59,25 +59,63 @@ function EmbeddingRebuildSection({ addNotification }) {
   }, []);
 
   useEffect(() => {
-    // Avoid unhandled promise rejections and ensure the interval gets cleared if refresh fails unexpectedly.
-    refreshStats().catch((err) => {
-      logger.debug('[EmbeddingRebuildSection] Initial stats refresh failed', {
-        error: err?.message
-      });
-    });
+    let timerId;
+    let errorCount = 0;
+    let isMounted = true;
 
-    // FIX: Auto-refresh stats periodically while component is mounted
-    // This ensures the count updates after embeddings are added
-    const intervalId = setInterval(() => {
-      refreshStats().catch((err) => {
-        logger.debug('[EmbeddingRebuildSection] Periodic stats refresh failed; stopping refresh', {
+    // Helper for scheduling next update with backoff and visibility check
+    const scheduleNext = () => {
+      if (!isMounted) return;
+
+      // Exponential backoff: 5s, 10s, 20s... max 60s
+      const delay = Math.min(5000 * 2 ** errorCount, 60000);
+
+      timerId = setTimeout(() => {
+        if (!isMounted) return;
+
+        // Fix: Stop polling when tab/window is not visible
+        if (document.hidden) {
+          // If hidden, just wait standard delay and check again
+          scheduleNext();
+          return;
+        }
+
+        refreshStats()
+          .then(() => {
+            if (isMounted) {
+              errorCount = 0;
+              scheduleNext();
+            }
+          })
+          .catch((err) => {
+            if (isMounted) {
+              logger.debug('[EmbeddingRebuildSection] Stats refresh failed', {
+                error: err?.message,
+                nextRetryMs: delay * 2
+              });
+              errorCount++;
+              scheduleNext();
+            }
+          });
+      }, delay);
+    };
+
+    // Initial load
+    refreshStats()
+      .catch((err) => {
+        logger.debug('[EmbeddingRebuildSection] Initial stats refresh failed', {
           error: err?.message
         });
-        clearInterval(intervalId);
+      })
+      .finally(() => {
+        // Start polling loop
+        if (isMounted) scheduleNext();
       });
-    }, 5000); // Refresh every 5 seconds
 
-    return () => clearInterval(intervalId);
+    return () => {
+      isMounted = false;
+      if (timerId) clearTimeout(timerId);
+    };
   }, [refreshStats]);
 
   const statsLabel = useMemo(() => {
