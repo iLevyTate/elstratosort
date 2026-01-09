@@ -33,11 +33,12 @@ async function applySettingsToServices(
   merged,
   { setOllamaHost, setOllamaModel, setOllamaVisionModel, setOllamaEmbeddingModel, logger }
 ) {
-  if (merged.ollamaHost) await setOllamaHost(merged.ollamaHost);
-  if (merged.textModel) await setOllamaModel(merged.textModel);
-  if (merged.visionModel) await setOllamaVisionModel(merged.visionModel);
+  // FIX: Pass false to skip saving to settings file, as we are already in a save operation
+  if (merged.ollamaHost) await setOllamaHost(merged.ollamaHost, false);
+  if (merged.textModel) await setOllamaModel(merged.textModel, false);
+  if (merged.visionModel) await setOllamaVisionModel(merged.visionModel, false);
   if (merged.embeddingModel && typeof setOllamaEmbeddingModel === 'function') {
-    await setOllamaEmbeddingModel(merged.embeddingModel);
+    await setOllamaEmbeddingModel(merged.embeddingModel, false);
   }
   if (typeof merged.launchOnStartup === 'boolean') {
     try {
