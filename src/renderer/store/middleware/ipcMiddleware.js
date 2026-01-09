@@ -1,10 +1,6 @@
 import { updateProgress, stopAnalysis } from '../slices/analysisSlice';
 import { updateMetrics, addNotification } from '../slices/systemSlice';
-import {
-  updateFilePathsAfterMove,
-  removeSelectedFile,
-  removeSelectedFiles
-} from '../slices/filesSlice';
+import { updateFilePathsAfterMove, removeSelectedFiles } from '../slices/filesSlice';
 import { logger } from '../../../shared/logger';
 import { validateEventPayload, hasEventSchema } from '../../../shared/ipcEventSchemas';
 

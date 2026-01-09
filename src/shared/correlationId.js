@@ -1,57 +1,83 @@
 /**
  * Correlation ID Context
  *
- * Provides a mechanism to track operations across asynchronous calls
- * using Node.js AsyncLocalStorage.
+ * Provides operation correlation tracking across async calls using AsyncLocalStorage.
+ * Allows tracing a request through various services and logs.
  *
- * @module shared/correlationId
+ * Robustly handles environments where AsyncLocalStorage or crypto is unavailable (e.g. Renderer).
  */
 
-const { AsyncLocalStorage } = require('async_hooks');
-const crypto = require('crypto');
+/* global globalThis */
 
-// Browser/Renderer fallback for AsyncLocalStorage
-// When bundled with webpack fallback: false, AsyncLocalStorage will be undefined
-const asyncLocalStorage = AsyncLocalStorage
-  ? new AsyncLocalStorage()
-  : {
-      run: (id, callback) => callback(),
-      getStore: () => undefined
-    };
+let AsyncLocalStorage;
+try {
+  ({ AsyncLocalStorage } = require('async_hooks'));
+} catch (e) {
+  // async_hooks not available (e.g. browser/renderer without polyfill)
+}
+
+let randomUUID;
+try {
+  ({ randomUUID } = require('crypto'));
+} catch (e) {
+  // crypto not available via require
+}
+
+// Fallback UUID generator if crypto.randomUUID is not available
+const generateUUID = () => {
+  if (typeof randomUUID === 'function') {
+    return randomUUID();
+  }
+  if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  // Simple fallback for environments without crypto
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+};
+
+// Fallback storage if AsyncLocalStorage is not available
+// This won't actually track context across async calls in the renderer,
+// but ensures the code doesn't crash.
+const dummyStorage = {
+  run: (store, callback) => callback(),
+  getStore: () => undefined
+};
+
+const correlationStorage = AsyncLocalStorage ? new AsyncLocalStorage() : dummyStorage;
 
 /**
- * Execute a callback within a correlation context
- * @param {Function} callback - Function to execute
- * @param {string} [correlationId] - Optional existing ID to propagate
- * @returns {*} Result of the callback
+ * Generate a new correlation ID
+ * @param {string} prefix - Optional prefix for the ID
+ * @returns {string} The generated ID
  */
-function withCorrelationId(callback, correlationId) {
-  const id =
-    correlationId || `req_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
-  return asyncLocalStorage.run(id, callback);
+function generateCorrelationId(prefix = 'req') {
+  const uuid = generateUUID();
+  // If uuid is full UUID, take substring, otherwise use as is if it came from math.random fallback
+  const shortUuid = uuid.length > 8 ? uuid.substring(0, 8) : uuid;
+  return `${prefix}_${Date.now()}_${shortUuid}`;
+}
+
+/**
+ * Run a function within a correlation context
+ * @param {Function} fn - The function to run
+ * @param {string} [id] - Optional ID to use (generates new one if not provided)
+ * @returns {*} The result of the function
+ */
+function withCorrelationId(fn, id = null) {
+  const correlationId = id || generateCorrelationId();
+  return correlationStorage.run(correlationId, fn);
 }
 
 /**
  * Get the current correlation ID
- * @returns {string|undefined} Current correlation ID or undefined
+ * @returns {string|undefined} The current correlation ID or undefined
  */
 function getCorrelationId() {
-  return asyncLocalStorage.getStore();
-}
-
-/**
- * Wrap an async function to ensure it runs in a new correlation context
- * @param {Function} fn - Async function to wrap
- * @returns {Function} Wrapped function
- */
-function wrapWithCorrelationId(fn) {
-  return async function (...args) {
-    return withCorrelationId(() => fn(...args));
-  };
+  return correlationStorage.getStore();
 }
 
 module.exports = {
   withCorrelationId,
   getCorrelationId,
-  wrapWithCorrelationId
+  generateCorrelationId
 };

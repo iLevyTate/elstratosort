@@ -99,7 +99,8 @@ module.exports = (env, argv) => {
         fs: false,
         child_process: false,
         worker_threads: false,
-        async_hooks: false
+        async_hooks: false,
+        vm: false
       }
     },
     externals: {},
@@ -158,6 +159,12 @@ module.exports = (env, argv) => {
         },
 
     // Performance optimizations
+    performance: {
+      hints: isProduction ? 'warning' : false,
+      maxEntrypointSize: 5120000, // 5MB (relaxed for Electron/Desktop)
+      maxAssetSize: 5120000 // 5MB
+    },
+
     cache: {
       type: 'filesystem',
       buildDependencies: {
