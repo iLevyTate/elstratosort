@@ -736,6 +736,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // NOTE: hybridSearch removed - use search() with mode: 'hybrid' instead
     rebuildBM25Index: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REBUILD_BM25_INDEX),
     getSearchStatus: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.GET_SEARCH_STATUS),
+    // Diagnostic endpoint for troubleshooting search issues
+    diagnoseSearch: (testQuery = 'test') =>
+      secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.DIAGNOSE_SEARCH, { testQuery }),
     // Multi-hop expansion
     findMultiHop: (seedIds, options = {}) =>
       secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.FIND_MULTI_HOP, {
