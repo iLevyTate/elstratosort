@@ -298,9 +298,14 @@ ${truncated}`;
           }
 
           // Build validated result object
+          // Include summary, entity, type for rich semantic folder matching
           const result = {
             rawText: textContent.substring(0, 2000),
             date: parsedJson.date || undefined,
+            // Semantic fields for folder matching - these drive organization decisions
+            summary: typeof parsedJson.summary === 'string' ? parsedJson.summary : undefined,
+            entity: typeof parsedJson.entity === 'string' ? parsedJson.entity : undefined,
+            type: typeof parsedJson.type === 'string' ? parsedJson.type : undefined,
             project: typeof parsedJson.project === 'string' ? parsedJson.project : undefined,
             purpose: typeof parsedJson.purpose === 'string' ? parsedJson.purpose : undefined,
             category: normalizeCategoryToSmartFolders(

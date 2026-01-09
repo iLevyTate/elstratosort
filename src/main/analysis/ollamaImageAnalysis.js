@@ -697,14 +697,33 @@ async function applySemanticFolderMatching(analysis, filePath, smartFolders) {
     if (Array.isArray(candidates) && candidates.length > 0) {
       const top = candidates[0];
       if (top && typeof top === 'object' && typeof top.score === 'number' && top.name) {
-        if (top.score >= THRESHOLDS.FOLDER_MATCH_CONFIDENCE) {
+        // Only override LLM category if embedding score exceeds both threshold AND LLM confidence
+        // This ensures semantic understanding from content analysis remains primary
+        const llmConfidence = analysis.confidence || 0.7;
+        const shouldOverride =
+          top.score >= THRESHOLDS.FOLDER_MATCH_CONFIDENCE && top.score > llmConfidence;
+
+        if (shouldOverride) {
+          logger.info('[IMAGE] Embedding override - folder match exceeds LLM confidence', {
+            llmCategory: analysis.category,
+            llmConfidence,
+            embeddingCategory: top.name,
+            embeddingScore: top.score
+          });
+          analysis.llmOriginalCategory = analysis.category;
           analysis.category = top.name;
+          analysis.categorySource = 'embedding_override';
           analysis.suggestedFolder = top.name;
           analysis.destinationFolder = top.path || top.name;
-          logger.debug('[IMAGE] Folder match applied', {
-            category: top.name,
-            score: top.score
+        } else if (top.score >= THRESHOLDS.FOLDER_MATCH_CONFIDENCE) {
+          // Embedding met threshold but LLM confidence was higher - keep LLM category
+          logger.debug('[IMAGE] LLM category preserved - confidence higher than embedding', {
+            llmCategory: analysis.category,
+            llmConfidence,
+            embeddingCategory: top.name,
+            embeddingScore: top.score
           });
+          analysis.categorySource = 'llm_preserved';
         }
         analysis.folderMatchCandidates = candidates;
       }
