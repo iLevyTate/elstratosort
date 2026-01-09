@@ -116,32 +116,26 @@ async function analyzeTextWithOllama(
     const fileDateContext = fileDate ? `\nDocument File Date: ${fileDate}` : '';
 
     const prompt = `You are an expert document analyzer. Analyze the TEXT CONTENT below and extract structured information.
-${fileDateContext}
+${fileDateContext}${folderCategoriesStr}
 
 FILENAME CONTEXT: The original filename is "${originalFileName}". Use this as a HINT for the document's purpose, but verify against the actual content.
-- If filename suggests financial content (budget, invoice, receipt, tax), look for financial terms in the text
-- If filename suggests a specific category, your analysis should align with it unless the content clearly indicates otherwise
 
 Your response MUST be a valid JSON object matching this schema exactly:
 ${JSON.stringify(ANALYSIS_SCHEMA_PROMPT, null, 2)}
 
+IMPORTANT FOR keywords:
+- Extract 3-7 keywords PURELY from the document content.
+- Focus on the main topics, entities, and subjects found in the text.
+
 IMPORTANT FOR suggestedName:
-- Keep it SHORT: maximum 50 characters (excluding extension)
-- PRESERVE semantic meaning from the original filename "${originalFileName}"
-- If filename contains key terms like "budget", "invoice", "report", include them in your suggested name
-- If the content matches the filename theme, your suggested name should reflect both
-- Do NOT suggest completely unrelated names that contradict the filename
-- Examples based on context:
-  - "financial-budget-report.pdf" → "budget_report_summary" (preserves key terms)
-  - "meeting-notes-jan.docx" → "january_meeting_notes" (preserves context)
-  - "project-proposal-v2.pdf" → "project_proposal" (preserves purpose)
+- Generate a short, concise name (1-3 words) based on the DOCUMENT TOPIC.
+- Example: "budget_report", "project_proposal", "meeting_notes".
+- Use underscores instead of spaces.
+- Do NOT include the file extension.
 
 CRITICAL REQUIREMENTS:
-1. The keywords array MUST contain 3-7 keywords extracted from the document content
-2. Keywords should include relevant terms from BOTH the content AND the filename
-3. Do NOT return an empty keywords array
-4. If filename hints at a category and content doesn't contradict it, use that category
-5. If available Smart Folders are listed above, the 'category' field MUST strictly match one of them.
+1. The keywords array MUST contain 3-7 keywords extracted from the document content.
+2. If available Smart Folders are listed above, the 'category' field MUST strictly match one of them.
 
 Document content (${truncated.length} characters, ${chunkCount} chunk(s)):
 ${truncated}`;

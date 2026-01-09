@@ -37,7 +37,7 @@ const ANALYSIS_SCHEMA_PROMPT = {
   keywords: ['keyword1', 'keyword2', 'keyword3', 'keyword4', 'keyword5'],
   confidence: 'Number 0-100 indicating confidence in the extraction.',
   suggestedName:
-    "A short, descriptive filename (max 50 chars) incorporating the entity, type, and date if available (e.g., '2023-10-15_Amazon_Invoice')."
+    "A short, concise topic-based filename (max 3 words) using underscores (e.g., 'budget_report', 'sunset_beach', 'meeting_notes'). Do NOT include the extension."
 };
 
 /**

@@ -527,6 +527,7 @@ async function extractTextFromXlsx(filePath) {
                     }
                   } catch (cellError) {
                     // Skip individual cell errors
+                    logger.debug('[XLSX] Cell read error', { error: cellError.message, row, col });
                   }
                 }
                 if (rowData.length > 0) {
@@ -758,7 +759,8 @@ function extractPlainTextFromRtf(rtf) {
     const decoded = rtf.replace(REGEX_PATTERNS.rtfHexEscape, (_, hex) => {
       try {
         return String.fromCharCode(parseInt(hex, 16));
-      } catch {
+      } catch (hexError) {
+        logger.debug('[RTF] Hex decode error', { hex, error: hexError.message });
         return '';
       }
     });
