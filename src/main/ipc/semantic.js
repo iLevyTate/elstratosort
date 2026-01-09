@@ -139,6 +139,45 @@ function setClusteringServiceInstance(service) {
   _clusteringServiceRef = service;
 }
 
+// FIX P0-2: Rebuild operation lock to prevent concurrent rebuilds
+// This prevents data corruption when user clicks rebuild multiple times
+let _rebuildLock = {
+  isLocked: false,
+  operation: null,
+  startedAt: null
+};
+
+/**
+ * Acquire rebuild lock for an operation
+ * @param {string} operation - Name of the operation (e.g., 'REBUILD_FILES', 'FULL_REBUILD')
+ * @returns {{ acquired: boolean, reason?: string }}
+ */
+function acquireRebuildLock(operation) {
+  if (_rebuildLock.isLocked) {
+    return {
+      acquired: false,
+      reason: `Another rebuild operation is in progress: ${_rebuildLock.operation} (started ${Math.round((Date.now() - _rebuildLock.startedAt) / 1000)}s ago)`
+    };
+  }
+  _rebuildLock = {
+    isLocked: true,
+    operation,
+    startedAt: Date.now()
+  };
+  return { acquired: true };
+}
+
+/**
+ * Release the rebuild lock
+ */
+function releaseRebuildLock() {
+  _rebuildLock = {
+    isLocked: false,
+    operation: null,
+    startedAt: null
+  };
+}
+
 function registerEmbeddingsIpc(servicesOrParams) {
   let container;
   if (servicesOrParams instanceof IpcServiceContext) {
@@ -458,6 +497,16 @@ function registerEmbeddingsIpc(servicesOrParams) {
     ipcMain,
     IPC_CHANNELS.EMBEDDINGS.REBUILD_FOLDERS,
     createChromaHandler(async () => {
+      // FIX P0-2: Acquire rebuild lock to prevent concurrent rebuilds
+      const lockResult = acquireRebuildLock('REBUILD_FOLDERS');
+      if (!lockResult.acquired) {
+        return {
+          success: false,
+          error: lockResult.reason,
+          errorCode: 'REBUILD_IN_PROGRESS'
+        };
+      }
+
       try {
         // FIX: Verify embedding model is available before starting
         const modelCheck = await verifyEmbeddingModelAvailable(logger);
@@ -568,6 +617,9 @@ function registerEmbeddingsIpc(servicesOrParams) {
           error: e.message,
           errorCode: e.code || 'REBUILD_FAILED'
         };
+      } finally {
+        // FIX P0-2: Always release lock when done
+        releaseRebuildLock();
       }
     })
   );
@@ -582,6 +634,16 @@ function registerEmbeddingsIpc(servicesOrParams) {
     ipcMain,
     IPC_CHANNELS.EMBEDDINGS.REBUILD_FILES,
     createChromaHandler(async () => {
+      // FIX P0-2: Acquire rebuild lock to prevent concurrent rebuilds
+      const lockResult = acquireRebuildLock('REBUILD_FILES');
+      if (!lockResult.acquired) {
+        return {
+          success: false,
+          error: lockResult.reason,
+          errorCode: 'REBUILD_IN_PROGRESS'
+        };
+      }
+
       try {
         // FIX: Verify embedding model is available before starting
         const modelCheck = await verifyEmbeddingModelAvailable(logger);
@@ -790,7 +852,9 @@ function registerEmbeddingsIpc(servicesOrParams) {
                       chunkIndex: c.index,
                       charStart: c.charStart,
                       charEnd: c.charEnd,
-                      snippet
+                      snippet,
+                      // FIX P0-3: Store embedding model version for mismatch detection
+                      model: chunkModel || 'unknown'
                     },
                     document: snippet,
                     updatedAt: new Date().toISOString()
@@ -900,6 +964,9 @@ function registerEmbeddingsIpc(servicesOrParams) {
           error: e.message,
           errorCode: e.code || 'REBUILD_FAILED'
         };
+      } finally {
+        // FIX P0-2: Always release lock when done
+        releaseRebuildLock();
       }
     })
   );
@@ -914,6 +981,16 @@ function registerEmbeddingsIpc(servicesOrParams) {
     ipcMain,
     IPC_CHANNELS.EMBEDDINGS.FULL_REBUILD,
     createChromaHandler(async () => {
+      // FIX P0-2: Acquire rebuild lock to prevent concurrent rebuilds
+      const lockResult = acquireRebuildLock('FULL_REBUILD');
+      if (!lockResult.acquired) {
+        return {
+          success: false,
+          error: lockResult.reason,
+          errorCode: 'REBUILD_IN_PROGRESS'
+        };
+      }
+
       const results = {
         folders: { success: 0, failed: 0 },
         files: { success: 0, failed: 0 },
@@ -1090,7 +1167,9 @@ function registerEmbeddingsIpc(servicesOrParams) {
                           chunkIndex: chunk.index,
                           charStart: chunk.charStart,
                           charEnd: chunk.charEnd,
-                          snippet
+                          snippet,
+                          // FIX P0-3: Store embedding model version for mismatch detection
+                          model: chunkModel || 'unknown'
                         },
                         document: snippet,
                         updatedAt: new Date().toISOString()
@@ -1174,6 +1253,9 @@ function registerEmbeddingsIpc(servicesOrParams) {
           errorCode: 'FULL_REBUILD_FAILED',
           partialResults: results
         };
+      } finally {
+        // FIX P0-2: Always release lock when done
+        releaseRebuildLock();
       }
     })
   );
@@ -1187,6 +1269,16 @@ function registerEmbeddingsIpc(servicesOrParams) {
     ipcMain,
     IPC_CHANNELS.EMBEDDINGS.REANALYZE_ALL,
     withErrorLogging(logger, async (_event, options = {}) => {
+      // FIX P0-2: Acquire rebuild lock to prevent concurrent rebuilds
+      const lockResult = acquireRebuildLock('REANALYZE_ALL');
+      if (!lockResult.acquired) {
+        return {
+          success: false,
+          error: lockResult.reason,
+          errorCode: 'REBUILD_IN_PROGRESS'
+        };
+      }
+
       try {
         logger.info('[EMBEDDINGS] Starting reanalyze all files operation...', {
           applyNaming: options.applyNaming
@@ -1262,6 +1354,9 @@ function registerEmbeddingsIpc(servicesOrParams) {
           error: e.message,
           errorCode: 'REANALYZE_ALL_FAILED'
         };
+      } finally {
+        // FIX P0-2: Always release lock when done
+        releaseRebuildLock();
       }
     })
   );
@@ -1337,6 +1432,43 @@ function registerEmbeddingsIpc(servicesOrParams) {
         };
       } catch (e) {
         return { success: false, error: e.message };
+      }
+    })
+  );
+
+  // Diagnostic endpoint for troubleshooting search issues
+  // Returns detailed analysis of why search might return partial or no results
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.EMBEDDINGS.DIAGNOSE_SEARCH,
+    createChromaHandler(async (event, { testQuery = 'test' } = {}) => {
+      try {
+        const serviceIntegration =
+          typeof getServiceIntegration === 'function' ? getServiceIntegration() : null;
+        const searchService = serviceIntegration?.searchService;
+
+        if (!searchService || !searchService.diagnoseSearchIssues) {
+          return {
+            success: false,
+            error: 'SearchService not available or missing diagnoseSearchIssues method'
+          };
+        }
+
+        const diagnostics = await searchService.diagnoseSearchIssues(testQuery);
+
+        return {
+          success: true,
+          diagnostics
+        };
+      } catch (e) {
+        logger.error('[EMBEDDINGS] Diagnose search failed:', {
+          error: e.message,
+          stack: e.stack
+        });
+        return {
+          success: false,
+          error: e.message
+        };
       }
     })
   );

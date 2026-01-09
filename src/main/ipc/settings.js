@@ -164,6 +164,7 @@ function validateImportedSettings(settings, logger) {
       case 'autoUpdateOllama':
       case 'autoUpdateChromaDb':
       case 'dependencyWizardShown':
+      case 'autoChunkOnAnalysis':
         if (typeof value !== 'boolean') {
           throw new Error(`Invalid ${key}: must be boolean`);
         }
@@ -320,6 +321,20 @@ async function handleSettingsSaveCore(settings, deps) {
       logger
     });
     logger.info('[SETTINGS] Saved settings');
+
+    // Invalidate notification service cache to ensure new settings take effect immediately
+    // This prevents the 5-second TTL cache from causing stale notification behavior
+    try {
+      const NotificationService = require('../services/NotificationService');
+      const notificationService = NotificationService.getInstance?.();
+      if (notificationService?.invalidateCache) {
+        notificationService.invalidateCache();
+        logger.debug('[SETTINGS] Notification service cache invalidated');
+      }
+    } catch (notifyErr) {
+      // Non-fatal - notification service may not be initialized yet
+      logger.debug('[SETTINGS] Could not invalidate notification cache:', notifyErr.message);
+    }
 
     // Enhanced settings propagation with error logging
     let propagationSuccess = true;

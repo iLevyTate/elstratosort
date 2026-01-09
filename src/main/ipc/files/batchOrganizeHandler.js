@@ -901,6 +901,39 @@ async function recordUndoAndUpdateDatabase(
         batchId
       });
     }
+
+    // FIX P1-1: Await the rebuild with timeout to ensure search consistency
+    // This ensures search results show new paths immediately (not after 15 min)
+    if (successCount > 0) {
+      try {
+        const { getSearchServiceInstance } = require('../semantic');
+        const searchService = getSearchServiceInstance?.();
+        if (searchService?.invalidateAndRebuild) {
+          // FIX: Await with timeout to ensure search consistency without blocking too long
+          const REBUILD_TIMEOUT_MS = 5000; // 5 second max wait
+          const rebuildPromise = searchService.invalidateAndRebuild({
+            immediate: true,
+            reason: 'batch-organize'
+          });
+
+          // Wait for rebuild but with timeout to prevent blocking UI
+          await Promise.race([
+            rebuildPromise,
+            new Promise((resolve) => setTimeout(resolve, REBUILD_TIMEOUT_MS))
+          ]).catch((rebuildErr) => {
+            log.warn('[FILE-OPS] BM25 rebuild failed or timed out after batch', {
+              error: rebuildErr?.message,
+              batchId
+            });
+          });
+        }
+      } catch (invalidateErr) {
+        log.warn('[FILE-OPS] Failed to trigger search index rebuild after batch', {
+          error: invalidateErr.message,
+          batchId
+        });
+      }
+    }
   }
 
   log.debug('[FILE-OPS] Undo/DB update complete', {
