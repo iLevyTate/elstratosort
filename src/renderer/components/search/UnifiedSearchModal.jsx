@@ -24,7 +24,7 @@ import {
 import Modal, { ConfirmModal } from '../Modal';
 import { Button, Input } from '../ui';
 import HighlightedText from '../ui/HighlightedText';
-import FileIcon, { getFileCategory } from '../ui/FileIcon';
+import { getFileCategory } from '../ui/FileIcon';
 import { TIMEOUTS } from '../../../shared/performanceConstants';
 import { logger } from '../../../shared/logger';
 import { safeBasename } from '../../utils/pathUtils';

@@ -449,7 +449,7 @@
 
   .form-input-enhanced {
     @apply w-full rounded-xl border border-border-soft bg-white/90 text-system-gray-800 placeholder-system-gray-400 transition-all shadow-sm focus:border-stratosort-blue/60 focus:ring-2 focus:ring-stratosort-blue/20;
-    padding: clamp(11px, 2.5vw, 14px) clamp(12px, 3vw, 16px);
+    @apply px-4 py-3;
     transition-duration: var(--duration-normal);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
@@ -462,7 +462,7 @@
   }
   .form-textarea-enhanced {
     @apply w-full rounded-xl border border-border-soft bg-white/90 text-system-gray-800 placeholder-system-gray-400 transition-all shadow-sm focus:border-stratosort-blue/60 focus:ring-2 focus:ring-stratosort-blue/20;
-    padding: clamp(11px, 2.5vw, 14px) clamp(12px, 3vw, 16px);
+    @apply px-4 py-3;
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     @apply resize-y min-h-[6rem];
