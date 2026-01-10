@@ -98,6 +98,13 @@
   }
 }
 
+@layer utilities {
+  /* Map design token to a Tailwind utility for surfaces */
+  .bg-surface-muted {
+    background-color: var(--surface-muted);
+  }
+}
+
 @layer base {
   *,
   *::before,
