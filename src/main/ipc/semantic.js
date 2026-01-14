@@ -2026,6 +2026,30 @@ function registerEmbeddingsIpc(servicesOrParams) {
   );
 
   /**
+   * FIX: Clear cluster cache manually
+   * Allows users/admins to force cluster recalculation without waiting for staleness timeout
+   */
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.EMBEDDINGS.CLEAR_CLUSTERS,
+    withErrorLogging(logger, async () => {
+      try {
+        const service = await getClusteringService();
+        service.clearClusters();
+        logger.info('[EMBEDDINGS] Cluster cache cleared manually');
+        return { success: true, message: 'Cluster cache cleared' };
+      } catch (e) {
+        logger.error('[EMBEDDINGS] Clear clusters failed:', e);
+        return {
+          success: false,
+          error: `Failed to clear cluster cache: ${e.message}`,
+          operation: 'CLEAR_CLUSTERS'
+        };
+      }
+    })
+  );
+
+  /**
    * Get members of a specific cluster
    */
   safeHandle(

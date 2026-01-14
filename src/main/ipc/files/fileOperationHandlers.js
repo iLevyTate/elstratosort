@@ -508,6 +508,20 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
             });
           }
 
+          // FIX: Invalidate clustering cache after file copy
+          // This ensures copied files are included in cluster analysis
+          try {
+            const { getClusteringServiceInstance } = require('../semantic');
+            const clusteringService = getClusteringServiceInstance?.();
+            if (clusteringService) {
+              clusteringService.invalidateClusters();
+            }
+          } catch (invalidateErr) {
+            log.warn('[FILE-OPS] Failed to invalidate clustering cache after copy', {
+              error: invalidateErr.message
+            });
+          }
+
           return {
             success: true,
             message: `Copied ${copyValidation.source} to ${copyValidation.destination}`

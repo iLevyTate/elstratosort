@@ -546,6 +546,8 @@ const ServiceIds = {
   CHROMA_DB: 'chromaDb',
   SETTINGS: 'settings',
   DEPENDENCY_MANAGER: 'dependencyManager',
+  SEARCH_SERVICE: 'searchService',
+  DOWNLOAD_WATCHER: 'downloadWatcher',
 
   // AI/Embedding services
   OLLAMA_SERVICE: 'ollamaService',
@@ -586,7 +588,9 @@ const ServiceIds = {
 const SHUTDOWN_ORDER = [
   // First: Watcher services (must stop before other services)
   ServiceIds.SMART_FOLDER_WATCHER,
+  ServiceIds.DOWNLOAD_WATCHER,
   // High-level services that use other services
+  ServiceIds.SEARCH_SERVICE,
   ServiceIds.AUTO_ORGANIZE,
   ServiceIds.ORGANIZATION_SUGGESTION,
   ServiceIds.CLUSTERING, // FIX: HIGH - Added to shutdown order (was missing, causing improper cleanup)
