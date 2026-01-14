@@ -725,3 +725,19 @@ export default elkLayout;
 
 // Also export the new functions
 export { LARGE_GRAPH_THRESHOLD, VERY_LARGE_GRAPH_THRESHOLD };
+
+// HMR disposal handler to reset module-level state during hot reload
+// This prevents stale callbacks and inconsistent state during development
+if (module.hot) {
+  module.hot.dispose(() => {
+    cancelPendingLayout();
+    if (layoutDebounceTimer) {
+      clearTimeout(layoutDebounceTimer);
+      layoutDebounceTimer = null;
+    }
+    pendingLayoutPromise = null;
+    pendingCallbacks = [];
+    latestLayoutData = { nodes: null, edges: null, options: {} };
+    layoutAborted = false;
+  });
+}

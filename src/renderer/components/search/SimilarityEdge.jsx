@@ -43,9 +43,10 @@ const SimilarityEdge = memo(
     const sourceData = data?.sourceData || {};
     const targetData = data?.targetData || {};
 
-    // Memoize derived values to prevent unnecessary re-renders and fix useCallback dependencies
-    const sourceTags = useMemo(() => sourceData.tags || [], [sourceData.tags]);
-    const targetTags = useMemo(() => targetData.tags || [], [targetData.tags]);
+    // Memoize derived values to prevent unnecessary re-renders
+    // Use data?.sourceData?.tags directly to ensure stable dependency references
+    const sourceTags = useMemo(() => data?.sourceData?.tags || [], [data?.sourceData?.tags]);
+    const targetTags = useMemo(() => data?.targetData?.tags || [], [data?.targetData?.tags]);
     const commonTags = useMemo(
       () => sourceTags.filter((tag) => targetTags.includes(tag)),
       [sourceTags, targetTags]
