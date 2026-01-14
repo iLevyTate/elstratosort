@@ -42,12 +42,18 @@ const NamingSettings = memo(function NamingSettings({
   useEffect(() => {
     if (typeof window === 'undefined' || !window.electronAPI?.settings?.save) return;
     // Fire-and-forget; settingsService merges partials
-    window.electronAPI.settings.save({
-      namingConvention,
-      separator,
-      dateFormat,
-      caseConvention
-    });
+    // FIX: Add error handling to log failures instead of silent swallowing
+    window.electronAPI.settings
+      .save({
+        namingConvention,
+        separator,
+        dateFormat,
+        caseConvention
+      })
+      .catch((err) => {
+        // Non-fatal: settings save failure shouldn't block UI
+        console.warn('[NamingSettings] Failed to persist naming preferences:', err?.message);
+      });
   }, [namingConvention, separator, dateFormat, caseConvention]);
 
   return (
