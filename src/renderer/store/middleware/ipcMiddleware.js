@@ -1,5 +1,5 @@
 import { updateProgress, stopAnalysis, updateResultPathsAfterMove } from '../slices/analysisSlice';
-import { updateMetrics, addNotification } from '../slices/systemSlice';
+import { updateMetrics, updateHealth, addNotification } from '../slices/systemSlice';
 import { updateFilePathsAfterMove, removeSelectedFiles } from '../slices/filesSlice';
 import { logger } from '../../../shared/logger';
 import { validateEventPayload, hasEventSchema } from '../../../shared/ipcEventSchemas';
@@ -208,6 +208,19 @@ const ipcMiddleware = (store) => {
             // Remove deleted files from state using batch action
             store.dispatch(removeSelectedFiles(validatedData.files));
           }
+
+          // FIX: Dispatch DOM event for components that need to react to file operations
+          // (e.g., UnifiedSearchModal graph updates, search index invalidation)
+          try {
+            window.dispatchEvent(
+              new CustomEvent('file-operation-complete', { detail: validatedData })
+            );
+          } catch (eventErr) {
+            logger.warn(
+              '[IPC Middleware] Failed to dispatch file-operation-complete event:',
+              eventErr.message
+            );
+          }
         } catch (e) {
           logger.error('[IPC Middleware] Failed to dispatch file operation update', {
             operation: validatedData.operation,
@@ -254,6 +267,43 @@ const ipcMiddleware = (store) => {
         );
       });
       if (appErrorCleanup) cleanupFunctions.push(appErrorCleanup);
+    }
+
+    // FIX: Subscribe to ChromaDB status changes
+    if (window.electronAPI?.chromadb?.onStatusChanged) {
+      const chromaStatusCleanup = window.electronAPI.chromadb.onStatusChanged((data) => {
+        const { data: validatedData } = validateIncomingEvent('chromadb-status-changed', data);
+        logger.debug('[IPC] ChromaDB status changed', { status: validatedData?.status });
+
+        // Update health state with new ChromaDB status
+        if (validatedData?.status) {
+          store.dispatch(updateHealth({ chromadb: validatedData.status }));
+        }
+      });
+      if (chromaStatusCleanup) cleanupFunctions.push(chromaStatusCleanup);
+    }
+
+    // FIX: Subscribe to dependency service status changes (Ollama/ChromaDB)
+    if (window.electronAPI?.dependencies?.onServiceStatusChanged) {
+      const depsStatusCleanup = window.electronAPI.dependencies.onServiceStatusChanged((data) => {
+        const { data: validatedData } = validateIncomingEvent(
+          'dependencies-service-status-changed',
+          data
+        );
+        logger.debug('[IPC] Dependency service status changed', {
+          service: validatedData?.service,
+          status: validatedData?.status
+        });
+
+        // Update health state based on which service changed
+        if (validatedData?.service && validatedData?.status) {
+          const service = validatedData.service.toLowerCase();
+          if (service === 'chromadb' || service === 'ollama') {
+            store.dispatch(updateHealth({ [service]: validatedData.status }));
+          }
+        }
+      });
+      if (depsStatusCleanup) cleanupFunctions.push(depsStatusCleanup);
     }
 
     // Clean up listeners on window unload to prevent memory leaks
