@@ -99,7 +99,7 @@
   },
   "dependencies": {
     "chokidar": "^5.0.0",
-    "chromadb": "^3.2.0",
+    "chromadb": "^3.2.1",
     "electron-updater": "^6.7.3",
     "electron-window-state": "^5.0.3",
     "elkjs": "^0.11.0",
@@ -213,7 +213,7 @@
     "png-to-ico": "^3.0.1",
     "postcss": "^8.4.24",
     "postcss-loader": "^8.2.0",
-    "prettier": "^3.7.4",
+    "prettier": "^3.8.0",
     "process": "^0.11.10",
     "querystring-es3": "^0.2.1",
     "react-refresh": "^0.18.0",
