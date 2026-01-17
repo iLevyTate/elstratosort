@@ -12,6 +12,11 @@ describe('deriveWatcherConfidencePercent', () => {
     expect(deriveWatcherConfidencePercent({ confidence: 91 })).toBe(91);
   });
 
+  test('ignores zero confidence unless an error is present', () => {
+    expect(deriveWatcherConfidencePercent({ confidence: 0 })).toBe(35);
+    expect(deriveWatcherConfidencePercent({ confidence: 0, error: 'timeout' })).toBe(0);
+  });
+
   test('clamps values above 100 down to 100', () => {
     expect(deriveWatcherConfidencePercent({ confidence: 150 })).toBe(100);
   });

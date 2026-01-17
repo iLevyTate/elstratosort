@@ -91,6 +91,7 @@ describe('SearchService', () => {
     mockChromaDb = {
       initialize: jest.fn().mockResolvedValue(undefined),
       getCollectionDimension: jest.fn().mockResolvedValue(384),
+      getStats: jest.fn().mockResolvedValue({ files: 2, fileChunks: 0, folders: 0 }),
       querySimilarFiles: jest.fn().mockResolvedValue([
         {
           id: 'doc1',
@@ -118,7 +119,7 @@ describe('SearchService', () => {
       // FIX: Add missing mocks required for hybrid search
       querySimilarFileChunks: jest.fn().mockResolvedValue([]),
       fileChunkCollection: null, // Chunk search returns early when null
-      fileCollection: { count: jest.fn().mockResolvedValue(3) }
+      fileCollection: { count: jest.fn().mockResolvedValue(2) }
     };
 
     // Create mock analysis history service
@@ -145,6 +146,14 @@ describe('SearchService', () => {
       chromaDbService: mockChromaDb,
       analysisHistoryService: mockHistoryService,
       parallelEmbeddingService: mockEmbeddingService
+    });
+  });
+
+  describe('diagnostics', () => {
+    test('reports embedding coverage between history and file embeddings', async () => {
+      const diagnostics = await service.diagnoseSearchIssues('test');
+      expect(diagnostics.details.embeddingCoverage).toBeDefined();
+      expect(diagnostics.details.embeddingCoverage).toBeCloseTo(2 / 3, 3);
     });
   });
 

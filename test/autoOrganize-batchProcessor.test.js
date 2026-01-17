@@ -95,13 +95,13 @@ describe('AutoOrganize Batch Processor', () => {
         defaultLocation: '/default',
         preserveNames: true
       };
+      const smartFolders = [{ name: 'Documents', path: '/docs/Documents', isDefault: true }];
       const results = {
         organized: [],
         needsReview: [],
         operations: [],
         failed: []
       };
-      const thresholds = { requireReview: 0.5 };
 
       await processBatchResults(
         batchSuggestions,
@@ -109,7 +109,7 @@ describe('AutoOrganize Batch Processor', () => {
         options,
         results,
         mockSuggestionService,
-        thresholds
+        smartFolders
       );
 
       expect(results.organized).toHaveLength(1);
@@ -117,7 +117,7 @@ describe('AutoOrganize Batch Processor', () => {
       expect(results.operations).toHaveLength(1);
     });
 
-    test('adds files to needsReview for medium confidence', async () => {
+    test('routes medium confidence files to default smart folder', async () => {
       const batchSuggestions = {
         groups: [
           {
@@ -139,13 +139,13 @@ describe('AutoOrganize Batch Processor', () => {
         confidenceThreshold: 0.8,
         defaultLocation: '/default'
       };
+      const smartFolders = [{ name: 'Documents', path: '/docs', isDefault: true }];
       const results = {
         organized: [],
         needsReview: [],
         operations: [],
         failed: []
       };
-      const thresholds = { requireReview: 0.5 };
 
       await processBatchResults(
         batchSuggestions,
@@ -153,11 +153,11 @@ describe('AutoOrganize Batch Processor', () => {
         options,
         results,
         mockSuggestionService,
-        thresholds
+        smartFolders
       );
 
-      expect(results.needsReview).toHaveLength(1);
-      expect(results.organized).toHaveLength(0);
+      expect(results.organized).toHaveLength(1);
+      expect(results.organized[0].method).toBe('low-confidence-default');
     });
 
     test('sends low confidence files to needsReview', async () => {
@@ -183,6 +183,7 @@ describe('AutoOrganize Batch Processor', () => {
         confidenceThreshold: 0.8,
         defaultLocation: '/default'
       };
+      const smartFolders = [{ name: 'Documents', path: '/docs', isDefault: true }];
       const results = {
         organized: [],
         needsReview: [],
@@ -190,11 +191,17 @@ describe('AutoOrganize Batch Processor', () => {
         failed: []
       };
 
-      await processBatchResults(batchSuggestions, files, options, results, mockSuggestionService);
+      await processBatchResults(
+        batchSuggestions,
+        files,
+        options,
+        results,
+        mockSuggestionService,
+        smartFolders
+      );
 
-      // With simplified thresholds, files below confidenceThreshold go to needsReview
-      expect(results.needsReview).toHaveLength(1);
-      expect(results.organized).toHaveLength(0);
+      // Low confidence files route to default smart folder when available
+      expect(results.organized).toHaveLength(1);
     });
 
     test('uses fallback when no suggestion', async () => {
@@ -220,13 +227,13 @@ describe('AutoOrganize Batch Processor', () => {
         confidenceThreshold: 0.8,
         defaultLocation: '/default'
       };
+      const smartFolders = [{ name: 'Documents', path: '/docs', isDefault: true }];
       const results = {
         organized: [],
         needsReview: [],
         operations: [],
         failed: []
       };
-      const thresholds = { requireReview: 0.5 };
 
       await processBatchResults(
         batchSuggestions,
@@ -234,7 +241,7 @@ describe('AutoOrganize Batch Processor', () => {
         options,
         results,
         mockSuggestionService,
-        thresholds
+        smartFolders
       );
 
       expect(results.organized).toHaveLength(1);
@@ -264,13 +271,13 @@ describe('AutoOrganize Batch Processor', () => {
         defaultLocation: '/default',
         preserveNames: true
       };
+      const smartFolders = [{ name: 'Documents', path: '/docs', isDefault: true }];
       const results = {
         organized: [],
         needsReview: [],
         operations: [],
         failed: []
       };
-      const thresholds = { requireReview: 0.5 };
 
       await processBatchResults(
         batchSuggestions,
@@ -278,7 +285,7 @@ describe('AutoOrganize Batch Processor', () => {
         options,
         results,
         mockSuggestionService,
-        thresholds
+        smartFolders
       );
 
       // Feedback is recorded asynchronously (void promise)
@@ -302,7 +309,7 @@ describe('AutoOrganize Batch Processor', () => {
       });
 
       const files = [{ name: 'doc.pdf', path: '/src/doc.pdf' }];
-      const smartFolders = [];
+      const smartFolders = [{ name: 'Documents', path: '/docs/Documents', isDefault: true }];
       const options = {
         autoApproveThreshold: 0.9,
         defaultLocation: '/default'
@@ -338,7 +345,14 @@ describe('AutoOrganize Batch Processor', () => {
       const options = { autoApproveThreshold: 0.9 };
       const thresholds = { autoApprove: 0.9 };
 
-      const result = await batchOrganize(files, [], options, mockSuggestionService, thresholds);
+      const smartFolders = [{ name: 'Documents', path: '/docs/Documents', isDefault: true }];
+      const result = await batchOrganize(
+        files,
+        smartFolders,
+        options,
+        mockSuggestionService,
+        thresholds
+      );
 
       expect(result.operations).toHaveLength(0);
       expect(result.skipped).toHaveLength(1);
@@ -378,9 +392,10 @@ describe('AutoOrganize Batch Processor', () => {
       const options = { autoApproveThreshold: 0.9 };
       const thresholds = { autoApprove: 0.9 };
 
+      const smartFolders = [{ name: 'Documents', path: '/docs/Documents', isDefault: true }];
       const result = await batchOrganize(
         files,
-        [],
+        smartFolders,
         options,
         mockSuggestionService,
         thresholds,
@@ -417,7 +432,8 @@ describe('AutoOrganize Batch Processor', () => {
       };
       const thresholds = { autoApprove: 0.9 };
 
-      await batchOrganize(files, [], options, mockSuggestionService, thresholds);
+      const smartFolders = [{ name: 'Documents', path: '/docs', isDefault: true }];
+      await batchOrganize(files, smartFolders, options, mockSuggestionService, thresholds);
 
       expect(mockSuggestionService.recordFeedback).toHaveBeenCalled();
     });

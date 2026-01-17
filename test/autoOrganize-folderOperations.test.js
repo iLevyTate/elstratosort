@@ -170,8 +170,7 @@ describe('AutoOrganize Folder Operations', () => {
 
       const result = getFallbackDestination(file, smartFolders, '/default');
 
-      expect(result).toContain('SpecialReports');
-      expect(result).toContain('report.pdf');
+      expect(result).toBeNull();
     });
 
     test('falls back to file type folder', () => {
@@ -180,7 +179,7 @@ describe('AutoOrganize Folder Operations', () => {
 
       const result = getFallbackDestination(file, smartFolders, '/default');
 
-      expect(result).toContain('Files'); // Unknown type category
+      expect(result).toBeNull();
     });
   });
 
