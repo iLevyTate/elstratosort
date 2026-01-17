@@ -1,4 +1,4 @@
-import React, { useState, useEffect, memo, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import {
   Home,
@@ -15,6 +15,7 @@ import { PHASES, PHASE_TRANSITIONS, PHASE_METADATA } from '../../shared/constant
 import { logger } from '../../shared/logger';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { setPhase, toggleSettings } from '../store/slices/uiSlice';
+import { updateHealth } from '../store/slices/systemSlice';
 import { useFloatingSearch } from '../contexts/FloatingSearchContext';
 import UpdateIndicator from './UpdateIndicator';
 import { isMac } from '../utils/platform';
@@ -454,6 +455,35 @@ function NavigationBar() {
     }),
     [dispatch]
   );
+
+  const didProbeHealth = useRef(false);
+
+  useEffect(() => {
+    if (didProbeHealth.current) return;
+    didProbeHealth.current = true;
+
+    const probeHealth = async () => {
+      try {
+        const settings = await window.electronAPI?.settings?.get?.();
+        const host = settings?.ollamaHost;
+        if (window.electronAPI?.ollama?.testConnection) {
+          const res = await window.electronAPI.ollama.testConnection(host);
+          const rawStatus = res?.ollamaHealth?.status;
+          const mappedStatus =
+            rawStatus === 'healthy' ? 'online' : rawStatus === 'unhealthy' ? 'offline' : null;
+          if (mappedStatus) {
+            dispatch(updateHealth({ ollama: mappedStatus }));
+          }
+        }
+      } catch (error) {
+        logger.debug('[NavigationBar] Ollama health probe failed', {
+          error: error?.message || String(error)
+        });
+      }
+    };
+
+    probeHealth();
+  }, [dispatch]);
 
   // Scroll effect for glass morphism - throttled to prevent excessive re-renders
   useEffect(() => {
