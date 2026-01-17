@@ -259,6 +259,16 @@ async function caller() {
 
 ## Code Formatting
 
+StratoSort standardizes formatting with Prettier and linting with ESLint. Use the following scripts
+before committing:
+
+```bash
+npm run format
+npm run lint
+```
+
+CI enforces `format:check` and `lint`, so ensure both pass locally.
+
 ### Indentation
 
 - **Standard**: 2 spaces (already configured in project)
