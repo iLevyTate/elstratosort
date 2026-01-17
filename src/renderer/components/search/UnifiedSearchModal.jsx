@@ -660,6 +660,8 @@ export default function UnifiedSearchModal({
 
   // Help tour state (for re-showing the tour via help button)
   const [showTourManually, setShowTourManually] = useState(false);
+  const nodeTypes = useMemo(() => NODE_TYPES, []);
+  const edgeTypes = useMemo(() => EDGE_TYPES, []);
 
   const dispatch = useAppDispatch();
   const handleOpenSettings = useCallback(() => {
@@ -4575,8 +4577,8 @@ export default function UnifiedSearchModal({
                   <ReactFlow
                     nodes={rfNodes}
                     edges={edges}
-                    nodeTypes={NODE_TYPES}
-                    edgeTypes={EDGE_TYPES}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
                     onNodesChange={onNodesChange}
                     onEdgesChange={graphActions.onEdgesChange}
                     className="bg-[var(--surface-muted)]"

@@ -445,7 +445,7 @@ function DiscoverPhase() {
           <section className="surface-panel flex flex-col flex-shrink-0 gap-default">
             <div className="flex items-center justify-between flex-wrap gap-cozy">
               <div className="flex items-center gap-cozy">
-                <h3 className="heading-tertiary m-0 flex items-center gap-compact">
+                <h3 className="heading-tertiary m-0 flex items-center gap-2">
                   <FolderOpenIcon className="w-5 h-5 text-stratosort-blue" />
                   <span>Select Content</span>
                 </h3>
