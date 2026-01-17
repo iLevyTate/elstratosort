@@ -66,6 +66,7 @@ const schemas = z
         operationType: z.string(),
         error: z.string(),
         code: z.string().optional(),
+        errorType: z.string().optional(),
         details: z.any().optional()
       });
 

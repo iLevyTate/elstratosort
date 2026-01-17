@@ -311,6 +311,56 @@ const CONFIG_SCHEMA = {
       min: 1,
       max: 50,
       description: 'Maximum concurrent network operations'
+    },
+    /** Chroma query cache size */
+    queryCacheSize: {
+      type: 'number',
+      default: 200,
+      min: 0,
+      max: 5000,
+      description: 'Maximum cached ChromaDB query results'
+    },
+    /** Delay for batching insert operations (ms) */
+    batchInsertDelay: {
+      type: 'number',
+      default: 100,
+      min: 0,
+      max: 5000,
+      description: 'Delay before flushing batched ChromaDB inserts (ms)'
+    }
+  },
+
+  /**
+   * ChromaDB Service Configuration
+   * Service-specific timeouts and limits
+   */
+  CHROMADB: {
+    /** Timeout for ChromaDB operations (ms) */
+    operationTimeout: {
+      type: 'number',
+      default: 30000,
+      envVar: 'CHROMADB_OPERATION_TIMEOUT',
+      min: 1000,
+      max: 300000,
+      description: 'Timeout for ChromaDB operations (ms)'
+    },
+    /** Timeout for ChromaDB initialization (ms) */
+    initTimeout: {
+      type: 'number',
+      default: 60000,
+      envVar: 'CHROMADB_INIT_TIMEOUT',
+      min: 5000,
+      max: 600000,
+      description: 'Timeout for ChromaDB initialization (ms)'
+    },
+    /** Maximum in-flight ChromaDB queries */
+    maxInflightQueries: {
+      type: 'number',
+      default: 100,
+      envVar: 'CHROMADB_MAX_INFLIGHT_QUERIES',
+      min: 10,
+      max: 1000,
+      description: 'Maximum in-flight ChromaDB queries'
     }
   },
 

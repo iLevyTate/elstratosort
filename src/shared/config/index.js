@@ -23,7 +23,11 @@ if (configManager.getDeprecationWarnings().length > 0) {
   logger.warn('[Config] Deprecation warnings:', configManager.getDeprecationWarnings());
 }
 
-if (configManager.getValidationErrors().length > 0) {
+const validationReport =
+  typeof configManager.validate === 'function' ? configManager.validate() : null;
+if (validationReport && validationReport.valid === false) {
+  logger.warn('[Config] Validation errors (using defaults):', validationReport.errors);
+} else if (!validationReport && configManager.getValidationErrors().length > 0) {
   logger.warn('[Config] Validation errors (using defaults):', configManager.getValidationErrors());
 }
 
@@ -41,6 +45,16 @@ module.exports = {
   isTest: () => configManager.isTest(),
   isCI: () => configManager.isCI(),
   validate: () => configManager.validate(),
+  validateAndLog: () => {
+    const report = configManager.validate();
+    if (!report.valid) {
+      logger.warn('[Config] Validation errors (using defaults):', report.errors);
+    }
+    if (report.warnings?.length) {
+      logger.warn('[Config] Deprecation warnings:', report.warnings);
+    }
+    return report;
+  },
   dump: (options) => configManager.dump(options),
   getSchema: () => configManager.getSchema(),
   override: (path, value) => configManager.override(path, value),

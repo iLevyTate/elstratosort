@@ -111,6 +111,10 @@ const IPC_CHANNELS = {
     GET_FILE_SUGGESTIONS: 'get-file-suggestions',
     GET_BATCH_SUGGESTIONS: 'get-batch-suggestions',
     RECORD_FEEDBACK: 'record-suggestion-feedback',
+    ADD_FEEDBACK_MEMORY: 'add-feedback-memory',
+    GET_FEEDBACK_MEMORY: 'get-feedback-memory',
+    DELETE_FEEDBACK_MEMORY: 'delete-feedback-memory',
+    UPDATE_FEEDBACK_MEMORY: 'update-feedback-memory',
     GET_STRATEGIES: 'get-organization-strategies',
     APPLY_STRATEGY: 'apply-organization-strategy',
     GET_USER_PATTERNS: 'get-user-patterns',
@@ -176,6 +180,17 @@ const IPC_CHANNELS = {
     CLEAR_CLUSTERS: 'embeddings-clear-clusters',
     // Diagnostic endpoint for troubleshooting search issues
     DIAGNOSE_SEARCH: 'embeddings-diagnose-search'
+  },
+
+  // Chat / Document QA
+  CHAT: {
+    QUERY: 'chat-query',
+    RESET_SESSION: 'chat-reset-session'
+  },
+
+  // Knowledge relationships
+  KNOWLEDGE: {
+    GET_RELATIONSHIP_EDGES: 'knowledge-get-relationship-edges'
   },
 
   // Ollama
