@@ -48,16 +48,7 @@ npm run lint
 npm test
 ```
 
-See `docs/TESTING_STRATEGY.md` for test patterns and goals.
-
-### Manual
-
-Use the regression test plan in `REGRESSION_TEST_PLAN.md`.
-
-If you are new to manual testing, start with:
-
-- `docs/CONTRIBUTING_TESTING_BEGINNER.md`
-- `docs/CONTRIBUTING_TESTING_ADVANCED.md`
+See `TESTING.md` for test patterns, goals, and manual verification checklists.
 
 ## Pull Request Checklist
 

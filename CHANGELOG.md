@@ -15,6 +15,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Retry Mechanism**: "Retry Failed Files" button in Discover phase (M-3)
 - **Conflict Detection**: Warning banner when multiple files target the same destination path (M-4)
 - **AI Description Generation**: "Generate with AI" button for smart folders (C-1)
+- **Enhanced Graph Visualization**:
+  - **Color-Coded Nodes**: Files in the Knowledge Graph are now color-coded by category
+    (Blue=Documents, Purple=Images, etc.) for instant visual recognition.
+  - **"Relationship Analysis" Tooltips**: Hovering over connection lines now explains _why_ files
+    are connected (e.g., "Both Images", "Same Subject", "Shared Tags").
+  - **Improved Layout**: Switched to `BRANDES_KOEPF` algorithm for straighter, more organized graph
+    structures with better handling of outliers.
+  - **Robust Data Handling**: Graph nodes now robustly display metadata even if underlying search
+    results are nested or incomplete.
+- **UI Spacing Improvements**:
+  - Implemented `spacious` (32px) layout density in Setup Phase for a cleaner, less cluttered look.
+  - Standardized grid gaps and padding across main views.
 - Comprehensive test coverage for IPC handlers (settings.js, suggestions.js)
 - SECURITY.md with vulnerability disclosure policy
 - This CHANGELOG.md file
@@ -48,6 +60,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Critical**: Race condition in undo/redo system allowing concurrent action execution
   - Added mutex lock to prevent overlapping operations
   - Exposed `isExecuting` state for UI feedback
+- **Critical**: UI Persistence issue where KnowledgeOS would reopen with only the file search
+  visible
+  - Switched `WIDGET_AUTO_SHOWN_KEY` and `MODAL_OPEN_STATE` to `localStorage` for robust state
+    persistence across restarts.
+- **Build System**: Fixed stale cache issues in development causing "Cannot find module" errors by
+  adding a pre-build `clean` step.
 - Toast timer reset when parent component re-renders with new callback reference
   - Used ref for onClose callback to maintain timer stability
 - ResizeObserver not attaching when container ref is null on first render

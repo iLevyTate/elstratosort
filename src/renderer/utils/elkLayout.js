@@ -54,8 +54,8 @@ const NODE_SIZES = {
  */
 const DEFAULT_OPTIONS = {
   direction: 'RIGHT',
-  spacing: 220, // Increased to reduce edge overlap with node badges
-  layerSpacing: 380, // Increased to provide room for long labels and edge routing
+  spacing: 160, // Optimized for Brandes-Koepf alignment
+  layerSpacing: 280, // Tighter layer spacing
   algorithm: 'layered'
 };
 
@@ -115,7 +115,8 @@ export async function elkLayout(nodes, edges, options = {}) {
     layoutOptions['elk.layered.spacing.nodeNodeBetweenLayers'] = String(layerSpacing);
     layoutOptions['elk.layered.spacing.edgeNodeBetweenLayers'] = String(edgeLayerSpacing);
     layoutOptions['elk.layered.spacing.edgeEdgeBetweenLayers'] = String(edgeSpacing);
-    layoutOptions['elk.layered.nodePlacement.strategy'] = 'SIMPLE';
+    layoutOptions['elk.layered.nodePlacement.strategy'] = 'BRANDES_KOEPF'; // Better straight-line alignment
+    layoutOptions['elk.spacing.componentComponent'] = String(spacing); // Keep disconnected clusters close
     layoutOptions['elk.layered.crossingMinimization.strategy'] = 'LAYER_SWEEP';
   } else if (elkAlgorithm === 'org.eclipse.elk.force') {
     layoutOptions['elk.force.iterations'] = '100';

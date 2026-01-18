@@ -936,15 +936,20 @@ export default function UnifiedSearchModal({
         position: defaultNodePosition(idx),
         data: {
           kind: 'file',
-          label: source.name || source.fileId,
-          path: source.path || '',
+          label: source.name || source.metadata?.name || source.fileId,
+          path: source.path || source.metadata?.path || '',
           score: source.score || 0,
-          tags: normalizeList(source.tags).slice(0, 5),
-          entities: normalizeList(source.entities).slice(0, 5),
-          dates: normalizeList(source.dates).slice(0, 3),
-          suggestedFolder: recommendationMap[source.path] || '',
-          category: '',
-          subject: ''
+          tags: normalizeList(source.tags || source.metadata?.tags).slice(0, 5),
+          entities: normalizeList(source.entities || source.metadata?.entities).slice(0, 5),
+          dates: normalizeList(source.dates || source.metadata?.dates).slice(0, 3),
+          suggestedFolder: recommendationMap[source.path || source.metadata?.path] || '',
+          category: getFileCategory(source.path || source.metadata?.path || ''),
+          subject:
+            source.subject ||
+            source.metadata?.subject ||
+            (recommendationMap[source.path || source.metadata?.path]
+              ? `Folder: ${recommendationMap[source.path || source.metadata?.path]}`
+              : '')
         },
         draggable: true
       }));
@@ -966,9 +971,9 @@ export default function UnifiedSearchModal({
           fileNodes.forEach((n) => {
             nodeDataMap.set(n.id, {
               label: n.data?.label || '',
-              tags: [],
-              category: '',
-              subject: ''
+              tags: n.data?.tags || [],
+              category: n.data?.category || '',
+              subject: n.data?.subject || ''
             });
           });
 
@@ -2382,8 +2387,8 @@ export default function UnifiedSearchModal({
           tags = [];
         }
       }
-      const category = metadata.category || '';
-      const subject = metadata.subject || '';
+      const category = metadata.category || getFileCategory(path);
+      const subject = metadata.subject || (suggestedFolder ? `Folder: ${suggestedFolder}` : '');
       const summary = metadata.summary || '';
       const content = result?.document || '';
       const suggestedFolder = recommendationMap[path] || '';

@@ -1,9 +1,73 @@
-import React, { memo, useState, useCallback } from 'react';
+import React, { memo, useState, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { Handle, Position, NodeToolbar } from 'reactflow';
 import { FileText, ExternalLink, FolderOpen, Copy, GitBranch, Focus } from 'lucide-react';
 import { useFileActions } from '../../../hooks';
 import { logger } from '../../../../shared/logger';
+import FileIcon, { getFileCategory } from '../../ui/FileIcon';
+
+const CATEGORY_STYLES = {
+  Documents: {
+    bg: 'bg-blue-50',
+    border: 'border-blue-200',
+    text: 'text-blue-700',
+    ring: 'ring-blue-100'
+  },
+  Spreadsheets: {
+    bg: 'bg-green-50',
+    border: 'border-green-200',
+    text: 'text-green-700',
+    ring: 'ring-green-100'
+  },
+  Presentations: {
+    bg: 'bg-orange-50',
+    border: 'border-orange-200',
+    text: 'text-orange-700',
+    ring: 'ring-orange-100'
+  },
+  Images: {
+    bg: 'bg-purple-50',
+    border: 'border-purple-200',
+    text: 'text-purple-700',
+    ring: 'ring-purple-100'
+  },
+  Videos: {
+    bg: 'bg-pink-50',
+    border: 'border-pink-200',
+    text: 'text-pink-700',
+    ring: 'ring-pink-100'
+  },
+  Audio: {
+    bg: 'bg-cyan-50',
+    border: 'border-cyan-200',
+    text: 'text-cyan-700',
+    ring: 'ring-cyan-100'
+  },
+  Code: {
+    bg: 'bg-yellow-50',
+    border: 'border-yellow-200',
+    text: 'text-yellow-700',
+    ring: 'ring-yellow-100'
+  },
+  Data: {
+    bg: 'bg-amber-50',
+    border: 'border-amber-200',
+    text: 'text-amber-700',
+    ring: 'ring-amber-100'
+  },
+  Archives: {
+    bg: 'bg-stone-50',
+    border: 'border-stone-200',
+    text: 'text-stone-700',
+    ring: 'ring-stone-100'
+  },
+  Other: {
+    bg: 'bg-gray-50',
+    border: 'border-gray-200',
+    text: 'text-gray-700',
+    ring: 'ring-gray-100'
+  }
+};
 
 const FileNode = memo(({ data, selected }) => {
   const [showActions, setShowActions] = useState(false);
@@ -13,6 +77,10 @@ const FileNode = memo(({ data, selected }) => {
   const dates = Array.isArray(data?.dates) ? data.dates.slice(0, 2) : [];
   const suggestedFolder =
     typeof data?.suggestedFolder === 'string' ? data.suggestedFolder.trim() : '';
+
+  // Determine category and style
+  const category = useMemo(() => getFileCategory(filePath), [filePath]);
+  const style = CATEGORY_STYLES[category] || CATEGORY_STYLES.Other;
 
   // Use shared hooks for file actions
   const { openFile, revealFile, copyPath } = useFileActions();
@@ -82,14 +150,13 @@ const FileNode = memo(({ data, selected }) => {
   return (
     <div
       className={`
-        relative px-3 py-2 rounded-lg border-2 shadow-sm min-w-[140px] max-w-[200px]
-        transition-colors duration-200 cursor-pointer group backface-hidden transform-gpu
+        relative px-3 py-2 rounded-lg border-2 shadow-sm min-w-[160px] max-w-[220px]
+        transition-all duration-200 cursor-pointer group backface-hidden transform-gpu
         ${
           selected
-            ? 'border-[var(--color-stratosort-blue)] bg-[var(--color-stratosort-blue)]/10 shadow-md'
-            : 'border-[var(--color-border-soft)] bg-white hover:border-[var(--color-stratosort-blue)]/50 hover:shadow-md'
+            ? `border-[var(--color-stratosort-blue)] ring-2 ring-[var(--color-stratosort-blue)]/20 shadow-lg scale-105 z-10 bg-white`
+            : `${style.border} ${style.bg} hover:border-[var(--color-stratosort-blue)]/50 hover:shadow-md hover:scale-102 hover:z-10`
         }
-        ${hasHighScore ? 'ring-1 ring-blue-400' : ''}
       `}
       style={{ opacity: data?.style?.opacity ?? 1 }}
       onMouseEnter={() => setShowActions(true)}
@@ -145,25 +212,25 @@ const FileNode = memo(({ data, selected }) => {
 
       {/* Quick actions on hover */}
       {showActions && filePath && !selected && (
-        <div className="absolute -top-7 left-1/2 -translate-x-1/2 flex gap-1 bg-white shadow-md rounded-lg px-1.5 py-1 border border-[var(--color-border-soft)] z-10">
+        <div className="absolute -top-8 left-1/2 -translate-x-1/2 flex gap-1 bg-white shadow-md rounded-lg px-2 py-1.5 border border-[var(--color-border-soft)] z-20">
           <button
             onClick={handleOpen}
             className="p-1 rounded hover:bg-[var(--color-stratosort-blue)]/10 transition-colors"
             title="Open file"
           >
-            <ExternalLink className="w-3 h-3 text-[var(--color-stratosort-blue)]" />
+            <ExternalLink className="w-3.5 h-3.5 text-[var(--color-stratosort-blue)]" />
           </button>
           <button
             onClick={handleReveal}
             className="p-1 rounded hover:bg-[var(--color-stratosort-blue)]/10 transition-colors"
             title="Reveal in folder"
           >
-            <FolderOpen className="w-3 h-3 text-[var(--color-stratosort-blue)]" />
+            <FolderOpen className="w-3.5 h-3.5 text-[var(--color-stratosort-blue)]" />
           </button>
         </div>
       )}
 
-      {/* Score badge for relevance indicator - only show if score is meaningful (> 0) */}
+      {/* Score badge for relevance indicator */}
       {displayScore !== null && displayScore > 0 && (
         <div
           className={`
@@ -176,25 +243,45 @@ const FileNode = memo(({ data, selected }) => {
         </div>
       )}
 
-      <div className="flex items-start gap-2">
-        <FileText className="w-4 h-4 text-[var(--color-stratosort-blue)] shrink-0 mt-0.5" />
+      <div className="flex items-start gap-2.5">
+        <div className="shrink-0 mt-0.5">
+          <FileIcon filename={filePath} className="w-5 h-5" />
+        </div>
+
         <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-1 mb-0.5">
+            <span className={`text-[10px] font-semibold uppercase tracking-wider ${style.text}`}>
+              {category}
+            </span>
+          </div>
+
           <div
-            className="file-node-label text-xs font-medium text-[var(--color-system-gray-900)] truncate"
+            className="file-node-label text-xs font-semibold text-[var(--color-system-gray-900)] truncate mb-1"
             title={data?.label}
           >
             {data?.label}
           </div>
-          {(tags.length > 0 || entities.length > 0 || dates.length > 0 || suggestedFolder) && (
-            <div className="mt-1 text-[10px] text-[var(--color-system-gray-500)] space-y-0.5">
-              {suggestedFolder && <div>Suggested: {suggestedFolder}</div>}
-              {tags.length > 0 && <div>Tags: {tags.join(', ')}</div>}
-              {entities.length > 0 && <div>Entities: {entities.join(', ')}</div>}
-              {dates.length > 0 && <div>Dates: {dates.join(', ')}</div>}
+
+          {(tags.length > 0 || suggestedFolder) && (
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {suggestedFolder && (
+                <span className="px-1.5 py-0.5 rounded text-[9px] bg-black/5 text-black/60 font-medium truncate max-w-full">
+                  📂 {suggestedFolder}
+                </span>
+              )}
+              {tags.map((tag, i) => (
+                <span
+                  key={i}
+                  className="px-1.5 py-0.5 rounded text-[9px] bg-white/60 text-[var(--color-system-gray-600)] border border-black/5"
+                >
+                  #{tag}
+                </span>
+              ))}
             </div>
           )}
         </div>
       </div>
+
       <Handle
         type="source"
         position={Position.Right}
@@ -213,6 +300,10 @@ FileNode.propTypes = {
     score: PropTypes.number,
     label: PropTypes.string,
     path: PropTypes.string,
+    tags: PropTypes.arrayOf(PropTypes.string),
+    entities: PropTypes.arrayOf(PropTypes.string),
+    dates: PropTypes.arrayOf(PropTypes.string),
+    suggestedFolder: PropTypes.string,
     style: PropTypes.shape({
       opacity: PropTypes.number
     })

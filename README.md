@@ -87,7 +87,7 @@ Detailed documentation is available in the `docs/` directory:
 
 - [Architecture Overview](docs/ARCHITECTURE.md)
 - [Learning Guide](docs/LEARNING_GUIDE.md)
-- [Testing Strategy](docs/TESTING_STRATEGY.md)
+- [Testing Guide](TESTING.md)
 - [Code Quality Standards](docs/CODE_QUALITY_STANDARDS.md)
 - [Dependency Patterns](docs/DI_PATTERNS.md)
 - [Error Handling](docs/ERROR_HANDLING_GUIDE.md)
