@@ -37,7 +37,9 @@ const ANALYSIS_SCHEMA_PROMPT = {
   keywords: ['keyword1', 'keyword2', 'keyword3', 'keyword4', 'keyword5'],
   confidence: 'Number 0-100 indicating confidence in the extraction.',
   suggestedName:
-    "A short, concise topic-based filename (max 3 words) using underscores (e.g., 'budget_report', 'sunset_beach', 'meeting_notes'). Do NOT include the extension."
+    "A short, concise topic-based filename (max 3 words) using underscores (e.g., 'budget_report', 'sunset_beach', 'meeting_notes'). Do NOT include the extension.",
+  reasoning:
+    'Brief explanation (1 sentence) of why this category was chosen based on the content and folder description.'
 };
 
 /**
@@ -52,7 +54,8 @@ const DEFAULT_ANALYSIS_RESULT = {
   summary: '',
   keywords: [],
   confidence: 0,
-  suggestedName: null
+  suggestedName: null,
+  reasoning: null
 };
 
 module.exports = {

@@ -229,7 +229,9 @@ const IPC_CHANNELS = {
     GET_METRICS: 'get-system-metrics',
     APPLY_UPDATE: 'apply-update',
     GET_CONFIG: 'get-app-config',
-    GET_CONFIG_VALUE: 'get-config-value'
+    GET_CONFIG_VALUE: 'get-config-value',
+    // FIX: Add constant for renderer error reporting channel
+    RENDERER_ERROR_REPORT: 'renderer-error-report'
   },
 
   // Window Controls
@@ -484,39 +486,39 @@ const ALL_SUPPORTED_EXTENSIONS = [
   ...SUPPORTED_ARCHIVE_EXTENSIONS
 ];
 
-// AI Model configurations - Ultra-lightweight models for accessibility
-// Total download: ~2.3GB (vs previous ~8GB = 71% reduction)
+// AI Model configurations - Optimized for Quality ("Top Tier")
+// Using best available models from user's local library
 const DEFAULT_AI_MODELS = {
-  TEXT_ANALYSIS: 'qwen3:0.6b', // 523MB - Ultra-fast, 40K context, 119 languages
-  IMAGE_ANALYSIS: 'gemma3:latest', // Gemma 3 - Google's multimodal vision-language model
-  EMBEDDING: 'embeddinggemma', // 308MB - Google's best-in-class, 768 dims, <15ms
-  FALLBACK_MODELS: ['qwen3:0.6b', 'llama3.2:latest', 'gemma2:2b', 'phi3', 'mistral']
+  TEXT_ANALYSIS: 'llama3.2:latest', // 3B - Excellent reasoning & instruction following
+  IMAGE_ANALYSIS: 'llava:latest', // 7B - Best-in-class open source vision
+  EMBEDDING: 'mxbai-embed-large', // 1024 dims - Top tier retrieval performance
+  FALLBACK_MODELS: ['qwen3:0.6b', 'gemma3:latest', 'moondream:1.8b', 'nomic-embed-text']
 };
 
 // AI defaults centralized for analyzers
 const AI_DEFAULTS = {
   TEXT: {
-    MODEL: 'qwen3:0.6b',
+    MODEL: 'llama3.2:latest',
     HOST: SERVICE_URLS.OLLAMA_HOST,
     MAX_CONTENT_LENGTH: 12000,
     TEMPERATURE: 0.1,
     MAX_TOKENS: 800
   },
   IMAGE: {
-    MODEL: 'gemma3:latest', // Gemma 3 is multimodal (4B+ variants support vision)
+    MODEL: 'llava:latest',
     HOST: SERVICE_URLS.OLLAMA_HOST,
     TEMPERATURE: 0.1, // ANTI-HALLUCINATION: Low temperature for factual image analysis
     MAX_TOKENS: 1000
   },
   EMBEDDING: {
-    MODEL: 'embeddinggemma',
-    DIMENSIONS: 768, // Different from previous mxbai-embed-large (1024)
+    MODEL: 'mxbai-embed-large',
+    DIMENSIONS: 1024, // mxbai-embed-large uses 1024 dimensions
     // FIX: Fallback chain for embedding models (in order of preference)
     // Used when primary model is not available on the Ollama server
     FALLBACK_MODELS: [
-      'embeddinggemma', // 768 dims - Google's default
       'mxbai-embed-large', // 1024 dims - High quality
       'nomic-embed-text', // 768 dims - Good general purpose
+      'embeddinggemma', // 768 dims - Google's default
       'all-minilm', // 384 dims - Fast, smaller
       'bge-large', // 1024 dims - Chinese & English
       'snowflake-arctic-embed' // 1024 dims - High quality
@@ -557,6 +559,22 @@ const RENDERER_LIMITS = {
   ANALYSIS_TIMEOUT_MS: 3 * 60 * 1000 // 3 minutes
 };
 
+// FIX L-2: Centralized UI virtualization constants to avoid magic numbers
+// Used by react-window list components across the organize phase
+const UI_VIRTUALIZATION = {
+  // Item heights for different list types
+  ANALYSIS_RESULTS_ITEM_HEIGHT: 176, // Height of analysis result row
+  FILE_GRID_ROW_HEIGHT: 400, // Height of file grid row (cards)
+  PROCESSED_FILES_ITEM_HEIGHT: 72, // Compact height for processed files
+  TARGET_FOLDER_ITEM_HEIGHT: 100, // Height of target folder item
+  // Threshold for enabling virtualization (items count)
+  THRESHOLD: 30,
+  // Default overscan count for react-window
+  OVERSCAN_COUNT: 5,
+  // Measurement padding for container sizing
+  MEASUREMENT_PADDING: 24
+};
+
 // Export both CommonJS (for main process) and ES6 (for renderer with webpack)
 const exports_object = {
   PHASES,
@@ -582,7 +600,8 @@ const exports_object = {
   FILE_SIZE_LIMITS,
   PROCESSING_LIMITS,
   UI_WORKFLOW,
-  RENDERER_LIMITS
+  RENDERER_LIMITS,
+  UI_VIRTUALIZATION
 };
 
 // CommonJS export for both Node.js (main process) and webpack (renderer)

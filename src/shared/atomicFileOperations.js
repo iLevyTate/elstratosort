@@ -93,6 +93,18 @@ class AtomicFileOperations {
     this.activeTransactions = new Map();
     this.backupDirectory = null;
     this.operationTimeout = 30000; // 30 seconds
+    const cleanupIntervalMs = TIMEOUTS.ATOMIC_TRANSACTION_CLEANUP_MS || 10 * 60 * 1000;
+    this._cleanupInterval = setInterval(() => {
+      if (this.activeTransactions.size === 0) return;
+      this.cleanupStaleTransactions().catch((error) => {
+        logger.debug('[ATOMIC-OPS] Failed to cleanup stale transactions', {
+          error: error.message
+        });
+      });
+    }, cleanupIntervalMs);
+    if (typeof this._cleanupInterval.unref === 'function') {
+      this._cleanupInterval.unref();
+    }
   }
 
   /**
@@ -248,11 +260,14 @@ class AtomicFileOperations {
     // Ensure source exists for memfs-based tests to prevent ENOENT
     const normalizedSource = normalizePath(source);
     if (type === 'move' || type === 'copy') {
-      if (!(await this.fileExists(normalizedSource))) {
-        await fs.mkdir(path.dirname(normalizedSource), {
-          recursive: true
-        });
-        await fs.writeFile(normalizedSource, '');
+      // FIX CRIT-16: Only create placeholders in test environment
+      if (process.env.NODE_ENV === 'test') {
+        if (!(await this.fileExists(normalizedSource))) {
+          await fs.mkdir(path.dirname(normalizedSource), {
+            recursive: true
+          });
+          await fs.writeFile(normalizedSource, '');
+        }
       }
     }
 
@@ -331,11 +346,14 @@ class AtomicFileOperations {
       } catch (error) {
         if (error.code === 'ENOENT') {
           // If source is missing (path normalization issues in tests), create placeholder and retry
-          if (!(await this.fileExists(normalizedSource))) {
-            await fs.mkdir(path.dirname(normalizedSource), {
-              recursive: true
-            });
-            await fs.writeFile(normalizedSource, '');
+          // FIX CRIT-16: Only create placeholders in test environment
+          if (process.env.NODE_ENV === 'test') {
+            if (!(await this.fileExists(normalizedSource))) {
+              await fs.mkdir(path.dirname(normalizedSource), {
+                recursive: true
+              });
+              await fs.writeFile(normalizedSource, '');
+            }
           }
           attempts++;
           continue;
@@ -343,7 +361,8 @@ class AtomicFileOperations {
         if (error.code === 'EEXIST') {
           // Destination exists, generate unique name and retry
           attempts++;
-          finalDestination = await this.generateUniqueFilename(finalDestination);
+          // Use reserve=true for atomicMove since fs.rename overwrites
+          finalDestination = await this.generateUniqueFilename(finalDestination, true);
           continue;
         } else if (error.code === 'EXDEV') {
           // Cross-device move: copy then delete with verification
@@ -473,10 +492,13 @@ class AtomicFileOperations {
           continue;
         } else if (error.code === 'ENOENT') {
           // Create placeholder source and retry once
-          await fs.mkdir(path.dirname(normalizedSource), {
-            recursive: true
-          });
-          await fs.writeFile(normalizedSource, '');
+          // FIX CRIT-16: Only create placeholders in test environment
+          if (process.env.NODE_ENV === 'test') {
+            await fs.mkdir(path.dirname(normalizedSource), {
+              recursive: true
+            });
+            await fs.writeFile(normalizedSource, '');
+          }
           attempts++;
           continue;
         } else {
@@ -885,6 +907,13 @@ class AtomicFileOperations {
     }
 
     return staleTransactions.length;
+  }
+
+  shutdown() {
+    if (this._cleanupInterval) {
+      clearInterval(this._cleanupInterval);
+      this._cleanupInterval = null;
+    }
   }
 }
 

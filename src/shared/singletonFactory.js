@@ -121,9 +121,14 @@ function createSingletonHelpers(options) {
     }
 
     // Create the instance
-    const instance = createFactory
-      ? createFactory(instanceOptions)
-      : new ServiceClass(instanceOptions);
+    let instance;
+    try {
+      instance = createFactory ? createFactory(instanceOptions) : new ServiceClass(instanceOptions);
+    } catch (createError) {
+      // FIX HIGH-72: Log creation errors
+      logger.error(`[SingletonFactory] Error creating instance for ${serviceName}:`, createError);
+      throw createError;
+    }
 
     // FIX: Handle both sync and async factory results
     // For sync factories, return synchronously (backward compatible)

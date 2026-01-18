@@ -79,7 +79,10 @@ const DANGEROUS_PATHS = {
     'C:\\Program Files',
     'C:\\Program Files (x86)',
     'C:\\ProgramData',
-    'C:\\System Volume Information'
+    'C:\\System Volume Information',
+    'C:\\Users\\All Users',
+    'C:\\Boot',
+    'C:\\Recovery'
   ],
   // macOS system directories
   darwin: ['/System', '/Library/System', '/private/etc', '/private/var', '/Library/Preferences']
@@ -219,7 +222,7 @@ const ALLOWED_METADATA_FIELDS = [
   'tags',
   'keywords',
   'entity',
-  'type',
+  // 'type', // FIX HIGH-48: Removed duplicate 'type'
   'project',
   'date',
   'suggestedName',
@@ -266,7 +269,8 @@ const ALLOWED_RECEIVE_CHANNELS = [
   'chromadb-status-changed', // FIX: ChromaDB status events for UI integration
   'dependencies-service-status-changed', // FIX: Missing channel for dependency status updates
   'notification', // Toast notifications from main process
-  'undo-redo:state-changed' // FIX: Undo/redo state change notifications
+  'undo-redo:state-changed', // FIX: Undo/redo state change notifications
+  'batch-results-chunk' // FIX: Batch results streaming for progressive UI updates
 ];
 
 /**
