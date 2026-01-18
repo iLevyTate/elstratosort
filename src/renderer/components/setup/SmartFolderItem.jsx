@@ -45,8 +45,8 @@ const SmartFolderItem = memo(function SmartFolderItem({
   if (compact && !isExpanded && !isEditing) {
     return (
       <div
-        className="group flex items-center bg-white/70 rounded-xl border border-border-soft/60 shadow-sm hover:shadow-md hover:border-stratosort-blue/30 transition-all cursor-pointer h-full"
-        style={{ padding: 'var(--spacing-cozy)', gap: 'var(--spacing-cozy)' }}
+        className="group flex items-center bg-white/70 rounded-xl border border-border-soft/60 shadow-sm hover:shadow-md hover:border-stratosort-blue/30 transition-all cursor-pointer h-full p-6 md:p-8"
+        style={{ gap: 'var(--spacing-default)' }}
         onClick={() => onToggleExpand?.(folder.id)}
         role="button"
         tabIndex={0}
@@ -134,19 +134,19 @@ const SmartFolderItem = memo(function SmartFolderItem({
   if (isEditing) {
     return (
       <div
-        className={`bg-white/90 rounded-xl border-2 border-stratosort-blue/40 shadow-lg h-full flex flex-col ${cardAnimationClass}`}
-        style={{ padding: 'var(--spacing-default)', animationDelay: cardAnimationDelay }}
+        className={`bg-white/90 rounded-xl border-2 border-stratosort-blue/40 shadow-lg h-full flex flex-col p-6 md:p-8 ${cardAnimationClass}`}
+        style={{ animationDelay: cardAnimationDelay }}
       >
         <div
           className="flex flex-col flex-1"
-          style={{ gap: 'var(--spacing-cozy)' }}
+          style={{ gap: 'var(--spacing-default)' }}
           role="form"
           aria-label="Edit smart folder"
         >
           {/* Header */}
           <div
             className="flex items-center"
-            style={{ gap: 'var(--spacing-cozy)', marginBottom: 'var(--spacing-compact)' }}
+            style={{ gap: 'var(--spacing-default)', marginBottom: 'var(--spacing-compact)' }}
           >
             <div className="h-10 w-10 rounded-xl bg-stratosort-blue/10 text-stratosort-blue flex items-center justify-center">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -295,14 +295,14 @@ const SmartFolderItem = memo(function SmartFolderItem({
   // Expanded view (default)
   return (
     <div
-      className={`bg-white/70 rounded-xl border border-border-soft/60 shadow-sm hover:shadow-md transition-all h-full flex flex-col ${cardAnimationClass}`}
+      className={`bg-white/70 rounded-xl border border-border-soft/60 shadow-sm hover:shadow-md transition-all h-full flex flex-col p-6 md:p-8 ${cardAnimationClass}`}
       style={{ padding: 'var(--spacing-default)', animationDelay: cardAnimationDelay }}
       data-testid="folder-item"
     >
       <div className="flex flex-col flex-1" style={{ gap: 'var(--spacing-cozy)' }}>
         {/* Header with collapse button (if in compact mode) */}
-        <div className="flex items-start justify-between" style={{ gap: 'var(--spacing-cozy)' }}>
-          <div className="flex items-start" style={{ gap: 'var(--spacing-cozy)' }}>
+        <div className="flex items-start justify-between" style={{ gap: 'var(--spacing-default)' }}>
+          <div className="flex items-start" style={{ gap: 'var(--spacing-default)' }}>
             {/* Folder icon */}
             <div className="h-12 w-12 rounded-xl bg-stratosort-blue/10 text-stratosort-blue flex items-center justify-center shrink-0">
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">

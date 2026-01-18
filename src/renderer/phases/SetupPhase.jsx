@@ -391,7 +391,7 @@ function SetupPhase() {
 
   return (
     <div className="phase-container">
-      <div className="container-responsive flex flex-col flex-1 min-h-0 py-spacious gap-spacious">
+      <div className="container-responsive flex flex-col flex-1 min-h-0 p-6 md:p-8 lg:p-12 gap-6 md:gap-8 lg:gap-12">
         {/* Header */}
         <div className="text-center flex flex-col flex-shrink-0 gap-compact">
           <h1 className="heading-primary text-xl md:text-2xl">
@@ -549,7 +549,7 @@ function SetupPhase() {
                 </div>
               ) : (
                 <div
-                  className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-spacious"
+                  className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8 lg:gap-12"
                   data-testid="folder-list"
                 >
                   {smartFolders.map((folder, index) => (
