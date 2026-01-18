@@ -66,6 +66,7 @@ blob-report/
 .webpack-cache/
 .eslintcache
 repomix-output.xml
+repomix-output.txt
 nul
 
 # Electron

@@ -111,6 +111,18 @@ Select multiple files/folders, analyze, and apply suggestions in bulk with full 
 
 ---
 
+## Documentation
+
+Detailed documentation is available in the `docs/` directory:
+
+- [Architecture Overview](docs/ARCHITECTURE.md)
+- [Learning Guide](docs/LEARNING_GUIDE.md)
+- [Testing Strategy](docs/TESTING_STRATEGY.md)
+- [Code Quality Standards](docs/CODE_QUALITY_STANDARDS.md)
+- [Dependency Patterns](docs/DI_PATTERNS.md)
+- [Error Handling](docs/ERROR_HANDLING_GUIDE.md)
+- [IPC Contracts](docs/IPC_CONTRACTS.md)
+
 ## For Developers & Contributors
 
 ### Tech Stack
