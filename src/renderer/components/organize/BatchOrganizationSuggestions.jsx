@@ -280,49 +280,53 @@ function BatchOrganizationSuggestions({
                 <div className="border-t border-system-gray-200 p-4 bg-system-gray-50">
                   <div className="space-y-2">
                     {/* FIX: Use stable identifier instead of array index as key */}
-                    {group.files.map((file) => (
-                      <div
-                        key={file.path || file.id || file.name}
-                        className="flex items-center justify-between text-sm"
-                      >
-                        <div className="flex items-center gap-2">
-                          <FileText className="w-4 h-4 text-system-gray-400" />
-                          <span>{file.name}</span>
+                    {Array.isArray(group.files) &&
+                      group.files.map((file) => (
+                        <div
+                          key={file.path || file.id || file.name}
+                          className="flex items-center justify-between text-sm"
+                        >
+                          <div className="flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-system-gray-400" />
+                            <span>{file.name}</span>
+                          </div>
+                          {file.suggestion && (
+                            <span className="text-xs text-system-gray-500">
+                              {Math.round((file.suggestion.confidence || 0) * 100)}% match
+                            </span>
+                          )}
                         </div>
-                        {file.suggestion && (
-                          <span className="text-xs text-system-gray-500">
-                            {Math.round((file.suggestion.confidence || 0) * 100)}% match
-                          </span>
-                        )}
-                      </div>
-                    ))}
+                      ))}
                   </div>
 
                   {/* FIX: Use consistent optional chaining and add array length check */}
-                  {group.files?.length > 0 && group.files[0]?.alternatives?.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-system-gray-200">
-                      <div className="text-xs text-system-gray-600 mb-2">
-                        Alternative folders for this group:
+                  {Array.isArray(group.files) &&
+                    group.files.length > 0 &&
+                    Array.isArray(group.files[0]?.alternatives) &&
+                    group.files[0].alternatives.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-system-gray-200">
+                        <div className="text-xs text-system-gray-600 mb-2">
+                          Alternative folders for this group:
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {/* FIX: Use stable identifier instead of array index as key */}
+                          {group.files[0].alternatives.slice(0, 3).map((alt) => (
+                            <button
+                              key={alt.folder || alt.id}
+                              className="px-2 py-1 text-xs bg-white border border-system-gray-300 rounded-md hover:border-stratosort-blue transition-colors"
+                              onClick={() =>
+                                onCustomizeGroup(groupIndex, {
+                                  ...group,
+                                  folder: alt.folder
+                                })
+                              }
+                            >
+                              {alt.folder}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        {/* FIX: Use stable identifier instead of array index as key */}
-                        {group.files[0].alternatives.slice(0, 3).map((alt) => (
-                          <button
-                            key={alt.folder || alt.id}
-                            className="px-2 py-1 text-xs bg-white border border-system-gray-300 rounded-md hover:border-stratosort-blue transition-colors"
-                            onClick={() =>
-                              onCustomizeGroup(groupIndex, {
-                                ...group,
-                                folder: alt.folder
-                              })
-                            }
-                          >
-                            {alt.folder}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                    )}
                 </div>
               )}
             </Card>

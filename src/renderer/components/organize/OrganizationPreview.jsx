@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { Folder, CheckCircle, XCircle } from 'lucide-react';
 import { Card, Button } from '../ui';
+import { ErrorBoundaryCore } from '../ErrorBoundary';
 
 function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel }) {
   const [previewTree, setPreviewTree] = useState({});
   const [expandedFolders, setExpandedFolders] = useState(new Set());
+  const [isCompact, setIsCompact] = useState(false);
   const [stats, setStats] = useState({
     totalFiles: 0,
     totalFolders: 0,
@@ -14,7 +16,7 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
   });
 
   useEffect(() => {
-    if (!files || !suggestions) return undefined;
+    if (!files || !Array.isArray(files) || !suggestions) return undefined;
 
     // Build preview tree structure
     const tree = {};
@@ -23,6 +25,8 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
     let renamedCount = 0;
 
     files.forEach((file, index) => {
+      if (!file) return;
+
       // FIX: Add bounds check for array access
       const suggestion =
         Array.isArray(suggestions) && index < suggestions.length
@@ -68,7 +72,7 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
 
     setPreviewTree(tree);
     setStats({
-      totalFiles: files.length,
+      totalFiles: files?.length || 0,
       totalFolders: folderCount.size,
       movedFiles: movedCount,
       renamedFiles: renamedCount
@@ -111,21 +115,34 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
   return (
     <div className="space-y-4">
       {/* Header with Strategy Info */}
-      {strategy && (
-        <Card className="p-4 bg-stratosort-blue/5 border-stratosort-blue/30">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-medium text-system-gray-900">
-                Organization Preview: {strategy.name}
-              </h3>
-              <p className="text-sm text-system-gray-600 mt-1">{strategy.description}</p>
+      <div className="flex items-center justify-between">
+        {strategy ? (
+          <Card className="flex-1 p-4 bg-stratosort-blue/5 border-stratosort-blue/30 mr-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium text-system-gray-900">
+                  Organization Preview: {strategy.name}
+                </h3>
+                <p className="text-sm text-system-gray-600 mt-1">{strategy.description}</p>
+              </div>
+              <div className="text-sm text-system-gray-500">
+                Pattern: <code className="bg-white px-2 py-1 rounded-md">{strategy.pattern}</code>
+              </div>
             </div>
-            <div className="text-sm text-system-gray-500">
-              Pattern: <code className="bg-white px-2 py-1 rounded-md">{strategy.pattern}</code>
-            </div>
-          </div>
-        </Card>
-      )}
+          </Card>
+        ) : (
+          <div className="flex-1" />
+        )}
+
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setIsCompact(!isCompact)}
+          className="whitespace-nowrap"
+        >
+          {isCompact ? 'Show Details' : 'Compact View'}
+        </Button>
+      </div>
 
       {/* Statistics */}
       <div className="grid grid-cols-4 gap-4">
@@ -154,7 +171,9 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
           {Object.entries(previewTree).map(([folderPath, folder]) => (
             <div key={folderPath} className="border rounded-lg overflow-hidden">
               <div
-                className="p-3 cursor-pointer hover:bg-system-gray-50 transition-colors flex items-center justify-between"
+                className={`cursor-pointer hover:bg-system-gray-50 transition-colors flex items-center justify-between ${
+                  isCompact ? 'p-2' : 'p-3'
+                }`}
                 onClick={() => toggleFolder(folderPath)}
               >
                 <div className="flex items-center gap-2">
@@ -345,4 +364,10 @@ OrganizationPreview.propTypes = {
   onCancel: PropTypes.func
 };
 
-export default OrganizationPreview;
+export default function OrganizationPreviewWithErrorBoundary(props) {
+  return (
+    <ErrorBoundaryCore contextName="Organization Preview" variant="simple">
+      <OrganizationPreview {...props} />
+    </ErrorBoundaryCore>
+  );
+}

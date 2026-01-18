@@ -404,21 +404,21 @@ function buildPreview({
  * @returns {Object} Organization handlers
  */
 export function useOrganization({
-  unprocessedFiles,
-  editingFiles,
-  getFileWithEdits,
-  findSmartFolderForCategory,
-  defaultLocation,
-  analysisResults,
-  markFilesAsProcessed,
-  unmarkFilesAsProcessed,
-  actions,
-  phaseData,
-  addNotification,
-  executeAction,
-  setOrganizedFiles,
-  setOrganizingState
-}) {
+  unprocessedFiles = [],
+  editingFiles = [],
+  getFileWithEdits = () => {},
+  findSmartFolderForCategory = () => {},
+  defaultLocation = '',
+  analysisResults = [],
+  markFilesAsProcessed = () => {},
+  unmarkFilesAsProcessed = () => {},
+  actions = { setPhaseData: () => {}, advancePhase: () => {} },
+  phaseData = {},
+  addNotification = () => {},
+  executeAction = () => {},
+  setOrganizedFiles = () => {},
+  setOrganizingState = () => {}
+} = {}) {
   const {
     batchProgress,
     setBatchProgress,

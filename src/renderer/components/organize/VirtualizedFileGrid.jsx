@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useMemo, useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { List } from 'react-window';
+import { ErrorBoundaryCore } from '../ErrorBoundary';
 import ReadyFileItem from './ReadyFileItem';
 import { joinPath } from '../../utils/platform';
 import { UI_VIRTUALIZATION } from '../../../shared/constants';
@@ -399,4 +400,12 @@ VirtualizedFileGrid.propTypes = {
   onViewDetails: PropTypes.func.isRequired
 };
 
-export default memo(VirtualizedFileGrid);
+const MemoizedVirtualizedFileGrid = memo(VirtualizedFileGrid);
+
+export default function VirtualizedFileGridWithErrorBoundary(props) {
+  return (
+    <ErrorBoundaryCore contextName="File Grid" variant="simple">
+      <MemoizedVirtualizedFileGrid {...props} />
+    </ErrorBoundaryCore>
+  );
+}

@@ -251,25 +251,25 @@ function showAnalysisCompletionNotification({
  * @param {Function} options.getCurrentPhase - Function to get current phase (for race condition prevention)
  * @returns {Object} Analysis functions and state
  */
-export function useAnalysis(options) {
+export function useAnalysis(options = {}) {
   const {
-    selectedFiles,
-    fileStates,
-    analysisResults,
-    isAnalyzing,
-    analysisProgress,
-    namingSettings,
+    selectedFiles = [],
+    fileStates = {},
+    analysisResults = [],
+    isAnalyzing = false,
+    analysisProgress = { current: 0, total: 0 },
+    namingSettings = {},
     setters: {
-      setIsAnalyzing,
-      setAnalysisProgress,
-      setCurrentAnalysisFile,
-      setAnalysisResults,
-      setFileStates
+      setIsAnalyzing = () => {},
+      setAnalysisProgress = () => {},
+      setCurrentAnalysisFile = () => {},
+      setAnalysisResults = () => {},
+      setFileStates = () => {}
     } = {},
-    updateFileState,
-    addNotification,
-    actions,
-    getCurrentPhase
+    updateFileState = () => {},
+    addNotification = () => {},
+    actions = { setPhaseData: () => {}, advancePhase: () => {} },
+    getCurrentPhase = () => {}
   } = options;
   const hasResumedRef = useRef(false);
   const analysisLockRef = useRef(false);
