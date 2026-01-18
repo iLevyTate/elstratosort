@@ -1,14 +1,12 @@
 const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { Ollama } = require('ollama');
-const { withErrorLogging, withValidation, safeHandle } = require('./ipcWrappers');
-const { optionalUrl: optionalUrlSchema } = require('./validationSchemas');
+// FIX: Added safeSend import for validated IPC event sending
+const { withErrorLogging, safeHandle, safeSend } = require('./ipcWrappers');
 const { SERVICE_URLS } = require('../../shared/configDefaults');
 const { normalizeOllamaUrl } = require('../ollamaUtils');
 const { LENIENT_URL_PATTERN } = require('../../shared/validationConstants');
 const { categorizeModels } = require('../../shared/modelCategorization');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
-
-let z;
 
 /**
  * FIX: CRITICAL - Helper to add timeout to Ollama API calls in IPC handlers
@@ -42,10 +40,14 @@ function isValidOllamaUrl(url) {
 
 // Note: normalizeOllamaUrl is imported from shared ollamaUtils module
 
-try {
-  z = require('zod');
-} catch {
-  z = null;
+// FIX: Consolidate validation to work identically with/without Zod
+function validateOllamaHost(hostUrl) {
+  // DUP-1: Use shared URL normalization utility (adds http:// if missing)
+  const url = normalizeOllamaUrl(hostUrl);
+  if (!isValidOllamaUrl(url)) {
+    throw new Error('Invalid Ollama URL format');
+  }
+  return url;
 }
 
 function registerOllamaIpc(servicesOrParams) {
@@ -87,12 +89,19 @@ function registerOllamaIpc(servicesOrParams) {
         const categories = categorizeModels(models);
 
         // Ensure we update health on every models fetch
-        systemAnalytics.ollamaHealth = {
-          status: 'healthy',
-          host: getOllamaHost ? getOllamaHost() : undefined,
-          modelCount: models.length,
-          lastCheck: Date.now()
-        };
+        // FIX: Race condition - check if update is newer than last check
+        const now = Date.now();
+        if (
+          !systemAnalytics.ollamaHealth?.lastCheck ||
+          now > systemAnalytics.ollamaHealth.lastCheck
+        ) {
+          systemAnalytics.ollamaHealth = {
+            status: 'healthy',
+            host: getOllamaHost ? getOllamaHost() : undefined,
+            modelCount: models.length,
+            lastCheck: now
+          };
+        }
         return {
           models: models.map((m) => m.name),
           categories,
@@ -107,12 +116,23 @@ function registerOllamaIpc(servicesOrParams) {
         };
       } catch (error) {
         logger.error('[IPC] Error fetching Ollama models:', error);
-        if (error.cause && error.cause.code === 'ECONNREFUSED') {
-          systemAnalytics.ollamaHealth = {
-            status: 'unhealthy',
-            error: 'Connection refused. Ensure Ollama is running.',
-            lastCheck: Date.now()
-          };
+        // FIX: Check all connection error codes
+        if (
+          error.cause &&
+          ['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EHOSTUNREACH'].includes(error.cause.code)
+        ) {
+          // FIX: Race condition - check if update is newer than last check
+          const now = Date.now();
+          if (
+            !systemAnalytics.ollamaHealth?.lastCheck ||
+            now > systemAnalytics.ollamaHealth.lastCheck
+          ) {
+            systemAnalytics.ollamaHealth = {
+              status: 'unhealthy',
+              error: 'Connection refused. Ensure Ollama is running.',
+              lastCheck: now
+            };
+          }
         }
         return {
           models: [],
@@ -124,107 +144,71 @@ function registerOllamaIpc(servicesOrParams) {
               typeof getOllamaEmbeddingModel === 'function' ? getOllamaEmbeddingModel() : null
           },
           error: error.message,
-          host: typeof getOllamaHost === 'function' ? getOllamaHost() : undefined,
+          host: (typeof getOllamaHost === 'function' ? getOllamaHost() : undefined) || 'unknown',
           ollamaHealth: systemAnalytics.ollamaHealth
         };
       }
     })
   );
 
-  // Use relaxed URL validation that allows URLs with or without protocol
-  // Normalize and validate user input (also extracts URL from pasted commands like `curl ...`).
-  const hostSchema = z && optionalUrlSchema ? optionalUrlSchema : null;
-  const testConnectionHandler =
-    z && hostSchema
-      ? withValidation(logger, hostSchema, async (event, hostUrl) => {
-          try {
-            // DUP-1: Use shared URL normalization utility (adds http:// if missing)
-            const testUrl = normalizeOllamaUrl(hostUrl);
+  const testConnectionHandler = withErrorLogging(logger, async (event, hostUrl) => {
+    try {
+      // FIX: Use consolidated validation
+      const testUrl = validateOllamaHost(hostUrl);
 
-            const testOllama = new Ollama({ host: testUrl });
-            // FIX: Add timeout to prevent main process hang during connection test
-            const response = await withOllamaTimeout(
-              testOllama.list(),
-              TIMEOUTS.API_REQUEST,
-              'Test connection'
-            );
-            systemAnalytics.ollamaHealth = {
-              status: 'healthy',
-              host: testUrl,
-              modelCount: response.models.length,
-              lastCheck: Date.now()
-            };
-            return {
-              success: true,
-              host: testUrl,
-              modelCount: response.models.length,
-              models: response.models.map((m) => m.name),
-              ollamaHealth: systemAnalytics.ollamaHealth
-            };
-          } catch (error) {
-            logger.error('[IPC] Ollama connection test failed:', error);
-            // FIX: Use consistent fallback host value
-            const fallbackHost = hostUrl || SERVICE_URLS.OLLAMA_HOST;
-            systemAnalytics.ollamaHealth = {
-              status: 'unhealthy',
-              host: fallbackHost,
-              error: error.message,
-              lastCheck: Date.now()
-            };
-            return {
-              success: false,
-              host: fallbackHost,
-              error: error.message,
-              ollamaHealth: systemAnalytics.ollamaHealth
-            };
-          }
-        })
-      : withErrorLogging(logger, async (event, hostUrl) => {
-          try {
-            // DUP-1: Use shared URL normalization utility
-            const testUrl = normalizeOllamaUrl(hostUrl);
-            if (!isValidOllamaUrl(testUrl)) {
-              throw new Error('Invalid Ollama URL format');
-            }
-
-            const testOllama = new Ollama({ host: testUrl });
-            // FIX: Add timeout to prevent main process hang during connection test
-            const response = await withOllamaTimeout(
-              testOllama.list(),
-              TIMEOUTS.API_REQUEST,
-              'Test connection'
-            );
-            systemAnalytics.ollamaHealth = {
-              status: 'healthy',
-              host: testUrl,
-              modelCount: response.models.length,
-              lastCheck: Date.now()
-            };
-            return {
-              success: true,
-              host: testUrl,
-              modelCount: response.models.length,
-              models: response.models.map((m) => m.name),
-              ollamaHealth: systemAnalytics.ollamaHealth
-            };
-          } catch (error) {
-            logger.error('[IPC] Ollama connection test failed:', error);
-            // FIX: Use consistent fallback host value
-            const fallbackHost = hostUrl || SERVICE_URLS.OLLAMA_HOST;
-            systemAnalytics.ollamaHealth = {
-              status: 'unhealthy',
-              host: fallbackHost,
-              error: error.message,
-              lastCheck: Date.now()
-            };
-            return {
-              success: false,
-              host: fallbackHost,
-              error: error.message,
-              ollamaHealth: systemAnalytics.ollamaHealth
-            };
-          }
-        });
+      const testOllama = new Ollama({ host: testUrl });
+      // FIX: Add timeout to prevent main process hang during connection test
+      const response = await withOllamaTimeout(
+        testOllama.list(),
+        TIMEOUTS.API_REQUEST,
+        'Test connection'
+      );
+      const models = response.models || [];
+      // FIX: Race condition - check if update is newer than last check
+      const now = Date.now();
+      if (
+        !systemAnalytics.ollamaHealth?.lastCheck ||
+        now > systemAnalytics.ollamaHealth.lastCheck
+      ) {
+        systemAnalytics.ollamaHealth = {
+          status: 'healthy',
+          host: testUrl,
+          modelCount: models.length,
+          lastCheck: now
+        };
+      }
+      return {
+        success: true,
+        host: testUrl,
+        modelCount: models.length,
+        models: models.map((m) => m.name),
+        ollamaHealth: systemAnalytics.ollamaHealth
+      };
+    } catch (error) {
+      logger.error('[IPC] Ollama connection test failed:', error);
+      // FIX: Use consistent fallback host value
+      const fallbackHost = hostUrl || SERVICE_URLS.OLLAMA_HOST;
+      // FIX: Race condition - check if update is newer than last check
+      const now = Date.now();
+      if (
+        !systemAnalytics.ollamaHealth?.lastCheck ||
+        now > systemAnalytics.ollamaHealth.lastCheck
+      ) {
+        systemAnalytics.ollamaHealth = {
+          status: 'unhealthy',
+          host: fallbackHost,
+          error: error.message,
+          lastCheck: now
+        };
+      }
+      return {
+        success: false,
+        host: fallbackHost,
+        error: error.message,
+        ollamaHealth: systemAnalytics.ollamaHealth
+      };
+    }
+  });
   safeHandle(ipcMain, IPC_CHANNELS.OLLAMA.TEST_CONNECTION, testConnectionHandler);
 
   // Pull models (best-effort, returns status per model)
@@ -250,14 +234,16 @@ function registerOllamaIpc(servicesOrParams) {
                 lastProgressTime = Date.now(); // Update activity timestamp
                 try {
                   if (win && !win.isDestroyed()) {
-                    win.webContents.send('operation-progress', {
+                    // FIX: Use safeSend for validated IPC event sending
+                    safeSend(win.webContents, 'operation-progress', {
                       type: 'ollama-pull',
                       model,
                       progress
                     });
                   }
-                } catch {
-                  // Non-fatal if progress send fails
+                } catch (err) {
+                  // MED-08: Log progress callback errors
+                  logger.debug('[IPC] Progress send failed:', err.message);
                 }
               }
             });
@@ -266,14 +252,19 @@ function registerOllamaIpc(servicesOrParams) {
             // FIX: Store timer references outside Promise to ensure cleanup on success
             let checkProgress;
             let pullTimeout;
+            const STALL_TIMEOUT_MS = 5 * 60 * 1000;
             const timeoutPromise = new Promise((_, reject) => {
               checkProgress = setInterval(() => {
                 const timeSinceProgress = Date.now() - lastProgressTime;
                 // If no progress for 5 minutes, consider it stalled
-                if (timeSinceProgress > 5 * 60 * 1000) {
+                if (timeSinceProgress > STALL_TIMEOUT_MS) {
                   clearInterval(checkProgress);
                   clearTimeout(pullTimeout);
-                  reject(new Error(`Model pull stalled (no progress for 5 minutes)`));
+                  reject(
+                    new Error(
+                      `Model pull stalled (no progress for ${STALL_TIMEOUT_MS / 60000} minutes)`
+                    )
+                  );
                 }
               }, 30000); // Check every 30 seconds
 
@@ -312,10 +303,19 @@ function registerOllamaIpc(servicesOrParams) {
     IPC_CHANNELS.OLLAMA.DELETE_MODEL,
     withErrorLogging(logger, async (_event, model) => {
       try {
+        // FIX: Validate model name
+        if (!model || typeof model !== 'string' || model.trim().length === 0) {
+          return { success: false, error: 'Invalid model name' };
+        }
+        // Basic validation for model name (alphanumeric, colons, dots, dashes)
+        if (!/^[a-zA-Z0-9.:_-]+$/.test(model.trim())) {
+          return { success: false, error: 'Invalid model name format' };
+        }
+
         const ollama = getOllama();
         // FIX: Add timeout to prevent main process hang during model deletion
         await withOllamaTimeout(
-          ollama.delete({ model }),
+          ollama.delete({ model: model.trim() }),
           TIMEOUTS.API_REQUEST_SLOW,
           'Delete model'
         );

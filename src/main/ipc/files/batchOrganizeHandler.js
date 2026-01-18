@@ -13,7 +13,7 @@ const { app } = require('electron');
 const crypto = require('crypto');
 const { ACTION_TYPES, PROCESSING_LIMITS } = require('../../../shared/constants');
 const { LIMITS, TIMEOUTS } = require('../../../shared/performanceConstants');
-const { logger } = require('../../../shared/logger');
+const { logger: baseLogger, createLogger } = require('../../../shared/logger');
 const { crossDeviceMove } = require('../../../shared/atomicFileOperations');
 const {
   validateFileOperationPath,
@@ -23,8 +23,14 @@ const { withTimeout } = require('../../../shared/promiseUtils');
 const { withCorrelationId } = require('../../../shared/correlationId');
 // FIX: Import centralized error codes for consistent error handling
 const { ERROR_CODES } = require('../../../shared/errorHandlingUtils');
+// FIX: Import safeSend for validated IPC event sending
+const { safeSend } = require('../ipcWrappers');
 
-logger.setContext('IPC:Files:BatchOrganize');
+const logger =
+  typeof createLogger === 'function' ? createLogger('IPC:Files:BatchOrganize') : baseLogger;
+if (typeof createLogger !== 'function' && logger?.setContext) {
+  logger.setContext('IPC:Files:BatchOrganize');
+}
 
 // Jest-mocked functions expose _isMockFunction; use to avoid false positives
 const isMockFn = (fn) => !!fn && typeof fn === 'function' && fn._isMockFunction;
@@ -33,7 +39,10 @@ const isMockFn = (fn) => !!fn && typeof fn === 'function' && fn._isMockFunction;
 // This prevents race conditions when multiple batch operations try to run simultaneously
 let batchOperationLock = null;
 const BATCH_LOCK_TIMEOUT = 5 * 60 * 1000; // 5 minutes max lock hold time
-const BATCH_LOCK_ACQUIRE_TIMEOUT = 30000; // 30 seconds to acquire lock
+const BATCH_LOCK_ACQUIRE_TIMEOUT = 15000; // 15 seconds per attempt
+const BATCH_LOCK_ACQUIRE_MAX_WAIT = 5 * 60 * 1000; // 5 minutes total wait
+const BATCH_LOCK_RETRY_BASE_MS = 1000;
+const BATCH_LOCK_RETRY_MAX_MS = 10000;
 
 // FIX: Promise-based mutex for atomic lock acquisition (prevents race conditions)
 // This ensures only one acquireBatchLock() call can check-and-set at a time
@@ -49,7 +58,7 @@ const batchLockWaiters = [];
  * @param {number} timeout - Maximum time to wait for lock (ms)
  * @returns {Promise<boolean>} True if lock acquired, false if timeout
  */
-async function acquireBatchLock(batchId, timeout = BATCH_LOCK_ACQUIRE_TIMEOUT) {
+async function acquireBatchLockOnce(batchId, timeout = BATCH_LOCK_ACQUIRE_TIMEOUT) {
   // FIX: Use mutex pattern to ensure atomic lock acquisition
   // This prevents two concurrent calls from both seeing null and both acquiring
   let release;
@@ -101,11 +110,19 @@ async function acquireBatchLock(batchId, timeout = BATCH_LOCK_ACQUIRE_TIMEOUT) {
 
     // Wait for lock to be released using promise-based approach (no polling)
     return new Promise((resolve) => {
-      const waiter = { batchId, resolve };
+      // FIX CRIT-36: Safe timeout cleanup using closure
+      let timeoutId;
+      const waiter = {
+        batchId,
+        resolve,
+        // Helper to clear timeout even if ID not yet attached to object
+        clearTimeout: () => clearTimeout(timeoutId)
+      };
+
       batchLockWaiters.push(waiter);
 
       // Set timeout for this waiter
-      const waiterTimeoutId = setTimeout(() => {
+      timeoutId = setTimeout(() => {
         const index = batchLockWaiters.indexOf(waiter);
         if (index !== -1) {
           batchLockWaiters.splice(index, 1);
@@ -113,13 +130,26 @@ async function acquireBatchLock(batchId, timeout = BATCH_LOCK_ACQUIRE_TIMEOUT) {
         }
       }, timeout);
 
-      // Store timeout ID for cleanup
-      waiter.timeoutId = waiterTimeoutId;
+      // Store timeout ID for direct access if needed
+      waiter.timeoutId = timeoutId;
     });
   } catch (e) {
     release(); // Ensure mutex is released on any error
     throw e;
   }
+}
+
+async function acquireBatchLock(batchId, timeout = BATCH_LOCK_ACQUIRE_TIMEOUT) {
+  const start = Date.now();
+  let attempt = 0;
+  while (Date.now() - start < BATCH_LOCK_ACQUIRE_MAX_WAIT) {
+    const acquired = await acquireBatchLockOnce(batchId, timeout);
+    if (acquired) return true;
+    attempt += 1;
+    const backoff = Math.min(BATCH_LOCK_RETRY_BASE_MS * 2 ** attempt, BATCH_LOCK_RETRY_MAX_MS);
+    await new Promise((resolve) => setTimeout(resolve, backoff));
+  }
+  return false;
 }
 
 /**
@@ -134,8 +164,10 @@ function releaseBatchLock(batchId) {
     // FIX: Notify first waiter that lock is available
     if (batchLockWaiters.length > 0) {
       const waiter = batchLockWaiters.shift();
-      // Clear the waiter's timeout
-      if (waiter.timeoutId) {
+      // Clear the waiter's timeout using the safe helper
+      if (waiter.clearTimeout) {
+        waiter.clearTimeout();
+      } else if (waiter.timeoutId) {
         clearTimeout(waiter.timeoutId);
       }
       // Grant lock to waiter
@@ -600,9 +632,10 @@ async function handleBatchOrganize(params) {
             });
 
             // Send progress to renderer
+            // FIX: Use safeSend for validated IPC event sending
             const win = getMainWindow();
             if (win && !win.isDestroyed()) {
-              win.webContents.send('operation-progress', {
+              safeSend(win.webContents, 'operation-progress', {
                 type: 'batch_organize',
                 current: successCount + failCount, // Approx progress
                 total: batch.operations.length,
@@ -726,7 +759,8 @@ async function handleBatchOrganize(params) {
           const chunk = results.slice(i, i + MAX_RESULTS_PER_CHUNK);
           const chunkIndex = Math.floor(i / MAX_RESULTS_PER_CHUNK);
 
-          win.webContents.send('batch-results-chunk', {
+          // FIX: Use safeSend for validated IPC event sending
+          safeSend(win.webContents, 'batch-results-chunk', {
             batchId,
             chunk,
             chunkIndex,
@@ -1001,6 +1035,7 @@ async function executeRollback(
     rollbackFailCount,
     summary: `Batch rolled back. ${rollbackSuccessCount}/${completedOperations.length} operations restored.`,
     batchId,
+    recoveryPath,
     criticalError: true
   };
 }
