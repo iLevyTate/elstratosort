@@ -406,7 +406,8 @@ function registerSettingsIpc(servicesOrParams) {
         return loaded;
       } catch (error) {
         logger.error('Failed to get settings:', error);
-        return {};
+        // FIX HIGH-24: Return proper error structure instead of swallowing error
+        return { success: false, error: error.message, settings: {} };
       }
     })
   );
@@ -554,6 +555,8 @@ function registerSettingsIpc(servicesOrParams) {
 
           filePath = result.filePaths[0];
         }
+
+        // Removed insecure direct path handling block
 
         // SECURITY FIX: Check file size before reading to prevent DoS
         const MAX_IMPORT_SIZE = 1 * 1024 * 1024; // 1MB limit for settings files

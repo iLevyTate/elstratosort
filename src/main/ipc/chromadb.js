@@ -12,7 +12,8 @@
 const { app } = require('electron');
 const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { getInstance: getChromaDB } = require('../services/chromadb');
-const { withErrorLogging, safeHandle } = require('./ipcWrappers');
+// FIX: Added safeSend import for validated IPC event sending
+const { withErrorLogging, safeHandle, safeSend } = require('./ipcWrappers');
 const { CircuitState } = require('../utils/CircuitBreaker');
 
 // FIX: Track if cleanup listener is already registered (prevents duplicate listeners)
@@ -133,21 +134,27 @@ function registerChromaDBIpc(servicesOrParams) {
 // FIX: Track event listener references for cleanup to prevent memory leaks
 let _eventListeners = [];
 let _chromaDbServiceRef = null;
+let _logger = null;
 
 /**
  * Set up event forwarding from ChromaDB service to renderer
  * @private
  */
 function _setupEventForwarding(chromaDbService, getMainWindow, IPC_CHANNELS, logger) {
+  // FIX: Cleanup previous listeners to prevent duplicates
+  cleanupEventListeners();
+
   // FIX: Store service reference for cleanup
   _chromaDbServiceRef = chromaDbService;
+  _logger = logger;
 
   // Helper to send status to renderer
   const sendStatusUpdate = (status, data = {}) => {
     try {
       const win = getMainWindow?.();
       if (win && !win.isDestroyed()) {
-        win.webContents.send(IPC_CHANNELS.CHROMADB.STATUS_CHANGED, {
+        // FIX: Use safeSend for validated IPC event sending
+        safeSend(win.webContents, IPC_CHANNELS.CHROMADB.STATUS_CHANGED, {
           status,
           timestamp: Date.now(),
           ...data
@@ -239,12 +246,20 @@ function cleanupEventListeners() {
     _eventListeners.forEach(({ event, handler }) => {
       try {
         _chromaDbServiceRef.off(event, handler);
-      } catch {
-        // Ignore cleanup errors
+      } catch (error) {
+        // FIX MED-02: Log cleanup failures
+        if (_logger) {
+          _logger.warn(`[CHROMADB-IPC] Failed to remove listener for ${event}:`, error);
+        } else {
+          // Fallback if logger not available
+          // eslint-disable-next-line no-console
+          console.warn(`[CHROMADB-IPC] Failed to remove listener for ${event}:`, error);
+        }
       }
     });
     _eventListeners = [];
     _chromaDbServiceRef = null;
+    _logger = null;
   }
 }
 

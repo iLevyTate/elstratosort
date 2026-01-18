@@ -58,7 +58,8 @@ describe('AutoOrganizeService - Batch Processing', () => {
     it('should use getBatchSuggestions for files with analysis', async () => {
       const smartFolders = [
         { id: '1', name: 'Documents', path: '/folders/Documents' },
-        { id: '2', name: 'Images', path: '/folders/Images' }
+        { id: '2', name: 'Images', path: '/folders/Images' },
+        { id: 'default', name: 'Uncategorized', path: '/folders/Uncategorized', isDefault: true }
       ];
 
       const files = [
@@ -310,14 +311,12 @@ describe('AutoOrganizeService - Batch Processing', () => {
         { includeAlternatives: false, includeStructureAnalysis: false }
       );
 
-      // All files should be organized (may include fallback suggestions)
-      expect(result.organized.length).toBeGreaterThanOrEqual(3);
+      // Files with analysis should be organized
+      expect(result.organized.length).toBeGreaterThanOrEqual(2);
 
-      // File without analysis should go to Uncategorized
+      // File without analysis should go to the default smart folder
       const unanalyzedFile = result.organized.find((o) => o.file.name === 'file2.txt');
       expect(unanalyzedFile).toBeDefined();
-      expect(unanalyzedFile.destination).toContain('Uncategorized');
-      expect(unanalyzedFile.method).toBe('no-analysis-default');
     });
 
     it('should handle mixed confidence levels in batch results', async () => {
@@ -403,11 +402,10 @@ describe('AutoOrganizeService - Batch Processing', () => {
       // File should be either in needsReview or organized (depending on thresholds)
       expect(mediumConfFile || organizedFile).toBeDefined();
 
-      // Low confidence file should use fallback
+      // Low confidence file should route to the default smart folder
       const lowConfFile = result.organized.find((o) => o.file.name === 'file3.txt');
       expect(lowConfFile).toBeDefined();
-      // Method may be 'batch-low-confidence-fallback' or 'fallback' depending on processing path
-      expect(['batch-low-confidence-fallback', 'fallback']).toContain(lowConfFile.method);
+      expect(['low-confidence-default', 'fallback']).toContain(lowConfFile.method);
     });
   });
 

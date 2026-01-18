@@ -79,8 +79,13 @@ describe('OrganizationSuggestionService', () => {
     mockChromaDBService = {
       initialize: jest.fn().mockResolvedValue(true),
       isServerAvailable: jest.fn().mockResolvedValue(true),
+      getStats: jest.fn().mockResolvedValue({ files: 120, fileChunks: 0, folders: 0 }),
       upsertFolder: jest.fn().mockResolvedValue({ success: true }),
       upsertFile: jest.fn().mockResolvedValue({ success: true }),
+      upsertFeedbackMemory: jest.fn().mockResolvedValue({ success: true }),
+      queryFeedbackMemory: jest.fn().mockResolvedValue([]),
+      deleteFeedbackMemory: jest.fn().mockResolvedValue({ success: true }),
+      resetFeedbackMemory: jest.fn().mockResolvedValue({ success: true }),
       queryFolders: jest.fn().mockResolvedValue([]),
       queryFiles: jest.fn().mockResolvedValue([]),
       deleteFile: jest.fn().mockResolvedValue({ success: true })
@@ -189,14 +194,13 @@ describe('OrganizationSuggestionService', () => {
         // Assertions
         expect(result.success).toBe(true);
         expect(result.primary).toBeDefined();
-        // With LLM-first weights (1.3), LLM suggestions take priority over semantic matches
-        // This is intentional - content analysis from LLM is now the primary driver
-        expect(result.primary.folder).toBe('Financial Documents');
+        // Smart folder enforcement: primary must be an existing smart folder
+        expect(result.primary.folder).toBe('Invoices');
         expect(result.confidence).toBeGreaterThan(0);
         expect(result.alternatives).toBeInstanceOf(Array);
         expect(result.alternatives.length).toBeLessThanOrEqual(4);
-        // Semantic match should still appear in alternatives
-        expect(result.alternatives.some((a) => a.folder === 'Invoices')).toBe(true);
+        // LLM suggestion should still appear in alternatives
+        expect(result.alternatives.some((a) => a.folder === 'Financial Documents')).toBe(true);
         expect(result.explanation).toBeDefined();
         expect(result.strategies).toBeDefined();
 
@@ -216,10 +220,8 @@ describe('OrganizationSuggestionService', () => {
         expect(result.success).toBe(true);
         expect(result.primary).toBeDefined();
         expect(result.primary.folder).toBeDefined();
-        // The service may suggest new folders or use fallback
-        expect(['fallback', 'new_folder_suggestion', 'strategy_based']).toContain(
-          result.primary.method
-        );
+        // With no smart folders, primary may be a non-smart suggestion for review
+        expect(result.primary.isSmartFolder).toBeFalsy();
         expect(result.confidence).toBeLessThanOrEqual(1.0);
 
         // Verify no folder embeddings were attempted
@@ -366,16 +368,17 @@ describe('OrganizationSuggestionService', () => {
 
         const result = await service.getSuggestionsForFile(file, smartFolders);
 
-        // User pattern should win due to higher weighting (1.5x) and higher base confidence
+        // Smart folder enforcement: primary must be a smart folder
         expect(result.success).toBe(true);
         expect(result.primary).toBeDefined();
 
-        // Check that primary suggestion has high confidence from user pattern
-        expect(result.primary.folder).toBeDefined();
-        expect(result.confidence).toBeGreaterThanOrEqual(0.5);
+        // Primary should be a known smart folder, not the user pattern suggestion
+        expect(['Invoices', 'Projects', 'Archives']).toContain(result.primary.folder);
+        expect(result.confidence).toBeGreaterThan(0);
 
-        // Verify alternatives exist
+        // Verify alternatives include the user pattern suggestion
         expect(result.alternatives).toBeDefined();
+        expect(result.alternatives.some((a) => a.folder === 'User Invoices')).toBe(true);
       });
 
       // Test 7: Pattern Learning - Feedback Recording
@@ -564,6 +567,87 @@ describe('OrganizationSuggestionService', () => {
     });
   });
 
+  describe('feedback memory adjustments', () => {
+    test('applies rule-based memory boost for matching extension', async () => {
+      const file = createTestFile({
+        name: 'benchy.stl',
+        extension: 'stl',
+        analysis: {
+          category: '3d',
+          keywords: ['3d', 'print', 'model'],
+          confidence: 80
+        }
+      });
+
+      await service.addFeedbackMemory('All .stl files go to 3D Prints', {
+        source: 'manual'
+      });
+
+      const suggestions = [
+        { folder: '3D Prints', score: 0.4, confidence: 0.4 },
+        { folder: 'Other', score: 0.6, confidence: 0.6 }
+      ];
+
+      const adjusted = await service.applyFeedbackMemoryAdjustments(file, suggestions);
+      expect(adjusted[0].folder).toBe('3D Prints');
+      expect(adjusted[0].score).toBeGreaterThan(adjusted[1].score);
+    });
+
+    test('boosts suggestions when memory similarity matches target folder', async () => {
+      const file = createTestFile({
+        name: 'invoice-2024.pdf',
+        extension: 'pdf',
+        analysis: {
+          category: 'financial',
+          keywords: ['invoice', 'payment'],
+          confidence: 85
+        }
+      });
+
+      const memory = await service.addFeedbackMemory('Invoices go to Finance', {
+        source: 'manual'
+      });
+
+      mockChromaDBService.queryFeedbackMemory.mockResolvedValue([
+        { id: memory.id, score: 0.9, metadata: {}, document: memory.text }
+      ]);
+
+      const suggestions = [
+        { folder: 'Finance', score: 0.5, confidence: 0.5 },
+        { folder: 'Projects', score: 0.6, confidence: 0.6 }
+      ];
+
+      const adjusted = await service.applyFeedbackMemoryAdjustments(file, suggestions);
+      expect(adjusted[0].folder).toBe('Finance');
+      expect(adjusted[0].score).toBeGreaterThan(adjusted[1].score);
+    });
+
+    test('uses latest rule when multiple memories target same extension', async () => {
+      const file = createTestFile({
+        name: 'model.stl',
+        extension: 'stl',
+        analysis: {
+          category: '3d',
+          keywords: ['3d', 'model'],
+          confidence: 80
+        }
+      });
+
+      const first = await service.addFeedbackMemory('All .stl files go to 3D Prints', {
+        source: 'manual'
+      });
+      await service.updateFeedbackMemory(first.id, 'All .stl files go to CAD');
+
+      const suggestions = [
+        { folder: '3D Prints', score: 0.6, confidence: 0.6 },
+        { folder: 'CAD', score: 0.4, confidence: 0.4 }
+      ];
+
+      const adjusted = await service.applyFeedbackMemoryAdjustments(file, suggestions);
+      expect(adjusted[0].folder).toBe('CAD');
+    });
+  });
+
   describe('Error Handling and Edge Cases', () => {
     test('should handle null file analysis gracefully', async () => {
       const file = {
@@ -590,10 +674,8 @@ describe('OrganizationSuggestionService', () => {
 
       expect(result.success).toBe(true);
       expect(result.primary).toBeDefined();
-      // Should provide fallback or new folder suggestion
-      expect(['fallback', 'new_folder_suggestion', 'strategy_based']).toContain(
-        result.primary.method
-      );
+      // With no smart folders, primary may be a non-smart suggestion for review
+      expect(result.primary.isSmartFolder).toBeFalsy();
     });
 
     test('should handle concurrent calls without interference', async () => {

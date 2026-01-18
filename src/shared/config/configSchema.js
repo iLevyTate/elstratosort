@@ -14,14 +14,14 @@ const {
   RETRY,
   CACHE,
   BATCH,
-  THRESHOLDS,
-  LIMITS
+  THRESHOLDS
 } = require('../performanceConstants');
 const {
   PROCESSING_LIMITS,
   AI_DEFAULTS,
   DEFAULT_AI_MODELS,
-  FILE_SIZE_LIMITS
+  FILE_SIZE_LIMITS,
+  LIMITS: FS_LIMITS
 } = require('../constants');
 // NOTE: Theme switching is no longer supported; no theme values are needed here.
 
@@ -311,6 +311,56 @@ const CONFIG_SCHEMA = {
       min: 1,
       max: 50,
       description: 'Maximum concurrent network operations'
+    },
+    /** Chroma query cache size */
+    queryCacheSize: {
+      type: 'number',
+      default: 200,
+      min: 0,
+      max: 5000,
+      description: 'Maximum cached ChromaDB query results'
+    },
+    /** Delay for batching insert operations (ms) */
+    batchInsertDelay: {
+      type: 'number',
+      default: 100,
+      min: 0,
+      max: 5000,
+      description: 'Delay before flushing batched ChromaDB inserts (ms)'
+    }
+  },
+
+  /**
+   * ChromaDB Service Configuration
+   * Service-specific timeouts and limits
+   */
+  CHROMADB: {
+    /** Timeout for ChromaDB operations (ms) */
+    operationTimeout: {
+      type: 'number',
+      default: 30000,
+      envVar: 'CHROMADB_OPERATION_TIMEOUT',
+      min: 1000,
+      max: 300000,
+      description: 'Timeout for ChromaDB operations (ms)'
+    },
+    /** Timeout for ChromaDB initialization (ms) */
+    initTimeout: {
+      type: 'number',
+      default: 60000,
+      envVar: 'CHROMADB_INIT_TIMEOUT',
+      min: 5000,
+      max: 600000,
+      description: 'Timeout for ChromaDB initialization (ms)'
+    },
+    /** Maximum in-flight ChromaDB queries */
+    maxInflightQueries: {
+      type: 'number',
+      default: 100,
+      envVar: 'CHROMADB_MAX_INFLIGHT_QUERIES',
+      min: 10,
+      max: 1000,
+      description: 'Maximum in-flight ChromaDB queries'
     }
   },
 
@@ -398,7 +448,7 @@ const CONFIG_SCHEMA = {
     /** Maximum path length */
     maxPathLength: {
       type: 'number',
-      default: LIMITS.MAX_SEARCH_RESULTS,
+      default: FS_LIMITS.MAX_PATH_LENGTH,
       min: 100,
       max: 4096,
       description: 'Maximum file path length'

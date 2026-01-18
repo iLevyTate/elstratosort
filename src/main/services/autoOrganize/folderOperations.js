@@ -9,11 +9,16 @@
 const path = require('path');
 const fs = require('fs').promises;
 const { app } = require('electron');
-const { logger } = require('../../../shared/logger');
+const { logger: baseLogger, createLogger } = require('../../../shared/logger');
+const { isPathDangerous, sanitizePath } = require('../../../shared/pathSanitization');
 const { getFileTypeCategory } = require('./fileTypeUtils');
 const { isUNCPath } = require('../../../shared/crossPlatformUtils');
 
-logger.setContext('AutoOrganize-Folders');
+const logger =
+  typeof createLogger === 'function' ? createLogger('AutoOrganize-Folders') : baseLogger;
+if (typeof createLogger !== 'function' && logger?.setContext) {
+  logger.setContext('AutoOrganize-Folders');
+}
 
 /**
  * Find default folder in smart folders array
@@ -115,9 +120,11 @@ async function createDefaultFolder(smartFolders) {
       const stats = await fs.lstat(defaultFolderPath);
       dirExists = stats.isDirectory();
       isSymbolicLink = stats.isSymbolicLink();
+      const isJunction =
+        process.platform === 'win32' && (isSymbolicLink || (stats.mode & 0o120000) === 0o120000);
 
       // Reject symbolic links for security
-      if (isSymbolicLink) {
+      if (isSymbolicLink || isJunction) {
         throw new Error(
           `Security violation: Symbolic links are not allowed for safety reasons. ` +
             `Path ${defaultFolderPath} is a symbolic link.`
@@ -174,49 +181,42 @@ async function createDefaultFolder(smartFolders) {
  * @returns {string} Fallback destination path
  */
 function getFallbackDestination(file, smartFolders, defaultLocation) {
-  // Ensure defaultLocation is a valid string
-  const safeDefaultLocation = typeof defaultLocation === 'string' ? defaultLocation : 'Documents';
-
+  const safeSmartFolders = Array.isArray(smartFolders) ? smartFolders : [];
+  const defaultFolder = findDefaultFolder(safeSmartFolders);
+  const _absoluteDefaultLocation = getAbsoluteDefaultLocation(defaultLocation);
   // Try to match based on file type
   const fileType = getFileTypeCategory(file.extension);
 
   // Look for a smart folder that matches the file type
-  const typeFolder = smartFolders.find(
+  const typeFolder = safeSmartFolders.find(
     (f) =>
       f.name && typeof f.name === 'string' && f.name.toLowerCase().includes(fileType.toLowerCase())
   );
 
-  if (typeFolder) {
-    const folderPath =
-      typeof typeFolder.path === 'string'
-        ? typeFolder.path
-        : `${safeDefaultLocation}/${typeFolder.name}`;
-    return path.join(folderPath, file.name);
+  if (typeFolder?.path && typeof typeFolder.path === 'string') {
+    return path.join(typeFolder.path, file.name);
   }
 
   // Use category from analysis if available
   if (file.analysis?.category && typeof file.analysis.category === 'string') {
-    const categoryFolder = smartFolders.find(
+    const categoryFolder = safeSmartFolders.find(
       (f) =>
         f.name &&
         typeof f.name === 'string' &&
         f.name.toLowerCase() === file.analysis.category.toLowerCase()
     );
 
-    if (categoryFolder) {
-      const folderPath =
-        typeof categoryFolder.path === 'string'
-          ? categoryFolder.path
-          : `${safeDefaultLocation}/${categoryFolder.name}`;
-      return path.join(folderPath, file.name);
+    if (categoryFolder?.path && typeof categoryFolder.path === 'string') {
+      return path.join(categoryFolder.path, file.name);
     }
-
-    // Create new folder based on category
-    return path.join(safeDefaultLocation, file.analysis.category, file.name);
   }
 
-  // Ultimate fallback - organize by file type
-  return path.join(safeDefaultLocation, fileType, file.name);
+  if (defaultFolder?.path && typeof defaultFolder.path === 'string') {
+    return path.join(defaultFolder.path, file.name);
+  }
+
+  // No safe fallback found
+  return null;
 }
 
 /**
@@ -250,8 +250,12 @@ function getAbsoluteDefaultLocation(defaultLocation) {
   try {
     return app.getPath('documents');
   } catch {
-    // Last resort fallback if app.getPath fails (shouldn't happen in Electron context)
-    return process.cwd();
+    // FIX HIGH-53: Unsafe default location fallback - prevent using CWD
+    try {
+      return app.getPath('temp');
+    } catch {
+      throw new Error('Could not determine a safe default location (documents or temp)');
+    }
   }
 }
 
@@ -292,6 +296,25 @@ function buildDestinationPath(file, suggestion, defaultLocation, preserveNames) 
   }
 
   let fileName = preserveNames ? file.name : file.analysis?.suggestedName || file.name;
+
+  // FIX H-6: Sanitize fileName to prevent path traversal attacks
+  if (typeof fileName === 'string') {
+    fileName = sanitizePath(fileName);
+  } else {
+    fileName = '';
+  }
+
+  // FIX HIGH-55: Handle empty filename after sanitization
+  if (!fileName || fileName.trim().length === 0) {
+    fileName = `unnamed_file_${Date.now()}`;
+    // Add extension back if available
+    if (originalExt) fileName += originalExt;
+  }
+
+  fileName = path.basename(fileName);
+  if (isPathDangerous(fileName)) {
+    throw new Error(`Invalid filename: ${fileName}`);
+  }
 
   // Ensure the original file extension is preserved
   const originalExt = path.extname(file.name);

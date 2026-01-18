@@ -283,7 +283,14 @@ describe('ModelManager', () => {
     });
 
     test('throws error when no models available', async () => {
+      mockSettingsService.load.mockResolvedValue({
+        textModel: null,
+        visionModel: null,
+        embeddingModel: null
+      });
       modelManager.availableModels = [];
+      modelManager.selectedModel = null;
+      mockOllamaClient.list.mockResolvedValue({ models: [] });
 
       await expect(modelManager.ensureWorkingModel()).rejects.toThrow(
         'No working Ollama models found'

@@ -10,10 +10,31 @@ const path = require('path');
 const crypto = require('crypto');
 const { atomicFileOps } = require('../../shared/atomicFileOperations');
 const { validateSettings, sanitizeSettings } = require('../../shared/settingsValidation');
-const { logger } = require('../../shared/logger');
+const { logger: baseLogger, createLogger } = require('../../shared/logger');
 const { LIMITS } = require('../../shared/performanceConstants');
 
-logger.setContext('SettingsBackupService');
+const logger =
+  typeof createLogger === 'function' ? createLogger('SettingsBackupService') : baseLogger;
+if (typeof createLogger !== 'function' && logger?.setContext) {
+  logger.setContext('SettingsBackupService');
+}
+
+const stableStringify = (value) =>
+  JSON.stringify(
+    value,
+    (key, val) => {
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        return Object.keys(val)
+          .sort()
+          .reduce((acc, k) => {
+            acc[k] = val[k];
+            return acc;
+          }, {});
+      }
+      return val;
+    },
+    2
+  );
 
 class SettingsBackupService {
   /**
@@ -37,8 +58,12 @@ class SettingsBackupService {
    * @throws {Error} If path is outside backup directory
    */
   _validateBackupPath(backupPath) {
-    const normalizedPath = path.normalize(path.resolve(backupPath));
-    const normalizedBackupDir = path.normalize(path.resolve(this.backupDir));
+    let normalizedPath = path.normalize(path.resolve(backupPath));
+    let normalizedBackupDir = path.normalize(path.resolve(this.backupDir));
+    if (process.platform === 'win32') {
+      normalizedPath = normalizedPath.toLowerCase();
+      normalizedBackupDir = normalizedBackupDir.toLowerCase();
+    }
     if (!normalizedPath.startsWith(normalizedBackupDir + path.sep)) {
       throw new Error('Invalid backup path: must be within backup directory');
     }
@@ -68,9 +93,10 @@ class SettingsBackupService {
         settings
       };
 
-      const backupJson = JSON.stringify(backupData, null, 2);
+      const backupJson = stableStringify(backupData);
 
       // Calculate SHA256 hash of the backup data for integrity verification
+      // FIX HIGH-22: Use stable JSON stringify for consistent hash calculation
       const hash = crypto.createHash('sha256').update(backupJson, 'utf8').digest('hex');
 
       // Store hash in a separate metadata object
@@ -79,7 +105,7 @@ class SettingsBackupService {
         hash
       };
 
-      const writeContent = JSON.stringify(backupWithHash, null, 2);
+      const writeContent = stableStringify(backupWithHash);
 
       // Write using atomicFileOps when available, otherwise fall back to fs.writeFile
       if (atomicFileOps?.safeWriteFile) {
@@ -116,7 +142,8 @@ class SettingsBackupService {
    * List all available backups
    * @returns {Promise<Array<{filename: string, path: string, timestamp: string, appVersion: string, size: number}>>}
    */
-  async listBackups() {
+  async listBackups(options = {}) {
+    const { includeParsedTime = false } = options;
     try {
       // Ensure backup directory exists
       await fs.mkdir(this.backupDir, { recursive: true });
@@ -158,10 +185,12 @@ class SettingsBackupService {
       // Sort by timestamp (newest first)
       backups.sort((a, b) => b._parsedTime - a._parsedTime);
 
-      // Remove internal _parsedTime property
-      backups.forEach((backup) => {
-        delete backup._parsedTime;
-      });
+      if (!includeParsedTime) {
+        // Remove internal _parsedTime property
+        backups.forEach((backup) => {
+          delete backup._parsedTime;
+        });
+      }
 
       return backups;
     } catch (error) {
@@ -199,7 +228,9 @@ class SettingsBackupService {
       // Verify SHA256 hash if present
       if (backupData.hash) {
         const { hash: storedHash, ...originalData } = backupData;
-        const originalJson = JSON.stringify(originalData, null, 2);
+        // FIX HIGH-22: Use stable JSON stringify for consistent hash verification
+        // This ensures key order doesn't affect the hash
+        const originalJson = stableStringify(originalData);
         const calculatedHash = crypto
           .createHash('sha256')
           .update(originalJson, 'utf8')
@@ -262,14 +293,19 @@ class SettingsBackupService {
    */
   async cleanupOldBackups() {
     try {
-      const backups = await this.listBackups();
+      const cleanupStart = Date.now();
+      const backups = await this.listBackups({ includeParsedTime: true });
 
       // Filter out backups with unsafe timestamps
       const safeBackups = backups.filter((backup) => {
-        if (backup._parsedTime && !Number.isSafeInteger(backup._parsedTime)) {
+        if (!Number.isFinite(backup._parsedTime)) {
           logger.warn(
             `[SettingsBackupService] Backup ${backup.filename} has unsafe timestamp. Skipping.`
           );
+          return false;
+        }
+        if (backup._parsedTime > cleanupStart) {
+          // Skip backups created after cleanup started to avoid race deletion
           return false;
         }
         return true;

@@ -65,7 +65,7 @@ describe('AutoOrganize File Processor', () => {
     mockSuggestionService = {
       getSuggestionsForFile: jest.fn().mockResolvedValue({
         success: true,
-        primary: { folder: 'Documents', path: '/docs/Documents' },
+        primary: { folder: 'Documents', path: '/docs/Documents', isSmartFolder: true },
         confidence: 0.9,
         alternatives: []
       }),
@@ -94,20 +94,19 @@ describe('AutoOrganize File Processor', () => {
   });
 
   describe('processFilesWithoutAnalysis', () => {
-    test('processes files to default folder', async () => {
+    test('queues files for review when no default smart folder exists', async () => {
       const files = [
         { name: 'file1.txt', path: '/src/file1.txt' },
         { name: 'file2.txt', path: '/src/file2.txt' }
       ];
       const smartFolders = [];
       const defaultLocation = '/docs';
-      const results = { organized: [], failed: [], operations: [] };
+      const results = { organized: [], failed: [], needsReview: [], operations: [] };
 
       await processFilesWithoutAnalysis(files, smartFolders, defaultLocation, results);
 
-      expect(results.organized).toHaveLength(2);
-      expect(results.organized[0].method).toBe('no-analysis-default');
-      expect(results.organized[0].confidence).toBe(0.1);
+      expect(results.organized).toHaveLength(0);
+      expect(results.needsReview).toHaveLength(2);
     });
 
     test('uses existing default folder', async () => {
@@ -126,19 +125,14 @@ describe('AutoOrganize File Processor', () => {
       expect(results.organized[0].destination).toContain('Uncategorized');
     });
 
-    test('marks files as failed when default folder creation fails', async () => {
-      // Force folder creation to fail
-      mockFs.mkdir.mockRejectedValueOnce(new Error('Permission denied'));
-      mockFs.lstat.mockRejectedValueOnce({ code: 'ENOENT' });
-
+    test('queues single file for review when no default smart folder exists', async () => {
       const files = [{ name: 'file.txt', path: '/src/file.txt' }];
       const smartFolders = [];
-      const results = { organized: [], failed: [], operations: [] };
+      const results = { organized: [], failed: [], needsReview: [], operations: [] };
 
       await processFilesWithoutAnalysis(files, smartFolders, '/docs', results);
 
-      expect(results.failed).toHaveLength(1);
-      expect(results.failed[0].reason).toContain('failed to create');
+      expect(results.needsReview).toHaveLength(1);
     });
   });
 
@@ -157,16 +151,7 @@ describe('AutoOrganize File Processor', () => {
         failed: [],
         operations: []
       };
-      const thresholds = { requireReview: 0.5 };
-
-      await processFilesIndividually(
-        files,
-        smartFolders,
-        options,
-        results,
-        mockSuggestionService,
-        thresholds
-      );
+      await processFilesIndividually(files, smartFolders, options, results, mockSuggestionService);
 
       expect(results.organized).toHaveLength(1);
       expect(results.organized[0].method).toBe('automatic');
@@ -176,7 +161,7 @@ describe('AutoOrganize File Processor', () => {
     test('adds files to needsReview for medium confidence', async () => {
       mockSuggestionService.getSuggestionsForFile.mockResolvedValueOnce({
         success: true,
-        primary: { folder: 'Documents' },
+        primary: { folder: 'Documents', path: '/docs/Documents', isSmartFolder: true },
         confidence: 0.6,
         alternatives: [],
         explanation: 'Medium confidence match'
@@ -190,25 +175,23 @@ describe('AutoOrganize File Processor', () => {
         failed: [],
         operations: []
       };
-      const thresholds = { requireReview: 0.5 };
-
       await processFilesIndividually(
         files,
-        [],
+        [{ name: 'Documents', path: '/docs/Documents', isDefault: true }],
         options,
         results,
-        mockSuggestionService,
-        thresholds
+        mockSuggestionService
       );
 
-      expect(results.needsReview).toHaveLength(1);
-      expect(results.organized).toHaveLength(0);
+      expect(results.needsReview).toHaveLength(0);
+      expect(results.organized).toHaveLength(1);
+      expect(results.organized[0].method).toBe('low-confidence-default');
     });
 
     test('sends low confidence files to needsReview', async () => {
       mockSuggestionService.getSuggestionsForFile.mockResolvedValueOnce({
         success: true,
-        primary: { folder: 'Documents' },
+        primary: { folder: 'Documents', path: '/docs/Documents', isSmartFolder: true },
         confidence: 0.3
       });
 
@@ -223,7 +206,7 @@ describe('AutoOrganize File Processor', () => {
 
       await processFilesIndividually(files, [], options, results, mockSuggestionService);
 
-      // With simplified thresholds, files below confidenceThreshold go to needsReview
+      // With no default smart folder, files below threshold go to needsReview
       expect(results.needsReview).toHaveLength(1);
       expect(results.organized).toHaveLength(0);
     });
@@ -242,15 +225,12 @@ describe('AutoOrganize File Processor', () => {
         failed: [],
         operations: []
       };
-      const thresholds = { requireReview: 0.5 };
-
       await processFilesIndividually(
         files,
-        [],
+        [{ name: 'Documents', path: '/docs/Documents', isDefault: true }],
         options,
         results,
-        mockSuggestionService,
-        thresholds
+        mockSuggestionService
       );
 
       expect(results.organized).toHaveLength(1);
@@ -270,15 +250,12 @@ describe('AutoOrganize File Processor', () => {
         failed: [],
         operations: []
       };
-      const thresholds = { requireReview: 0.5 };
-
       await processFilesIndividually(
         files,
-        [],
+        [{ name: 'Documents', path: '/docs/Documents', isDefault: true }],
         options,
         results,
-        mockSuggestionService,
-        thresholds
+        mockSuggestionService
       );
 
       expect(results.organized).toHaveLength(1);
@@ -300,13 +277,11 @@ describe('AutoOrganize File Processor', () => {
         failed: [],
         operations: []
       };
-      const thresholds = { requireReview: 0.5 };
+      await processFilesIndividually(files, [], options, results, badSuggestionService);
 
-      await processFilesIndividually(files, [], options, results, badSuggestionService, thresholds);
-
-      // Since there's inner try-catch for suggestions, it uses suggestion-error-fallback instead
-      expect(results.organized).toHaveLength(1);
-      expect(results.organized[0].method).toBe('suggestion-error-fallback');
+      // Without a default smart folder, fallback cannot move files
+      expect(results.organized).toHaveLength(0);
+      expect(results.needsReview).toHaveLength(1);
     });
   });
 

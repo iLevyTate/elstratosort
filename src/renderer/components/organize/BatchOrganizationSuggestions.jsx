@@ -18,12 +18,15 @@ function BatchOrganizationSuggestions({
   batchSuggestions,
   onAcceptStrategy,
   onCustomizeGroup,
-  onRejectAll
+  onRejectAll,
+  onMemorySaved
 }) {
-  useNotification();
+  const { addNotification } = useNotification();
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [selectedStrategy, setSelectedStrategy] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [memoryNote, setMemoryNote] = useState('');
+  const [savingMemory, setSavingMemory] = useState(false);
 
   // FIX: Memoize toggleGroup to prevent unnecessary re-renders
   const toggleGroup = useCallback((groupIndex) => {
@@ -54,8 +57,50 @@ function BatchOrganizationSuggestions({
 
   const { groups, patterns, recommendations } = batchSuggestions;
 
+  const handleSaveMemory = async () => {
+    const trimmed = memoryNote.trim();
+    if (!trimmed) return;
+    setSavingMemory(true);
+    try {
+      await window.electronAPI.suggestions.addFeedbackMemory(trimmed);
+      setMemoryNote('');
+      addNotification('Memory saved', 'success');
+      if (onMemorySaved) {
+        onMemorySaved();
+      }
+    } catch (error) {
+      addNotification('Failed to save memory', 'warning');
+    } finally {
+      setSavingMemory(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-[var(--spacing-default)]">
+      <Card className="p-4 border-system-gray-200 bg-system-gray-50">
+        <h3 className="font-medium text-system-gray-900 mb-2">Batch Feedback Note</h3>
+        <textarea
+          value={memoryNote}
+          onChange={(event) => setMemoryNote(event.target.value)}
+          placeholder='e.g., "All 3D files go to 3D Prints"'
+          className="w-full rounded-md border border-system-gray-200 bg-white p-2 text-sm text-system-gray-800 focus:outline-none focus:ring-2 focus:ring-stratosort-blue/30"
+          rows={2}
+        />
+        <div className="mt-2">
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={handleSaveMemory}
+            disabled={savingMemory || !memoryNote.trim()}
+            className="bg-stratosort-blue hover:bg-stratosort-blue/90"
+          >
+            Save Memory
+          </Button>
+        </div>
+        <div className="mt-2 text-xs text-system-gray-500">
+          Saved notes guide future suggestions for all files.
+        </div>
+      </Card>
       {/* Pattern Analysis */}
       {patterns && (
         <Card className="p-4 bg-blue-50 border-stratosort-blue/30">
@@ -235,49 +280,53 @@ function BatchOrganizationSuggestions({
                 <div className="border-t border-system-gray-200 p-4 bg-system-gray-50">
                   <div className="space-y-2">
                     {/* FIX: Use stable identifier instead of array index as key */}
-                    {group.files.map((file) => (
-                      <div
-                        key={file.path || file.id || file.name}
-                        className="flex items-center justify-between text-sm"
-                      >
-                        <div className="flex items-center gap-2">
-                          <FileText className="w-4 h-4 text-system-gray-400" />
-                          <span>{file.name}</span>
+                    {Array.isArray(group.files) &&
+                      group.files.map((file) => (
+                        <div
+                          key={file.path || file.id || file.name}
+                          className="flex items-center justify-between text-sm"
+                        >
+                          <div className="flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-system-gray-400" />
+                            <span>{file.name}</span>
+                          </div>
+                          {file.suggestion && (
+                            <span className="text-xs text-system-gray-500">
+                              {Math.round((file.suggestion.confidence || 0) * 100)}% match
+                            </span>
+                          )}
                         </div>
-                        {file.suggestion && (
-                          <span className="text-xs text-system-gray-500">
-                            {Math.round((file.suggestion.confidence || 0) * 100)}% match
-                          </span>
-                        )}
-                      </div>
-                    ))}
+                      ))}
                   </div>
 
                   {/* FIX: Use consistent optional chaining and add array length check */}
-                  {group.files?.length > 0 && group.files[0]?.alternatives?.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-system-gray-200">
-                      <div className="text-xs text-system-gray-600 mb-2">
-                        Alternative folders for this group:
+                  {Array.isArray(group.files) &&
+                    group.files.length > 0 &&
+                    Array.isArray(group.files[0]?.alternatives) &&
+                    group.files[0].alternatives.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-system-gray-200">
+                        <div className="text-xs text-system-gray-600 mb-2">
+                          Alternative folders for this group:
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {/* FIX: Use stable identifier instead of array index as key */}
+                          {group.files[0].alternatives.slice(0, 3).map((alt) => (
+                            <button
+                              key={alt.folder || alt.id}
+                              className="px-2 py-1 text-xs bg-white border border-system-gray-300 rounded-md hover:border-stratosort-blue transition-colors"
+                              onClick={() =>
+                                onCustomizeGroup(groupIndex, {
+                                  ...group,
+                                  folder: alt.folder
+                                })
+                              }
+                            >
+                              {alt.folder}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        {/* FIX: Use stable identifier instead of array index as key */}
-                        {group.files[0].alternatives.slice(0, 3).map((alt) => (
-                          <button
-                            key={alt.folder || alt.id}
-                            className="px-2 py-1 text-xs bg-white border border-system-gray-300 rounded-md hover:border-stratosort-blue transition-colors"
-                            onClick={() =>
-                              onCustomizeGroup(groupIndex, {
-                                ...group,
-                                folder: alt.folder
-                              })
-                            }
-                          >
-                            {alt.folder}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                    )}
                 </div>
               )}
             </Card>
@@ -451,7 +500,8 @@ BatchOrganizationSuggestions.propTypes = {
   }),
   onAcceptStrategy: PropTypes.func,
   onCustomizeGroup: PropTypes.func,
-  onRejectAll: PropTypes.func
+  onRejectAll: PropTypes.func,
+  onMemorySaved: PropTypes.func
 };
 
 export default BatchOrganizationSuggestions;

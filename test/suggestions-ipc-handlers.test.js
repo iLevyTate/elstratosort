@@ -63,7 +63,10 @@ jest.mock('../src/main/ipc/validationSchemas', () => ({
     fileSuggestion: null,
     batchSuggestion: null,
     feedback: null,
-    strategyApplication: null
+    strategyApplication: null,
+    feedbackMemoryAdd: null,
+    feedbackMemoryDelete: null,
+    feedbackMemoryUpdate: null
   }
 }));
 
@@ -72,6 +75,11 @@ const mockSuggestionService = {
   getSuggestionsForFile: jest.fn(),
   getBatchSuggestions: jest.fn(),
   recordFeedback: jest.fn(),
+  recordFeedbackNote: jest.fn(),
+  addFeedbackMemory: jest.fn(),
+  listFeedbackMemory: jest.fn(),
+  deleteFeedbackMemory: jest.fn(),
+  updateFeedbackMemory: jest.fn(),
   strategies: {
     'by-type': {
       name: 'By Type',
@@ -108,6 +116,10 @@ describe('Suggestions IPC Handlers', () => {
       GET_FILE_SUGGESTIONS: 'get-file-suggestions',
       GET_BATCH_SUGGESTIONS: 'get-batch-suggestions',
       RECORD_FEEDBACK: 'record-feedback',
+      ADD_FEEDBACK_MEMORY: 'add-feedback-memory',
+      GET_FEEDBACK_MEMORY: 'get-feedback-memory',
+      DELETE_FEEDBACK_MEMORY: 'delete-feedback-memory',
+      UPDATE_FEEDBACK_MEMORY: 'update-feedback-memory',
       GET_STRATEGIES: 'get-strategies',
       APPLY_STRATEGY: 'apply-strategy',
       GET_USER_PATTERNS: 'get-user-patterns',
@@ -138,6 +150,11 @@ describe('Suggestions IPC Handlers', () => {
     mockSuggestionService.getSuggestionsForFile.mockReset();
     mockSuggestionService.getBatchSuggestions.mockReset();
     mockSuggestionService.recordFeedback.mockReset();
+    mockSuggestionService.recordFeedbackNote.mockReset();
+    mockSuggestionService.addFeedbackMemory.mockReset();
+    mockSuggestionService.listFeedbackMemory.mockReset();
+    mockSuggestionService.deleteFeedbackMemory.mockReset();
+    mockSuggestionService.updateFeedbackMemory.mockReset();
     mockSuggestionService.mapFileToStrategy.mockReset();
     mockSuggestionService.analyzeFolderStructure.mockReset();
     mockSuggestionService.suggestNewSmartFolder.mockReset();
@@ -229,6 +246,24 @@ describe('Suggestions IPC Handlers', () => {
       expect(mockSuggestionService.recordFeedback).toHaveBeenCalledWith(file, suggestion, accepted);
     });
 
+    test('records feedback note when provided', async () => {
+      const file = { name: 'test.pdf' };
+      const suggestion = { folder: 'Documents' };
+      const accepted = true;
+      const note = 'All invoices go to Finance';
+
+      const handler = handlers[IPC_CHANNELS.SUGGESTIONS.RECORD_FEEDBACK];
+      const result = await handler({}, { file, suggestion, accepted, note });
+
+      expect(result.success).toBe(true);
+      expect(mockSuggestionService.recordFeedbackNote).toHaveBeenCalledWith(
+        file,
+        suggestion,
+        accepted,
+        note
+      );
+    });
+
     test('handles error in recordFeedback', async () => {
       mockSuggestionService.recordFeedback.mockImplementation(() => {
         throw new Error('Feedback failed');
@@ -245,6 +280,50 @@ describe('Suggestions IPC Handlers', () => {
       );
 
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('Feedback memory handlers', () => {
+    test('adds feedback memory', async () => {
+      const text = 'All .stl files go to 3D Prints';
+      mockSuggestionService.addFeedbackMemory.mockResolvedValue({ id: 'mem-1', text });
+
+      const handler = handlers[IPC_CHANNELS.SUGGESTIONS.ADD_FEEDBACK_MEMORY];
+      const result = await handler({}, { text });
+
+      expect(result.success).toBe(true);
+      expect(result.item.id).toBe('mem-1');
+      expect(mockSuggestionService.addFeedbackMemory).toHaveBeenCalledWith(text, undefined);
+    });
+
+    test('lists feedback memory', async () => {
+      mockSuggestionService.listFeedbackMemory.mockResolvedValue([{ id: 'mem-1', text: 'Rule' }]);
+      const handler = handlers[IPC_CHANNELS.SUGGESTIONS.GET_FEEDBACK_MEMORY];
+      const result = await handler({});
+
+      expect(result.success).toBe(true);
+      expect(result.items).toHaveLength(1);
+    });
+
+    test('updates feedback memory', async () => {
+      const id = 'mem-1';
+      const text = 'Updated rule';
+      mockSuggestionService.updateFeedbackMemory.mockResolvedValue({ id, text });
+
+      const handler = handlers[IPC_CHANNELS.SUGGESTIONS.UPDATE_FEEDBACK_MEMORY];
+      const result = await handler({}, { id, text });
+
+      expect(result.success).toBe(true);
+      expect(result.item.text).toBe(text);
+    });
+
+    test('deletes feedback memory', async () => {
+      mockSuggestionService.deleteFeedbackMemory.mockResolvedValue(true);
+      const handler = handlers[IPC_CHANNELS.SUGGESTIONS.DELETE_FEEDBACK_MEMORY];
+      const result = await handler({}, { id: 'mem-1' });
+
+      expect(result.success).toBe(true);
+      expect(result.removed).toBe(true);
     });
   });
 

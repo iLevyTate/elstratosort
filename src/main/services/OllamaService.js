@@ -512,6 +512,8 @@ class OllamaService {
 
   /**
    * Pull models from Ollama registry
+   * @param {string[]} modelNames - List of model names to pull
+   * @returns {Promise<{success: boolean, results: Array<{model: string, success: boolean, error?: string}>, error?: string}>}
    */
   async pullModels(modelNames) {
     if (!Array.isArray(modelNames) || modelNames.length === 0) {

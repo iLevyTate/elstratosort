@@ -21,10 +21,10 @@ const { getCorrelationId } = require('./correlationId');
  * @returns {string|object}
  */
 function sanitizeLogData(data) {
-  // Skip sanitization in development mode
-  if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
-    return data;
-  }
+  // FIX CRIT-22: Always sanitize paths, even in development
+  // if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+  //   return data;
+  // }
 
   // Strings: redact common absolute path patterns
   if (typeof data === 'string') {
@@ -78,6 +78,7 @@ class Logger {
     this.MAX_LOG_FILE_SIZE = 50 * 1024 * 1024; // 50MB
     this.MAX_ROTATED_FILES = 3;
     this._isRotating = false;
+    this._lastRotationCheck = 0; // FIX HIGH-50: Debounce rotation checks
   }
 
   /**
@@ -85,6 +86,11 @@ class Logger {
    * @private
    */
   async rotateLogIfNeeded() {
+    // FIX HIGH-50: Prevent rapid-fire rotation checks (max once per second)
+    const now = Date.now();
+    if (now - this._lastRotationCheck < 1000) return;
+    this._lastRotationCheck = now;
+
     if (!this.logFile || this._isRotating || this._fileWriteFailed) return;
 
     try {

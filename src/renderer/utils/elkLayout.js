@@ -41,10 +41,12 @@ let layoutAborted = false;
  * Node size configuration for different node types
  */
 const NODE_SIZES = {
-  queryNode: { width: 160, height: 50 },
-  fileNode: { width: 220, height: 80 },
-  clusterNode: { width: 320, height: 180 },
-  default: { width: 200, height: 80 }
+  queryNode: { width: 180, height: 60 },
+  fileNode: { width: 240, height: 120 },
+  folderNode: { width: 220, height: 90 },
+  // FIX: Make cluster nodes compact circles/hubs instead of large cards
+  clusterNode: { width: 180, height: 180 },
+  default: { width: 220, height: 100 }
 };
 
 /**
@@ -52,8 +54,8 @@ const NODE_SIZES = {
  */
 const DEFAULT_OPTIONS = {
   direction: 'RIGHT',
-  spacing: 200, // Increased to reduce edge overlap with node badges
-  layerSpacing: 350, // Increased to provide room for long labels and edge routing
+  spacing: 160, // Optimized for Brandes-Koepf alignment
+  layerSpacing: 280, // Tighter layer spacing
   algorithm: 'layered'
 };
 
@@ -93,11 +95,17 @@ export async function elkLayout(nodes, edges, options = {}) {
 
   const elkAlgorithm = ALGORITHM_MAP[algorithm] || algorithm;
 
+  const edgeSpacing = Math.max(20, Math.round(spacing / 4));
+  const edgeNodeSpacing = Math.max(24, Math.round(spacing / 3));
+  const edgeLayerSpacing = Math.max(40, Math.round(layerSpacing / 3));
+
   // Base layout options
   const layoutOptions = {
     'elk.algorithm': elkAlgorithm,
     'elk.direction': direction,
     'elk.spacing.nodeNode': String(spacing),
+    'elk.spacing.edgeEdge': String(edgeSpacing),
+    'elk.spacing.edgeNode': String(edgeNodeSpacing),
     // Improve edge routing
     'elk.edgeRouting': 'ORTHOGONAL'
   };
@@ -105,7 +113,10 @@ export async function elkLayout(nodes, edges, options = {}) {
   // Add algorithm-specific options
   if (elkAlgorithm === 'layered') {
     layoutOptions['elk.layered.spacing.nodeNodeBetweenLayers'] = String(layerSpacing);
-    layoutOptions['elk.layered.nodePlacement.strategy'] = 'SIMPLE';
+    layoutOptions['elk.layered.spacing.edgeNodeBetweenLayers'] = String(edgeLayerSpacing);
+    layoutOptions['elk.layered.spacing.edgeEdgeBetweenLayers'] = String(edgeSpacing);
+    layoutOptions['elk.layered.nodePlacement.strategy'] = 'BRANDES_KOEPF'; // Better straight-line alignment
+    layoutOptions['elk.spacing.componentComponent'] = String(spacing); // Keep disconnected clusters close
     layoutOptions['elk.layered.crossingMinimization.strategy'] = 'LAYER_SWEEP';
   } else if (elkAlgorithm === 'org.eclipse.elk.force') {
     layoutOptions['elk.force.iterations'] = '100';
@@ -510,8 +521,8 @@ export function radialLayout(centerNode, nodes, options = {}) {
  */
 export function clusterRadialLayout(clusterNodes, edges, options = {}) {
   const { centerX = 400, centerY = 300, radius = 500 } = options;
-  const clusterSize = NODE_SIZES.clusterNode || { width: 320, height: 180 };
-  const arcPadding = 140; // Extra spacing between cluster cards to avoid overlap
+  const clusterSize = NODE_SIZES.clusterNode || { width: 180, height: 180 };
+  const arcPadding = 80; // Reduced padding for compact hubs
 
   if (!clusterNodes || clusterNodes.length === 0) {
     return clusterNodes;

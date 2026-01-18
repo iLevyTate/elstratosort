@@ -254,6 +254,7 @@ const LIMITS = {
   MAX_IPC_REQUESTS_PER_SECOND: 200,
   RATE_LIMIT_CLEANUP_THRESHOLD: 100,
   RATE_LIMIT_STALE_MS: 60000,
+  IPC_INVOKE_TIMEOUT: 30000, // FIX: Maximum wait time for IPC invoke to prevent renderer hangs
   MAX_NUMERIC_RETRIES: 5000,
   MAX_FILENAME_LENGTH: 255, // Standard filesystem limit (NTFS, ext4, HFS+)
   MAX_SETTINGS_BACKUPS: 10,

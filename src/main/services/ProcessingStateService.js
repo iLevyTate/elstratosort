@@ -73,10 +73,12 @@ class ProcessingStateService {
           this.state = this.createEmptyState();
           await this._saveStateInternal(); // Use internal method to avoid double-locking
           this.initialized = true;
+          // FIX CRIT-32: Explicitly reset initialized flag on failure
         } catch (saveError) {
           // FIX: Clear _initPromise so next call can retry
           logger.error('[ProcessingStateService] Failed to save initial state:', saveError.message);
           this._initPromise = null;
+          this.initialized = false;
           throw saveError;
         }
       }
@@ -207,17 +209,20 @@ class ProcessingStateService {
       }
     };
 
+    let saveResult = { success: true };
     this._writeLock = this._writeLock
       .then(() => saveOperation())
       .then(() => {
         this._consecutiveSaveFailures = 0;
         // FIX: Clear last error on success so callers can check save health
         this._lastSaveError = null;
+        saveResult = { success: true };
       })
       .catch((err) => {
         this._consecutiveSaveFailures++;
         // FIX: Store error so callers can check if save failed via getLastSaveError()
         this._lastSaveError = err;
+        saveResult = { success: false, error: err?.message };
         logger.error('[ProcessingStateService] Save failed:', {
           error: err?.message,
           consecutiveFailures: this._consecutiveSaveFailures
@@ -231,7 +236,7 @@ class ProcessingStateService {
         // Callers can use getLastSaveError() or isSaveHealthy() to check save status.
       });
 
-    return this._writeLock;
+    return this._writeLock.then(() => saveResult);
   }
 
   // ===== Analysis tracking =====
@@ -272,7 +277,11 @@ class ProcessingStateService {
       error: errorMessage || 'Unknown analysis error'
     };
     this.state.analysis.lastUpdated = now;
-    await this.saveState();
+    const result = await this.saveState();
+    // FIX HIGH-73: Log error if saveState fails (silent error fix)
+    if (!result.success) {
+      logger.error('[ProcessingStateService] Failed to save analysis error state:', result.error);
+    }
   }
 
   getIncompleteAnalysisJobs() {

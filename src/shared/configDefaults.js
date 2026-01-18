@@ -3,7 +3,8 @@
  * Single source of truth for environment variables, ports, and service URLs
  */
 
-const { logger } = require('./logger');
+// FIX CRIT-40: Remove logger import to prevent circular dependency
+// const { logger } = require('./logger');
 
 // Default service ports
 const PORTS = {
@@ -241,8 +242,21 @@ function getValidatedChromaServerUrl() {
   const result = validateServiceUrl(envUrl);
 
   if (!result.valid) {
-    // Log warning but return default
-    logger.warn(`[Config] Invalid CHROMA_SERVER_URL: ${result.error}. Using default.`);
+    if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
+      // Prefer logger when available; fall back to console.warn to avoid hard deps.
+      try {
+        const { logger } = require('./logger');
+        if (logger?.warn) {
+          logger.warn(`[Config] Invalid CHROMA_SERVER_URL: ${result.error}. Using default.`);
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn(`[Config] Invalid CHROMA_SERVER_URL: ${result.error}. Using default.`);
+        }
+      } catch {
+        // eslint-disable-next-line no-console
+        console.warn(`[Config] Invalid CHROMA_SERVER_URL: ${result.error}. Using default.`);
+      }
+    }
     return {
       url: SERVICE_URLS.CHROMA_SERVER_URL,
       valid: false,
@@ -282,8 +296,21 @@ function getValidatedOllamaHost() {
   const result = validateServiceUrl(envUrl);
 
   if (!result.valid) {
-    // Log warning but return default
-    logger.warn(`[Config] Invalid OLLAMA_BASE_URL: ${result.error}. Using default.`);
+    if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
+      // Prefer logger when available; fall back to console.warn to avoid hard deps.
+      try {
+        const { logger } = require('./logger');
+        if (logger?.warn) {
+          logger.warn(`[Config] Invalid OLLAMA_BASE_URL: ${result.error}. Using default.`);
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn(`[Config] Invalid OLLAMA_BASE_URL: ${result.error}. Using default.`);
+        }
+      } catch {
+        // eslint-disable-next-line no-console
+        console.warn(`[Config] Invalid OLLAMA_BASE_URL: ${result.error}. Using default.`);
+      }
+    }
     return {
       url: SERVICE_URLS.OLLAMA_HOST,
       valid: false,

@@ -135,7 +135,18 @@ const SEMANTIC_EXTENSION_MAP = {
   laser: ['svg', 'dxf', 'ai', 'pdf', 'lbrn', 'lbrn2'],
   cnc: ['nc', 'gcode', 'ngc', 'tap', 'dxf', 'dwg'],
   lightburn: ['lbrn', 'lbrn2'],
-  engrave: ['svg', 'dxf', 'ai', 'png', 'jpg']
+  engrave: ['svg', 'dxf', 'ai', 'png', 'jpg'],
+
+  // Finance & Legal
+  finance: ['pdf', 'csv', 'xlsx', 'xls', 'ofx', 'qif', 'qfx'],
+  financial: ['pdf', 'csv', 'xlsx', 'xls', 'ofx', 'qif'],
+  tax: ['pdf', 'docx', 'xlsx', 'csv'],
+  taxes: ['pdf', 'docx', 'xlsx', 'csv'],
+  invoice: ['pdf', 'jpg', 'png', 'html'],
+  receipt: ['pdf', 'jpg', 'png', 'html'],
+  legal: ['pdf', 'docx', 'doc'],
+  contract: ['pdf', 'docx', 'doc'],
+  statement: ['pdf', 'csv']
 };
 
 /**

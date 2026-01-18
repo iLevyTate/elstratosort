@@ -161,6 +161,21 @@ This is the "Brain" of the operation.
   user's computer by trying to process 100 files at once. It uses a semaphore/queue system to limit
   active jobs.
 
+**D. Knowledge Visualization (Explainable AI)**
+
+- **Concept:** Making the "black box" of AI decisions transparent to the user.
+- **Implementation:** The "Knowledge Graph" visualizes high-dimensional vector relationships in 2D
+  space.
+- **Key Engineering Decisions:**
+  - **Brandes-Koepf Layout:** We use the `BRANDES_KOEPF` algorithm (via ELK.js) instead of standard
+    force-directed layouts. This forces nodes into clean, straight lines and prioritized ranks,
+    preventing the "hairball" or "outlier" effect common in graph visualizations.
+  - **Metadata Injection:** The edges (lines) connecting nodes are not just lines; they carry
+    metadata (`category`, `commonTags`). This allows the UI to display "Relationship Analysis"
+    tooltips explaining _why_ two files are connected (e.g., "Both Images", "95% Similar").
+  - **Color Encoding:** Nodes are programmatically color-coded by file type (using a shared
+    `FileCategory` logic) to turn the graph into an instant visual map.
+
 ---
 
 ## 5. Resilience Engineering View
@@ -270,6 +285,10 @@ How does the software handle failure? (This distinguishes "scripts" from "system
 
 - **Cosine Similarity:** A metric measuring how similar two vectors are. Used by ChromaDB to rank
   folder matches.
+
+- **Brandes-Koepf:** An algorithm used in graph visualization to minimize edge crossings and
+  straighten long edges in layered graphs. We use this to keep the Knowledge Graph clean and
+  legible.
 
 - **Ollama:** A tool for running open-source LLMs locally. Acts as our local AI server at
   `localhost:11434`.

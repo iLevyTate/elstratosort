@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { Folder, CheckCircle, XCircle } from 'lucide-react';
 import { Card, Button } from '../ui';
+import { ErrorBoundaryCore } from '../ErrorBoundary';
 
 function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel }) {
   const [previewTree, setPreviewTree] = useState({});
   const [expandedFolders, setExpandedFolders] = useState(new Set());
+  const [isCompact, setIsCompact] = useState(false);
   const [stats, setStats] = useState({
     totalFiles: 0,
     totalFolders: 0,
@@ -14,7 +16,7 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
   });
 
   useEffect(() => {
-    if (!files || !suggestions) return undefined;
+    if (!files || !Array.isArray(files) || !suggestions) return undefined;
 
     // Build preview tree structure
     const tree = {};
@@ -23,6 +25,8 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
     let renamedCount = 0;
 
     files.forEach((file, index) => {
+      if (!file) return;
+
       // FIX: Add bounds check for array access
       const suggestion =
         Array.isArray(suggestions) && index < suggestions.length
@@ -68,7 +72,7 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
 
     setPreviewTree(tree);
     setStats({
-      totalFiles: files.length,
+      totalFiles: files?.length || 0,
       totalFolders: folderCount.size,
       movedFiles: movedCount,
       renamedFiles: renamedCount
@@ -111,21 +115,34 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
   return (
     <div className="space-y-4">
       {/* Header with Strategy Info */}
-      {strategy && (
-        <Card className="p-4 bg-stratosort-blue/5 border-stratosort-blue/30">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-medium text-system-gray-900">
-                Organization Preview: {strategy.name}
-              </h3>
-              <p className="text-sm text-system-gray-600 mt-1">{strategy.description}</p>
+      <div className="flex items-center justify-between">
+        {strategy ? (
+          <Card className="flex-1 p-4 bg-stratosort-blue/5 border-stratosort-blue/30 mr-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium text-system-gray-900">
+                  Organization Preview: {strategy.name}
+                </h3>
+                <p className="text-sm text-system-gray-600 mt-1">{strategy.description}</p>
+              </div>
+              <div className="text-sm text-system-gray-500">
+                Pattern: <code className="bg-white px-2 py-1 rounded-md">{strategy.pattern}</code>
+              </div>
             </div>
-            <div className="text-sm text-system-gray-500">
-              Pattern: <code className="bg-white px-2 py-1 rounded-md">{strategy.pattern}</code>
-            </div>
-          </div>
-        </Card>
-      )}
+          </Card>
+        ) : (
+          <div className="flex-1" />
+        )}
+
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setIsCompact(!isCompact)}
+          className="whitespace-nowrap"
+        >
+          {isCompact ? 'Show Details' : 'Compact View'}
+        </Button>
+      </div>
 
       {/* Statistics */}
       <div className="grid grid-cols-4 gap-4">
@@ -154,7 +171,9 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
           {Object.entries(previewTree).map(([folderPath, folder]) => (
             <div key={folderPath} className="border rounded-lg overflow-hidden">
               <div
-                className="p-3 cursor-pointer hover:bg-system-gray-50 transition-colors flex items-center justify-between"
+                className={`cursor-pointer hover:bg-system-gray-50 transition-colors flex items-center justify-between ${
+                  isCompact ? 'p-2' : 'p-3'
+                }`}
                 onClick={() => toggleFolder(folderPath)}
               >
                 <div className="flex items-center gap-2">
@@ -237,7 +256,8 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
         <h4 className="font-medium text-system-gray-900 mb-3">Folder Structure Visualization</h4>
         <div className="font-mono text-sm">
           <div className="text-system-gray-700 flex items-center gap-1">
-            <Folder className="w-4 h-4 inline" /> Documents
+            <Folder className="w-4 h-4 inline" />
+            <span>Documents</span>
           </div>
           {Object.entries(previewTree).map(([folderPath, folder]) => {
             const depth = folderPath.split('/').length - 1;
@@ -262,7 +282,8 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
             <h5 className="text-sm font-medium text-system-gray-700 mb-2">Current State</h5>
             <div className="bg-stratosort-danger/5 border border-stratosort-danger/20 rounded-md p-3 text-sm">
               <div className="text-stratosort-danger font-medium mb-2 flex items-center gap-1">
-                <XCircle className="w-4 h-4" /> Disorganized
+                <XCircle className="w-4 h-4" />
+                <span>Disorganized</span>
               </div>
               <ul className="space-y-1 text-stratosort-danger/80">
                 <li>• All files in one location</li>
@@ -276,7 +297,8 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
             <h5 className="text-sm font-medium text-system-gray-700 mb-2">After Organization</h5>
             <div className="bg-stratosort-success/5 border border-stratosort-success/20 rounded-md p-3 text-sm">
               <div className="text-stratosort-success font-medium mb-2 flex items-center gap-1">
-                <CheckCircle className="w-4 h-4" /> Well-Organized
+                <CheckCircle className="w-4 h-4" />
+                <span>Well-Organized</span>
               </div>
               <ul className="space-y-1 text-stratosort-success/80">
                 <li>• Files sorted into {stats.totalFolders} folders</li>
@@ -342,4 +364,10 @@ OrganizationPreview.propTypes = {
   onCancel: PropTypes.func
 };
 
-export default OrganizationPreview;
+export default function OrganizationPreviewWithErrorBoundary(props) {
+  return (
+    <ErrorBoundaryCore contextName="Organization Preview" variant="simple">
+      <OrganizationPreview {...props} />
+    </ErrorBoundaryCore>
+  );
+}

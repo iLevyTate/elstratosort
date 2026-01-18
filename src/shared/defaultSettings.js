@@ -6,6 +6,7 @@
 const { SERVICE_URLS } = require('./configDefaults');
 const { CONCURRENCY } = require('./performanceConstants');
 const { DEFAULT_AI_MODELS } = require('./constants');
+const { DEFAULT_CHAT_PERSONA_ID } = require('./chatPersonas');
 
 const DEFAULT_SETTINGS = {
   // UI
@@ -27,6 +28,8 @@ const DEFAULT_SETTINGS = {
   launchOnStartup: false,
   // Organization Confidence Threshold (files must meet this confidence to be auto-organized)
   confidenceThreshold: 0.75,
+  // Smart folder routing mode: auto-select based on embedding health
+  smartFolderRoutingMode: 'auto',
   // Naming convention defaults (used by auto-organize / download watcher)
   namingConvention: 'subject-date',
   dateFormat: 'YYYY-MM-DD',
@@ -37,6 +40,8 @@ const DEFAULT_SETTINGS = {
   textModel: DEFAULT_AI_MODELS.TEXT_ANALYSIS,
   visionModel: DEFAULT_AI_MODELS.IMAGE_ANALYSIS,
   embeddingModel: DEFAULT_AI_MODELS.EMBEDDING,
+  chatPersona: DEFAULT_CHAT_PERSONA_ID,
+  chatResponseMode: 'fast',
   // Dependency lifecycle management (user consent required)
   autoUpdateOllama: false,
   autoUpdateChromaDb: false,

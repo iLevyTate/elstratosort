@@ -30,6 +30,19 @@ function cosineSimilarity(a, b) {
   let i = 0;
 
   for (; i < unrollLimit; i += 4) {
+    // FIX HIGH-49: Validate vector elements to prevent NaN propagation
+    if (
+      isNaN(a[i]) ||
+      isNaN(b[i]) ||
+      isNaN(a[i + 1]) ||
+      isNaN(b[i + 1]) ||
+      isNaN(a[i + 2]) ||
+      isNaN(b[i + 2]) ||
+      isNaN(a[i + 3]) ||
+      isNaN(b[i + 3])
+    )
+      return 0;
+
     dot += a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3];
     normA += a[i] * a[i] + a[i + 1] * a[i + 1] + a[i + 2] * a[i + 2] + a[i + 3] * a[i + 3];
     normB += b[i] * b[i] + b[i + 1] * b[i + 1] + b[i + 2] * b[i + 2] + b[i + 3] * b[i + 3];
@@ -37,12 +50,14 @@ function cosineSimilarity(a, b) {
 
   // Handle remaining elements
   for (; i < len; i++) {
+    if (isNaN(a[i]) || isNaN(b[i])) return 0;
     dot += a[i] * b[i];
     normA += a[i] * a[i];
     normB += b[i] * b[i];
   }
 
-  if (normA === 0 || normB === 0) return 0;
+  // FIX CRIT-39: Check for zero or near-zero magnitude to avoid division by zero
+  if (normA < Number.EPSILON || normB < Number.EPSILON) return 0;
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 

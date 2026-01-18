@@ -20,6 +20,7 @@ describe('registerAnalysisHistoryIpc', () => {
   let mockLogger;
   let mockGetServiceIntegration;
   let mockAnalysisHistory;
+  let mockChromaDbService;
   let handlers;
 
   const { IPC_CHANNELS } = require('../src/shared/constants');
@@ -56,11 +57,25 @@ describe('registerAnalysisHistoryIpc', () => {
         originalPath: '/test/doc1.pdf',
         analysis: { category: 'documents', confidence: 0.9 }
       }),
-      createDefaultStructures: jest.fn().mockResolvedValue(undefined)
+      createDefaultStructures: jest.fn().mockResolvedValue(undefined),
+      initialize: jest.fn().mockResolvedValue(undefined),
+      analysisHistory: {
+        entries: {
+          one: { originalPath: '/test/doc1.pdf' },
+          two: { organization: { actual: '/test/img1.jpg' } }
+        }
+      }
+    };
+
+    mockChromaDbService = {
+      markEmbeddingsOrphaned: jest
+        .fn()
+        .mockResolvedValue({ file: { marked: 2 }, chunks: { marked: 2 } })
     };
 
     mockGetServiceIntegration = jest.fn().mockReturnValue({
-      analysisHistory: mockAnalysisHistory
+      analysisHistory: mockAnalysisHistory,
+      chromaDbService: mockChromaDbService
     });
 
     mockLogger = {
@@ -245,6 +260,7 @@ describe('registerAnalysisHistoryIpc', () => {
     test('clears history', async () => {
       const result = await handlers[HISTORY_CHANNELS.CLEAR]({});
 
+      expect(mockChromaDbService.markEmbeddingsOrphaned).toHaveBeenCalled();
       expect(mockAnalysisHistory.createDefaultStructures).toHaveBeenCalled();
       expect(result.success).toBe(true);
     });

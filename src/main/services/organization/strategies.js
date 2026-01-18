@@ -11,7 +11,16 @@ const path = require('path');
 const { FILE_TYPE_CATEGORIES, getFileTypeCategory } = require('../autoOrganize/fileTypeUtils');
 
 /**
+ * @typedef {Object} StrategyDefinition
+ * @property {string} name - Human readable strategy name
+ * @property {string} description - Description of what the strategy does
+ * @property {string} pattern - Path pattern template
+ * @property {string[]} priority - List of analysis fields to prioritize
+ */
+
+/**
  * Organization strategy templates
+ * @type {Object.<string, StrategyDefinition>}
  */
 const strategies = {
   'project-based': {

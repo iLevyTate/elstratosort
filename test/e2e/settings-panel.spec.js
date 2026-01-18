@@ -94,8 +94,9 @@ test.describe('Settings Panel - Opening and Closing', () => {
     // Click on the overlay (outside the dialog content)
     const overlay = window.locator('[role="presentation"].fixed.inset-0');
     if (await overlay.isVisible()) {
-      // Click at the edge of the overlay
-      await overlay.click({ position: { x: 10, y: 10 } });
+      // Click at the edge of the overlay, but avoid the header area (top 100px)
+      // which might intercept clicks if z-index is acting up
+      await overlay.click({ position: { x: 20, y: 200 } });
       await window.waitForTimeout(500);
 
       // Verify it's closed
@@ -127,12 +128,36 @@ test.describe('Settings Panel - AI Configuration', () => {
   });
 
   test('should display AI model settings', async () => {
-    // Look for model-related settings
-    const modelLabels = window.locator('text=Model, text=model, text=Ollama');
-    const count = await modelLabels.count();
+    // Expand all sections to make sure content is visible
+    const expandAllButton = window.locator('[title="Expand all"]');
+    if (await expandAllButton.isVisible()) {
+      console.log('[Test] Clicking Expand All');
+      await expandAllButton.click();
+      // Allow time for sections to expand and content to render
+      await window.waitForTimeout(2000);
+    }
 
-    console.log('[Test] Model-related labels found:', count);
-    expect(count).toBeGreaterThan(0);
+    // Wait for AI Configuration section header to be visible
+    const aiSection = window.locator('text=AI Configuration');
+    await aiSection
+      .first()
+      .waitFor({ state: 'visible', timeout: 5000 })
+      .catch(() => {
+        console.log('[Test] Warning: AI Configuration header not found');
+      });
+
+    // Verify AI settings are visible by checking for a specific label
+    const hostLabel = window.locator('text=Ollama Host URL');
+    let hostLabelVisible = false;
+    try {
+      await hostLabel.waitFor({ state: 'visible', timeout: 5000 });
+      console.log('[Test] Found Ollama Host URL label');
+      hostLabelVisible = true;
+    } catch (e) {
+      console.log('[Test] Warning: Timeout waiting for "Ollama Host URL"');
+    }
+
+    expect(hostLabelVisible).toBe(true);
   });
 
   test('should have text model dropdown', async () => {

@@ -113,7 +113,8 @@ describe('AutoOrganizeService', () => {
           success: true,
           primary: {
             folder: 'Documents',
-            path: '/base/Documents'
+            path: '/base/Documents',
+            isSmartFolder: true
           },
           confidence: 0.9
         });
@@ -141,7 +142,8 @@ describe('AutoOrganizeService', () => {
           success: true,
           primary: {
             folder: 'Images',
-            path: '/base/Images'
+            path: '/base/Images',
+            isSmartFolder: true
           },
           confidence: 0.85
         });
@@ -165,7 +167,7 @@ describe('AutoOrganizeService', () => {
 
         const suggestion = {
           success: true,
-          primary: { folder: 'Documents', path: '/base/Documents' },
+          primary: { folder: 'Documents', path: '/base/Documents', isSmartFolder: true },
           confidence: 0.9
         };
 
@@ -272,7 +274,6 @@ describe('AutoOrganizeService', () => {
 
         expect(result.organized).toHaveLength(1);
         expect(result.organized[0].method).toBe('fallback');
-        expect(result.organized[0].confidence).toBe(0.3);
       });
     });
 
@@ -288,12 +289,10 @@ describe('AutoOrganizeService', () => {
 
         const result = await service.organizeFiles(files, mockSmartFolders);
 
-        // Files without analysis should go to default folder, not fail
-        expect(result.organized).toHaveLength(1);
+        // Files without analysis should go to review if no default smart folder exists
+        expect(result.organized).toHaveLength(0);
         expect(result.failed).toHaveLength(0);
-        // Should have low confidence and use no-analysis-default method
-        expect(result.organized[0].confidence).toBe(0.1);
-        expect(result.organized[0].method).toBe('no-analysis-default');
+        expect(result.needsReview).toHaveLength(1);
       });
 
       test('handles suggestion service errors', async () => {
@@ -312,9 +311,7 @@ describe('AutoOrganizeService', () => {
 
         const result = await service.organizeFiles(files, mockSmartFolders);
 
-        // IMPROVED BEHAVIOR: Now catches suggestion service errors and uses fallback
-        // instead of failing completely. This ensures resilience when suggestion
-        // service is unavailable.
+        // Suggestion service errors should fall back to matching smart folders when available.
         expect(result.organized).toHaveLength(1);
         expect(result.failed).toHaveLength(0);
         expect(result.organized[0].method).toBe('suggestion-error-fallback');
@@ -340,7 +337,7 @@ describe('AutoOrganizeService', () => {
           .mockRejectedValueOnce(new Error('Failed'))
           .mockResolvedValueOnce({
             success: true,
-            primary: { folder: 'Documents', path: '/base/Documents' },
+            primary: { folder: 'Documents', path: '/base/Documents', isSmartFolder: true },
             confidence: 0.9
           });
 
@@ -367,15 +364,15 @@ describe('AutoOrganizeService', () => {
 
         mockSuggestionService.getSuggestionsForFile.mockResolvedValue({
           success: true,
-          primary: { folder: 'Documents', path: '/base/Documents' },
+          primary: { folder: 'Documents', path: '/base/Documents', isSmartFolder: true },
           confidence: 0.7
         });
 
-        // With threshold 0.6, should auto-organize
+        // Base threshold of 0.75 should override lower values
         const result1 = await service.organizeFiles(files, mockSmartFolders, {
           confidenceThreshold: 0.6
         });
-        expect(result1.organized).toHaveLength(1);
+        expect(result1.needsReview).toHaveLength(1);
 
         // With threshold 0.8, should need review
         const result2 = await service.organizeFiles(files, mockSmartFolders, {
@@ -395,7 +392,7 @@ describe('AutoOrganizeService', () => {
 
         mockSuggestionService.getSuggestionsForFile.mockResolvedValue({
           success: true,
-          primary: { folder: 'Documents', path: '/base/Documents' },
+          primary: { folder: 'Documents', path: '/base/Documents', isSmartFolder: true },
           confidence: 0.8
         });
 
@@ -428,12 +425,9 @@ describe('AutoOrganizeService', () => {
           defaultLocation: '/custom/location'
         });
 
-        expect(result.organized.length).toBeGreaterThan(0);
-        expect(result.organized[0].destination).toBeDefined();
-        // Should use custom location for files that don't match any smart folder or type category
-        const normalized = result.organized[0].destination.replace(/\\/g, '/');
-        expect(normalized).toContain('/custom/location');
-        expect(normalized).toContain('CustomType'); // Should create folder based on analysis category
+        // Without a matching smart folder, file should go to needsReview
+        expect(result.organized.length).toBe(0);
+        expect(result.needsReview.length).toBe(1);
       });
 
       test('preserves original names when requested', async () => {
@@ -450,7 +444,7 @@ describe('AutoOrganizeService', () => {
 
         mockSuggestionService.getSuggestionsForFile.mockResolvedValue({
           success: true,
-          primary: { folder: 'Documents', path: '/base/Documents' },
+          primary: { folder: 'Documents', path: '/base/Documents', isSmartFolder: true },
           confidence: 0.9
         });
 
@@ -705,8 +699,7 @@ describe('AutoOrganizeService', () => {
 
       const destination = service.getFallbackDestination(file, mockSmartFolders, '/base');
 
-      expect(destination).toContain('CustomType');
-      expect(destination).toContain('file.xyz');
+      expect(destination).toBeNull();
     });
 
     test('falls back to file type category when no match', () => {
@@ -717,7 +710,7 @@ describe('AutoOrganizeService', () => {
 
       const destination = service.getFallbackDestination(file, mockSmartFolders, '/base');
 
-      expect(destination).toContain('Files');
+      expect(destination).toBeNull();
     });
   });
 

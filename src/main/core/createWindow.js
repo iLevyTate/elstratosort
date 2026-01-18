@@ -123,7 +123,8 @@ function createMainWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
+      // FIX CRIT-26: Enable sandbox for better security
+      sandbox: true,
       enableRemoteModule: false,
       preload: getPreloadPath(),
       webSecurity: true,
@@ -363,7 +364,8 @@ function createMainWindow() {
       'https://docs.github.com',
       'https://microsoft.com',
       'https://docs.microsoft.com',
-      'https://ollama.ai'
+      'https://ollama.ai',
+      'https://ollama.com' // FIX HIGH-60: Added ollama.com
     ];
     if (allowedDomains.some((domain) => url.startsWith(domain))) {
       shell.openExternal(url);

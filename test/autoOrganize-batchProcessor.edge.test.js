@@ -45,7 +45,10 @@ describe('autoOrganize batchProcessor edge cases', () => {
       },
       results,
       { recordFeedback: jest.fn().mockResolvedValue() },
-      { requireReview: 0.4 }
+      [
+        { name: 'FolderA', path: '/dest/A', isDefault: true },
+        { name: 'FolderB', path: '/dest/B' }
+      ]
     );
 
     expect(results.operations).toHaveLength(2);
@@ -69,7 +72,7 @@ describe('autoOrganize batchProcessor edge cases', () => {
       },
       results,
       { recordFeedback: jest.fn().mockResolvedValue() },
-      { requireReview: 0.4 }
+      []
     );
     expect(results.operations).toHaveLength(0);
     expect(results.organized).toHaveLength(0);

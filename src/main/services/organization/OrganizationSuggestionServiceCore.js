@@ -8,12 +8,16 @@
  */
 
 const os = require('os');
-const { logger } = require('../../../shared/logger');
+const path = require('path');
+const { logger: baseLogger, createLogger } = require('../../../shared/logger');
 const { LIMITS } = require('../../../shared/performanceConstants');
 const { globalBatchProcessor } = require('../../utils/llmOptimization');
 const { cosineSimilarity } = require('../../../shared/vectorMath');
 const { getSemanticFileId, stripSemanticPrefix } = require('../../../shared/fileIdUtils');
-const { findDefaultFolder, createDefaultFolder } = require('../autoOrganize/folderOperations');
+const { normalizePathForIndex } = require('../../../shared/pathSanitization');
+const { findDefaultFolder } = require('../autoOrganize/folderOperations');
+const { readEmbeddingIndexMetadata } = require('../chromadb/embeddingIndexMetadata');
+const FolderMatchingService = require('../FolderMatchingService');
 
 // Extracted modules
 const {
@@ -26,6 +30,12 @@ const {
 } = require('./strategies');
 
 const { PatternMatcher } = require('./patternMatcher');
+const { FeedbackMemoryStore } = require('./feedbackMemoryStore');
+const {
+  buildMemoryEntry,
+  applyMemoryRuleAdjustments,
+  normalizeText
+} = require('./feedbackMemoryUtils');
 
 const { rankSuggestions, calculateConfidence, generateExplanation } = require('./suggestionRanker');
 
@@ -48,7 +58,20 @@ const {
   generateFileSummary
 } = require('./filePatternAnalyzer');
 
-logger.setContext('OrganizationSuggestionService');
+const logger =
+  typeof createLogger === 'function' ? createLogger('OrganizationSuggestionService') : baseLogger;
+if (typeof createLogger !== 'function' && logger?.setContext) {
+  logger.setContext('OrganizationSuggestionService');
+}
+
+const ROUTING_MODES = Object.freeze({
+  AUTO: 'auto',
+  LLM: 'llm',
+  EMBEDDING: 'embedding',
+  HYBRID: 'hybrid'
+});
+
+const DEFAULT_ROUTING_MODE = ROUTING_MODES.AUTO;
 
 /**
  * Calculate optimal concurrency based on CPU cores
@@ -56,6 +79,53 @@ logger.setContext('OrganizationSuggestionService');
 function calculateOptimalConcurrency() {
   const cpuCores = os.cpus().length;
   return Math.min(Math.max(2, Math.floor(cpuCores * 0.75)), 8);
+}
+
+function buildSmartFolderIndex(smartFolders = []) {
+  const byId = new Map();
+  const byName = new Map();
+  const byPath = new Map();
+
+  for (const folder of smartFolders) {
+    // MED-12: Validate smartFolders elements
+    if (!folder || typeof folder !== 'object') continue;
+    if (!folder.id && !folder.name && !folder.path) continue;
+
+    if (folder.id) {
+      byId.set(String(folder.id), folder);
+    }
+    if (folder.name) {
+      byName.set(String(folder.name).toLowerCase(), folder);
+    }
+    if (folder.path) {
+      byPath.set(normalizePathForIndex(String(folder.path)), folder);
+    }
+  }
+
+  return { byId, byName, byPath };
+}
+
+function findSmartFolderMatch(suggestion, index) {
+  if (!suggestion || !index) return null;
+
+  const idCandidate = suggestion.folderId || suggestion.id;
+  if (idCandidate && index.byId.has(String(idCandidate))) {
+    return index.byId.get(String(idCandidate));
+  }
+
+  if (suggestion.path) {
+    const normalizedPath = normalizePathForIndex(String(suggestion.path));
+    if (index.byPath.has(normalizedPath)) {
+      return index.byPath.get(normalizedPath);
+    }
+  }
+
+  const nameCandidate = suggestion.folder || suggestion.name;
+  if (nameCandidate && index.byName.has(String(nameCandidate).toLowerCase())) {
+    return index.byName.get(String(nameCandidate).toLowerCase());
+  }
+
+  return null;
 }
 
 /**
@@ -107,6 +177,8 @@ class OrganizationSuggestionServiceCore {
       strategyMatchThreshold: config.strategyMatchThreshold || 0.3,
       patternSimilarityThreshold: config.patternSimilarityThreshold || 0.5,
       topKSemanticMatches: config.topKSemanticMatches || 8,
+      hybridLLMThreshold: config.hybridLLMThreshold || 0.55,
+      embeddingFirstMinFileEmbeddings: config.embeddingFirstMinFileEmbeddings || 50,
       maxFeedbackHistory: config.maxFeedbackHistory || 1000,
       llmTemperature: config.llmTemperature || 0.7,
       llmMaxTokens: config.llmMaxTokens || 500,
@@ -135,11 +207,20 @@ class OrganizationSuggestionServiceCore {
       saveThrottleMs: 5000
     });
 
+    this.feedbackMemoryStore = new FeedbackMemoryStore({
+      filename: 'feedback-memory.json',
+      saveThrottleMs: 5000
+    });
+
     // FIX: CRITICAL - Track loading promise to prevent race condition
     // Previously, this was fire-and-forget which could cause:
     // 1. Suggestions generated without historical patterns
     // 2. recordFeedback overwriting patterns before they're loaded
     this._loadingPatterns = this._loadPatternsAsync();
+    this._loadingFeedbackMemory = this._loadFeedbackMemoryAsync();
+    this._rebuildingFeedbackMemory = false;
+    // FIX C-2: Track whether patterns have been successfully loaded
+    this._patternsLoaded = false;
   }
 
   /**
@@ -149,10 +230,169 @@ class OrganizationSuggestionServiceCore {
    * @returns {Promise<void>}
    */
   async _ensurePatternsLoaded() {
+    // FIX C-2: Check flag first to avoid unnecessary await
+    // FIX HIGH-10: Check _patternsLoadedSuccessfully to allow retry on failure
+    if (this._patternsLoaded && this._patternsLoadedSuccessfully) {
+      return;
+    }
+    // If loaded but failed, retry loading
+    if (this._patternsLoaded && !this._patternsLoadedSuccessfully && !this._loadingPatterns) {
+      this._loadingPatterns = this._loadPatternsAsync();
+    }
+    // Wait for loading if in progress
     if (this._loadingPatterns) {
       await this._loadingPatterns;
-      this._loadingPatterns = null;
     }
+    // Note: _patternsLoaded is set by _loadPatternsAsync on success
+  }
+
+  async _loadFeedbackMemoryAsync() {
+    try {
+      await this.feedbackMemoryStore.load();
+    } catch (error) {
+      logger.warn('Failed to load feedback memory', { error: error.message });
+    }
+  }
+
+  async _ensureFeedbackMemoryLoaded() {
+    if (this._loadingFeedbackMemory) {
+      await this._loadingFeedbackMemory;
+      this._loadingFeedbackMemory = null;
+    }
+  }
+
+  async _getRoutingModeSetting() {
+    try {
+      if (!this.settings || typeof this.settings.load !== 'function') {
+        return DEFAULT_ROUTING_MODE;
+      }
+      const settings = await this.settings.load();
+      const mode = String(settings?.smartFolderRoutingMode || DEFAULT_ROUTING_MODE).toLowerCase();
+      return Object.values(ROUTING_MODES).includes(mode) ? mode : DEFAULT_ROUTING_MODE;
+    } catch (error) {
+      logger.warn('[OrganizationSuggestionService] Failed to load routing mode setting', {
+        error: error.message
+      });
+      return DEFAULT_ROUTING_MODE;
+    }
+  }
+
+  async _getEmbeddingHealth() {
+    let stats = null;
+    try {
+      stats = await this.chromaDb.getStats();
+    } catch (error) {
+      return {
+        available: false,
+        reason: 'chroma_stats_failed',
+        error: error.message
+      };
+    }
+
+    const fileCount = Number(stats?.files ?? 0);
+    const hasFileEmbeddings = fileCount > 0;
+
+    let settings = null;
+    try {
+      settings = await this.settings?.load?.();
+    } catch (error) {
+      settings = null;
+    }
+
+    let embeddingIndex = null;
+    try {
+      embeddingIndex = await readEmbeddingIndexMetadata();
+    } catch {
+      embeddingIndex = null;
+    }
+
+    const configuredEmbeddingModel = settings?.embeddingModel;
+    const embeddingModelMismatch =
+      Boolean(embeddingIndex?.model) &&
+      typeof configuredEmbeddingModel === 'string' &&
+      embeddingIndex.model !== configuredEmbeddingModel;
+
+    if (embeddingModelMismatch) {
+      return {
+        available: false,
+        reason: 'embedding_model_mismatch',
+        stats,
+        embeddingIndex
+      };
+    }
+
+    if (!hasFileEmbeddings) {
+      return {
+        available: false,
+        reason: 'no_embeddings',
+        stats
+      };
+    }
+
+    const lowCoverage = fileCount < this.config.embeddingFirstMinFileEmbeddings;
+
+    return {
+      available: true,
+      reason: lowCoverage ? 'partial_embeddings' : 'healthy_embeddings',
+      stats,
+      embeddingIndex,
+      lowCoverage
+    };
+  }
+
+  async _resolveRoutingMode() {
+    const settingMode = await this._getRoutingModeSetting();
+    if (settingMode !== ROUTING_MODES.AUTO) {
+      return { mode: settingMode, reason: 'settings_override' };
+    }
+
+    const health = await this._getEmbeddingHealth();
+    if (!health.available) {
+      return { mode: ROUTING_MODES.LLM, reason: health.reason, health };
+    }
+
+    if (health.lowCoverage) {
+      return { mode: ROUTING_MODES.HYBRID, reason: health.reason, health };
+    }
+
+    return { mode: ROUTING_MODES.EMBEDDING, reason: health.reason, health };
+  }
+
+  _buildLlmCategorySuggestion(file, smartFolders) {
+    const analysis = file?.analysis || {};
+    const rawCategory =
+      analysis.smartFolder ||
+      analysis.folder ||
+      analysis.category ||
+      analysis.type ||
+      analysis.purpose;
+    // MED-21: Ensure rawCategory is string before trim()
+    if (typeof rawCategory !== 'string' || !rawCategory.trim()) {
+      return null;
+    }
+
+    const matchedFolder = FolderMatchingService.matchCategoryToFolder(rawCategory, smartFolders);
+    const folderMatch = smartFolders.find(
+      (f) => String(f?.name || '').toLowerCase() === String(matchedFolder || '').toLowerCase()
+    );
+    const rawConfidence = Number(analysis.confidence);
+    const confidence =
+      Number.isFinite(rawConfidence) && rawConfidence > 1
+        ? Math.min(1, rawConfidence / 100)
+        : Number.isFinite(rawConfidence)
+          ? Math.min(1, Math.max(0, rawConfidence))
+          : 0.6;
+
+    return {
+      folder: matchedFolder,
+      path: folderMatch?.path || '',
+      description: folderMatch?.description || '',
+      score: confidence,
+      confidence,
+      method: 'llm_category',
+      source: 'llm',
+      isSmartFolder: Boolean(folderMatch)
+    };
   }
 
   /**
@@ -193,8 +433,19 @@ class OrganizationSuggestionServiceCore {
       if (stored) {
         this.patternMatcher.loadPatterns(stored);
       }
+      // FIX C-2: Mark patterns as loaded on success
+      this._patternsLoaded = true;
+      // FIX H-5: Track successful load separately to allow retry on transient failures
+      this._patternsLoadedSuccessfully = true;
     } catch (error) {
       logger.warn('Failed to load user patterns', { error: error.message });
+      // FIX H-5: Mark as loaded to prevent immediate retry loops, but track failure
+      // This allows future operations to check if patterns were actually loaded successfully
+      this._patternsLoaded = true;
+      this._patternsLoadedSuccessfully = false;
+    } finally {
+      // Clear the loading promise reference
+      this._loadingPatterns = null;
     }
   }
 
@@ -226,8 +477,14 @@ class OrganizationSuggestionServiceCore {
   async getSuggestionsForFile(file, smartFolders = [], options = {}) {
     // FIX: Ensure patterns are loaded before generating suggestions
     await this._ensurePatternsLoaded();
+    await this._ensureFeedbackMemoryLoaded();
 
-    const { includeStructureAnalysis = true, includeAlternatives = true } = options;
+    const {
+      includeStructureAnalysis = true,
+      includeAlternatives = true,
+      routingModeOverride,
+      routingReason
+    } = options;
 
     // Validate inputs
     if (!file || typeof file !== 'object') {
@@ -236,7 +493,14 @@ class OrganizationSuggestionServiceCore {
     if (!file.name || typeof file.name !== 'string') {
       throw new Error('Invalid file object: file.name is required');
     }
-    if (!file.extension || typeof file.extension !== 'string') {
+    const providedExtension = typeof file.extension === 'string' ? file.extension.trim() : '';
+    const inferredExtension =
+      providedExtension ||
+      path
+        .extname(file.path || file.name || '')
+        .replace('.', '')
+        .trim();
+    if (!inferredExtension) {
       throw new Error('Invalid file object: file.extension is required');
     }
     if (!Array.isArray(smartFolders)) {
@@ -245,38 +509,81 @@ class OrganizationSuggestionServiceCore {
     if (file.name.length > LIMITS.MAX_FILENAME_LENGTH) {
       throw new Error('Invalid file object: file.name exceeds maximum length');
     }
-    if (file.extension.length > 50) {
+    if (inferredExtension.length > 50) {
       throw new Error('Invalid file object: file.extension exceeds maximum length');
     }
     if (!file.path || typeof file.path !== 'string') {
       throw new Error('Invalid file object: file.path is required');
     }
 
+    let normalizedFile = file;
+    if (providedExtension !== inferredExtension) {
+      normalizedFile = { ...file, extension: inferredExtension };
+    }
+
     try {
-      // Ensure smart folders have embeddings
-      if (smartFolders && smartFolders.length > 0) {
+      const routing =
+        routingModeOverride && Object.values(ROUTING_MODES).includes(routingModeOverride)
+          ? { mode: routingModeOverride, reason: routingReason || 'override' }
+          : await this._resolveRoutingMode();
+
+      if (routing.mode === ROUTING_MODES.LLM) {
+        logger.debug('[OrganizationSuggestionService] Routing mode: LLM-only', {
+          reason: routing.reason
+        });
+      } else {
+        logger.debug('[OrganizationSuggestionService] Routing mode selected', {
+          mode: routing.mode,
+          reason: routing.reason
+        });
+      }
+
+      // Ensure smart folders have embeddings when semantic matching is active
+      if (routing.mode !== ROUTING_MODES.LLM && smartFolders && smartFolders.length > 0) {
         await this.ensureSmartFolderEmbeddings(smartFolders);
       }
 
       // Get suggestions from all sources
-      const semanticMatches = await this.getSemanticFolderMatches(file, smartFolders);
+      const semanticMatches =
+        routing.mode === ROUTING_MODES.LLM
+          ? []
+          : await this.getSemanticFolderMatches(normalizedFile, smartFolders);
       const strategyMatches = getStrategyBasedSuggestions(
-        file,
+        normalizedFile,
         smartFolders,
         this.config.strategyMatchThreshold
       );
-      const patternMatches = this.patternMatcher.getPatternBasedSuggestions(file);
+      const patternMatches = this.patternMatcher.getPatternBasedSuggestions(normalizedFile);
+
+      const semanticTopScore =
+        semanticMatches.length > 0 ? Number(semanticMatches[0]?.score || 0) : 0;
+      const hybridNeedsLlm =
+        routing.mode === ROUTING_MODES.HYBRID &&
+        (semanticMatches.length === 0 || semanticTopScore < this.config.hybridLLMThreshold);
+      const forceLlmSuggestions = routing.mode === ROUTING_MODES.LLM || hybridNeedsLlm;
 
       // Optimization: Only request LLM creative suggestions if alternatives are requested
       // This prevents "hallucinated" new folders from becoming the primary suggestion during auto-organize
-      const llmSuggestions = includeAlternatives
-        ? await getLLMAlternativeSuggestions(file, smartFolders, this.config)
-        : [];
+      const llmSuggestions =
+        includeAlternatives || forceLlmSuggestions
+          ? await getLLMAlternativeSuggestions(normalizedFile, smartFolders, this.config)
+          : [];
 
-      const improvementSuggestions = await this.getImprovementSuggestions(file, smartFolders);
+      const llmCategorySuggestion =
+        routing.mode === ROUTING_MODES.LLM
+          ? this._buildLlmCategorySuggestion(normalizedFile, smartFolders)
+          : null;
+
+      const improvementSuggestions = await this.getImprovementSuggestions(
+        normalizedFile,
+        smartFolders
+      );
 
       // Get cluster-based suggestions (if clustering is available)
-      const clusterSuggestions = await this.getClusterBasedSuggestions(file, smartFolders);
+      const clusterSuggestions = await this.getClusterBasedSuggestions(
+        normalizedFile,
+        smartFolders
+      );
 
       // Combine and tag suggestions
       const allSuggestions = [];
@@ -297,6 +604,9 @@ class OrganizationSuggestionServiceCore {
         suggestion.source = suggestion.source || 'llm';
         allSuggestions.push(suggestion);
       }
+      if (llmCategorySuggestion) {
+        allSuggestions.push(llmCategorySuggestion);
+      }
       for (const suggestion of improvementSuggestions) {
         suggestion.source = 'improvement';
         allSuggestions.push(suggestion);
@@ -306,17 +616,49 @@ class OrganizationSuggestionServiceCore {
         allSuggestions.push(suggestion);
       }
 
+      const smartFolderIndex = buildSmartFolderIndex(smartFolders);
+      const normalizedSuggestions = allSuggestions.map((suggestion) => {
+        const match = findSmartFolderMatch(suggestion, smartFolderIndex);
+        if (!match) {
+          return { ...suggestion, isSmartFolder: false };
+        }
+
+        return {
+          ...suggestion,
+          folder: match.name || suggestion.folder,
+          path: match.path || suggestion.path,
+          description: match.description || suggestion.description,
+          isSmartFolder: true,
+          folderId: match.id || suggestion.folderId
+        };
+      });
+
       // Rank suggestions (cluster-consistent ones get boosted)
-      let rankedSuggestions = rankSuggestions(allSuggestions);
+      let rankedSuggestions = rankSuggestions(normalizedSuggestions);
 
       // Apply additional cluster boost to top suggestions
-      rankedSuggestions = await this.boostClusterConsistentSuggestions(file, rankedSuggestions);
+      rankedSuggestions = await this.boostClusterConsistentSuggestions(
+        normalizedFile,
+        rankedSuggestions
+      );
 
-      // Ensure files always get a folder
-      if (rankedSuggestions.length === 0) {
-        const defaultSuggestion = await this._getDefaultFolderSuggestion(file, smartFolders);
+      // Apply memory-based adjustments (natural-language feedback)
+      rankedSuggestions = await this.applyFeedbackMemoryAdjustments(
+        normalizedFile,
+        rankedSuggestions
+      );
+
+      let primary = rankedSuggestions.find((suggestion) => suggestion.isSmartFolder) || null;
+      if (!primary) {
+        const defaultSuggestion = await this._getDefaultFolderSuggestion(
+          normalizedFile,
+          smartFolders
+        );
         if (defaultSuggestion) {
-          rankedSuggestions.push(defaultSuggestion);
+          primary = defaultSuggestion;
+          rankedSuggestions = [defaultSuggestion, ...rankedSuggestions];
+        } else if (rankedSuggestions.length > 0) {
+          primary = rankedSuggestions[0];
         }
       }
 
@@ -325,18 +667,20 @@ class OrganizationSuggestionServiceCore {
       if (includeStructureAnalysis) {
         folderImprovements = analyzeFolderStructure(
           smartFolders,
-          [file],
+          [normalizedFile],
           this.patternMatcher.folderUsageStats
         );
       }
 
       return {
         success: true,
-        primary: rankedSuggestions[0] || null,
-        alternatives: includeAlternatives ? rankedSuggestions.slice(1, 5) : [],
-        strategies: getApplicableStrategies(file),
-        confidence: calculateConfidence(rankedSuggestions[0]),
-        explanation: generateExplanation(rankedSuggestions[0], file),
+        primary,
+        alternatives: includeAlternatives
+          ? rankedSuggestions.filter((suggestion) => suggestion !== primary).slice(0, 5)
+          : [],
+        strategies: getApplicableStrategies(normalizedFile),
+        confidence: calculateConfidence(primary),
+        explanation: generateExplanation(primary, normalizedFile),
         folderImprovements
       };
     } catch (error) {
@@ -344,7 +688,7 @@ class OrganizationSuggestionServiceCore {
       return {
         success: false,
         error: error.message,
-        fallback: getFallbackSuggestion(file, smartFolders)
+        fallback: getFallbackSuggestion(normalizedFile, smartFolders)
       };
     }
   }
@@ -356,28 +700,11 @@ class OrganizationSuggestionServiceCore {
    */
   async _getDefaultFolderSuggestion(file, smartFolders) {
     // Use shared findDefaultFolder for consistent lookup
-    let defaultFolder = findDefaultFolder(smartFolders);
+    const defaultFolder = findDefaultFolder(smartFolders);
 
-    if (!defaultFolder) {
-      logger.warn('[OrganizationSuggestionService] No default folder, creating secure fallback');
-      // Use secure createDefaultFolder with proper path validation (UNC, symlink, traversal checks)
-      defaultFolder = await createDefaultFolder(smartFolders);
-    }
-
-    // Handle case where folder creation failed
-    if (!defaultFolder) {
-      logger.error('[OrganizationSuggestionService] Failed to create secure default folder');
-      return {
-        folder: 'Uncategorized',
-        path: null,
-        score: 0.1,
-        confidence: 0.1,
-        method: 'default_fallback',
-        description: 'Default folder for unmatched files (creation failed)',
-        source: 'default',
-        isSmartFolder: false,
-        creationFailed: true
-      };
+    if (!defaultFolder || !defaultFolder.path) {
+      logger.warn('[OrganizationSuggestionService] No default smart folder configured');
+      return null;
     }
 
     return {
@@ -388,7 +715,9 @@ class OrganizationSuggestionServiceCore {
       method: 'default_fallback',
       description: defaultFolder.description || 'Default folder for unmatched files',
       source: 'default',
-      isSmartFolder: true
+      isSmartFolder: true,
+      // MED-18: Consistent return structure (add folderId)
+      folderId: defaultFolder.id
     };
   }
 
@@ -400,6 +729,7 @@ class OrganizationSuggestionServiceCore {
     await this._ensurePatternsLoaded();
 
     try {
+      const routing = await this._resolveRoutingMode();
       const patterns = analyzeFilePatterns(files);
       const groups = new Map();
 
@@ -412,7 +742,11 @@ class OrganizationSuggestionServiceCore {
       const batchResult = await globalBatchProcessor.processBatch(
         files,
         async (file) => {
-          const suggestion = await this.getSuggestionsForFile(file, smartFolders, options);
+          const suggestion = await this.getSuggestionsForFile(file, smartFolders, {
+            ...options,
+            routingModeOverride: routing.mode,
+            routingReason: routing.reason
+          });
           return { file, suggestion };
         },
         { concurrency: optimalConcurrency, stopOnError: false }
@@ -452,7 +786,8 @@ class OrganizationSuggestionServiceCore {
         group.files.push({
           ...file,
           suggestion: suggestion.primary,
-          alternatives: suggestion.alternatives
+          alternatives: suggestion.alternatives,
+          confidence: suggestion.confidence
         });
 
         // Update average confidence (guard against division by zero)
@@ -494,13 +829,31 @@ class OrganizationSuggestionServiceCore {
 
       const embeddingPromises = smartFolders.map(async (folder) => {
         try {
-          const folderText = [folder.name, folder.description].filter(Boolean).join(' - ');
+          // FIX H-1: Validate folder object before accessing properties
+          if (!folder || typeof folder !== 'object') {
+            logger.warn('[OrganizationSuggestionService] Invalid folder object skipped');
+            return null;
+          }
+          const folderName = folder.name || '';
+          const folderText = [
+            folderName,
+            folder.description,
+            ...(Array.isArray(folder.keywords) ? folder.keywords : [])
+          ]
+            .filter(Boolean)
+            .join(' - ');
+
+          if (!folderText.trim()) {
+            logger.warn('[OrganizationSuggestionService] Empty folder text skipped');
+            return null;
+          }
+
           const { vector, model } = await this.folderMatcher.embedText(folderText);
           const folderId = folder.id || this.folderMatcher.generateFolderId(folder);
 
           return {
             id: folderId,
-            name: folder.name,
+            name: folderName,
             description: folder.description || '',
             path: folder.path || '',
             vector,
@@ -508,7 +861,11 @@ class OrganizationSuggestionServiceCore {
             updatedAt: new Date().toISOString()
           };
         } catch (error) {
-          logger.warn('[OrganizationSuggestionService] Failed to embed folder:', folder.name);
+          // FIX H-1: Use safe access for folder.name in error logging
+          logger.warn(
+            '[OrganizationSuggestionService] Failed to embed folder:',
+            folder?.name || 'unknown'
+          );
           return null;
         }
       });
@@ -539,11 +896,19 @@ class OrganizationSuggestionServiceCore {
       const fileId = getSemanticFileId(file.path);
       const summary = generateFileSummary(file);
 
-      await this.folderMatcher.upsertFileEmbedding(fileId, summary, {
-        path: file.path,
-        name: file.name,
-        analysis: file.analysis
-      });
+      await this.folderMatcher.upsertFileEmbedding(
+        fileId,
+        summary,
+        {
+          path: file.path,
+          name: file.name,
+          analysis: file.analysis,
+          // Explicitly mark this as a metadata-based embedding to prevent overwriting
+          // full-text embeddings generated by the analysis pipeline
+          extractionMethod: 'metadata_summary'
+        },
+        { checkExisting: true }
+      );
 
       const matches = await this.folderMatcher.matchFileToFolders(
         fileId,
@@ -558,26 +923,31 @@ class OrganizationSuggestionServiceCore {
       const suggestions = [];
       for (const match of matches) {
         const smartFolder = smartFolders.find(
-          (f) => f.id === match.folderId || f.name === match.name || f.path === match.path
+          (f) => f?.id === match.folderId || f?.name === match.name || f?.path === match.path
         );
 
         // Weight the match score by analysis confidence
         // High-confidence analysis (90%) keeps most of score, low-confidence (40%) is dampened
         const weightedScore = match.score * confidenceMultiplier;
 
-        if (smartFolder || weightedScore > this.config.semanticMatchThreshold) {
-          suggestions.push({
-            folder: smartFolder?.name || match.name,
-            path: smartFolder?.path || match.path,
-            score: weightedScore,
-            confidence: weightedScore,
-            baseScore: match.score,
-            analysisConfidence,
-            description: smartFolder?.description || match.description,
-            method: 'semantic_embedding',
-            isSmartFolder: !!smartFolder
-          });
+        if (!smartFolder) {
+          continue;
         }
+        if (weightedScore < this.config.semanticMatchThreshold) {
+          continue;
+        }
+
+        suggestions.push({
+          folder: smartFolder.name,
+          path: smartFolder.path,
+          score: weightedScore,
+          confidence: weightedScore,
+          baseScore: match.score,
+          analysisConfidence,
+          description: smartFolder.description || match.description,
+          method: 'semantic_embedding',
+          isSmartFolder: true
+        });
       }
 
       return suggestions;
@@ -629,7 +999,304 @@ class OrganizationSuggestionServiceCore {
     await this._ensurePatternsLoaded();
 
     this.patternMatcher.recordFeedback(file, suggestion, accepted);
+    if (suggestion?.note || suggestion?.feedbackNote) {
+      logger.debug(
+        '[OrganizationSuggestionService] Suggestion contains note field; use recordFeedbackNote.'
+      );
+    }
     return this._savePatterns();
+  }
+
+  async recordFeedbackNote(file, suggestion, accepted, note) {
+    await this._ensureFeedbackMemoryLoaded();
+    const normalized = normalizeText(note);
+    if (!normalized) return null;
+
+    const entry = await this.addFeedbackMemory(normalized, {
+      source: accepted ? 'feedback_accept' : 'feedback_reject',
+      targetFolder: suggestion?.folder || null,
+      scope: suggestion?.folder ? { type: 'folder', value: suggestion.folder } : { type: 'global' }
+    });
+    return entry;
+  }
+
+  async addFeedbackMemory(text, metadata = {}) {
+    await this._ensureFeedbackMemoryLoaded();
+    const entry = buildMemoryEntry(text, metadata);
+    if (!entry) return null;
+
+    // FIX H-2: Wrap feedbackMemoryStore.add in try-catch to handle storage failures
+    let stored;
+    try {
+      stored = await this.feedbackMemoryStore.add(entry);
+    } catch (storeError) {
+      logger.error('[OrganizationSuggestionService] Failed to add feedback memory to store:', {
+        error: storeError.message
+      });
+      return null;
+    }
+
+    if (this.chromaDb && this.folderMatcher) {
+      try {
+        const { vector, model } = await this.folderMatcher.embedText(stored.text);
+        const payload = {
+          id: stored.id,
+          vector,
+          metadata: {
+            targetFolder: stored.targetFolder,
+            source: stored.source,
+            model
+          },
+          document: stored.text
+        };
+        await this.chromaDb.upsertFeedbackMemory(payload);
+        await this.feedbackMemoryStore.update(stored.id, { embeddingModel: model });
+      } catch (error) {
+        if (String(error.message).includes('dimension mismatch')) {
+          logger.warn('[OrganizationSuggestionService] Resetting feedback memory collection');
+          await this.chromaDb.resetFeedbackMemory();
+          try {
+            const { vector, model } = await this.folderMatcher.embedText(stored.text);
+            await this.chromaDb.upsertFeedbackMemory({
+              id: stored.id,
+              vector,
+              metadata: {
+                targetFolder: stored.targetFolder,
+                source: stored.source,
+                model
+              },
+              document: stored.text
+            });
+            await this.feedbackMemoryStore.update(stored.id, { embeddingModel: model });
+          } catch (retryError) {
+            logger.warn('[OrganizationSuggestionService] Retry upsert failed', {
+              error: retryError.message
+            });
+            // FIX L-1: Schedule a full rebuild to recover from repeated dimension mismatches
+            try {
+              await this.rebuildFeedbackMemoryEmbeddings();
+            } catch (rebuildError) {
+              logger.warn('[OrganizationSuggestionService] Feedback memory rebuild failed', {
+                error: rebuildError.message
+              });
+            }
+          }
+        } else {
+          logger.warn('[OrganizationSuggestionService] Failed to upsert feedback memory', {
+            error: error.message
+          });
+        }
+      }
+    }
+
+    return stored;
+  }
+
+  async listFeedbackMemory() {
+    await this._ensureFeedbackMemoryLoaded();
+    return this.feedbackMemoryStore.list();
+  }
+
+  async updateFeedbackMemory(id, text, metadata = {}) {
+    await this._ensureFeedbackMemoryLoaded();
+    const normalized = normalizeText(text);
+    if (!normalized) return null;
+
+    const existingList = await this.feedbackMemoryStore.list();
+    const existing = existingList.find((entry) => entry.id === id);
+    if (!existing) return null;
+
+    const { rules, targetFolder } = buildMemoryEntry(normalized, metadata) || {};
+    const updatedAt = new Date().toISOString();
+    const updated = await this.feedbackMemoryStore.update(id, {
+      text: normalized,
+      rules: rules || [],
+      targetFolder: metadata.targetFolder || targetFolder || existing.targetFolder || null,
+      scope: metadata.scope || existing.scope,
+      source: metadata.source || existing.source,
+      updatedAt
+    });
+
+    if (updated && this.chromaDb && this.folderMatcher) {
+      try {
+        const { vector, model } = await this.folderMatcher.embedText(updated.text);
+        await this.chromaDb.upsertFeedbackMemory({
+          id: updated.id,
+          vector,
+          metadata: {
+            targetFolder: updated.targetFolder,
+            source: updated.source,
+            model
+          },
+          document: updated.text
+        });
+        await this.feedbackMemoryStore.update(updated.id, { embeddingModel: model });
+      } catch (error) {
+        if (String(error.message).includes('dimension mismatch')) {
+          await this.rebuildFeedbackMemoryEmbeddings();
+        } else {
+          logger.warn(
+            '[OrganizationSuggestionService] Failed to update feedback memory embedding',
+            {
+              error: error.message
+            }
+          );
+        }
+      }
+    }
+
+    return updated;
+  }
+
+  async deleteFeedbackMemory(id) {
+    await this._ensureFeedbackMemoryLoaded();
+    const removed = await this.feedbackMemoryStore.remove(id);
+    if (removed && this.chromaDb) {
+      try {
+        await this.chromaDb.deleteFeedbackMemory(id);
+      } catch (error) {
+        logger.warn('[OrganizationSuggestionService] Failed to delete feedback memory vector', {
+          error: error.message
+        });
+      }
+    }
+    return removed;
+  }
+
+  async applyFeedbackMemoryAdjustments(file, rankedSuggestions) {
+    if (!Array.isArray(rankedSuggestions) || rankedSuggestions.length === 0) {
+      return rankedSuggestions;
+    }
+
+    const memories = await this.feedbackMemoryStore.list();
+    if (!memories || memories.length === 0) {
+      return rankedSuggestions;
+    }
+
+    let memoryMatches = [];
+    if (this.chromaDb && this.folderMatcher) {
+      try {
+        const summary = generateFileSummary(file);
+        const { vector } = await this.folderMatcher.embedText(summary || file.name);
+        memoryMatches = await this.chromaDb.queryFeedbackMemory(vector, 5);
+        // MED-16: Validate response is array
+        if (!Array.isArray(memoryMatches)) {
+          memoryMatches = [];
+        }
+      } catch (error) {
+        logger.warn('[OrganizationSuggestionService] Feedback memory query failed', {
+          error: error.message
+        });
+        if (String(error.message).includes('dimension mismatch')) {
+          await this.rebuildFeedbackMemoryEmbeddings();
+        }
+      }
+    }
+
+    const memoryById = new Map(memories.map((entry) => [entry.id, entry]));
+
+    const latestExtensionRules = new Map();
+    for (const entry of memories) {
+      for (const rule of entry.rules || []) {
+        if (rule.type !== 'extension_to_folder') continue;
+        const ext = rule.extension?.toLowerCase();
+        if (!ext) continue;
+        const timestamp = Date.parse(entry.updatedAt || entry.createdAt || 0) || 0;
+        const existing = latestExtensionRules.get(ext);
+        if (!existing || timestamp > existing.timestamp) {
+          latestExtensionRules.set(ext, { rule, timestamp });
+        }
+      }
+    }
+
+    const adjusted = rankedSuggestions.map((suggestion) => {
+      const suggestionFolder = suggestion.folder || suggestion.path;
+      const baseScore = Number.isFinite(suggestion.score)
+        ? suggestion.score
+        : Number.isFinite(suggestion.confidence)
+          ? suggestion.confidence
+          : 0;
+
+      let boost = 0;
+      let penalty = 0;
+
+      const extKey = String(file.extension || '')
+        .replace('.', '')
+        .toLowerCase();
+      const latestRule = latestExtensionRules.get(extKey);
+      if (latestRule?.rule) {
+        const ruleAdjust = applyMemoryRuleAdjustments({
+          fileExtension: file.extension,
+          suggestionFolder,
+          rules: [latestRule.rule]
+        });
+        boost = Math.max(boost, ruleAdjust.boost);
+        penalty = Math.max(penalty, ruleAdjust.penalty);
+      }
+
+      for (const match of memoryMatches) {
+        const entry = memoryById.get(match.id);
+        if (!entry?.targetFolder) continue;
+        if (
+          suggestionFolder &&
+          entry.targetFolder.toLowerCase() === suggestionFolder.toLowerCase()
+        ) {
+          boost = Math.max(boost, Math.min(0.15, match.score * 0.15));
+        }
+      }
+
+      const adjustedScore = Math.max(0, Math.min(1, baseScore + boost - penalty));
+      const updated = {
+        ...suggestion,
+        score: adjustedScore,
+        confidence: adjustedScore
+      };
+
+      if (boost > 0 || penalty > 0) {
+        updated.memoryAdjustment = {
+          boost,
+          penalty
+        };
+      }
+
+      return updated;
+    });
+
+    return adjusted.sort((a, b) => (b.score || 0) - (a.score || 0));
+  }
+
+  async rebuildFeedbackMemoryEmbeddings() {
+    if (this._rebuildingFeedbackMemory) return;
+    if (!this.chromaDb || !this.folderMatcher) return;
+    this._rebuildingFeedbackMemory = true;
+    try {
+      const entries = await this.feedbackMemoryStore.list();
+      if (!entries || entries.length === 0) return;
+      await this.chromaDb.resetFeedbackMemory();
+      for (const entry of entries) {
+        try {
+          const { vector, model } = await this.folderMatcher.embedText(entry.text);
+          await this.chromaDb.upsertFeedbackMemory({
+            id: entry.id,
+            vector,
+            metadata: {
+              targetFolder: entry.targetFolder,
+              source: entry.source,
+              model
+            },
+            document: entry.text
+          });
+          await this.feedbackMemoryStore.update(entry.id, { embeddingModel: model });
+        } catch (error) {
+          logger.warn('[OrganizationSuggestionService] Failed to rebuild memory entry', {
+            id: entry.id,
+            error: error.message
+          });
+        }
+      }
+    } finally {
+      this._rebuildingFeedbackMemory = false;
+    }
   }
 
   /**
@@ -719,8 +1386,9 @@ class OrganizationSuggestionServiceCore {
 
       // Get the most common folder assignments for cluster members
       const folderVotes = new Map();
+      const clusterMembers = fileCluster.members || [];
 
-      for (const member of fileCluster.members) {
+      for (const member of clusterMembers) {
         if (member.id === fileId) continue;
 
         const memberPath = member.metadata?.path || stripSemanticPrefix(member.id);
@@ -739,7 +1407,9 @@ class OrganizationSuggestionServiceCore {
       const suggestions = [];
       for (const [, vote] of folderVotes) {
         const avgScore = vote.count > 0 ? vote.totalScore / vote.count : 0;
-        const clusterConsistency = vote.count / fileCluster.members.length;
+        // FIX M-3: Guard against division by zero when cluster has no members
+        const memberCount = clusterMembers.length || 1;
+        const clusterConsistency = memberCount > 0 ? vote.count / memberCount : 0;
 
         suggestions.push({
           folder: vote.folder.name,
@@ -749,7 +1419,7 @@ class OrganizationSuggestionServiceCore {
           description: vote.folder.description,
           method: 'cluster_membership',
           clusterLabel: fileCluster.label || `Cluster ${fileCluster.id}`,
-          clusterSize: fileCluster.members.length,
+          clusterSize: clusterMembers.length,
           clusterPeersInFolder: vote.count,
           isSmartFolder: true
         });
@@ -759,8 +1429,11 @@ class OrganizationSuggestionServiceCore {
       if (suggestions.length === 0 && fileCluster.label) {
         const labelLower = fileCluster.label.toLowerCase();
         for (const folder of smartFolders) {
-          const folderNameLower = folder.name.toLowerCase();
-          const folderDescLower = (folder.description || '').toLowerCase();
+          const folderNameLower = (folder?.name || '').toLowerCase();
+          const folderDescLower = (folder?.description || '').toLowerCase();
+          if (!folderNameLower && !folderDescLower) {
+            continue;
+          }
 
           // Check if folder name/description matches cluster label
           if (
@@ -776,7 +1449,7 @@ class OrganizationSuggestionServiceCore {
               description: folder.description,
               method: 'cluster_label_match',
               clusterLabel: fileCluster.label,
-              clusterSize: fileCluster.members.length,
+              clusterSize: clusterMembers.length,
               isSmartFolder: true
             });
           }
@@ -816,15 +1489,28 @@ class OrganizationSuggestionServiceCore {
       }
 
       const clusters = this.clustering.clusters || [];
-      const fileIdSet = new Set(files.map((f) => getSemanticFileId(f.path)));
+      // FIX M-2: Wrap getSemanticFileId in try-catch to handle invalid paths
+      const fileIdSet = new Set(
+        files
+          .map((f) => {
+            try {
+              return getSemanticFileId(f.path);
+            } catch (e) {
+              logger.warn('[OrganizationSuggestionService] Failed to get file ID:', f.path);
+              return null;
+            }
+          })
+          .filter(Boolean)
+      );
       const groups = [];
       const outliers = [];
 
       // Group files by cluster
       for (const cluster of clusters) {
         const clusterFiles = [];
+        const members = cluster.members || [];
 
-        for (const member of cluster.members) {
+        for (const member of members) {
           if (fileIdSet.has(member.id)) {
             const file = files.find((f) => getSemanticFileId(f.path) === member.id);
             if (file) {
@@ -898,7 +1584,10 @@ class OrganizationSuggestionServiceCore {
 
     // First pass: exact or close match on folder name
     for (const folder of smartFolders) {
-      const folderNameLower = folder.name.toLowerCase();
+      const folderNameLower = (folder?.name || '').toLowerCase();
+      if (!folderNameLower) {
+        continue;
+      }
       if (folderNameLower === labelLower || folderNameLower.includes(labelLower)) {
         return {
           folder: folder.name,
@@ -910,19 +1599,27 @@ class OrganizationSuggestionServiceCore {
     }
 
     // Second pass: keyword overlap
-    const labelWords = labelLower.split(/\s+/);
+    // MED-13: Limit split results to prevent memory issues with massive labels
+    const labelWords = labelLower.split(/\s+/).slice(0, 50);
     let bestMatch = null;
     let bestScore = 0;
 
     for (const folder of smartFolders) {
+      const folderName = folder?.name || '';
+      if (!folderName && !folder?.description && !Array.isArray(folder?.keywords)) {
+        continue;
+      }
       const folderWords = [
-        folder.name.toLowerCase(),
-        ...(folder.description || '').toLowerCase().split(/\s+/),
-        ...(folder.keywords || []).map((k) => k.toLowerCase())
+        folderName.toLowerCase(),
+        ...(folder?.description || '').toLowerCase().split(/\s+/),
+        ...(Array.isArray(folder?.keywords) ? folder.keywords : []).map((k) =>
+          String(k).toLowerCase()
+        )
       ];
 
       const overlap = labelWords.filter((w) => folderWords.some((fw) => fw.includes(w))).length;
-      const score = overlap / labelWords.length;
+      // MED-14: Prevent division by zero if labelWords is empty
+      const score = labelWords.length > 0 ? overlap / labelWords.length : 0;
 
       if (score > bestScore) {
         bestScore = score;
@@ -1093,6 +1790,24 @@ class OrganizationSuggestionServiceCore {
    */
   calculatePatternSimilarity(file, pattern) {
     return this.patternMatcher.calculatePatternSimilarity(file, pattern);
+  }
+
+  /**
+   * Shutdown the service, cancelling any pending operations
+   * FIX C-1: Call shutdown on persistence layers to prevent timer leaks
+   */
+  shutdown() {
+    try {
+      if (this.persistence) {
+        this.persistence.shutdown();
+      }
+      if (this.feedbackMemoryStore) {
+        this.feedbackMemoryStore.shutdown();
+      }
+      logger.info('[OrganizationSuggestionService] Shutdown complete');
+    } catch (error) {
+      logger.warn('[OrganizationSuggestionService] Error during shutdown:', error.message);
+    }
   }
 
   // Legacy compatibility getters and setters

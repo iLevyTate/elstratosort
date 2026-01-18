@@ -44,9 +44,9 @@ const LENIENT_URL_PATTERN =
 /**
  * Model name validation pattern
  * Allows alphanumeric with hyphens, underscores, dots, @, colons, slashes
- * Updated to allow single-char names and trailing special chars (e.g., "llama3:")
+ * FIX CRIT-21: Block path traversal (..) by using negative lookahead
  */
-const MODEL_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9\-_.@:/]*$/;
+const MODEL_NAME_PATTERN = /^(?!.*\.\.)[a-zA-Z0-9][a-zA-Z0-9\-_.@:/]*$/;
 
 /**
  * Maximum model name length

@@ -10,6 +10,15 @@ import PropTypes from 'prop-types';
 import { Layers, FileText, HelpCircle, Check, Search } from 'lucide-react';
 import { CONFIDENCE_COLORS, getConfidenceColor } from '../../utils/confidenceColors';
 
+const CATEGORY_COLORS = {
+  Documents: { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700' },
+  Spreadsheets: { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700' },
+  Images: { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700' },
+  Code: { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-700' },
+  Audio: { bg: 'bg-cyan-50', border: 'border-cyan-200', text: 'text-cyan-700' },
+  Videos: { bg: 'bg-pink-50', border: 'border-pink-200', text: 'text-pink-700' }
+};
+
 const ClusterLegend = memo(
   ({
     className = '',
@@ -128,6 +137,21 @@ const ClusterLegend = memo(
             </button>
           </div>
 
+          {/* NEW: File Categories */}
+          <div className="space-y-1 pt-2 border-t border-system-gray-100">
+            <div className="text-[10px] uppercase tracking-wider text-system-gray-400 font-medium">
+              File Categories
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {Object.entries(CATEGORY_COLORS).map(([cat, style]) => (
+                <div key={cat} className="flex items-center gap-2 text-[10px]">
+                  <div className={`w-3 h-3 rounded border ${style.bg} ${style.border}`} />
+                  <span className="text-system-gray-600">{cat}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Confidence levels */}
           <div className="space-y-1 pt-2 border-t border-system-gray-100">
             <div className="text-[10px] uppercase tracking-wider text-system-gray-400 font-medium">
@@ -207,47 +231,6 @@ const ClusterLegend = memo(
             </button>
           </div>
 
-          {/* Layout explanation (Static) */}
-          <div className="space-y-1 pt-2 border-t border-system-gray-100">
-            <div className="text-[10px] uppercase tracking-wider text-system-gray-400 font-medium">
-              Layout
-            </div>
-            <div className="text-[10px] text-system-gray-500 space-y-0.5 px-1">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span>Inner ring: High confidence</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-blue-400" />
-                <span>Middle ring: Medium confidence</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-gray-400" />
-                <span>Outer ring: Low confidence</span>
-              </div>
-              <div className="text-system-gray-400 mt-1 italic">
-                Connected clusters are placed nearby
-              </div>
-            </div>
-          </div>
-
-          {/* Size meaning (Static) */}
-          <div className="space-y-1 pt-2 border-t border-system-gray-100">
-            <div className="text-[10px] uppercase tracking-wider text-system-gray-400 font-medium">
-              Size
-            </div>
-            <div className="flex items-center gap-3 text-[11px] px-1">
-              <div className="flex items-center gap-1">
-                <div className="w-3 h-3 rounded bg-amber-100 border border-amber-300" />
-                <span className="text-system-gray-500">Few files</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <div className="w-5 h-5 rounded bg-amber-100 border border-amber-300" />
-                <span className="text-system-gray-500">Many files</span>
-              </div>
-            </div>
-          </div>
-
           {/* Interactions (Static) */}
           <div className="space-y-1 pt-2 border-t border-system-gray-100">
             <div className="text-[10px] uppercase tracking-wider text-system-gray-400 font-medium">
@@ -256,7 +239,7 @@ const ClusterLegend = memo(
             <div className="text-[10px] text-system-gray-500 space-y-0.5 px-1">
               <div>Double-click to expand cluster</div>
               <div>Drag to rearrange nodes</div>
-              <div>Dashed lines show related clusters</div>
+              <div>Hover lines for connection info</div>
             </div>
           </div>
         </div>

@@ -36,16 +36,15 @@ test.describe('Analysis Flow', () => {
     console.log('[Test] Ollama connection status:', connected ? 'Connected' : 'Not connected');
 
     // We don't fail if not connected - tests should handle both cases
-    // Just verify the indicator exists
-    const statusIndicator = window.locator(
-      '.animate-pulse, .text-stratosort-success, .text-stratosort-error'
-    );
+    // Just verify the indicator exists (success or danger)
+    const statusIndicator = window.locator('.bg-stratosort-success, .bg-stratosort-danger');
     const exists = await statusIndicator
       .first()
       .isVisible()
       .catch(() => false);
 
     console.log('[Test] Connection indicator exists:', exists);
+    expect(exists).toBe(true);
   });
 
   test('should have analysis API methods available', async () => {
@@ -242,11 +241,47 @@ test.describe('Analysis Flow - Settings', () => {
     await nav.openSettings();
     await window.waitForTimeout(500);
 
-    // Look for AI/model related settings
-    const modelSettings = window.locator('text=model, text=ollama, text=AI, text=llama');
-    const count = await modelSettings.count();
+    // Verify settings panel is open
+    const settingsHeading = window.locator('h2:has-text("Settings")');
+    expect(await settingsHeading.isVisible()).toBe(true);
 
-    console.log('[Test] Model-related settings elements:', count);
+    // Expand all sections to make sure content is visible
+    const expandAllButton = window.locator('[title="Expand all"]');
+    if (await expandAllButton.isVisible()) {
+      console.log('[Test] Clicking Expand All');
+      await expandAllButton.click();
+      // Increase timeout to allow expansion animation and rendering
+      await window.waitForTimeout(2000);
+    } else {
+      console.log('[Test] Expand All button not visible');
+    }
+
+    // Wait for "AI Configuration" section header to be visible
+    const aiSection = window.locator('text=AI Configuration');
+    await aiSection
+      .first()
+      .waitFor({ state: 'visible', timeout: 5000 })
+      .catch(() => {
+        console.log('[Test] Warning: AI Configuration header not found');
+      });
+
+    // Try to find specific content that should be in the expanded section
+    // Finding "Ollama Host URL" proves the settings are loaded and expanded
+    const hostLabel = window.locator('text=Ollama Host URL');
+    let hostLabelVisible = false;
+    try {
+      await hostLabel.waitFor({ state: 'visible', timeout: 5000 });
+      console.log('[Test] Found Ollama Host URL label');
+      hostLabelVisible = true;
+    } catch (e) {
+      console.log('[Test] Warning: Timeout waiting for "Ollama Host URL"');
+      // If we can't find it, dump visible text for debugging
+      const bodyText = await window.textContent('body');
+      console.log('[Test] Body text sample:', bodyText.substring(0, 500) + '...');
+    }
+
+    // Expect the host label to be visible, which confirms AI settings are shown
+    expect(hostLabelVisible).toBe(true);
 
     // Close settings
     const closeButton = window.locator(

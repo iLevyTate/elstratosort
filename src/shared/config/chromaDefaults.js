@@ -86,7 +86,16 @@ function getChromaDataDir(fallbackPath) {
  */
 function getChromaUrl() {
   if (process.env.CHROMA_SERVER_URL) {
-    return process.env.CHROMA_SERVER_URL;
+    try {
+      const parsed = new URL(process.env.CHROMA_SERVER_URL);
+      const protocol = parsed.protocol?.replace(':', '') || CHROMA_DEFAULTS.PROTOCOL;
+      const host = parsed.hostname || CHROMA_DEFAULTS.HOST;
+      const port = Number(parsed.port) || CHROMA_DEFAULTS.PORT;
+
+      return `${protocol}://${host}:${port}`;
+    } catch {
+      return `${CHROMA_DEFAULTS.PROTOCOL}://${CHROMA_DEFAULTS.HOST}:${CHROMA_DEFAULTS.PORT}`;
+    }
   }
 
   const protocol = process.env.CHROMA_SERVER_PROTOCOL || CHROMA_DEFAULTS.PROTOCOL;

@@ -119,6 +119,43 @@ function sanitizeMetadata(metadata, allowedFields = null) {
 
   const sanitized = {};
 
+  const normalizeMetadataValue = (value) => {
+    if (value === undefined || value === null) return null;
+
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return value;
+    }
+
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+
+    if (Array.isArray(value)) {
+      const flat = value
+        .map((item) => normalizeMetadataValue(item))
+        .filter((item) => item !== null);
+      if (flat.length === 0) return null;
+      if (flat.every((item) => typeof item === 'string')) {
+        return flat.join(',');
+      }
+      try {
+        return JSON.stringify(flat);
+      } catch {
+        return String(value);
+      }
+    }
+
+    if (typeof value === 'object') {
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return String(value);
+      }
+    }
+
+    return String(value);
+  };
+
   // Use centralized config for allowed metadata fields
   const allowed = allowedFields || ALLOWED_METADATA_FIELDS;
 
@@ -150,7 +187,10 @@ function sanitizeMetadata(metadata, allowedFields = null) {
         continue;
       }
 
-      sanitized[key] = value;
+      const normalized = normalizeMetadataValue(value);
+      if (normalized !== null) {
+        sanitized[key] = normalized;
+      }
     }
   }
 

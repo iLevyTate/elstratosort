@@ -185,7 +185,7 @@ describe('Path Sanitization', () => {
         expect(result.fileSize).toBe(1024);
         expect(result.mimeType).toBe('text/plain');
         expect(result.category).toBe('document');
-        expect(result.tags).toEqual(['test', 'sample']);
+        expect(result.tags).toBe('test,sample');
         expect(result.confidence).toBe(0.95);
       });
 
@@ -322,7 +322,7 @@ describe('Path Sanitization', () => {
         expect(result.fileSize).toBe(1024);
         expect(result.confidence).toBe(0.95);
         expect(result.category).toBe('document');
-        expect(result.tags).toEqual(['tag1', 'tag2']);
+        expect(result.tags).toBe('tag1,tag2');
       });
 
       test('handles zero and false as valid values', () => {
@@ -384,8 +384,8 @@ describe('Path Sanitization', () => {
 
         const result = sanitizeMetadata(input);
 
-        // Arrays and objects in allowed fields pass through (sanitization is shallow)
-        expect(result.tags).toEqual(['tag1', 'tag2']);
+        // Arrays are normalized into strings for ChromaDB compatibility
+        expect(result.tags).toBe('tag1,tag2');
         expect(result.name).toBe('file.txt');
       });
 

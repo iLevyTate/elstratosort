@@ -122,7 +122,12 @@ async function restoreWindow(win) {
 function restoreMinimizedWindow(win) {
   return new Promise((resolve) => {
     // Set up one-time event handler for restore completion
+    let timeout; // Forward declaration
+
     const onRestore = () => {
+      // FIX CRIT-34: Clear timeout when restore event fires
+      if (timeout) clearTimeout(timeout);
+
       // Guard against destroyed window
       if (!win || win.isDestroyed()) {
         resolve();
@@ -155,7 +160,7 @@ function restoreMinimizedWindow(win) {
     win.once('restore', onRestore);
 
     // Set a timeout in case restore event never fires
-    const timeout = setTimeout(() => {
+    timeout = setTimeout(() => {
       win.removeListener('restore', onRestore);
       logger.warn('[WINDOW] Restore event timeout, forcing show+focus');
 
@@ -176,9 +181,6 @@ function restoreMinimizedWindow(win) {
     // Trigger the restore
     logger.debug('[WINDOW] Triggering restore');
     win.restore();
-
-    // Clean up timeout if restore completes normally
-    win.once('restore', () => clearTimeout(timeout));
   });
 }
 

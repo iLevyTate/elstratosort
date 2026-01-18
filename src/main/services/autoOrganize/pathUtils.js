@@ -25,11 +25,16 @@ function safeSuggestion(suggestion) {
     ...suggestion,
     folder:
       typeof suggestion.folder === 'string'
-        ? suggestion.folder
-        : suggestion.folder?.name || 'Uncategorized',
+        ? sanitizePath(suggestion.folder)
+        : suggestion.folder?.name
+          ? sanitizePath(suggestion.folder.name)
+          : 'Uncategorized',
     path: typeof suggestion.path === 'string' ? suggestion.path : suggestion.path?.path || undefined
   };
 }
+
+// FIX HIGH-51: Import sanitizePath to prevent injection
+const { sanitizePath } = require('../../../shared/pathSanitization');
 
 module.exports = {
   safeSuggestion

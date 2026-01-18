@@ -224,7 +224,8 @@ class PatternMatcher {
   checkMemoryUsage() {
     try {
       const patternSize = JSON.stringify(Array.from(this.userPatterns.entries())).length;
-      const estimatedMemoryMB = patternSize / (1024 * 1024);
+      // MED-19: Account for object overhead (approx 2x raw string size)
+      const estimatedMemoryMB = (patternSize * 2) / (1024 * 1024);
 
       if (estimatedMemoryMB > this.maxMemoryMB) {
         logger.warn(
@@ -306,7 +307,9 @@ class PatternMatcher {
    * @returns {number} Usage count
    */
   getFolderUsage(folderId) {
-    return this.folderUsageStats.get(folderId) || 0;
+    const stats = this.folderUsageStats.get(folderId);
+    if (typeof stats === 'number') return stats;
+    return stats?.count || 0;
   }
 
   /**
@@ -314,8 +317,11 @@ class PatternMatcher {
    * @param {string} folderId - Folder ID or name
    */
   incrementFolderUsage(folderId) {
-    const current = this.folderUsageStats.get(folderId) || 0;
-    this.folderUsageStats.set(folderId, current + 1);
+    const current = this.getFolderUsage(folderId);
+    this.folderUsageStats.set(folderId, {
+      count: current + 1,
+      lastUsed: Date.now()
+    });
   }
 }
 

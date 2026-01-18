@@ -5,15 +5,13 @@ find the right documentation for your needs.
 
 ## Quick Links
 
-| Document                                                               | Description                                           | Audience       |
-| ---------------------------------------------------------------------- | ----------------------------------------------------- | -------------- |
-| [CONFIG.md](./CONFIG.md)                                               | Installation, dependencies & configuration            | All users      |
-| [ARCHITECTURE.md](./ARCHITECTURE.md)                                   | High-level system design and data flow                | All developers |
-| [LEARNING_GUIDE.md](./LEARNING_GUIDE.md)                               | Codebase learning guide with glossary & code examples | New developers |
-| [CODE_QUALITY_STANDARDS.md](./CODE_QUALITY_STANDARDS.md)               | Coding standards and style guide                      | All developers |
-| [ERROR_HANDLING_GUIDE.md](./ERROR_HANDLING_GUIDE.md)                   | Error handling patterns and best practices            | All developers |
-| [CONTRIBUTING_TESTING_BEGINNER.md](./CONTRIBUTING_TESTING_BEGINNER.md) | Manual testing guide for beginners                    | Contributors   |
-| [CONTRIBUTING_TESTING_ADVANCED.md](./CONTRIBUTING_TESTING_ADVANCED.md) | Manual testing guide for advanced users               | Contributors   |
+| Document                                                 | Description                                           | Audience       |
+| -------------------------------------------------------- | ----------------------------------------------------- | -------------- |
+| [CONFIG.md](./CONFIG.md)                                 | Installation, dependencies & configuration            | All users      |
+| [ARCHITECTURE.md](./ARCHITECTURE.md)                     | High-level system design and data flow                | All developers |
+| [LEARNING_GUIDE.md](./LEARNING_GUIDE.md)                 | Codebase learning guide with glossary & code examples | New developers |
+| [CODE_QUALITY_STANDARDS.md](./CODE_QUALITY_STANDARDS.md) | Coding standards and style guide                      | All developers |
+| [ERROR_HANDLING_GUIDE.md](./ERROR_HANDLING_GUIDE.md)     | Error handling patterns and best practices            | All developers |
 
 ## Installation & Dependencies
 
@@ -50,19 +48,11 @@ find the right documentation for your needs.
 
 ## Testing
 
-- **[TESTING_STRATEGY.md](./TESTING_STRATEGY.md)** - Test organization, patterns, and coverage goals
-
-See also: [REGRESSION_TEST_PLAN.md](../REGRESSION_TEST_PLAN.md) - Complete test case specifications
-
-## Contributing (Manual Testing)
-
-Want to help test El StratoSort? No coding experience required! Choose the guide that matches your
-experience level:
-
-| Guide                                                                  | Who It's For          | Description                                                                                  |
-| ---------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------- |
-| [CONTRIBUTING_TESTING_BEGINNER.md](./CONTRIBUTING_TESTING_BEGINNER.md) | Beginners             | Step-by-step instructions including how to install, test features, and report bugs on GitHub |
-| [CONTRIBUTING_TESTING_ADVANCED.md](./CONTRIBUTING_TESTING_ADVANCED.md) | Intermediate/Advanced | Streamlined guide for those comfortable with Git, CLI, and debugging                         |
+- **[TESTING.md](../TESTING.md)** - **Single Source of Truth** for:
+  - Quick Manual QA Checklist
+  - Automated Test Commands
+  - Critical Path Strategy
+  - Debugging Tips
 
 ## Active Development
 
@@ -85,14 +75,10 @@ docs/
 ├── ARCHITECTURE.md                      # System design
 ├── CODE_QUALITY_STANDARDS.md            # Style guide
 ├── CONFIG.md                            # Environment variables
-├── CONTRIBUTING_TESTING_BEGINNER.md     # Manual testing guide (beginners)
-├── CONTRIBUTING_TESTING_ADVANCED.md     # Manual testing guide (advanced)
 ├── DI_PATTERNS.md                       # Dependency injection
 ├── ERROR_HANDLING_GUIDE.md              # Error patterns
 ├── GRAPH_INTEGRATION_PLAN.md            # Graph feature roadmap
-├── LEARNING_GUIDE.md                    # Developer onboarding (glossary + examples)
-├── TESTING_STRATEGY.md                  # Test strategy
-└── .legacy/                             # Local-only archived docs/reports (gitignored)
+└── LEARNING_GUIDE.md                    # Developer onboarding (glossary + examples)
 ```
 
 ## Contributing

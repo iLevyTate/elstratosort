@@ -22,6 +22,7 @@ jest.mock('../src/shared/errorHandlingUtils', () => ({
 // Mock pathSanitization
 jest.mock('../src/shared/pathSanitization', () => ({
   sanitizeMetadata: jest.fn((meta) => meta),
+  sanitizePath: jest.fn((value) => value),
   prepareFileMetadata: jest.fn((file) => ({
     path: file?.meta?.path || '',
     name: file?.meta?.name || '',

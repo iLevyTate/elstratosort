@@ -130,7 +130,7 @@ class CircuitBreaker extends EventEmitter {
         break;
 
       case CircuitState.HALF_OPEN:
-        this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
+        // NOTE: halfOpenInFlight is decremented in execute()'s finally block to avoid double-decrement
         this.successCount++;
 
         logger.debug(`[CircuitBreaker:${this.serviceName}] Success in HALF_OPEN`, {
@@ -183,7 +183,7 @@ class CircuitBreaker extends EventEmitter {
         break;
 
       case CircuitState.HALF_OPEN:
-        this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
+        // NOTE: halfOpenInFlight is decremented in execute()'s finally block to avoid double-decrement
         logger.debug(`[CircuitBreaker:${this.serviceName}] Failure in HALF_OPEN`, {
           error: errorMessage
         });
@@ -225,8 +225,12 @@ class CircuitBreaker extends EventEmitter {
       throw error;
     }
 
-    // Track in-flight requests for HALF_OPEN
-    if (this.state === CircuitState.HALF_OPEN) {
+    // FIX: Track HALF_OPEN state for proper counter management
+    // Decrement is now ONLY done in finally block to prevent double-decrement
+    // when recordSuccess/recordFailure were previously decrementing as well
+    const wasHalfOpen = this.state === CircuitState.HALF_OPEN;
+
+    if (wasHalfOpen) {
       this.halfOpenInFlight++;
     }
 
@@ -237,6 +241,13 @@ class CircuitBreaker extends EventEmitter {
     } catch (error) {
       this.recordFailure(error);
       throw error;
+    } finally {
+      // FIX: Single point of decrement for halfOpenInFlight
+      // This ensures exactly one decrement per execute() call, regardless of
+      // whether recordSuccess/recordFailure succeed or throw
+      if (wasHalfOpen) {
+        this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
+      }
     }
   }
 
