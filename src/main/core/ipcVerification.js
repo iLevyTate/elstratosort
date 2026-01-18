@@ -10,6 +10,7 @@
 const { ipcMain } = require('electron');
 const { isWindows } = require('../../shared/platformUtils');
 const { logger } = require('../../shared/logger');
+const { IPC_CHANNELS } = require('../../shared/constants');
 
 logger.setContext('IPC-Verify');
 
@@ -18,52 +19,52 @@ logger.setContext('IPC-Verify');
  */
 const REQUIRED_HANDLERS = [
   // Settings - critical for initial load
-  'get-settings',
-  'save-settings',
+  IPC_CHANNELS.SETTINGS.GET,
+  IPC_CHANNELS.SETTINGS.SAVE,
 
   // Smart Folders - needed for UI initialization
-  'get-smart-folders',
-  'save-smart-folders',
-  'get-custom-folders',
-  'update-custom-folders',
+  IPC_CHANNELS.SMART_FOLDERS.GET,
+  IPC_CHANNELS.SMART_FOLDERS.SAVE,
+  IPC_CHANNELS.SMART_FOLDERS.GET_CUSTOM,
+  IPC_CHANNELS.SMART_FOLDERS.UPDATE_CUSTOM,
 
   // File operations - core functionality
-  'handle-file-selection',
-  'select-directory',
-  'get-documents-path',
-  'get-file-stats',
-  'get-files-in-directory',
+  IPC_CHANNELS.FILES.SELECT,
+  IPC_CHANNELS.FILES.SELECT_DIRECTORY,
+  IPC_CHANNELS.FILES.GET_DOCUMENTS_PATH,
+  IPC_CHANNELS.FILES.GET_FILE_STATS,
+  IPC_CHANNELS.FILES.GET_FILES_IN_DIRECTORY,
 
   // Analysis - core functionality
-  'analyze-document',
-  'analyze-image',
+  IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT,
+  IPC_CHANNELS.ANALYSIS.ANALYZE_IMAGE,
 
   // Organization - core functionality
-  'auto-organize-files',
-  'batch-organize-files',
+  IPC_CHANNELS.ORGANIZE.AUTO,
+  IPC_CHANNELS.ORGANIZE.BATCH,
 
   // Suggestions - needed for UI
-  'get-file-suggestions',
-  'get-batch-suggestions',
+  IPC_CHANNELS.SUGGESTIONS.GET_FILE_SUGGESTIONS,
+  IPC_CHANNELS.SUGGESTIONS.GET_BATCH_SUGGESTIONS,
 
   // System monitoring
-  'get-system-metrics',
-  'get-application-statistics',
+  IPC_CHANNELS.SYSTEM.GET_METRICS,
+  IPC_CHANNELS.SYSTEM.GET_APPLICATION_STATISTICS,
 
   // Ollama - AI features
-  'get-ollama-models',
-  'test-ollama-connection'
+  IPC_CHANNELS.OLLAMA.GET_MODELS,
+  IPC_CHANNELS.OLLAMA.TEST_CONNECTION
 ];
 
 /**
  * Windows-specific IPC handlers
  */
 const WINDOWS_HANDLERS = [
-  'window-minimize',
-  'window-maximize',
-  'window-toggle-maximize',
-  'window-is-maximized',
-  'window-close'
+  IPC_CHANNELS.WINDOW.MINIMIZE,
+  IPC_CHANNELS.WINDOW.MAXIMIZE,
+  IPC_CHANNELS.WINDOW.TOGGLE_MAXIMIZE,
+  IPC_CHANNELS.WINDOW.IS_MAXIMIZED,
+  IPC_CHANNELS.WINDOW.CLOSE
 ];
 
 /**

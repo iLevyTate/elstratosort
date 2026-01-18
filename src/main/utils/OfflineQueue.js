@@ -16,11 +16,14 @@
 const { EventEmitter } = require('events');
 const path = require('path');
 const { app } = require('electron');
-const { logger } = require('../../shared/logger');
+const { logger: baseLogger, createLogger } = require('../../shared/logger');
 const { atomicWriteFile, loadJsonFile, safeUnlink } = require('../../shared/atomicFile');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 
-logger.setContext('OfflineQueue');
+const logger = typeof createLogger === 'function' ? createLogger('OfflineQueue') : baseLogger;
+if (typeof createLogger !== 'function' && logger?.setContext) {
+  logger.setContext('OfflineQueue');
+}
 
 // Operation types
 const OperationType = {
@@ -55,7 +58,8 @@ const DEFAULT_CONFIG = {
   flushBatchSize: 50, // Number of operations to process per flush batch
   flushDelayMs: 1000, // Delay between flush batches
   deduplicateByKey: true, // Deduplicate operations by their key
-  maxRetries: 3 // Maximum retries for failed operations
+  maxRetries: 3, // Maximum retries for failed operations
+  mergeStrategy: null // Optional merge strategy for deduplicated operations
 };
 
 /**
@@ -157,11 +161,15 @@ class OfflineQueue extends EventEmitter {
 
     // Check for deduplication
     if (this.config.deduplicateByKey && this.operationMap.has(key)) {
-      // Update existing operation with new data
+      // Update existing operation with new data (optionally merge)
       const existingIndex = this.operationMap.get(key);
       if (existingIndex !== undefined && this.queue[existingIndex]) {
-        this.queue[existingIndex].data = data;
-        this.queue[existingIndex].updatedAt = Date.now();
+        const existing = this.queue[existingIndex];
+        const mergeStrategy = options.mergeStrategy || this.config.mergeStrategy;
+        const mergedData =
+          typeof mergeStrategy === 'function' ? mergeStrategy(existing.data, data) : data;
+        existing.data = mergedData;
+        existing.updatedAt = Date.now();
         this.stats.deduplicated++;
         logger.debug('[OfflineQueue] Updated existing operation', { key });
         this._schedulePersist();

@@ -10,6 +10,8 @@
 const { BrowserWindow } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { logger } = require('../../shared/logger');
+// FIX: Import safeSend for validated IPC event sending
+const { safeSend } = require('../ipc/ipcWrappers');
 
 logger.setContext('AutoUpdater');
 
@@ -24,7 +26,8 @@ function notifyRenderer(status) {
   try {
     const win = BrowserWindow.getAllWindows()[0];
     if (win && !win.isDestroyed()) {
-      win.webContents.send('app:update', { status });
+      // FIX: Use safeSend for validated IPC event sending
+      safeSend(win.webContents, 'app:update', { status });
     }
   } catch (error) {
     logger.error(`[UPDATER] Failed to send ${status} message:`, error);
@@ -64,6 +67,23 @@ function handleUpdateDownloaded() {
 }
 
 /**
+ * Handle update progress event
+ */
+function handleUpdateProgress(progressObj) {
+  try {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win && !win.isDestroyed()) {
+      safeSend(win.webContents, 'app:update', {
+        status: 'downloading',
+        progress: progressObj.percent
+      });
+    }
+  } catch (error) {
+    // Ignore progress errors to avoid log spam
+  }
+}
+
+/**
  * Initialize auto-updater (production only)
  * @param {boolean} isDev - Whether running in development mode
  * @returns {Promise<Object>} Result object with cleanup function
@@ -74,6 +94,11 @@ async function initializeAutoUpdater(isDev) {
     return { cleanup: () => {} };
   }
 
+  // FIX HIGH-58: Prevent accumulation of cleanup functions on repeated init
+  if (cleanupFunctions.length > 0) {
+    cleanupAutoUpdater();
+  }
+
   try {
     autoUpdater.autoDownload = true;
 
@@ -82,6 +107,8 @@ async function initializeAutoUpdater(isDev) {
     autoUpdater.on('update-available', handleUpdateAvailable);
     autoUpdater.on('update-not-available', handleUpdateNotAvailable);
     autoUpdater.on('update-downloaded', handleUpdateDownloaded);
+    // FIX HIGH-57: Add progress listener
+    autoUpdater.on('download-progress', handleUpdateProgress);
 
     // Store cleanup function
     const cleanup = () => {
@@ -89,6 +116,7 @@ async function initializeAutoUpdater(isDev) {
       autoUpdater.removeListener('update-available', handleUpdateAvailable);
       autoUpdater.removeListener('update-not-available', handleUpdateNotAvailable);
       autoUpdater.removeListener('update-downloaded', handleUpdateDownloaded);
+      autoUpdater.removeListener('download-progress', handleUpdateProgress);
       logger.debug('[UPDATER] Listeners cleaned up');
     };
 

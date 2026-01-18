@@ -16,6 +16,8 @@ const { app, BrowserWindow } = require('electron');
 const fs = require('fs').promises;
 const path = require('path');
 const { logger } = require('../../shared/logger');
+// FIX: Import safeSend for validated IPC event sending
+const { safeSend } = require('../ipc/ipcWrappers');
 const { getInstance: getDependencyManager } = require('../services/DependencyManagerService');
 const { getStartupManager } = require('../services/startup');
 const { getOllama } = require('../ollamaUtils');
@@ -48,7 +50,8 @@ function emitDependencyProgress(payload) {
   try {
     const win = BrowserWindow.getAllWindows()[0];
     if (win && !win.isDestroyed()) {
-      win.webContents.send('operation-progress', { type: 'dependency', ...(payload || {}) });
+      // FIX: Use safeSend for validated IPC event sending
+      safeSend(win.webContents, 'operation-progress', { type: 'dependency', ...(payload || {}) });
     }
   } catch (error) {
     logger.debug('[BACKGROUND] Could not emit dependency progress:', error.message);
@@ -115,7 +118,8 @@ async function pullModelsInBackground(models) {
           try {
             const win = BrowserWindow.getAllWindows()[0];
             if (win && !win.isDestroyed()) {
-              win.webContents.send('operation-progress', {
+              // FIX: Use safeSend for validated IPC event sending
+              safeSend(win.webContents, 'operation-progress', {
                 type: 'ollama-pull',
                 model,
                 progress

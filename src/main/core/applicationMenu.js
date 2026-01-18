@@ -9,6 +9,8 @@
 
 const { Menu, shell } = require('electron');
 const { getQuitAccelerator } = require('../../shared/platformUtils');
+// FIX: Import safeSend for validated IPC event sending
+const { safeSend } = require('../ipc/ipcWrappers');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -26,8 +28,8 @@ function createApplicationMenu(getMainWindow) {
           accelerator: 'CmdOrCtrl+O',
           click: () => {
             const mainWindow = getMainWindow();
-            if (mainWindow) {
-              mainWindow.webContents.send('menu-action', 'select-files');
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              safeSend(mainWindow.webContents, 'menu-action', 'select-files');
             }
           }
         },
@@ -36,8 +38,8 @@ function createApplicationMenu(getMainWindow) {
           accelerator: 'CmdOrCtrl+Shift+O',
           click: () => {
             const mainWindow = getMainWindow();
-            if (mainWindow) {
-              mainWindow.webContents.send('menu-action', 'select-folder');
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              safeSend(mainWindow.webContents, 'menu-action', 'select-folder');
             }
           }
         },
@@ -47,8 +49,8 @@ function createApplicationMenu(getMainWindow) {
           accelerator: 'CmdOrCtrl+,',
           click: () => {
             const mainWindow = getMainWindow();
-            if (mainWindow) {
-              mainWindow.webContents.send('menu-action', 'open-settings');
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              safeSend(mainWindow.webContents, 'menu-action', 'open-settings');
             }
           }
         },
@@ -116,8 +118,8 @@ function createApplicationMenu(getMainWindow) {
           label: 'About StratoSort',
           click: () => {
             const mainWindow = getMainWindow();
-            if (mainWindow) {
-              mainWindow.webContents.send('menu-action', 'show-about');
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              safeSend(mainWindow.webContents, 'menu-action', 'show-about');
             }
           }
         },

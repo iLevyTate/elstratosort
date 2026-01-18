@@ -73,6 +73,11 @@ const ALLOWED_SEND_CHANNELS = [...SECURITY_SEND_CHANNELS];
 // Flatten allowed send channels for validation
 const ALL_SEND_CHANNELS = Object.values(ALLOWED_CHANNELS).flat();
 
+const THROTTLED_CHANNELS = new Map([
+  // Avoid request bursts on large folder scans.
+  [IPC_CHANNELS.FILES.GET_FILE_STATS, 25]
+]);
+
 /**
  * Enhanced IPC validation with security checks
  */
@@ -80,7 +85,10 @@ class SecureIPCManager {
   constructor() {
     this.activeListeners = new Map();
     this.rateLimiter = new Map();
+    this.channelQueues = new Map();
     this.maxRequestsPerSecond = PERF_LIMITS.MAX_IPC_REQUESTS_PER_SECOND; // From centralized config
+    // FIX: Debounce rate limiter cleanup to prevent race conditions during rapid calls
+    this._cleanupScheduled = false;
   }
 
   /**
@@ -103,17 +111,17 @@ class SecureIPCManager {
 
     this.rateLimiter.set(channel, channelData);
 
-    // Fixed: Cleanup old rate limit entries to prevent memory leak
-    if (this.rateLimiter.size > PERF_LIMITS.RATE_LIMIT_CLEANUP_THRESHOLD) {
-      // Arbitrary limit
-      const staleEntries = [];
-      for (const [ch, data] of this.rateLimiter.entries()) {
-        // Remove entries that are more than 1 minute old
-        if (now > data.resetTime + PERF_LIMITS.RATE_LIMIT_STALE_MS) {
-          staleEntries.push(ch);
-        }
-      }
-      staleEntries.forEach((ch) => this.rateLimiter.delete(ch));
+    // FIX: Schedule cleanup asynchronously to prevent race conditions
+    // during rapid concurrent calls. Debounce to avoid repeated scheduling.
+    if (
+      this.rateLimiter.size > PERF_LIMITS.RATE_LIMIT_CLEANUP_THRESHOLD &&
+      !this._cleanupScheduled
+    ) {
+      this._cleanupScheduled = true;
+      setTimeout(() => {
+        this._cleanupRateLimiter();
+        this._cleanupScheduled = false;
+      }, 0);
     }
 
     if (channelData.count > this.maxRequestsPerSecond) {
@@ -127,9 +135,96 @@ class SecureIPCManager {
   }
 
   /**
+   * FIX: Separate cleanup method to avoid inline iteration during rate limit checks
+   * Runs asynchronously via setTimeout to prevent race conditions
+   */
+  _cleanupRateLimiter() {
+    const now = Date.now();
+    const staleEntries = [];
+    for (const [ch, data] of this.rateLimiter.entries()) {
+      // Remove entries that are more than 1 minute old
+      if (now > data.resetTime + PERF_LIMITS.RATE_LIMIT_STALE_MS) {
+        staleEntries.push(ch);
+      }
+    }
+    staleEntries.forEach((ch) => this.rateLimiter.delete(ch));
+  }
+
+  /**
+   * FIX: Periodic audit of stale listeners to prevent memory leaks
+   * Listeners that haven't been cleaned up in over 30 minutes are considered stale
+   */
+  auditStaleListeners() {
+    const now = Date.now();
+    const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+    let staleCount = 0;
+
+    for (const [key] of this.activeListeners.entries()) {
+      // Extract timestamp from key (format: channel_timestamp)
+      const parts = key.split('_');
+      const timestamp = parseInt(parts[parts.length - 1], 10);
+
+      if (!isNaN(timestamp) && now - timestamp > STALE_THRESHOLD_MS) {
+        staleCount++;
+      }
+    }
+
+    // Audit listeners periodically
+    if (staleCount > 0) {
+      log.warn(`[SecureIPC] Found ${staleCount} potentially stale listeners`, {
+        totalListeners: this.activeListeners.size,
+        staleCount
+      });
+      // FIX HIGH-37: Force cleanup of stale listeners to prevent memory leak
+      // We assume listeners older than 30m are leaks in a single-page app context
+      for (const [key] of this.activeListeners.entries()) {
+        const parts = key.split('_');
+        const timestamp = parseInt(parts[parts.length - 1], 10);
+        if (!isNaN(timestamp) && now - timestamp > STALE_THRESHOLD_MS) {
+          const listener = this.activeListeners.get(key);
+          if (listener) {
+            ipcRenderer.removeListener(listener.channel, listener.callback);
+            this.activeListeners.delete(key);
+          }
+        }
+      }
+    }
+
+    return staleCount;
+  }
+
+  // FIX CRIT-35: Remove async to ensure synchronous execution up to return
+  enqueueThrottled(channel, task) {
+    const delayMs = THROTTLED_CHANNELS.get(channel) || 0;
+    const prev = this.channelQueues.get(channel) || Promise.resolve();
+    const next = prev
+      .catch(() => undefined)
+      .then(async () => {
+        if (delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+        return task();
+      })
+      .finally(() => {
+        if (this.channelQueues.get(channel) === next) {
+          this.channelQueues.delete(channel);
+        }
+      });
+    this.channelQueues.set(channel, next);
+    return next;
+  }
+
+  /**
    * Secure invoke with validation and error handling
    */
   async safeInvoke(channel, ...args) {
+    if (THROTTLED_CHANNELS.has(channel)) {
+      return this.enqueueThrottled(channel, () => this.safeInvokeCore(channel, ...args));
+    }
+    return this.safeInvokeCore(channel, ...args);
+  }
+
+  async safeInvokeCore(channel, ...args) {
     try {
       // Channel validation
       if (!ALL_SEND_CHANNELS.includes(channel)) {
@@ -153,13 +248,28 @@ class SecureIPCManager {
         log.info(`Secure invoke: ${channel}${sanitizedArgs.length > 0 ? ' [with args]' : ''}`);
       }
 
+      // FIX: Add overall timeout to prevent renderer hangs from stuck main process
+      const timeout = PERF_LIMITS.IPC_INVOKE_TIMEOUT || 30000;
+
       // Add retry logic for handler not registered errors
       // 5 attempts with exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms (total ~3.1s)
       const MAX_RETRIES = 5;
       let lastError;
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
-          const result = await ipcRenderer.invoke(channel, ...sanitizedArgs);
+          // FIX: Wrap invoke in Promise.race with timeout
+          const invokePromise = ipcRenderer.invoke(channel, ...sanitizedArgs);
+          // FIX HIGH-40: Store timeout ID for cleanup
+          let timeoutId;
+          const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(
+              () => reject(new Error(`IPC timeout after ${timeout}ms for channel: ${channel}`)),
+              timeout
+            );
+          });
+          const result = await Promise.race([invokePromise, timeoutPromise]);
+          // Clear timeout on success
+          clearTimeout(timeoutId);
           // Result validation
           return this.validateResult(result, channel);
         } catch (error) {
@@ -462,8 +572,10 @@ class SecureIPCManager {
       case 'get-system-metrics':
         return this.isValidSystemMetrics(result) ? result : null;
       case 'select-directory':
-        // Main returns { success, folder } now
-        return result && typeof result === 'object' ? result : { success: false, folder: null };
+        // FIX H-8: Main returns { success, path } - fixed comment and fallback
+        return result && typeof result === 'object' && result.success !== undefined
+          ? result
+          : { success: false, path: null };
       case 'get-custom-folders':
         return Array.isArray(result) ? result : [];
       default:
@@ -485,6 +597,17 @@ class SecureIPCManager {
 
 // Initialize secure IPC manager
 const secureIPC = new SecureIPCManager();
+
+// FIX: Periodic listener audit to detect potential memory leaks (every 10 minutes)
+// Store interval ID for cleanup on window unload
+const LISTENER_AUDIT_INTERVAL_MS = 10 * 60 * 1000;
+const listenerAuditIntervalId = setInterval(() => {
+  try {
+    secureIPC.auditStaleListeners();
+  } catch (err) {
+    // Silently ignore audit errors to avoid disrupting app functionality
+  }
+}, LISTENER_AUDIT_INTERVAL_MS);
 
 /**
  * Throw on structured failure responses.
@@ -510,6 +633,8 @@ function throwIfFailed(result, opts = {}) {
 
 // Cleanup on window unload
 window.addEventListener('beforeunload', () => {
+  // FIX: Clear the listener audit interval to prevent memory leaks on window recreation
+  clearInterval(listenerAuditIntervalId);
   secureIPC.cleanup();
 });
 
@@ -544,7 +669,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return p;
       }
     },
-    getStats: (filePath) => secureIPC.safeInvoke(IPC_CHANNELS.FILES.GET_FILE_STATS, filePath),
+    getStats: async (filePath) => {
+      const result = await secureIPC.safeInvoke(IPC_CHANNELS.FILES.GET_FILE_STATS, filePath);
+      if (!result || typeof result !== 'object') {
+        return result;
+      }
+      const success = result.success !== false;
+      const stats = result.stats && typeof result.stats === 'object' ? result.stats : {};
+      return {
+        success,
+        exists: success,
+        error: result.error,
+        ...stats
+      };
+    },
     getDirectoryContents: (dirPath) =>
       secureIPC.safeInvoke(IPC_CHANNELS.FILES.GET_FILES_IN_DIRECTORY, dirPath),
     organize: (operations) =>
@@ -867,12 +1005,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     canUndo: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.CAN_UNDO),
     canRedo: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.CAN_REDO),
     // FIX H-3: Listen for state changes after undo/redo operations
-    onStateChanged: (callback) => {
-      if (typeof callback !== 'function') return () => {};
-      const listener = (event, data) => callback(data);
-      ipcRenderer.on(IPC_CHANNELS.UNDO_REDO.STATE_CHANGED, listener);
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.UNDO_REDO.STATE_CHANGED, listener);
-    }
+    // FIX: Use secureIPC.safeOn() for proper event source validation and cleanup tracking
+    onStateChanged: (callback) => secureIPC.safeOn(IPC_CHANNELS.UNDO_REDO.STATE_CHANGED, callback)
   },
 
   // System Monitoring
@@ -888,21 +1022,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getConfig: () => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.GET_CONFIG),
     getConfigValue: (path) => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.GET_CONFIG_VALUE, path),
     // Listen for semantic search trigger from tray/global shortcut
-    onOpenSemanticSearch: (callback) => {
-      const channel = 'open-semantic-search';
-      const handler = () => {
-        try {
-          callback();
-        } catch (error) {
-          log.error('[Preload] Error in semantic search callback:', error);
-        }
-      };
-      ipcRenderer.on(channel, handler);
-      // Return cleanup function
-      return () => {
-        ipcRenderer.removeListener(channel, handler);
-      };
-    }
+    // FIX: Use secureIPC.safeOn() for proper event source validation and cleanup tracking
+    onOpenSemanticSearch: (callback) => secureIPC.safeOn('open-semantic-search', callback)
   },
 
   // Window controls (Windows custom title bar)
@@ -944,8 +1065,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onOperationProgress: (callback) => secureIPC.safeOn('operation-progress', callback),
     onAppError: (callback) => secureIPC.safeOn('app:error', callback),
     onAppUpdate: (callback) => secureIPC.safeOn('app:update', callback),
-    onStartupProgress: (callback) => secureIPC.safeOn('startup-progress', callback),
-    onStartupError: (callback) => secureIPC.safeOn('startup-error', callback),
+    // NOTE: startup-progress and startup-error listeners removed (dead code - events never sent)
     onSystemMetrics: (callback) => secureIPC.safeOn('system-metrics', callback),
     onMenuAction: (callback) => secureIPC.safeOn('menu-action', callback),
     onSettingsChanged: (callback) => secureIPC.safeOn('settings-changed-external', callback),
@@ -956,6 +1076,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onFileOperationComplete: (callback) => secureIPC.safeOn('file-operation-complete', callback),
     // Notification events from watchers (SmartFolderWatcher, DownloadWatcher)
     onNotification: (callback) => secureIPC.safeOn('notification', callback),
+    // FIX: Batch results chunk events for progressive streaming during batch operations
+    onBatchResultsChunk: (callback) => secureIPC.safeOn('batch-results-chunk', callback),
     // Send error report to main process (uses send, not invoke)
     sendError: (errorData) => {
       try {
@@ -964,8 +1086,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
           log.warn('[events.sendError] Invalid error data structure');
           return;
         }
-        // Validate channel is allowed
-        const channel = 'renderer-error-report';
+        // FIX: Use constant instead of hardcoded string
+        const channel = IPC_CHANNELS.SYSTEM.RENDERER_ERROR_REPORT;
         if (!ALLOWED_SEND_CHANNELS.includes(channel)) {
           log.warn(`[events.sendError] Blocked send to unauthorized channel: ${channel}`);
           return;
@@ -981,7 +1103,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Settings - FIX: Use centralized IPC_CHANNELS constants to prevent drift
   settings: {
-    get: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET),
+    get: async () => {
+      const result = await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET);
+      return throwIfFailed(result, {
+        allowCanceled: false,
+        defaultMessage: 'Failed to load settings'
+      });
+    },
     save: async (settings) => {
       const result = await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.SAVE, settings);
       // If persistence fails, throw so renderer can't "pretend" it saved.

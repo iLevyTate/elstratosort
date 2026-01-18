@@ -10,6 +10,8 @@
 const { app, BrowserWindow, shell } = require('electron');
 const { isWindows } = require('../../shared/platformUtils');
 const { logger } = require('../../shared/logger');
+// FIX: Import safeSend for validated IPC event sending
+const { safeSend } = require('../ipc/ipcWrappers');
 
 logger.setContext('JumpList');
 
@@ -35,11 +37,14 @@ function handleCommandLineTasks(args) {
       if (win) {
         win.focus();
         try {
-          win.webContents.send('operation-progress', {
-            type: 'hint',
-            message: 'Use Select Directory to analyze a folder'
-          });
-          logger.info('[JUMP-LIST] Sent analyze folder hint to renderer');
+          // FIX: Use safeSend for validated IPC event sending
+          if (!win.isDestroyed()) {
+            safeSend(win.webContents, 'operation-progress', {
+              type: 'hint',
+              message: 'Use Select Directory to analyze a folder'
+            });
+            logger.info('[JUMP-LIST] Sent analyze folder hint to renderer');
+          }
         } catch (error) {
           logger.error('[JUMP-LIST] Failed to send hint message:', error);
         }
