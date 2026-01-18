@@ -2871,7 +2871,7 @@ export default function UnifiedSearchModal({
           id: `cluster:${clusterId}->${id}`,
           source: clusterId,
           target: id,
-          type: 'default',
+          type: 'straight', // Straight lines look better radiating from a hub
           animated: false,
           style: {
             stroke: '#fbbf24', // Amber-400

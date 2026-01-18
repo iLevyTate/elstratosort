@@ -174,10 +174,21 @@ const ClusterNode = memo(({ data, selected }) => {
         </div>
       </NodeToolbar>
 
+      {/* Central Target Handle - "Hidden" in center so edges radiate from middle */}
       <Handle
         type="target"
         position={Position.Left}
-        className="!bg-amber-500 !w-3 !h-3 !border-2 !border-white"
+        style={{
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+          opacity: 0,
+          width: 10,
+          height: 10,
+          background: 'transparent',
+          border: 'none',
+          zIndex: -1
+        }}
       />
 
       {/* Center Icon */}
@@ -234,10 +245,21 @@ const ClusterNode = memo(({ data, selected }) => {
         style={{ margin: '-6px' }}
       />
 
+      {/* Central Source Handle - "Hidden" in center */}
       <Handle
         type="source"
         position={Position.Right}
-        className="!bg-amber-500 !w-3 !h-3 !border-2 !border-white"
+        style={{
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+          opacity: 0,
+          width: 10,
+          height: 10,
+          background: 'transparent',
+          border: 'none',
+          zIndex: -1
+        }}
       />
     </div>
   );
