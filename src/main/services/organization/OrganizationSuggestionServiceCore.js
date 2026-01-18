@@ -9,7 +9,7 @@
 
 const os = require('os');
 const path = require('path');
-const { logger } = require('../../../shared/logger');
+const { logger: baseLogger, createLogger } = require('../../../shared/logger');
 const { LIMITS } = require('../../../shared/performanceConstants');
 const { globalBatchProcessor } = require('../../utils/llmOptimization');
 const { cosineSimilarity } = require('../../../shared/vectorMath');
@@ -58,7 +58,11 @@ const {
   generateFileSummary
 } = require('./filePatternAnalyzer');
 
-logger.setContext('OrganizationSuggestionService');
+const logger =
+  typeof createLogger === 'function' ? createLogger('OrganizationSuggestionService') : baseLogger;
+if (typeof createLogger !== 'function' && logger?.setContext) {
+  logger.setContext('OrganizationSuggestionService');
+}
 
 const ROUTING_MODES = Object.freeze({
   AUTO: 'auto',
@@ -83,7 +87,10 @@ function buildSmartFolderIndex(smartFolders = []) {
   const byPath = new Map();
 
   for (const folder of smartFolders) {
-    if (!folder) continue;
+    // MED-12: Validate smartFolders elements
+    if (!folder || typeof folder !== 'object') continue;
+    if (!folder.id && !folder.name && !folder.path) continue;
+
     if (folder.id) {
       byId.set(String(folder.id), folder);
     }
@@ -212,6 +219,8 @@ class OrganizationSuggestionServiceCore {
     this._loadingPatterns = this._loadPatternsAsync();
     this._loadingFeedbackMemory = this._loadFeedbackMemoryAsync();
     this._rebuildingFeedbackMemory = false;
+    // FIX C-2: Track whether patterns have been successfully loaded
+    this._patternsLoaded = false;
   }
 
   /**
@@ -221,10 +230,20 @@ class OrganizationSuggestionServiceCore {
    * @returns {Promise<void>}
    */
   async _ensurePatternsLoaded() {
+    // FIX C-2: Check flag first to avoid unnecessary await
+    // FIX HIGH-10: Check _patternsLoadedSuccessfully to allow retry on failure
+    if (this._patternsLoaded && this._patternsLoadedSuccessfully) {
+      return;
+    }
+    // If loaded but failed, retry loading
+    if (this._patternsLoaded && !this._patternsLoadedSuccessfully && !this._loadingPatterns) {
+      this._loadingPatterns = this._loadPatternsAsync();
+    }
+    // Wait for loading if in progress
     if (this._loadingPatterns) {
       await this._loadingPatterns;
-      this._loadingPatterns = null;
     }
+    // Note: _patternsLoaded is set by _loadPatternsAsync on success
   }
 
   async _loadFeedbackMemoryAsync() {
@@ -347,6 +366,7 @@ class OrganizationSuggestionServiceCore {
       analysis.category ||
       analysis.type ||
       analysis.purpose;
+    // MED-21: Ensure rawCategory is string before trim()
     if (typeof rawCategory !== 'string' || !rawCategory.trim()) {
       return null;
     }
@@ -413,8 +433,19 @@ class OrganizationSuggestionServiceCore {
       if (stored) {
         this.patternMatcher.loadPatterns(stored);
       }
+      // FIX C-2: Mark patterns as loaded on success
+      this._patternsLoaded = true;
+      // FIX H-5: Track successful load separately to allow retry on transient failures
+      this._patternsLoadedSuccessfully = true;
     } catch (error) {
       logger.warn('Failed to load user patterns', { error: error.message });
+      // FIX H-5: Mark as loaded to prevent immediate retry loops, but track failure
+      // This allows future operations to check if patterns were actually loaded successfully
+      this._patternsLoaded = true;
+      this._patternsLoadedSuccessfully = false;
+    } finally {
+      // Clear the loading promise reference
+      this._loadingPatterns = null;
     }
   }
 
@@ -684,7 +715,9 @@ class OrganizationSuggestionServiceCore {
       method: 'default_fallback',
       description: defaultFolder.description || 'Default folder for unmatched files',
       source: 'default',
-      isSmartFolder: true
+      isSmartFolder: true,
+      // MED-18: Consistent return structure (add folderId)
+      folderId: defaultFolder.id
     };
   }
 
@@ -753,7 +786,8 @@ class OrganizationSuggestionServiceCore {
         group.files.push({
           ...file,
           suggestion: suggestion.primary,
-          alternatives: suggestion.alternatives
+          alternatives: suggestion.alternatives,
+          confidence: suggestion.confidence
         });
 
         // Update average confidence (guard against division by zero)
@@ -795,19 +829,31 @@ class OrganizationSuggestionServiceCore {
 
       const embeddingPromises = smartFolders.map(async (folder) => {
         try {
+          // FIX H-1: Validate folder object before accessing properties
+          if (!folder || typeof folder !== 'object') {
+            logger.warn('[OrganizationSuggestionService] Invalid folder object skipped');
+            return null;
+          }
+          const folderName = folder.name || '';
           const folderText = [
-            folder.name,
+            folderName,
             folder.description,
             ...(Array.isArray(folder.keywords) ? folder.keywords : [])
           ]
             .filter(Boolean)
             .join(' - ');
+
+          if (!folderText.trim()) {
+            logger.warn('[OrganizationSuggestionService] Empty folder text skipped');
+            return null;
+          }
+
           const { vector, model } = await this.folderMatcher.embedText(folderText);
           const folderId = folder.id || this.folderMatcher.generateFolderId(folder);
 
           return {
             id: folderId,
-            name: folder.name,
+            name: folderName,
             description: folder.description || '',
             path: folder.path || '',
             vector,
@@ -815,7 +861,11 @@ class OrganizationSuggestionServiceCore {
             updatedAt: new Date().toISOString()
           };
         } catch (error) {
-          logger.warn('[OrganizationSuggestionService] Failed to embed folder:', folder.name);
+          // FIX H-1: Use safe access for folder.name in error logging
+          logger.warn(
+            '[OrganizationSuggestionService] Failed to embed folder:',
+            folder?.name || 'unknown'
+          );
           return null;
         }
       });
@@ -846,11 +896,19 @@ class OrganizationSuggestionServiceCore {
       const fileId = getSemanticFileId(file.path);
       const summary = generateFileSummary(file);
 
-      await this.folderMatcher.upsertFileEmbedding(fileId, summary, {
-        path: file.path,
-        name: file.name,
-        analysis: file.analysis
-      });
+      await this.folderMatcher.upsertFileEmbedding(
+        fileId,
+        summary,
+        {
+          path: file.path,
+          name: file.name,
+          analysis: file.analysis,
+          // Explicitly mark this as a metadata-based embedding to prevent overwriting
+          // full-text embeddings generated by the analysis pipeline
+          extractionMethod: 'metadata_summary'
+        },
+        { checkExisting: true }
+      );
 
       const matches = await this.folderMatcher.matchFileToFolders(
         fileId,
@@ -865,7 +923,7 @@ class OrganizationSuggestionServiceCore {
       const suggestions = [];
       for (const match of matches) {
         const smartFolder = smartFolders.find(
-          (f) => f.id === match.folderId || f.name === match.name || f.path === match.path
+          (f) => f?.id === match.folderId || f?.name === match.name || f?.path === match.path
         );
 
         // Weight the match score by analysis confidence
@@ -967,7 +1025,16 @@ class OrganizationSuggestionServiceCore {
     const entry = buildMemoryEntry(text, metadata);
     if (!entry) return null;
 
-    const stored = await this.feedbackMemoryStore.add(entry);
+    // FIX H-2: Wrap feedbackMemoryStore.add in try-catch to handle storage failures
+    let stored;
+    try {
+      stored = await this.feedbackMemoryStore.add(entry);
+    } catch (storeError) {
+      logger.error('[OrganizationSuggestionService] Failed to add feedback memory to store:', {
+        error: storeError.message
+      });
+      return null;
+    }
 
     if (this.chromaDb && this.folderMatcher) {
       try {
@@ -1005,6 +1072,14 @@ class OrganizationSuggestionServiceCore {
             logger.warn('[OrganizationSuggestionService] Retry upsert failed', {
               error: retryError.message
             });
+            // FIX L-1: Schedule a full rebuild to recover from repeated dimension mismatches
+            try {
+              await this.rebuildFeedbackMemoryEmbeddings();
+            } catch (rebuildError) {
+              logger.warn('[OrganizationSuggestionService] Feedback memory rebuild failed', {
+                error: rebuildError.message
+              });
+            }
           }
         } else {
           logger.warn('[OrganizationSuggestionService] Failed to upsert feedback memory', {
@@ -1104,6 +1179,10 @@ class OrganizationSuggestionServiceCore {
         const summary = generateFileSummary(file);
         const { vector } = await this.folderMatcher.embedText(summary || file.name);
         memoryMatches = await this.chromaDb.queryFeedbackMemory(vector, 5);
+        // MED-16: Validate response is array
+        if (!Array.isArray(memoryMatches)) {
+          memoryMatches = [];
+        }
       } catch (error) {
         logger.warn('[OrganizationSuggestionService] Feedback memory query failed', {
           error: error.message
@@ -1307,8 +1386,9 @@ class OrganizationSuggestionServiceCore {
 
       // Get the most common folder assignments for cluster members
       const folderVotes = new Map();
+      const clusterMembers = fileCluster.members || [];
 
-      for (const member of fileCluster.members) {
+      for (const member of clusterMembers) {
         if (member.id === fileId) continue;
 
         const memberPath = member.metadata?.path || stripSemanticPrefix(member.id);
@@ -1327,7 +1407,9 @@ class OrganizationSuggestionServiceCore {
       const suggestions = [];
       for (const [, vote] of folderVotes) {
         const avgScore = vote.count > 0 ? vote.totalScore / vote.count : 0;
-        const clusterConsistency = vote.count / fileCluster.members.length;
+        // FIX M-3: Guard against division by zero when cluster has no members
+        const memberCount = clusterMembers.length || 1;
+        const clusterConsistency = memberCount > 0 ? vote.count / memberCount : 0;
 
         suggestions.push({
           folder: vote.folder.name,
@@ -1337,7 +1419,7 @@ class OrganizationSuggestionServiceCore {
           description: vote.folder.description,
           method: 'cluster_membership',
           clusterLabel: fileCluster.label || `Cluster ${fileCluster.id}`,
-          clusterSize: fileCluster.members.length,
+          clusterSize: clusterMembers.length,
           clusterPeersInFolder: vote.count,
           isSmartFolder: true
         });
@@ -1347,8 +1429,11 @@ class OrganizationSuggestionServiceCore {
       if (suggestions.length === 0 && fileCluster.label) {
         const labelLower = fileCluster.label.toLowerCase();
         for (const folder of smartFolders) {
-          const folderNameLower = folder.name.toLowerCase();
-          const folderDescLower = (folder.description || '').toLowerCase();
+          const folderNameLower = (folder?.name || '').toLowerCase();
+          const folderDescLower = (folder?.description || '').toLowerCase();
+          if (!folderNameLower && !folderDescLower) {
+            continue;
+          }
 
           // Check if folder name/description matches cluster label
           if (
@@ -1364,7 +1449,7 @@ class OrganizationSuggestionServiceCore {
               description: folder.description,
               method: 'cluster_label_match',
               clusterLabel: fileCluster.label,
-              clusterSize: fileCluster.members.length,
+              clusterSize: clusterMembers.length,
               isSmartFolder: true
             });
           }
@@ -1404,15 +1489,28 @@ class OrganizationSuggestionServiceCore {
       }
 
       const clusters = this.clustering.clusters || [];
-      const fileIdSet = new Set(files.map((f) => getSemanticFileId(f.path)));
+      // FIX M-2: Wrap getSemanticFileId in try-catch to handle invalid paths
+      const fileIdSet = new Set(
+        files
+          .map((f) => {
+            try {
+              return getSemanticFileId(f.path);
+            } catch (e) {
+              logger.warn('[OrganizationSuggestionService] Failed to get file ID:', f.path);
+              return null;
+            }
+          })
+          .filter(Boolean)
+      );
       const groups = [];
       const outliers = [];
 
       // Group files by cluster
       for (const cluster of clusters) {
         const clusterFiles = [];
+        const members = cluster.members || [];
 
-        for (const member of cluster.members) {
+        for (const member of members) {
           if (fileIdSet.has(member.id)) {
             const file = files.find((f) => getSemanticFileId(f.path) === member.id);
             if (file) {
@@ -1486,7 +1584,10 @@ class OrganizationSuggestionServiceCore {
 
     // First pass: exact or close match on folder name
     for (const folder of smartFolders) {
-      const folderNameLower = folder.name.toLowerCase();
+      const folderNameLower = (folder?.name || '').toLowerCase();
+      if (!folderNameLower) {
+        continue;
+      }
       if (folderNameLower === labelLower || folderNameLower.includes(labelLower)) {
         return {
           folder: folder.name,
@@ -1498,19 +1599,27 @@ class OrganizationSuggestionServiceCore {
     }
 
     // Second pass: keyword overlap
-    const labelWords = labelLower.split(/\s+/);
+    // MED-13: Limit split results to prevent memory issues with massive labels
+    const labelWords = labelLower.split(/\s+/).slice(0, 50);
     let bestMatch = null;
     let bestScore = 0;
 
     for (const folder of smartFolders) {
+      const folderName = folder?.name || '';
+      if (!folderName && !folder?.description && !Array.isArray(folder?.keywords)) {
+        continue;
+      }
       const folderWords = [
-        folder.name.toLowerCase(),
-        ...(folder.description || '').toLowerCase().split(/\s+/),
-        ...(folder.keywords || []).map((k) => k.toLowerCase())
+        folderName.toLowerCase(),
+        ...(folder?.description || '').toLowerCase().split(/\s+/),
+        ...(Array.isArray(folder?.keywords) ? folder.keywords : []).map((k) =>
+          String(k).toLowerCase()
+        )
       ];
 
       const overlap = labelWords.filter((w) => folderWords.some((fw) => fw.includes(w))).length;
-      const score = overlap / labelWords.length;
+      // MED-14: Prevent division by zero if labelWords is empty
+      const score = labelWords.length > 0 ? overlap / labelWords.length : 0;
 
       if (score > bestScore) {
         bestScore = score;
@@ -1681,6 +1790,24 @@ class OrganizationSuggestionServiceCore {
    */
   calculatePatternSimilarity(file, pattern) {
     return this.patternMatcher.calculatePatternSimilarity(file, pattern);
+  }
+
+  /**
+   * Shutdown the service, cancelling any pending operations
+   * FIX C-1: Call shutdown on persistence layers to prevent timer leaks
+   */
+  shutdown() {
+    try {
+      if (this.persistence) {
+        this.persistence.shutdown();
+      }
+      if (this.feedbackMemoryStore) {
+        this.feedbackMemoryStore.shutdown();
+      }
+      logger.info('[OrganizationSuggestionService] Shutdown complete');
+    } catch (error) {
+      logger.warn('[OrganizationSuggestionService] Error during shutdown:', error.message);
+    }
   }
 
   // Legacy compatibility getters and setters

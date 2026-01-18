@@ -54,7 +54,8 @@ async function analyzeTextWithOllama(
   textContent,
   originalFileName,
   smartFolders = [],
-  fileDate = null
+  fileDate = null,
+  namingContext = []
 ) {
   try {
     const cfg = await loadOllamaConfig();
@@ -109,7 +110,7 @@ async function analyzeTextWithOllama(
           (f, i) => `${i + 1}. "${f.name}" — ${f.description || 'no description provided'}`
         );
         const folderListDetailed = folderListParts.join('\n');
-        folderCategoriesStr = `\n\nAVAILABLE SMART FOLDERS (name — description):\n${folderListDetailed}\n\nSELECTION RULES (CRITICAL):\n- Choose the category by comparing the document's CONTENT to the folder DESCRIPTIONS above.\n- Output the category EXACTLY as one of the folder names above (verbatim).\n- Do NOT invent new categories. If unsure, choose the closest match by description or use the first folder as a fallback.`;
+        folderCategoriesStr = `\n\nAVAILABLE SMART FOLDERS (name — description):\n${folderListDetailed}\n\nSELECTION RULES (CRITICAL):\n- Choose the category by comparing the document's CONTENT to the folder DESCRIPTIONS above.\n- You MUST read the description of each folder to understand what belongs there.\n- Output the category EXACTLY as one of the folder names above (verbatim).\n- Fill the 'reasoning' field with a brief explanation of why the content matches that specific folder's description.\n- Do NOT invent new categories. If unsure, choose the closest match by description or use the first folder as a fallback.`;
       }
     }
 
@@ -132,6 +133,7 @@ IMPORTANT FOR suggestedName:
 - Example: "budget_report", "project_proposal", "meeting_notes".
 - Use underscores instead of spaces.
 - Do NOT include the file extension.
+- REFER to the "NAMING PATTERNS" section above if available for style consistency.
 
 CRITICAL REQUIREMENTS:
 1. The keywords array MUST contain 3-7 keywords extracted from the document content.
@@ -304,6 +306,7 @@ ${truncated}`;
             date: parsedJson.date || undefined,
             // Semantic fields for folder matching - these drive organization decisions
             summary: typeof parsedJson.summary === 'string' ? parsedJson.summary : undefined,
+            reasoning: typeof parsedJson.reasoning === 'string' ? parsedJson.reasoning : undefined,
             entity: typeof parsedJson.entity === 'string' ? parsedJson.entity : undefined,
             type: typeof parsedJson.type === 'string' ? parsedJson.type : undefined,
             project: typeof parsedJson.project === 'string' ? parsedJson.project : undefined,

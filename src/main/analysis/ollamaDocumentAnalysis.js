@@ -299,6 +299,7 @@ async function applyDocumentFolderMatching(
       category: analysis.category || 'Uncategorized',
       confidence: confidencePercent,
       type: 'document',
+      extractionMethod: analysis.extractionMethod || 'content',
       summary: (summaryForEmbedding || analysis.summary || analysis.purpose || '').substring(
         0,
         500
@@ -709,6 +710,41 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
         preview: extractedText.substring(0, TRUNCATION.PREVIEW_MEDIUM)
       });
 
+      // OPTIMIZATION: Retrieve similar file names to improve naming consistency (Vector-based Decision)
+      let namingContext = [];
+      try {
+        const { matcher } = getServicesLazy();
+        if (matcher) {
+          // Initialize matcher if needed (lazy init pattern)
+          if (!matcher.embeddingCache?.initialized) {
+            await matcher.initialize();
+          }
+
+          // Create a lightweight summary for embedding
+          const summaryForEmbedding = extractedText.slice(0, 1500);
+          const { vector } = await matcher.embedText(summaryForEmbedding);
+          // Find top 5 similar files
+          const similarFiles = await matcher.findSimilarFilesByVector(vector, 5);
+
+          // Extract basenames
+          namingContext = similarFiles
+            .filter((f) => f.metadata && f.metadata.name && f.metadata.name !== fileName)
+            .map((f) => f.metadata.name);
+
+          if (namingContext.length > 0) {
+            logger.debug('[DocumentAnalysis] Found similar files for naming context', {
+              count: namingContext.length,
+              examples: namingContext.slice(0, 3)
+            });
+          }
+        }
+      } catch (namingError) {
+        // Non-fatal, just log and proceed without context
+        logger.debug('[DocumentAnalysis] Failed to get naming context (non-fatal)', {
+          error: namingError.message
+        });
+      }
+
       // Backend Caching & Deduplication:
       // Generate a content hash to prevent duplicate AI processing
       const contentHash = crypto
@@ -717,16 +753,19 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
         .update(modelName)
         .digest('hex');
 
+      // FIX HIGH-65: Remove redundant model/folders from key since contentHash + fileName covers uniqueness
+      // Folders are only relevant if they change the prompt structure, but analyzeTextWithOllama uses
+      // folders in the prompt. So we SHOULD include folders. But model is in contentHash.
       const deduplicationKey = globalDeduplicator.generateKey({
         contentHash,
         fileName,
         task: 'analyzeTextWithOllama',
-        model: modelName,
+        // model: modelName, // Redundant, in contentHash
         folders: Array.isArray(smartFolders) ? smartFolders.map((f) => f?.name || '').join(',') : ''
       });
 
       const analysis = await globalDeduplicator.deduplicate(deduplicationKey, () =>
-        analyzeTextWithOllama(extractedText, fileName, smartFolders, fileDate)
+        analyzeTextWithOllama(extractedText, fileName, smartFolders, fileDate, namingContext)
       );
 
       // Semantic folder refinement using embeddings (delegated to helper)

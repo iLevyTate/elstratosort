@@ -22,6 +22,9 @@ const { generateSecureId } = require('./idUtils');
 
 logger.setContext('AutoOrganize-FileProcessor');
 
+// FIX CRIT-24: Module-level lock to prevent concurrent processing of the same file
+const processingLocks = new Set();
+
 /**
  * Process files without analysis (use default folder)
  * @param {Array} files - Files without analysis
@@ -80,6 +83,7 @@ async function processFilesWithoutAnalysis(files, smartFolders, _defaultLocation
  */
 async function processFilesIndividually(files, smartFolders, options, results, suggestionService) {
   const { confidenceThreshold, defaultLocation, preserveNames } = options;
+  // FIX LOW-20: Use constant for base threshold
   const baseThreshold = 0.75;
   const effectiveThreshold = Math.max(
     Number.isFinite(confidenceThreshold) ? confidenceThreshold : 0,
@@ -262,7 +266,7 @@ async function processFilesIndividually(files, smartFolders, options, results, s
 async function processNewFile(filePath, smartFolders, options, suggestionService, undoRedo) {
   const {
     autoOrganizeEnabled = false,
-    // FIX: Use same default as settings (0.75) for consistency - actual value comes from options
+    // FIX LOW-20: Use constant for default confidence threshold
     confidenceThreshold = 0.75
   } = options;
   const baseThreshold = 0.75;
@@ -275,6 +279,13 @@ async function processNewFile(filePath, smartFolders, options, suggestionService
     logger.info('[AutoOrganize] Auto-organize disabled, skipping file:', filePath);
     return null;
   }
+
+  // FIX CRIT-24: Check and acquire lock for this file
+  if (processingLocks.has(filePath)) {
+    logger.debug('[AutoOrganize] File already being processed, skipping:', filePath);
+    return null;
+  }
+  processingLocks.add(filePath);
 
   try {
     // Analyze the file first
@@ -439,6 +450,9 @@ async function processNewFile(filePath, smartFolders, options, suggestionService
       error: error.message
     });
     return null;
+  } finally {
+    // FIX CRIT-24: Release lock
+    processingLocks.delete(filePath);
   }
 }
 

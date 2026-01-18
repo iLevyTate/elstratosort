@@ -33,10 +33,13 @@ let folderMatcherSingleton = null;
 // In-memory cache for image analysis keyed by path|size|mtimeMs
 const imageAnalysisCache = new Map();
 const MAX_IMAGE_CACHE = 300;
+const IMAGE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
 const IMAGE_SIGNATURE_VERSION = 'v2';
 function setImageCache(signature, value) {
   if (!signature) return;
-  imageAnalysisCache.set(signature, value);
+  // FIX CRIT-28: Add timestamp for TTL eviction
+  imageAnalysisCache.set(signature, { value, timestamp: Date.now() });
   if (imageAnalysisCache.size > MAX_IMAGE_CACHE) {
     const first = imageAnalysisCache.keys().next().value;
     imageAnalysisCache.delete(first);
@@ -62,12 +65,23 @@ async function analyzeImageWithOllama(
   imageBase64,
   originalFileName,
   smartFolders = [],
-  extractedText = null
+  extractedText = null,
+  namingContext = []
 ) {
   try {
     logger.info(`Analyzing image content with Ollama`, {
       model: AppConfig.ai.imageAnalysis.defaultModel
     });
+
+    // Build naming context string
+    let namingContextStr = '';
+    if (namingContext && namingContext.length > 0) {
+      const examples = namingContext
+        .slice(0, 3)
+        .map((n) => `"${n}"`)
+        .join(', ');
+      namingContextStr = `\n\nNAMING PATTERNS FROM SIMILAR FILES:\nConsistent naming is important. The following are names of semantically similar files in the system. If they follow a clear pattern, TRY to adapt your 'suggestedName' to match their style (e.g., specific date format, separator style), while describing THIS image's content:\n${examples}`;
+    }
 
     // Build folder categories string for the prompt (include descriptions)
     let folderCategoriesStr = '';
@@ -84,7 +98,7 @@ async function analyzeImageWithOllama(
           .map((f, i) => `${i + 1}. "${f.name}" — ${f.description || 'no description provided'}`)
           .join('\n');
 
-        folderCategoriesStr = `\n\nAVAILABLE SMART FOLDERS (name — description):\n${folderListDetailed}\n\nSELECTION RULES (CRITICAL):\n- Choose the category by comparing BOTH the image content AND the filename to folder DESCRIPTIONS.\n- Output the category EXACTLY as one of the folder names above (verbatim).\n- Do NOT invent new categories.\n- If the filename suggests a category (e.g., "financial-report" → Finance folder), PRIORITIZE that match.`;
+        folderCategoriesStr = `\n\nAVAILABLE SMART FOLDERS (name — description):\n${folderListDetailed}\n\nSELECTION RULES (CRITICAL):\n- Choose the category by comparing BOTH the image content AND the filename to folder DESCRIPTIONS.\n- You MUST read the description of each folder to understand what belongs there.\n- Output the category EXACTLY as one of the folder names above (verbatim).\n- Fill the 'reasoning' field with a brief explanation of why the visual content matches that specific folder's description.\n- Do NOT invent new categories.\n- If the filename suggests a category (e.g., "financial-report" → Finance folder), PRIORITIZE that match.`;
       }
     }
 
@@ -114,6 +128,10 @@ ${JSON.stringify(
   2
 )}
 
+IMPORTANT FOR category:
+- Verify that your selected 'category' matches the folder description provided above.
+- Use the 'reasoning' field to explain the link between the visual content and the folder description.
+
 IMPORTANT FOR keywords:
 - Extract 3-7 keywords based on the VISUAL CONTENT and any visible text.
 - Do NOT just copy the filename. Look at what is actually in the image.
@@ -123,6 +141,7 @@ IMPORTANT FOR suggestedName:
 - Example: "budget_report", "sunset_beach", "project_diagram".
 - Use underscores instead of spaces.
 - Do NOT include the file extension.
+- REFER to "NAMING PATTERNS" above for style consistency if available.
 
 If you cannot determine a field with confidence, use null.
 Analyze this image:`;
@@ -582,37 +601,43 @@ async function extractExifDate(imageBuffer) {
  * @returns {Promise<Buffer>} Processed image buffer
  */
 async function preprocessImageBuffer(imageBuffer, fileExtension) {
-  const needsFormatConversion = ['.svg', '.tiff', '.tif', '.bmp', '.gif', '.webp'].includes(
-    fileExtension
-  );
-  const maxDimension = 1536;
-
-  let meta = null;
+  // FIX HIGH-67: Wrap entire preprocessing in try/catch to catch synchronous sharp errors
   try {
-    meta = await sharp(imageBuffer).metadata();
-  } catch (metaErr) {
-    logger.debug('[IMAGE] Metadata extraction failed:', metaErr.message);
-  }
+    const needsFormatConversion = ['.svg', '.tiff', '.tif', '.bmp', '.gif', '.webp'].includes(
+      fileExtension
+    );
+    const maxDimension = 1536;
 
-  const shouldResize =
-    meta && (Number(meta.width) > maxDimension || Number(meta.height) > maxDimension);
-
-  if (!needsFormatConversion && !shouldResize) {
-    return imageBuffer;
-  }
-
-  let transformer = sharp(imageBuffer);
-  if (shouldResize) {
-    const resizeOptions = { fit: 'inside', withoutEnlargement: true };
-    if (meta && meta.width && meta.height) {
-      if (meta.width >= meta.height) resizeOptions.width = maxDimension;
-      else resizeOptions.height = maxDimension;
-    } else {
-      resizeOptions.width = maxDimension;
+    let meta = null;
+    try {
+      meta = await sharp(imageBuffer).metadata();
+    } catch (metaErr) {
+      logger.debug('[IMAGE] Metadata extraction failed:', metaErr.message);
     }
-    transformer = transformer.resize(resizeOptions);
+
+    const shouldResize =
+      meta && (Number(meta.width) > maxDimension || Number(meta.height) > maxDimension);
+
+    if (!needsFormatConversion && !shouldResize) {
+      return imageBuffer;
+    }
+
+    let transformer = sharp(imageBuffer);
+    if (shouldResize) {
+      const resizeOptions = { fit: 'inside', withoutEnlargement: true };
+      if (meta && meta.width && meta.height) {
+        if (meta.width >= meta.height) resizeOptions.width = maxDimension;
+        else resizeOptions.height = maxDimension;
+      } else {
+        resizeOptions.width = maxDimension;
+      }
+      transformer = transformer.resize(resizeOptions);
+    }
+    return await transformer.png({ compressionLevel: 5 }).toBuffer();
+  } catch (error) {
+    logger.error('[IMAGE] Preprocessing failed:', error.message);
+    throw error;
   }
-  return transformer.png({ compressionLevel: 5 }).toBuffer();
 }
 
 /**
@@ -622,7 +647,13 @@ async function preprocessImageBuffer(imageBuffer, fileExtension) {
  * @param {Array} smartFolders - Available smart folders
  * @returns {Promise<Object>} Analysis with folder matching applied
  */
-async function applySemanticFolderMatching(analysis, filePath, smartFolders, fileSize) {
+async function applySemanticFolderMatching(
+  analysis,
+  filePath,
+  smartFolders,
+  fileSize,
+  extractedText
+) {
   const chromaDb = container.tryResolve(ServiceIds.CHROMA_DB);
   if (chromaDb !== chromaDbSingleton) {
     chromaDbSingleton = chromaDb;
@@ -679,7 +710,8 @@ async function applySemanticFolderMatching(analysis, filePath, smartFolders, fil
     analysis.project,
     analysis.purpose,
     (analysis.keywords || []).join(' '),
-    analysis.content_type || ''
+    analysis.content_type || '',
+    (extractedText || '').slice(0, 500) // Include OCR text for better matching
   ]
     .filter(Boolean)
     .join('\n');
@@ -720,6 +752,7 @@ async function applySemanticFolderMatching(analysis, filePath, smartFolders, fil
         category: analysis.category || 'Uncategorized',
         confidence: confidencePercent,
         type: 'image',
+        extractionMethod: extractedText ? 'image_ocr' : 'image_analysis',
         summary: summary.substring(0, 500),
         tags: Array.isArray(analysis.keywords) ? analysis.keywords : [],
         keywords: Array.isArray(analysis.keywords) ? analysis.keywords : [],
@@ -884,7 +917,12 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
     // Cache quick path: signature based on file stats
     const signature = `${IMAGE_SIGNATURE_VERSION}|${visionModelName}|${smartFolderSig}|${filePath}|${stats.size}|${stats.mtimeMs}`;
     if (!bypassCache && imageAnalysisCache.has(signature)) {
-      return imageAnalysisCache.get(signature);
+      // FIX CRIT-28: Check TTL
+      const cached = imageAnalysisCache.get(signature);
+      if (Date.now() - cached.timestamp < IMAGE_CACHE_TTL_MS) {
+        return cached.value;
+      }
+      imageAnalysisCache.delete(signature);
     }
     if (bypassCache) {
       logger.debug('[IMAGE] Bypassing analysis cache for reanalysis', { filePath });
@@ -968,9 +1006,46 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
     }
 
     // Analyze with Ollama, passing extracted text for grounding
+    let namingContext = [];
+    try {
+      // Try to get folder matcher to find similar files for naming context
+      const chromaDb = container.tryResolve(ServiceIds.CHROMA_DB);
+      if (chromaDb) {
+        if (chromaDb !== chromaDbSingleton) chromaDbSingleton = chromaDb;
+        if (!folderMatcherSingleton) folderMatcherSingleton = new FolderMatchingService(chromaDb);
+
+        // Only if we have some text or at least a filename to embed
+        const textForEmbedding = (extractedText || fileName || '').slice(0, 1000);
+        if (folderMatcherSingleton && textForEmbedding) {
+          if (!folderMatcherSingleton.embeddingCache?.initialized) {
+            await folderMatcherSingleton.initialize();
+          }
+          const { vector } = await folderMatcherSingleton.embedText(textForEmbedding);
+          const similarFiles = await folderMatcherSingleton.findSimilarFilesByVector(vector, 5);
+          namingContext = similarFiles
+            .filter((f) => f.metadata && f.metadata.name && f.metadata.name !== fileName)
+            .map((f) => f.metadata.name);
+
+          if (namingContext.length > 0) {
+            logger.debug('[IMAGE] Found similar files for naming context', {
+              count: namingContext.length
+            });
+          }
+        }
+      }
+    } catch (ncError) {
+      logger.debug('[IMAGE] Failed to get naming context', { error: ncError.message });
+    }
+
     let analysis;
     try {
-      analysis = await analyzeImageWithOllama(imageBase64, fileName, smartFolders, extractedText);
+      analysis = await analyzeImageWithOllama(
+        imageBase64,
+        fileName,
+        smartFolders,
+        extractedText,
+        namingContext
+      );
 
       // Merge EXIF date if available and Ollama didn't return a valid date (or override it?)
       // The plan says "populate the date field without asking LLM".
@@ -1033,7 +1108,13 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
 
     // Semantic folder refinement using embeddings (delegated to helper)
     try {
-      await applySemanticFolderMatching(analysis, filePath, smartFolders, stats?.size);
+      await applySemanticFolderMatching(
+        analysis,
+        filePath,
+        smartFolders,
+        stats?.size,
+        extractedTextForStorage
+      );
     } catch (error) {
       logger.warn('[IMAGE] Unexpected error in semantic folder refinement:', {
         error: error?.message,
@@ -1127,6 +1208,18 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
 // OCR capability using Ollama for text extraction from images
 async function extractTextFromImage(filePath) {
   try {
+    // FIX CRIT-30: Check file size before reading to prevent memory exhaustion
+    const stats = await fs.stat(filePath);
+    const MAX_OCR_SIZE = 20 * 1024 * 1024; // 20MB limit for OCR
+    if (stats.size > MAX_OCR_SIZE) {
+      logger.warn('[IMAGE] Skipping OCR for large file:', {
+        filePath,
+        size: stats.size,
+        limit: MAX_OCR_SIZE
+      });
+      return null;
+    }
+
     const imageBuffer = await fs.readFile(filePath);
     const imageBase64 = imageBuffer.toString('base64');
 

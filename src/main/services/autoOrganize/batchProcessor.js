@@ -20,6 +20,13 @@ const { generateSecureId } = require('./idUtils');
 
 logger.setContext('AutoOrganize-Batch');
 
+// FIX: Named constants for confidence thresholds (previously magic numbers)
+const CONFIDENCE_THRESHOLDS = {
+  BASE: 0.75, // Minimum confidence for auto-organization
+  FALLBACK: 0.3, // Confidence assigned to fallback destinations
+  DEFAULT: 0.75 // Default threshold when not specified
+};
+
 /**
  * Process batch suggestion results
  * @param {Object} batchSuggestions - Batch suggestions from suggestion service
@@ -38,11 +45,13 @@ async function processBatchResults(
   smartFolders
 ) {
   const { confidenceThreshold, defaultLocation, preserveNames } = options;
-  const baseThreshold = 0.75;
   const effectiveThreshold = Math.max(
     Number.isFinite(confidenceThreshold) ? confidenceThreshold : 0,
-    baseThreshold
+    CONFIDENCE_THRESHOLDS.BASE
   );
+
+  // FIX MED-20 & CRIT-23: Initialize pendingFeedback to track promises
+  const pendingFeedback = [];
 
   // Create a map of files keyed by path (more stable than name)
   const fileMap = new Map(files.map((f) => [f.path || f.name, f]));
@@ -63,7 +72,9 @@ async function processBatchResults(
       const lookupKey = fileWithSuggestion.path || fileWithSuggestion.name;
       const file = fileMap.get(lookupKey) || fileWithSuggestion;
       let { suggestion } = fileWithSuggestion;
-      const confidence = group.confidence || 0;
+      const confidence = Number.isFinite(fileWithSuggestion?.confidence)
+        ? fileWithSuggestion.confidence
+        : group.confidence || 0;
 
       // Ensure we have a valid source path
       const sourcePath = file.path || fileWithSuggestion.path;
@@ -100,7 +111,7 @@ async function processBatchResults(
           results.organized.push({
             file,
             destination: fallbackDestination,
-            confidence: 0.3,
+            confidence: CONFIDENCE_THRESHOLDS.FALLBACK,
             method: 'batch-fallback'
           });
 
@@ -148,12 +159,14 @@ async function processBatchResults(
         });
 
         // Record feedback for learning (non-blocking with error handling)
-        void suggestionService.recordFeedback(file, suggestion, true).catch((err) => {
-          logger.warn('[AutoOrganize] Failed to record feedback (non-critical):', {
-            file: sourcePath,
-            error: err.message
-          });
-        });
+        pendingFeedback.push(
+          suggestionService.recordFeedback(file, suggestion, true).catch((err) => {
+            logger.warn('[AutoOrganize] Failed to record feedback (non-critical):', {
+              file: sourcePath,
+              error: err.message
+            });
+          })
+        );
       } else {
         const defaultFolder = findDefaultFolder(smartFolders);
         if (defaultFolder?.path && confidence < effectiveThreshold) {
@@ -188,6 +201,11 @@ async function processBatchResults(
       }
     }
   }
+
+  // FIX MED-20: Await all pending feedback promises before completing
+  if (pendingFeedback.length > 0) {
+    await Promise.allSettled(pendingFeedback);
+  }
 }
 
 /**
@@ -209,7 +227,7 @@ async function batchOrganize(
   buildDestFn = buildDestinationPath
 ) {
   // FIX: Use ?? instead of || to properly handle falsy values like 0
-  const { confidenceThreshold = thresholds.confidence ?? 0.75 } = options;
+  const { confidenceThreshold = thresholds.confidence ?? CONFIDENCE_THRESHOLDS.DEFAULT } = options;
 
   logger.info('[AutoOrganize] Starting batch organization', {
     fileCount: files.length
@@ -228,6 +246,7 @@ async function batchOrganize(
     skipped: [],
     failed: []
   };
+  const pendingFeedback = [];
 
   // Process groups with error handling
   const groups = Array.isArray(batchSuggestions.groups) ? batchSuggestions.groups : [];
@@ -249,6 +268,7 @@ async function batchOrganize(
       });
       continue;
     }
+    const groupFiles = group.files;
 
     try {
       if (group.confidence >= confidenceThreshold) {
@@ -256,7 +276,15 @@ async function batchOrganize(
         const groupOperations = [];
         const groupFailures = [];
 
-        for (const file of group.files) {
+        for (const file of groupFiles) {
+          // FIX H-1: Guard against missing file.path before processing
+          if (!file?.path) {
+            logger.warn('[AutoOrganize] Skipping file with missing path in batch', {
+              fileName: file?.name || 'unknown'
+            });
+            continue;
+          }
+
           try {
             // Ensure folder and path are valid strings
             const safeGroup = safeSuggestion(group);
@@ -385,6 +413,9 @@ async function batchOrganize(
     skippedCount: results.skipped.length
   });
 
+  if (pendingFeedback.length > 0) {
+    await Promise.allSettled(pendingFeedback);
+  }
   return results;
 }
 

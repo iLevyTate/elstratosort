@@ -1,6 +1,8 @@
 const path = require('path');
 const fs = require('fs').promises;
 const { crossDeviceMove } = require('../../shared/atomicFileOperations');
+// FIX: Import safeSend for validated IPC event sending
+const { safeSend } = require('../ipc/ipcWrappers');
 
 /**
  * Resume incomplete organize batches from a previous session.
@@ -21,7 +23,8 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
         if (op.status === 'done') {
           const win = getMainWindow?.();
           if (win && !win.isDestroyed()) {
-            win.webContents.send('operation-progress', {
+            // FIX: Use safeSend for validated IPC event sending
+            safeSend(win.webContents, 'operation-progress', {
               type: 'batch_organize',
               current: i + 1,
               total,
@@ -51,7 +54,13 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
                 counter += 1;
                 const base = baseName || op.destination;
                 uniqueDestination = `${base}_${counter}${ext}`;
-              } catch {
+              } catch (accessErr) {
+                if (accessErr?.code && accessErr.code !== 'ENOENT') {
+                  logger.warn('[RESUME] Unexpected fs.access error:', {
+                    error: accessErr.message,
+                    code: accessErr.code
+                  });
+                }
                 break;
               }
             }
@@ -59,8 +68,13 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
             if (uniqueDestination !== op.destination) {
               op.destination = uniqueDestination;
             }
-          } catch {
-            // ignore if fs.access fails, means file doesn't exist
+          } catch (accessErr) {
+            if (accessErr?.code && accessErr.code !== 'ENOENT') {
+              logger.warn('[RESUME] Unexpected fs.access error:', {
+                error: accessErr.message,
+                code: accessErr.code
+              });
+            }
           }
 
           // Move with EXDEV handling using shared utility
@@ -82,7 +96,8 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
 
           const win = getMainWindow?.();
           if (win && !win.isDestroyed()) {
-            win.webContents.send('operation-progress', {
+            // FIX: Use safeSend for validated IPC event sending
+            safeSend(win.webContents, 'operation-progress', {
               type: 'batch_organize',
               current: i + 1,
               total,

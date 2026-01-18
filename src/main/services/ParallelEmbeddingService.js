@@ -323,11 +323,12 @@ class ParallelEmbeddingService {
 
         // FIX: Validate model consistency - warn if model used differs from batch model
         if (model !== batchModel && model !== 'fallback') {
-          logger.warn('[ParallelEmbeddingService] Model mismatch in batch', {
-            expected: batchModel,
-            actual: model,
+          // FIX CRIT-29: Throw on model mismatch to prevent vector space corruption
+          const mismatchMsg = `Model mismatch in batch: expected ${batchModel}, got ${model}. Aborting to protect vector integrity.`;
+          logger.error('[ParallelEmbeddingService] ' + mismatchMsg, {
             itemId: item.id
           });
+          throw new Error(mismatchMsg);
         }
 
         const result = {
