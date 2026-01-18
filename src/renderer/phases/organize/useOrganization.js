@@ -114,46 +114,43 @@ export function useProgressTracking() {
     const setupChunkListener = () => {
       if (abortController.signal.aborted) return;
 
-      if (!window.electronAPI?.events?.on) {
-        logger.warn('Events API not available for chunk listener');
+      if (!window.electronAPI?.events?.onBatchResultsChunk) {
+        logger.debug('Batch results chunk listener not available');
         return;
       }
 
       try {
-        chunkUnsubscribeRef.current = window.electronAPI.events.on(
-          'batch-results-chunk',
-          (payload) => {
-            if (abortController.signal.aborted) return;
+        chunkUnsubscribeRef.current = window.electronAPI.events.onBatchResultsChunk((payload) => {
+          if (abortController.signal.aborted) return;
 
-            try {
-              if (!payload || !payload.chunk) return;
+          try {
+            if (!payload || !payload.chunk) return;
 
-              logger.debug('[ORGANIZE] Received batch results chunk', {
-                batchId: payload.batchId,
-                chunkIndex: payload.chunkIndex,
-                totalChunks: payload.totalChunks,
-                chunkSize: payload.chunk?.length
-              });
+            logger.debug('[ORGANIZE] Received batch results chunk', {
+              batchId: payload.batchId,
+              chunkIndex: payload.chunkIndex,
+              totalChunks: payload.totalChunks,
+              chunkSize: payload.chunk?.length
+            });
 
-              // Accumulate chunks
-              chunkedResultsRef.current = [...chunkedResultsRef.current, ...payload.chunk];
-              setChunkedResults([...chunkedResultsRef.current]);
+            // Accumulate chunks
+            chunkedResultsRef.current = [...chunkedResultsRef.current, ...payload.chunk];
+            setChunkedResults([...chunkedResultsRef.current]);
 
-              // Update progress based on chunks received
-              if (payload.totalChunks > 0) {
-                const progress = Math.round(((payload.chunkIndex + 1) / payload.totalChunks) * 100);
-                logger.debug('[ORGANIZE] Chunk progress', {
-                  progress,
-                  chunkIndex: payload.chunkIndex
-                });
-              }
-            } catch (error) {
-              logger.error('Error processing batch results chunk', {
-                error: error.message
+            // Update progress based on chunks received
+            if (payload.totalChunks > 0) {
+              const progress = Math.round(((payload.chunkIndex + 1) / payload.totalChunks) * 100);
+              logger.debug('[ORGANIZE] Chunk progress', {
+                progress,
+                chunkIndex: payload.chunkIndex
               });
             }
+          } catch (error) {
+            logger.error('Error processing batch results chunk', {
+              error: error.message
+            });
           }
-        );
+        });
       } catch (error) {
         logger.error('Failed to subscribe to batch-results-chunk events', {
           error: error.message

@@ -660,8 +660,8 @@ export default function UnifiedSearchModal({
 
   // Help tour state (for re-showing the tour via help button)
   const [showTourManually, setShowTourManually] = useState(false);
-  const nodeTypes = useMemo(() => NODE_TYPES, []);
-  const edgeTypes = useMemo(() => EDGE_TYPES, []);
+  // nodeTypes and edgeTypes are defined as constants outside the component to prevent React Flow warnings
+  // See: https://reactflow.dev/error#002
 
   const dispatch = useAppDispatch();
   const handleOpenSettings = useCallback(() => {
@@ -958,8 +958,8 @@ export default function UnifiedSearchModal({
       const fileIds = sources.map((s) => s.fileId).filter(Boolean);
       if (fileIds.length >= 2) {
         const simEdgesResp = await window.electronAPI?.embeddings?.getSimilarityEdges?.(fileIds, {
-          threshold: 0.5,
-          maxEdgesPerNode: 2
+          threshold: 0.75,
+          maxEdgesPerNode: 1
         });
         if (simEdgesResp?.success && Array.isArray(simEdgesResp.edges)) {
           const nodeDataMap = new Map();
@@ -3105,7 +3105,7 @@ export default function UnifiedSearchModal({
         try {
           const simEdgesResp = await window.electronAPI?.embeddings?.getSimilarityEdges?.(
             expandedFileIds,
-            { threshold: 0.5, maxEdgesPerNode: 2 }
+            { threshold: 0.75, maxEdgesPerNode: 1 }
           );
 
           if (simEdgesResp?.success && Array.isArray(simEdgesResp.edges)) {
@@ -3343,7 +3343,7 @@ export default function UnifiedSearchModal({
             const expandedNodeIds = nextNodes.map((n) => n.id);
             const simEdgesResp = await window.electronAPI?.embeddings?.getSimilarityEdges?.(
               expandedNodeIds,
-              { minSimilarity: 0.5 }
+              { threshold: 0.75, maxEdgesPerNode: 1 }
             );
 
             if (simEdgesResp?.success && Array.isArray(simEdgesResp.edges)) {
@@ -4623,8 +4623,8 @@ export default function UnifiedSearchModal({
                   <ReactFlow
                     nodes={rfNodes}
                     edges={rfEdges}
-                    nodeTypes={nodeTypes}
-                    edgeTypes={edgeTypes}
+                    nodeTypes={NODE_TYPES}
+                    edgeTypes={EDGE_TYPES}
                     onNodesChange={onNodesChange}
                     onEdgesChange={graphActions.onEdgesChange}
                     className={`bg-[var(--surface-muted)] ${zoomLevel < 0.6 ? 'graph-zoomed-out' : ''}`}

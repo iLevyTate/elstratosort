@@ -391,9 +391,9 @@ function SetupPhase() {
 
   return (
     <div className="phase-container">
-      <div className="container-responsive flex flex-col flex-1 min-h-0 py-4 md:py-6 gap-4">
+      <div className="container-responsive flex flex-col flex-1 min-h-0 py-spacious gap-spacious">
         {/* Header */}
-        <div className="text-center flex flex-col flex-shrink-0 gap-2">
+        <div className="text-center flex flex-col flex-shrink-0 gap-compact">
           <h1 className="heading-primary text-xl md:text-2xl">
             Configure <span className="text-gradient">Smart Folders</span>
           </h1>
@@ -405,7 +405,7 @@ function SetupPhase() {
         {/* Main content */}
         <div className="flex-1 min-h-0 flex flex-col">
           {/* Toolbar */}
-          <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <div className="flex items-center justify-between gap-cozy mb-spacious flex-wrap">
             <div className="flex items-center gap-2">
               <span className="text-sm text-system-gray-600">
                 {isLoading
@@ -549,7 +549,7 @@ function SetupPhase() {
                 </div>
               ) : (
                 <div
-                  className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"
+                  className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-spacious"
                   data-testid="folder-list"
                 >
                   {smartFolders.map((folder, index) => (
@@ -580,7 +580,7 @@ function SetupPhase() {
         </div>
 
         {/* Footer navigation */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between flex-shrink-0 gap-3 pt-3 border-t border-border-soft/50">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end flex-shrink-0 gap-default pt-spacious border-t border-border-soft/50">
           <Button
             onClick={() => actions.advancePhase(PHASES.WELCOME)}
             variant="secondary"

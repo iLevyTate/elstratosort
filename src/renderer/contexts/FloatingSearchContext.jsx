@@ -18,12 +18,30 @@ const FloatingSearchContext = createContext(null);
 
 // Session storage key to track if widget was auto-shown this session
 const WIDGET_AUTO_SHOWN_KEY = 'floatingSearchWidgetAutoShown';
+// Local storage key to persist modal open state
+const MODAL_OPEN_STATE_KEY = 'unifiedSearchModalOpen';
 
 export function FloatingSearchProvider({ children }) {
   const [isWidgetOpen, setIsWidgetOpen] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  // Initialize from localStorage to restore state after restart
+  const [isModalOpen, setIsModalOpen] = useState(() => {
+    try {
+      return localStorage.getItem(MODAL_OPEN_STATE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [modalInitialTab, setModalInitialTab] = useState('search');
   const autoShowChecked = useRef(false);
+
+  // Persist modal state changes
+  useEffect(() => {
+    try {
+      localStorage.setItem(MODAL_OPEN_STATE_KEY, String(isModalOpen));
+    } catch (error) {
+      // Ignore storage errors
+    }
+  }, [isModalOpen]);
 
   const openWidget = useCallback(() => {
     setIsWidgetOpen(true);
@@ -37,11 +55,13 @@ export function FloatingSearchProvider({ children }) {
     autoShowChecked.current = true;
 
     // Check if already shown this session
+    // FIX: Use localStorage instead of sessionStorage to prevent widget from popping up
+    // every time the app restarts (better user experience)
     let alreadyShown = false;
     try {
-      alreadyShown = Boolean(sessionStorage.getItem(WIDGET_AUTO_SHOWN_KEY));
+      alreadyShown = Boolean(localStorage.getItem(WIDGET_AUTO_SHOWN_KEY));
     } catch {
-      // sessionStorage not available, proceed with check
+      // localStorage not available, proceed with check
     }
 
     if (alreadyShown) {
@@ -60,9 +80,9 @@ export function FloatingSearchProvider({ children }) {
           // Files are indexed, show the widget to help users discover semantic search
           setIsWidgetOpen(true);
           try {
-            sessionStorage.setItem(WIDGET_AUTO_SHOWN_KEY, 'true');
+            localStorage.setItem(WIDGET_AUTO_SHOWN_KEY, 'true');
           } catch {
-            // sessionStorage write failed, widget will show again next session
+            // localStorage write failed, widget will show again next session
           }
         }
       } catch {

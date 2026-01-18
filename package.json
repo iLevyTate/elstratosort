@@ -39,7 +39,7 @@
     "npm": ">=8.0.0"
   },
   "scripts": {
-    "dev": "npm run build:dev && npm run build:main:dev && cross-env NODE_ENV=development USE_DEV_SERVER=true electron . --enable-logging",
+    "dev": "npm run clean && npm run build:dev && npm run build:main:dev && cross-env NODE_ENV=development USE_DEV_SERVER=true electron . --enable-logging",
     "dev:fast": "cross-env NODE_ENV=development USE_DEV_SERVER=false electron . --enable-logging",
     "build": "rimraf dist && npm run build:main && cross-env NODE_ENV=production webpack --mode=production",
     "build:dev": "webpack --mode=development",
@@ -53,6 +53,7 @@
     "generate:channels:update": "node scripts/generate-preload-channels.js --update",
     "generate:assets": "npm run generate:icons && npm run generate:nsis",
     "postinstall": "node scripts/postinstall.js",
+    "clean": "rimraf dist .webpack-cache",
     "setup:ollama": "node scripts/setup-ollama.js",
     "setup:ollama:check": "node scripts/setup-ollama.js --check",
     "setup:chromadb": "node scripts/setup-chromadb.js --auto",

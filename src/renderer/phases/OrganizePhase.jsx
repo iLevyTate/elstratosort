@@ -641,7 +641,12 @@ function OrganizePhase() {
       <Modal
         isOpen={showStatusModal}
         onClose={() => setShowStatusModal(false)}
-        title="📊 File Status Overview"
+        title={
+          <span className="flex items-center gap-2">
+            <BarChart3Icon className="w-5 h-5 text-stratosort-blue" />
+            File Status Overview
+          </span>
+        }
         size="medium"
       >
         <div className="flex flex-col gap-[var(--spacing-default)]">
