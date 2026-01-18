@@ -75,8 +75,8 @@ const formatConfidence = (value) => {
  * Individual row component for virtualized list
  */
 const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }) {
-  const { items, handleAction, getFileStateDisplay } = data;
-  const file = items[index];
+  const { items, handleAction, getFileStateDisplay } = data || {};
+  const file = items && items[index];
 
   if (!file) return null;
 
