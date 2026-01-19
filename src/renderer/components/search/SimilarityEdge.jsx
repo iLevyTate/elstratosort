@@ -155,7 +155,7 @@ const SimilarityEdge = memo(
                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                 : 'bg-emerald-100 text-emerald-700'
           }
-          title="Connection Details"
+          title="Relationship Analysis"
           headerColorClass="text-emerald-400"
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}

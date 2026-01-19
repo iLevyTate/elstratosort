@@ -19,8 +19,14 @@ const {
 } = require('../../shared/performanceConstants');
 const { withErrorLogging, withChromaInit, safeHandle } = require('./ipcWrappers');
 const { cosineSimilarity } = require('../../shared/vectorMath');
-const { getOllamaEmbeddingModel, getOllama } = require('../ollamaUtils');
+const {
+  getOllamaEmbeddingModel,
+  getOllamaModel,
+  getOllamaVisionModel,
+  getOllama
+} = require('../ollamaUtils');
 const { chunkText } = require('../utils/textChunking');
+const { normalizeText } = require('../../shared/normalization');
 const {
   readEmbeddingIndexMetadata,
   writeEmbeddingIndexMetadata
@@ -92,6 +98,84 @@ async function verifyEmbeddingModelAvailable(logger) {
     return {
       available: false,
       model,
+      error: `Cannot connect to Ollama: ${error.message}. Make sure Ollama is running.`
+    };
+  }
+}
+
+function isModelAvailable(modelNames, model) {
+  const normalizedModel = String(model || '').toLowerCase();
+  if (!normalizedModel) return false;
+  return modelNames.some(
+    (name) =>
+      name === normalizedModel ||
+      name.startsWith(`${normalizedModel}:`) ||
+      normalizedModel.startsWith(name.split(':')[0])
+  );
+}
+
+async function verifyReanalyzeModelsAvailable(logger) {
+  const textModel = getOllamaModel() || AI_DEFAULTS.TEXT.MODEL;
+  const visionModel = getOllamaVisionModel() || AI_DEFAULTS.IMAGE.MODEL;
+  const embeddingModel = getOllamaEmbeddingModel() || AI_DEFAULTS.EMBEDDING.MODEL;
+
+  try {
+    const ollama = getOllama();
+    const response = await ollama.list();
+    const models = response?.models || [];
+    const modelNames = models.map((m) => m.name?.toLowerCase() || '');
+
+    if (!isModelAvailable(modelNames, textModel)) {
+      return {
+        available: false,
+        model: textModel,
+        modelType: 'text',
+        error: `Text model "${textModel}" not installed. Install it with: ollama pull ${textModel}`
+      };
+    }
+
+    if (!isModelAvailable(modelNames, visionModel)) {
+      return {
+        available: false,
+        model: visionModel,
+        modelType: 'vision',
+        error: `Vision model "${visionModel}" not installed. Install it with: ollama pull ${visionModel}`
+      };
+    }
+
+    let embeddingModelToUse = embeddingModel;
+    if (!isModelAvailable(modelNames, embeddingModelToUse)) {
+      const fallbackModels = AI_DEFAULTS.EMBEDDING.FALLBACK_MODELS || [];
+      const fallback = fallbackModels.find((candidate) => isModelAvailable(modelNames, candidate));
+      if (fallback) {
+        logger.info('[EMBEDDINGS] Primary model not found, using fallback', {
+          primary: embeddingModel,
+          fallback,
+          availableModels: modelNames.slice(0, 10)
+        });
+        embeddingModelToUse = fallback;
+      } else {
+        return {
+          available: false,
+          model: embeddingModel,
+          modelType: 'embedding',
+          error: `Embedding model "${embeddingModel}" not installed. Install it with: ollama pull ${embeddingModel}`
+        };
+      }
+    }
+
+    return {
+      available: true,
+      textModel,
+      visionModel,
+      embeddingModel: embeddingModelToUse
+    };
+  } catch (error) {
+    logger.error('[EMBEDDINGS] Failed to verify models for reanalysis:', error.message);
+    return {
+      available: false,
+      model: embeddingModel,
+      modelType: 'ollama',
       error: `Cannot connect to Ollama: ${error.message}. Make sure Ollama is running.`
     };
   }
@@ -1297,14 +1381,15 @@ function registerEmbeddingsIpc(servicesOrParams) {
           applyNaming: options.applyNaming
         });
 
-        // Step 1: Verify models are available
-        const modelCheck = await verifyEmbeddingModelAvailable(logger);
+        // Step 1: Verify text, vision, and embedding models are available
+        const modelCheck = await verifyReanalyzeModelsAvailable(logger);
         if (!modelCheck.available) {
           return {
             success: false,
-            error: modelCheck.error,
+            error: `MODEL_NOT_AVAILABLE: ${modelCheck.error}`,
             errorCode: 'MODEL_NOT_AVAILABLE',
-            model: modelCheck.model
+            model: modelCheck.model,
+            modelType: modelCheck.modelType
           };
         }
 
@@ -1357,7 +1442,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
           success: true,
           scanned: result.scanned,
           queued: result.queued,
-          model: modelCheck.model,
+          model: modelCheck.embeddingModel,
           message: `Queued ${result.queued} files for reanalysis. Analysis will run in the background and embeddings will be rebuilt automatically.`
         };
       } catch (e) {
@@ -1571,7 +1656,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
         const { MAX_TOP_K } = LIMITS;
 
         try {
-          const cleanQuery = typeof query === 'string' ? query.trim() : '';
+          const cleanQuery = normalizeText(query, { maxLength: 2000 });
           if (!cleanQuery) {
             return { success: false, error: 'Query is required' };
           }
@@ -1755,7 +1840,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
       };
 
       try {
-        const cleanQuery = typeof query === 'string' ? query.trim() : '';
+        const cleanQuery = normalizeText(query, { maxLength: 2000 });
         if (!cleanQuery) {
           return { success: false, error: 'Query is required' };
         }
@@ -1773,9 +1858,15 @@ function registerEmbeddingsIpc(servicesOrParams) {
           return { success: false, error: `fileIds must contain at most ${MAX_IDS} ids` };
         }
 
-        const normalizedIds = fileIds
-          .filter((id) => typeof id === 'string' && id.length > 0 && id.length < 2048)
-          .slice(0, MAX_IDS);
+        const normalizedIds = [];
+        const seenIds = new Set();
+        for (const id of fileIds) {
+          if (typeof id !== 'string' || id.length === 0 || id.length >= 2048) continue;
+          if (seenIds.has(id)) continue;
+          seenIds.add(id);
+          normalizedIds.push(id);
+          if (normalizedIds.length >= MAX_IDS) break;
+        }
 
         if (normalizedIds.length === 0) {
           return { success: false, error: 'No valid fileIds provided' };

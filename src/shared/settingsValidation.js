@@ -4,6 +4,7 @@
  */
 
 const { DEFAULT_SETTINGS } = require('./defaultSettings');
+const { CHAT_PERSONAS } = require('./chatPersonas');
 const { PROTOTYPE_POLLUTION_KEYS } = require('./securityConfig');
 const { LENIENT_URL_PATTERN, LOGGING_LEVELS, NUMERIC_LIMITS } = require('./validationConstants');
 const {
@@ -20,6 +21,8 @@ const { isValidEmbeddingModel } = require('./modelCategorization');
  * Examples: "localhost:11434", "http://127.0.0.1:11434", "https://ollama.example.com/api"
  */
 const URL_PATTERN = LENIENT_URL_PATTERN;
+
+const CHAT_PERSONA_IDS = CHAT_PERSONAS.map((persona) => persona.id);
 
 /**
  * Validation rules for settings
@@ -63,6 +66,11 @@ const VALIDATION_RULES = {
     type: 'number',
     min: 0,
     max: 1,
+    required: false
+  },
+  smartFolderRoutingMode: {
+    type: 'string',
+    enum: ['auto', 'llm', 'embedding', 'hybrid'],
     required: false
   },
   namingConvention: {
@@ -123,6 +131,16 @@ const VALIDATION_RULES = {
     validator: isValidEmbeddingModel,
     validatorMessage:
       'embeddingModel must be a valid embedding model (e.g., embeddinggemma, mxbai-embed-large, nomic-embed-text)'
+  },
+  chatPersona: {
+    type: 'string',
+    enum: CHAT_PERSONA_IDS,
+    required: false
+  },
+  chatResponseMode: {
+    type: 'string',
+    enum: ['fast', 'deep'],
+    required: false
   },
   autoUpdateOllama: {
     type: 'boolean',

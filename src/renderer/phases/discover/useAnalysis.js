@@ -251,25 +251,25 @@ function showAnalysisCompletionNotification({
  * @param {Function} options.getCurrentPhase - Function to get current phase (for race condition prevention)
  * @returns {Object} Analysis functions and state
  */
-export function useAnalysis(options) {
+export function useAnalysis(options = {}) {
   const {
-    selectedFiles,
-    fileStates,
-    analysisResults,
-    isAnalyzing,
-    analysisProgress,
-    namingSettings,
+    selectedFiles = [],
+    fileStates = {},
+    analysisResults = [],
+    isAnalyzing = false,
+    analysisProgress = { current: 0, total: 0 },
+    namingSettings = {},
     setters: {
-      setIsAnalyzing,
-      setAnalysisProgress,
-      setCurrentAnalysisFile,
-      setAnalysisResults,
-      setFileStates
+      setIsAnalyzing = () => {},
+      setAnalysisProgress = () => {},
+      setCurrentAnalysisFile = () => {},
+      setAnalysisResults = () => {},
+      setFileStates = () => {}
     } = {},
-    updateFileState,
-    addNotification,
-    actions,
-    getCurrentPhase
+    updateFileState = () => {},
+    addNotification = () => {},
+    actions = { setPhaseData: () => {}, advancePhase: () => {} },
+    getCurrentPhase = () => {}
   } = options;
   const hasResumedRef = useRef(false);
   const analysisLockRef = useRef(false);
@@ -285,6 +285,8 @@ export function useAnalysis(options) {
   // FIX: Throttle progress updates to prevent race conditions with concurrent workers
   const lastProgressDispatchRef = useRef(0);
   const PROGRESS_THROTTLE_MS = 50;
+  // FIX: Track mount state to prevent state resets on navigation
+  const isMountedRef = useRef(true);
 
   // Refs to track current state values (prevents stale closures in callbacks)
   // PERF FIX: Update refs synchronously during render instead of using separate useEffect hooks.
@@ -450,13 +452,6 @@ export function useAnalysis(options) {
     async (files) => {
       if (!files || files.length === 0) return;
 
-      // FIX Issue-4: Mark as "resumed" IMMEDIATELY at function entry
-      // This prevents the resume useEffect from showing "Resuming..." notification
-      // for a brand new analysis. The resume logic should only trigger when isAnalyzing
-      // was already true on component mount (e.g., from persisted state after page refresh).
-      // Moving this before the lock check ensures it's set before any async operations.
-      hasResumedRef.current = true;
-
       // Atomic lock acquisition (use refs to avoid stale closures)
       const lockAcquired = (() => {
         if (analysisLockRef.current || globalAnalysisActiveRef.current || isAnalyzingRef.current) {
@@ -477,6 +472,14 @@ export function useAnalysis(options) {
         ];
         return;
       }
+
+      // FIX Issue-4: Mark as "resumed" ONLY after lock is acquired
+      // This prevents the resume useEffect from showing "Resuming..." notification
+      // for a brand new analysis. The resume logic should only trigger when isAnalyzing
+      // was already true on component mount (e.g., from persisted state after page refresh).
+      // Setting this after lock acquisition ensures we don't permanently disable resume
+      // logic when the lock wasn't acquired and we returned early.
+      hasResumedRef.current = true;
 
       setGlobalAnalysisActive(true);
       abortControllerRef.current = new AbortController();
@@ -793,23 +796,31 @@ export function useAnalysis(options) {
           clearTimeout(analysisTimeoutRef.current);
           analysisTimeoutRef.current = null;
         }
-        // Update both local and outer refs to ensure proper lock synchronization
+
+        // Update local refs to ensure proper lock synchronization
         localAnalyzingRef.current = false;
-        isAnalyzingRef.current = false;
-        setIsAnalyzing(false);
 
-        // FIX: Delay clearing the current file name to allow UI to show final state
-        // This prevents the "file name not updating" issue where quick analyses
-        // would clear the name before it could be rendered
-        setTimeout(() => {
-          setCurrentAnalysisFile('');
-          actions.setPhaseData('currentAnalysisFile', '');
-        }, 500);
+        // CRITICAL FIX: Only reset Redux state if component is still mounted.
+        // If unmounted (user navigated away), keep isAnalyzing=true in Redux
+        // so that analysis resumes automatically when they return.
+        if (isMountedRef.current) {
+          isAnalyzingRef.current = false;
+          setIsAnalyzing(false);
 
-        // FIX: Include lastActivity in reset to fully clear progress state
-        setAnalysisProgress({ current: 0, total: 0, lastActivity: 0 });
-        actions.setPhaseData('isAnalyzing', false);
-        // FIX: Removed redundant setPhaseData('analysisProgress') - already updated via setAnalysisProgress
+          // FIX: Delay clearing the current file name to allow UI to show final state
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              setCurrentAnalysisFile('');
+              actions.setPhaseData('currentAnalysisFile', '');
+            }
+          }, 500);
+
+          // FIX: Include lastActivity in reset to fully clear progress state
+          setAnalysisProgress({ current: 0, total: 0, lastActivity: 0 });
+          actions.setPhaseData('isAnalyzing', false);
+        } else {
+          logger.info('Analysis interrupted by navigation - preserving state for resume');
+        }
 
         analysisLockRef.current = false;
         setGlobalAnalysisActive(false);
@@ -942,13 +953,17 @@ export function useAnalysis(options) {
     }
   }, [analysisResults, fileStates, setFileStates, addNotification]);
 
-  // Cleanup on unmount
+  // FIX M-1: Consolidated cleanup on unmount (removed duplicate effect below)
   useEffect(() => {
     return () => {
+      // Clear auto-advance timeout
+      clearAutoAdvanceTimeoutRef(autoAdvanceTimeoutRef);
+      // Clear abort controller
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
+      // Clear all intervals and timeouts
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
         heartbeatIntervalRef.current = null;
@@ -995,27 +1010,7 @@ export function useAnalysis(options) {
     }
   }, [isAnalyzing, selectedFiles, fileStates, addNotification, resetAnalysisState]);
 
-  // FIX Issue 4: Cleanup effect to clear auto-advance timeout on unmount
-  // This prevents "Can't perform state update on unmounted component" warnings
-  useEffect(() => {
-    return () => {
-      // FIX Issue 4: Clear per-hook auto-advance timeout
-      clearAutoAdvanceTimeoutRef(autoAdvanceTimeoutRef);
-      // Also clear any other pending timeouts
-      if (heartbeatIntervalRef.current) {
-        clearInterval(heartbeatIntervalRef.current);
-        heartbeatIntervalRef.current = null;
-      }
-      if (analysisTimeoutRef.current) {
-        clearTimeout(analysisTimeoutRef.current);
-        analysisTimeoutRef.current = null;
-      }
-      if (lockTimeoutRef.current) {
-        clearTimeout(lockTimeoutRef.current);
-        lockTimeoutRef.current = null;
-      }
-    };
-  }, []);
+  // FIX M-1: Duplicate cleanup effect removed - consolidated above in single cleanup useEffect
 
   return {
     analyzeFiles,

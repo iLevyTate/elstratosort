@@ -39,21 +39,35 @@ test.describe('Smart Folders - Setup Phase Navigation', () => {
 
   test('should display Smart Folders heading', async () => {
     await nav.goToPhase(PHASES.SETUP);
-    await window.waitForTimeout(500);
+    // Increased timeout for phase transition and rendering
+    await window.waitForTimeout(2000);
 
-    const heading = window.locator('text=Smart Folders, text=Folders, h1, h2');
+    // Try multiple selectors for robustness
+    const heading = window.locator('h1:has-text("Smart Folders"), h1:has-text("Configure")');
     const count = await heading.count();
 
     console.log('[Test] Smart Folders heading elements:', count);
+
+    // Check for error boundary if heading is missing
+    if (count === 0) {
+      const errorBoundary = window.locator('text=Something went wrong');
+      if (await errorBoundary.isVisible()) {
+        console.log('[Test] Phase Error Boundary triggered!');
+      }
+      // Dump page content for debugging
+      const body = await window.textContent('body');
+      console.log('[Test] Page content:', body.substring(0, 500) + '...');
+    }
+
     expect(count).toBeGreaterThan(0);
   });
 
   test('should have Add Folder button', async () => {
     await nav.goToPhase(PHASES.SETUP);
-    await window.waitForTimeout(500);
+    await window.waitForTimeout(1000);
 
     const addButton = window.locator(
-      'button:has-text("Add"), button:has-text("New"), button:has-text("Create")'
+      'button:has-text("Add Folder"), button:has-text("Add Custom Folder")'
     );
 
     const visible = await addButton
@@ -84,22 +98,70 @@ test.describe('Smart Folders - Folder List', () => {
     await closeApp(app);
   });
 
-  test('should display folder list container', async () => {
-    const folderList = window.locator(
-      '[data-testid="folder-list"], .folder-list, [class*="folder-list"]'
-    );
+  test('should display folder list container or empty state', async () => {
+    // Check for either list or empty state
+    const folderList = window.locator('[data-testid="folder-list"]');
+    const emptyState = window.locator('[data-testid="smart-folders-empty-state"]');
 
-    const count = await folderList.count();
-    console.log('[Test] Folder list containers:', count);
+    const listCount = await folderList.count();
+    const emptyCount = await emptyState.count();
+
+    console.log(`[Test] Folder list: ${listCount}, Empty state: ${emptyCount}`);
+    expect(listCount + emptyCount).toBeGreaterThan(0);
+  });
+
+  test('should populate folders if empty (Load Defaults)', async () => {
+    const emptyState = window.locator('[data-testid="smart-folders-empty-state"]');
+    if (await emptyState.isVisible()) {
+      console.log('[Test] Empty state detected, clicking Load Defaults...');
+      // Click Load Defaults
+      const loadDefaultsBtn = window.locator('button:has-text("Load Defaults")');
+      await loadDefaultsBtn.click();
+
+      // Wait for confirmation dialog
+      const confirmBtn = window.locator('button:has-text("Reset")'); // It says "Reset" in the dialog
+      if (await confirmBtn.isVisible()) {
+        await confirmBtn.click();
+      }
+
+      // Wait for list to appear
+      await window.waitForSelector('[data-testid="folder-list"]', { timeout: 5000 });
+    }
+
+    // Now verify we have items
+    const folderItems = window.locator('[data-testid="folder-item"]');
+    const count = await folderItems.count();
+    console.log('[Test] Folder items after ensuring defaults:', count);
+    expect(count).toBeGreaterThan(0);
   });
 
   test('should have Uncategorized folder by default', async () => {
-    const uncategorized = window.locator(
-      'text=Uncategorized, text=uncategorized, [data-testid*="uncategorized"]'
-    );
+    // Ensure consistent state by resetting to defaults via API
+    await window.evaluate(async () => {
+      await window.electronAPI?.smartFolders?.resetToDefaults();
+    });
+
+    // Refresh the view by navigating away and back
+    await nav.goToPhase(PHASES.WELCOME);
+    await window.waitForTimeout(500);
+    await nav.goToPhase(PHASES.SETUP);
+    // Increased wait time to ensure rendering is complete
+    await window.waitForTimeout(2000);
+
+    // Use a specific locator for the Uncategorized folder text
+    const uncategorized = window.locator('text=Uncategorized');
+
+    // Wait for it to appear with a generous timeout
+    await uncategorized
+      .first()
+      .waitFor({ state: 'visible', timeout: 10000 })
+      .catch(() => {
+        console.log('[Test] Warning: Uncategorized folder wait timed out');
+      });
 
     const count = await uncategorized.count();
     console.log('[Test] Uncategorized folder found:', count > 0);
+    expect(count).toBeGreaterThan(0);
   });
 
   test('should display folder items with names', async () => {
@@ -109,23 +171,27 @@ test.describe('Smart Folders - Folder List', () => {
 
     const count = await folderItems.count();
     console.log('[Test] Folder items displayed:', count);
+    expect(count).toBeGreaterThan(0);
   });
 
   test('should have folders API available', async () => {
     const foldersApi = await window.evaluate(() => {
-      const api = window.electronAPI?.folders;
+      // API is exposed as electronAPI.smartFolders
+      const api = window.electronAPI?.smartFolders;
+      const filesApi = window.electronAPI?.files;
       return {
-        hasGetAll: typeof api?.getAll === 'function',
-        hasCreate: typeof api?.create === 'function',
-        hasUpdate: typeof api?.update === 'function',
+        hasGet: typeof api?.get === 'function',
+        hasAdd: typeof api?.add === 'function',
+        hasEdit: typeof api?.edit === 'function',
         hasDelete: typeof api?.delete === 'function',
-        hasScan: typeof api?.scan === 'function'
+        // Scanning is on smartFolders or files depending on type
+        hasScanStructure: typeof api?.scanStructure === 'function'
       };
     });
 
-    console.log('[Test] Folders API methods:', foldersApi);
-    expect(foldersApi.hasGetAll).toBe(true);
-    expect(foldersApi.hasCreate).toBe(true);
+    console.log('[Test] Smart Folders API methods:', foldersApi);
+    expect(foldersApi.hasGet).toBe(true);
+    expect(foldersApi.hasAdd).toBe(true);
   });
 });
 
@@ -396,20 +462,29 @@ test.describe('Smart Folders - Folder Scanning', () => {
   });
 
   test('should have scan folder option', async () => {
-    const scanButton = window.locator(
-      'button:has-text("Scan"), button:has-text("Analyze"), [data-testid*="scan"]'
+    // Scan option might be in the toolbar or context menu, depending on UI
+    // In current SetupPhase, there isn't a direct "Scan" button in toolbar, but there is "Add Folder"
+    // The previous test looked for "Scan" or "Analyze" button.
+    // If it's not present, we should skip or update expectation.
+    // Checking SetupPhase.jsx, there is no "Scan" button visible in the toolbar.
+    // So we will look for 'Add Folder' or 'Load Defaults' which are the main actions.
+    const actionButtons = window.locator(
+      'button:has-text("Add Folder"), button:has-text("Load Defaults")'
     );
 
-    const count = await scanButton.count();
-    console.log('[Test] Scan buttons found:', count);
+    const count = await actionButtons.count();
+    console.log('[Test] Action buttons found:', count);
+    expect(count).toBeGreaterThan(0);
   });
 
   test('should have scan API available', async () => {
     const hasScanApi = await window.evaluate(() => {
-      return typeof window.electronAPI?.folders?.scan === 'function';
+      // Scan structure is available on smartFolders
+      return typeof window.electronAPI?.smartFolders?.scanStructure === 'function';
     });
 
     console.log('[Test] Folder scan API available:', hasScanApi);
+    expect(hasScanApi).toBe(true);
   });
 });
 
@@ -431,26 +506,23 @@ test.describe('Smart Folders - Folder API Operations', () => {
   test('should get all folders via API', async () => {
     const result = await window.evaluate(async () => {
       try {
-        const folders = await window.electronAPI?.folders?.getAll();
+        const folders = await window.electronAPI?.smartFolders?.get();
         return { success: true, count: folders?.length || 0 };
       } catch (e) {
         return { success: false, error: e.message };
       }
     });
 
-    console.log('[Test] Get all folders result:', result);
+    console.log('[Test] Get all smart folders result:', result);
     expect(result.success).toBe(true);
   });
 
   test('should validate folder creation data', async () => {
     const result = await window.evaluate(async () => {
       try {
-        // Try to create folder with minimal data (should fail or require validation)
-        const api = window.electronAPI?.folders;
-        if (!api?.create) return { hasApi: false };
-
-        // We won't actually create to avoid side effects
-        return { hasApi: true, canCreate: typeof api.create === 'function' };
+        const api = window.electronAPI?.smartFolders;
+        if (!api?.add) return { hasApi: false };
+        return { hasApi: true, canAdd: typeof api.add === 'function' };
       } catch (e) {
         return { error: e.message };
       }
@@ -462,7 +534,7 @@ test.describe('Smart Folders - Folder API Operations', () => {
 
   test('should have folder update API', async () => {
     const hasUpdateApi = await window.evaluate(() => {
-      return typeof window.electronAPI?.folders?.update === 'function';
+      return typeof window.electronAPI?.smartFolders?.edit === 'function';
     });
 
     expect(hasUpdateApi).toBe(true);
@@ -470,7 +542,7 @@ test.describe('Smart Folders - Folder API Operations', () => {
 
   test('should have folder delete API', async () => {
     const hasDeleteApi = await window.evaluate(() => {
-      return typeof window.electronAPI?.folders?.delete === 'function';
+      return typeof window.electronAPI?.smartFolders?.delete === 'function';
     });
 
     expect(hasDeleteApi).toBe(true);

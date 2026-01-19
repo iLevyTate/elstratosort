@@ -23,14 +23,25 @@ export default function ChromaDBStatusManager() {
   // Track previous status to detect changes and avoid duplicate notifications
   const previousStatusRef = useRef(null);
   const hasShownInitialRef = useRef(false);
+  const hasReceivedUpdateRef = useRef(false);
 
   // Fetch initial status on mount
   const fetchInitialStatus = useCallback(async () => {
     try {
       if (window.electronAPI?.chromadb?.getStatus) {
+        if (hasReceivedUpdateRef.current) {
+          return;
+        }
         const status = await window.electronAPI.chromadb.getStatus();
-        if (status && status.success !== undefined) {
-          const chromaStatus = status.status || (status.success ? 'online' : 'offline');
+        if (status) {
+          const chromaStatus =
+            status.status ||
+            (typeof status.isOnline === 'boolean'
+              ? status.isOnline
+                ? 'online'
+                : 'offline'
+              : null);
+          if (!chromaStatus) return;
           dispatch(updateHealth({ chromadb: chromaStatus }));
           previousStatusRef.current = chromaStatus;
           logger.info('ChromaDB initial status:', chromaStatus);
@@ -41,8 +52,8 @@ export default function ChromaDBStatusManager() {
       dispatch(updateHealth({ chromadb: 'offline' }));
       previousStatusRef.current = 'offline';
       // FIX: Show notification when initial status fetch fails
-      // This helps users understand why semantic search may be unavailable
-      showWarning('Could not connect to semantic search service');
+      // This helps users understand why Knowledge OS may be unavailable
+      showWarning('Could not connect to Knowledge OS service');
     }
   }, [dispatch, showWarning]);
 
@@ -50,7 +61,6 @@ export default function ChromaDBStatusManager() {
   // FIX Issue 6: Subscribe FIRST, then fetch initial status to prevent race condition
   useEffect(() => {
     let unsubscribe = null;
-    let _hasReceivedUpdate = false; // Track if subscription has fired (prefixed to satisfy linter)
 
     // Subscribe to status changes FIRST to catch any updates during initial fetch
     if (window.electronAPI?.chromadb?.onStatusChanged) {
@@ -58,7 +68,7 @@ export default function ChromaDBStatusManager() {
         unsubscribe = window.electronAPI.chromadb.onStatusChanged((statusData) => {
           try {
             // FIX Issue 6: Mark that we received an update from subscription
-            _hasReceivedUpdate = true;
+            hasReceivedUpdateRef.current = true;
 
             const status = statusData?.status || statusData;
             let chromaStatus;
@@ -78,11 +88,11 @@ export default function ChromaDBStatusManager() {
             const prevStatus = previousStatusRef.current;
             if (prevStatus !== null && prevStatus !== chromaStatus && hasShownInitialRef.current) {
               if (chromaStatus === 'online') {
-                showSuccess('Semantic search is now available');
+                showSuccess('Knowledge OS is now available');
               } else if (chromaStatus === 'offline') {
-                showWarning('Semantic search is temporarily unavailable');
+                showWarning('Knowledge OS is temporarily unavailable');
               } else if (chromaStatus === 'initializing') {
-                showInfo('Initializing semantic search...');
+                showInfo('Initializing Knowledge OS...');
               }
             }
 

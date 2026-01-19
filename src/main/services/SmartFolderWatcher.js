@@ -17,7 +17,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const chokidar = require('chokidar');
-const { logger } = require('../../shared/logger');
+const { logger: baseLogger, createLogger } = require('../../shared/logger');
 const { isNotFoundError } = require('../../shared/errorClassifier');
 const { WatcherError } = require('../errors/FileSystemError');
 const { generateSuggestedNameFromAnalysis } = require('./autoOrganize/namingUtils');
@@ -28,8 +28,12 @@ const { chunkText } = require('../utils/textChunking');
 const { CHUNKING } = require('../../shared/performanceConstants');
 const { AI_DEFAULTS } = require('../../shared/constants');
 const { getInstance: getFileOperationTracker } = require('../../shared/fileOperationTracker');
+const { normalizePathForIndex, getCanonicalFileId } = require('../../shared/pathSanitization');
 
-logger.setContext('SmartFolderWatcher');
+const logger = typeof createLogger === 'function' ? createLogger('SmartFolderWatcher') : baseLogger;
+if (typeof createLogger !== 'function' && logger?.setContext) {
+  logger.setContext('SmartFolderWatcher');
+}
 
 // CRITICAL: Prevent unbounded memory growth under heavy file activity (e.g., large archive extraction).
 // We bound the analysis queue and apply light deduplication by filePath.
@@ -190,6 +194,9 @@ class SmartFolderWatcher {
     // FIX M3: Promise deduplication for concurrent start() calls
     this._startPromise = null;
 
+    // FIX M-6: Flag to prevent timer callbacks during shutdown
+    this._isStopping = false;
+
     // Processing state
     this.processingFiles = new Set();
     this.pendingAnalysis = new Map(); // filePath -> { mtime, timeout }
@@ -231,6 +238,7 @@ class SmartFolderWatcher {
       logger.debug('[SMART-FOLDER-WATCHER] Already running');
       return true;
     }
+    this._isStopping = false;
 
     // FIX M3: Return existing start promise if one is in progress
     // This prevents race condition where concurrent callers get false
@@ -352,6 +360,7 @@ class SmartFolderWatcher {
    */
   stop() {
     logger.info('[SMART-FOLDER-WATCHER] Stopping...');
+    this._isStopping = true;
 
     // Stop queue processor
     if (this.queueTimer) {
@@ -448,7 +457,10 @@ class SmartFolderWatcher {
         }
       } catch (error) {
         if (!isNotFoundError(error)) {
-          logger.warn('[SMART-FOLDER-WATCHER] Cannot access folder:', folder.path, error.message);
+          logger.warn('[SMART-FOLDER-WATCHER] Cannot access folder:', {
+            folderPath: folder.path,
+            error: error.message
+          });
         }
       }
     }
@@ -488,7 +500,7 @@ class SmartFolderWatcher {
 
     const mtime = stats?.mtime ? new Date(stats.mtime).getTime() : Date.now();
 
-    logger.debug('[SMART-FOLDER-WATCHER] File event:', eventType, filePath);
+    logger.debug('[SMART-FOLDER-WATCHER] File event:', { eventType, filePath });
 
     const now = Date.now();
 
@@ -506,6 +518,9 @@ class SmartFolderWatcher {
     const elapsed = now - firstEventAt;
     const delay = elapsed >= this.maxDebounceWaitMs ? 0 : this.debounceDelay;
     const timeout = setTimeout(() => {
+      if (this._isStopping) {
+        return;
+      }
       this._queueFileForAnalysis(filePath, mtime, eventType);
     }, delay);
 
@@ -544,13 +559,16 @@ class SmartFolderWatcher {
         queuedAt: Date.now()
       });
 
-      logger.info('[SMART-FOLDER-WATCHER] Queued for analysis:', filePath, `(${eventType})`);
+      logger.info('[SMART-FOLDER-WATCHER] Queued for analysis:', { filePath, eventType });
       this.stats.lastActivity = new Date().toISOString();
     } catch (error) {
       if (isNotFoundError(error)) {
         logger.debug('[SMART-FOLDER-WATCHER] File no longer exists:', filePath);
       } else {
-        logger.error('[SMART-FOLDER-WATCHER] Error queueing file:', filePath, error.message);
+        logger.error('[SMART-FOLDER-WATCHER] Error queueing file:', {
+          filePath,
+          error: error.message
+        });
         this.stats.errors++;
       }
     }
@@ -681,7 +699,8 @@ class SmartFolderWatcher {
 
     try {
       // Take up to maxConcurrentAnalysis files from queue
-      const batch = this.analysisQueue.splice(0, this.maxConcurrentAnalysis);
+      const batchSize = Math.max(1, this.maxConcurrentAnalysis || 1);
+      const batch = this.analysisQueue.splice(0, batchSize);
 
       for (const item of batch) {
         await this._analyzeFile(item);
@@ -700,6 +719,7 @@ class SmartFolderWatcher {
    */
   async _analyzeFile(item) {
     const { filePath, eventType, applyNaming } = item;
+    const isReanalyze = eventType === 'reanalyze';
 
     if (this.processingFiles.has(filePath)) {
       return;
@@ -716,7 +736,8 @@ class SmartFolderWatcher {
       });
 
       // Get smart folders for categorization
-      const smartFolders = this.getSmartFolders();
+      // FIX H-4: Guard against null/undefined from getSmartFolders()
+      const smartFolders = this.getSmartFolders() || [];
       const folderCategories = smartFolders.map((f) => ({
         name: f.name,
         description: f.description || '',
@@ -726,9 +747,13 @@ class SmartFolderWatcher {
       // Choose analysis function based on file type
       let result;
       if (isImageFile(filePath)) {
-        result = await this.analyzeImageFile(filePath, folderCategories);
+        result = await this.analyzeImageFile(filePath, folderCategories, {
+          bypassCache: isReanalyze
+        });
       } else {
-        result = await this.analyzeDocumentFile(filePath, folderCategories);
+        result = await this.analyzeDocumentFile(filePath, folderCategories, {
+          bypassCache: isReanalyze
+        });
       }
 
       if (result) {
@@ -807,13 +832,19 @@ class SmartFolderWatcher {
               ? analysis.tags
               : [];
 
+          const derivedConfidence = deriveWatcherConfidencePercent(analysis);
+          const historyConfidence =
+            typeof analysis.confidence === 'number' && (analysis.confidence !== 0 || analysis.error)
+              ? analysis.confidence
+              : derivedConfidence;
+
           const historyPayload = {
             // The history utility uses suggestedName as the subject fallback.
             // Prefer any naming-convention output; otherwise keep the original basename.
             suggestedName: analysis.suggestedName || path.basename(filePath),
             category: analysis.category || analysis.folder || 'uncategorized',
             keywords,
-            confidence: typeof analysis.confidence === 'number' ? analysis.confidence : 0,
+            confidence: historyConfidence,
             summary: analysis.summary || analysis.description || analysis.purpose || '',
             extractedText: analysis.extractedText || null,
             smartFolder: analysis.smartFolder || analysis.folder || null,
@@ -895,7 +926,10 @@ class SmartFolderWatcher {
       if (isNotFoundError(error)) {
         logger.debug('[SMART-FOLDER-WATCHER] File no longer exists:', filePath);
       } else {
-        logger.error('[SMART-FOLDER-WATCHER] Error analyzing file:', filePath, error.message);
+        logger.error('[SMART-FOLDER-WATCHER] Error analyzing file:', {
+          filePath,
+          error: error.message
+        });
         this.stats.errors++;
       }
     } finally {
@@ -922,7 +956,9 @@ class SmartFolderWatcher {
       await fs.stat(filePath);
     } catch (statError) {
       if (isNotFoundError(statError)) {
-        logger.debug('[SMART-FOLDER-WATCHER] File no longer exists, skipping embedding:', filePath);
+        logger.debug('[SMART-FOLDER-WATCHER] File no longer exists, skipping embedding:', {
+          filePath
+        });
         return;
       }
       // For other stat errors, continue and let embedding logic handle it
@@ -962,8 +998,7 @@ class SmartFolderWatcher {
 
       // Prepare metadata for ChromaDB
       // IMPORTANT: IDs must match the rest of the semantic pipeline.
-      // Do NOT normalize path separators in the ID; other producers/consumers use the native path.
-      const fileId = `${isImageFile(filePath) ? 'image' : 'file'}:${filePath}`;
+      const fileId = getCanonicalFileId(filePath, isImageFile(filePath));
       const fileName = path.basename(filePath);
 
       // Upsert to ChromaDB
@@ -1068,7 +1103,10 @@ class SmartFolderWatcher {
       }
     } catch (error) {
       // Non-fatal - embedding failure shouldn't block analysis
-      logger.warn('[SMART-FOLDER-WATCHER] Failed to embed file:', filePath, error.message);
+      logger.warn('[SMART-FOLDER-WATCHER] Failed to embed file:', {
+        filePath,
+        error: error.message
+      });
 
       // FIX: Notify user about search index failure
       if (
@@ -1111,22 +1149,47 @@ class SmartFolderWatcher {
     try {
       // Remove from ChromaDB (both file: and image: prefixes)
       if (this.chromaDbService) {
-        const filePrefix = `file:${filePath}`;
-        const imagePrefix = `image:${filePath}`;
+        const normalizedPath = normalizePathForIndex(filePath);
+        const filePrefix = `file:${normalizedPath}`;
+        const imagePrefix = `image:${normalizedPath}`;
+        const legacyFilePrefix = `file:${filePath}`;
+        const legacyImagePrefix = `image:${filePath}`;
+        const idsToDelete =
+          normalizedPath === filePath
+            ? [filePrefix, imagePrefix]
+            : [filePrefix, imagePrefix, legacyFilePrefix, legacyImagePrefix];
 
         // Use batch delete for atomicity when available
         if (typeof this.chromaDbService.batchDeleteFileEmbeddings === 'function') {
-          await this.chromaDbService.batchDeleteFileEmbeddings([filePrefix, imagePrefix]);
+          await this.chromaDbService.batchDeleteFileEmbeddings(idsToDelete);
         } else {
           // Fallback to individual deletes
-          await this.chromaDbService.deleteFileEmbedding(filePrefix);
-          await this.chromaDbService.deleteFileEmbedding(imagePrefix);
+          // FIX H-9: Wrap each delete in try-catch to continue on failure
+          for (const id of idsToDelete) {
+            try {
+              await this.chromaDbService.deleteFileEmbedding(id);
+            } catch (delErr) {
+              logger.debug(
+                '[SMART-FOLDER-WATCHER] Failed to delete embedding:',
+                id,
+                delErr.message
+              );
+              // Continue with remaining IDs
+            }
+          }
         }
 
         // Delete associated chunks
+        // FIX H-9: Wrap each chunk delete in try-catch to continue on failure
         if (typeof this.chromaDbService.deleteFileChunks === 'function') {
-          await this.chromaDbService.deleteFileChunks(filePrefix);
-          await this.chromaDbService.deleteFileChunks(imagePrefix);
+          for (const id of idsToDelete) {
+            try {
+              await this.chromaDbService.deleteFileChunks(id);
+            } catch (chunkErr) {
+              logger.debug('[SMART-FOLDER-WATCHER] Failed to delete chunks:', id, chunkErr.message);
+              // Continue with remaining IDs
+            }
+          }
         }
 
         logger.debug('[SMART-FOLDER-WATCHER] Removed embeddings for deleted file:', filePath);
@@ -1224,7 +1287,10 @@ class SmartFolderWatcher {
           }
         }
       } catch (error) {
-        logger.warn('[SMART-FOLDER-WATCHER] Error scanning folder:', folderPath, error.message);
+        logger.warn('[SMART-FOLDER-WATCHER] Error scanning folder:', {
+          folderPath,
+          error: error.message
+        });
       }
     }
 
@@ -1265,11 +1331,17 @@ class SmartFolderWatcher {
             });
             queued++;
           } catch (fileErr) {
-            logger.debug('[SMART-FOLDER-WATCHER] Cannot stat file:', file, fileErr.message);
+            logger.debug('[SMART-FOLDER-WATCHER] Cannot stat file:', {
+              file,
+              error: fileErr.message
+            });
           }
         }
       } catch (error) {
-        logger.warn('[SMART-FOLDER-WATCHER] Error scanning folder:', folderPath, error.message);
+        logger.warn('[SMART-FOLDER-WATCHER] Error scanning folder:', {
+          folderPath,
+          error: error.message
+        });
       }
     }
 
@@ -1308,7 +1380,10 @@ class SmartFolderWatcher {
         }
       }
     } catch (error) {
-      logger.debug('[SMART-FOLDER-WATCHER] Cannot read directory:', dirPath, error.message);
+      logger.debug('[SMART-FOLDER-WATCHER] Cannot read directory:', {
+        dirPath,
+        error: error.message
+      });
     }
 
     return files;

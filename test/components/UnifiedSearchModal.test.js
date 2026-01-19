@@ -11,6 +11,11 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
+jest.mock('../../src/renderer/store/hooks', () => ({
+  useAppDispatch: jest.fn(() => jest.fn()),
+  useAppSelector: jest.fn((selector) => selector({}))
+}));
+
 // Mock ReactFlow
 jest.mock('reactflow', () => ({
   __esModule: true,
@@ -313,7 +318,7 @@ describe('UnifiedSearchModal', () => {
   });
 
   describe('Tab Switching', () => {
-    test('should render Search Results tab by default', () => {
+    test('should render Discover tab by default', () => {
       render(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} />);
 
       // Search-related elements should be present
@@ -324,14 +329,14 @@ describe('UnifiedSearchModal', () => {
       render(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} />);
 
       // Graph feature is now enabled
-      expect(screen.queryByText(/Explore Graph/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Relate/i)).toBeInTheDocument();
     });
 
     test('should switch back to search tab', async () => {
       render(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} initialTab="graph" />);
 
-      // Find and click the Search Results tab
-      const searchTab = screen.queryByText(/Search Results/i);
+      // Find and click the Discover tab
+      const searchTab = screen.getByRole('button', { name: /List Discover/i });
       if (searchTab) {
         fireEvent.click(searchTab);
 
@@ -346,7 +351,7 @@ describe('UnifiedSearchModal', () => {
       render(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} initialTab="graph" />);
 
       // Graph tab should be active
-      expect(screen.queryByText(/Explore Graph/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Relate/i)).toBeInTheDocument();
       // Since reactflow is mocked as a div with data-testid="react-flow", we can check for it if graph tab content renders
       // However, the test structure might just check if the tab button exists and is clickable
     });
@@ -591,7 +596,7 @@ describe('UnifiedSearchModal', () => {
       render(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} initialTab="graph" />);
 
       // Graph controls/UI should be shown
-      expect(screen.queryByText(/Explore Graph/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Relate/i)).toBeInTheDocument();
       // We expect the graph container or some graph-specific element to be present
       // Since we mocked reactflow, we can check if that mock is rendered or if the "Explore File Connections" empty state is shown
       // The empty state has text "Stop Searching. Start Finding."
@@ -687,8 +692,8 @@ describe('UnifiedSearchModal - Integration', () => {
   test('should handle rapid tab switching', async () => {
     render(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} />);
 
-    const graphTab = screen.queryByText(/Explore Graph/i);
-    const searchTab = screen.queryByText(/Search Results/i);
+    const graphTab = screen.getByRole('button', { name: /Relate/i });
+    const searchTab = screen.getByRole('button', { name: /List Discover/i });
 
     // FIX: Both tabs should exist when graph feature is enabled
     expect(graphTab).toBeInTheDocument();
@@ -709,8 +714,8 @@ describe('UnifiedSearchModal - Integration', () => {
   test('should reset focused result index when switching tabs', async () => {
     render(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} />);
 
-    const graphTab = screen.queryByText(/Explore Graph/i);
-    const searchTab = screen.queryByText(/Search Results/i);
+    const graphTab = screen.getByRole('button', { name: /Relate/i });
+    const searchTab = screen.getByRole('button', { name: /List Discover/i });
 
     // FIX: Both tabs should exist
     expect(graphTab).toBeInTheDocument();

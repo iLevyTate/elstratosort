@@ -11,6 +11,8 @@ const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut } = require(
 const path = require('path');
 const { isWindows, isMacOS } = require('../../shared/platformUtils');
 const { logger } = require('../../shared/logger');
+// FIX: Import safeSend for validated IPC event sending
+const { safeSend } = require('../ipc/ipcWrappers');
 
 logger.setContext('Tray');
 
@@ -64,14 +66,14 @@ function createSystemTray() {
 
     // Single click on tray icon restores the window (except on macOS where it's context menu by default)
     if (!isMacOS) {
-      tray.on('click', () => {
+      tray.on('click', async () => {
         const win = BrowserWindow.getAllWindows()[0];
         if (win) {
           if (win.isMinimized()) win.restore();
           win.show();
           win.focus();
         } else if (trayConfig.createWindow) {
-          trayConfig.createWindow();
+          await trayConfig.createWindow();
         }
       });
     }
@@ -102,8 +104,11 @@ function openSemanticSearch() {
 
     // Send message to renderer to open semantic search
     // Small delay to ensure window is ready
+    // FIX: Use safeSend for validated IPC event sending
     setTimeout(() => {
-      win.webContents.send('open-semantic-search');
+      if (!win.isDestroyed()) {
+        safeSend(win.webContents, 'open-semantic-search');
+      }
     }, 100);
   }
 }
@@ -120,6 +125,11 @@ function registerGlobalShortcut() {
 
     if (success) {
       logger.info(`[TRAY] Registered global shortcut: ${SEARCH_SHORTCUT}`);
+      // FIX CRIT-27: Ensure global shortcuts are unregistered on app quit/crash
+      // Check if listener is already registered to avoid duplicates
+      if (app.listenerCount('will-quit') === 0) {
+        app.on('will-quit', unregisterGlobalShortcuts);
+      }
     } else {
       logger.warn(`[TRAY] Failed to register global shortcut: ${SEARCH_SHORTCUT}`);
     }
@@ -151,14 +161,14 @@ function updateTrayMenu() {
   const contextMenu = Menu.buildFromTemplate([
     {
       label: 'Open StratoSort',
-      click: () => {
+      click: async () => {
         const win = BrowserWindow.getAllWindows()[0];
         if (win) {
           if (win.isMinimized()) win.restore();
           win.show();
           win.focus();
         } else if (trayConfig.createWindow) {
-          trayConfig.createWindow();
+          await trayConfig.createWindow();
         }
       }
     },

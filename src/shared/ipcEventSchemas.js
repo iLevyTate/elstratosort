@@ -14,7 +14,9 @@ let z;
 try {
   z = require('zod');
 } catch (error) {
-  // Zod not available - schemas will be null
+  // FIX: Log warning when Zod fails to load so validation bypass is visible
+  // eslint-disable-next-line no-console
+  console.warn('[ipcEventSchemas] Zod not available, schema validation disabled:', error.message);
   z = null;
 }
 
@@ -66,6 +68,7 @@ const schemas = z
         operationType: z.string(),
         error: z.string(),
         code: z.string().optional(),
+        errorType: z.string().optional(),
         details: z.any().optional()
       });
 
@@ -147,7 +150,17 @@ const schemas = z
        * Emitted when ChromaDB connection status changes
        */
       const chromadbStatusChangedSchema = z.object({
-        status: z.enum(['connected', 'disconnected', 'connecting', 'error']),
+        status: z.enum([
+          'connected',
+          'disconnected',
+          'connecting',
+          'error',
+          'online',
+          'offline',
+          'recovering',
+          'circuit_changed',
+          'operation_queued'
+        ]),
         timestamp: z.number().optional(),
         error: z.string().optional()
       });
@@ -160,6 +173,7 @@ const schemas = z
         timestamp: z.number().optional(),
         service: z.string().optional(),
         status: z.string().optional(),
+        health: z.string().optional(),
         details: z.any().optional()
       });
 
@@ -209,6 +223,35 @@ const schemas = z
         operationType: z.string().optional()
       });
 
+      /**
+       * Undo/Redo State Changed Event
+       * Emitted after undo/redo operations to notify UI of state changes
+       */
+      const undoRedoStateChangedSchema = z.object({
+        action: z.enum(['undo', 'redo']),
+        result: z
+          .object({
+            success: z.boolean(),
+            message: z.string().optional(),
+            affectedFiles: z.array(z.string()).optional()
+          })
+          .optional()
+      });
+
+      /**
+       * Operation Failed Event
+       * FIX H-7: Add schema for operation-failed event
+       * Emitted when an operation fails critically
+       */
+      const operationFailedSchema = z.object({
+        operationId: z.string().optional(),
+        operationType: z.string().optional(),
+        error: z.string(),
+        code: z.string().optional(),
+        details: z.any().optional(),
+        timestamp: z.number().optional()
+      });
+
       return {
         operationProgressSchema,
         operationCompleteSchema,
@@ -223,7 +266,9 @@ const schemas = z
         menuActionSchema,
         appUpdateSchema,
         openSemanticSearchSchema,
-        batchResultsChunkSchema
+        batchResultsChunkSchema,
+        undoRedoStateChangedSchema,
+        operationFailedSchema
       };
     })()
   : {};
@@ -247,7 +292,9 @@ const EVENT_SCHEMAS = z
       'menu-action': schemas.menuActionSchema,
       'app:update': schemas.appUpdateSchema,
       'open-semantic-search': schemas.openSemanticSearchSchema,
-      'batch-results-chunk': schemas.batchResultsChunkSchema
+      'batch-results-chunk': schemas.batchResultsChunkSchema,
+      'undo-redo:state-changed': schemas.undoRedoStateChangedSchema,
+      'operation-failed': schemas.operationFailedSchema
     }
   : {};
 
@@ -259,7 +306,9 @@ const EVENT_SCHEMAS = z
  */
 function validateEventPayload(channel, data) {
   if (!z) {
-    // Zod not available, skip validation
+    // FIX CRIT-19: Log error if Zod is missing (validation bypassed)
+    // eslint-disable-next-line no-console
+    console.error(`[ipcEventSchemas] CRITICAL: Zod missing, validation bypassed for ${channel}`);
     return { valid: true, data };
   }
 

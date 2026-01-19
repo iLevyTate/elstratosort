@@ -123,6 +123,46 @@ let eventListeners = [];
 let childProcessListeners = [];
 let globalProcessListeners = [];
 
+// Ensure any tracked timers are cleared during shutdown
+eventListeners.push(() => {
+  clearAllTrackedTimers();
+});
+
+const trackedTimers = new Map();
+const trackTimeout = (handler, delay) => {
+  const id = setTimeout(() => {
+    trackedTimers.delete(id);
+    handler();
+  }, delay);
+  trackedTimers.set(id, 'timeout');
+  return id;
+};
+const trackInterval = (handler, delay) => {
+  const id = setInterval(handler, delay);
+  trackedTimers.set(id, 'interval');
+  return id;
+};
+const clearTrackedTimer = (id) => {
+  if (!id) return;
+  const type = trackedTimers.get(id);
+  if (type === 'interval') {
+    clearInterval(id);
+  } else {
+    clearTimeout(id);
+  }
+  trackedTimers.delete(id);
+};
+const clearAllTrackedTimers = () => {
+  for (const [id, type] of trackedTimers.entries()) {
+    if (type === 'interval') {
+      clearInterval(id);
+    } else {
+      clearTimeout(id);
+    }
+  }
+  trackedTimers.clear();
+};
+
 // Background setup status is now tracked in ./core/backgroundSetup module
 
 // NOTE: Startup logic is handled by StartupManager and ServiceIntegration
@@ -191,16 +231,25 @@ function createWindow() {
 
       // Wait for window to be ready before releasing mutex
       if (mainWindow) {
-        mainWindow.once('ready-to-show', () => {
+        let creationTimeout;
+
+        const onReadyToShow = () => {
           logger.debug('[WINDOW] Window ready, releasing creation mutex');
+          if (creationTimeout) clearTimeout(creationTimeout);
           _windowCreationPromise = null;
           resolve();
-        });
+        };
+
+        mainWindow.once('ready-to-show', onReadyToShow);
 
         // Also handle error case - release mutex after timeout
-        setTimeout(() => {
+        creationTimeout = setTimeout(() => {
           if (_windowCreationPromise) {
             logger.warn('[WINDOW] Window creation timeout, releasing mutex');
+            // Remove the listener to avoid memory leak or late execution
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.removeListener('ready-to-show', onReadyToShow);
+            }
             _windowCreationPromise = null;
             resolve();
           }
@@ -450,7 +499,7 @@ if (!gotTheLock) {
 app.whenReady().then(async () => {
   // FIX: Create a referenced interval to keep the event loop alive during startup
   // This prevents premature exit when async operations use unreferenced timeouts
-  const startupKeepalive = setInterval(() => {}, 1000);
+  const startupKeepalive = trackInterval(() => {}, 1000);
 
   try {
     // ---- Logging (best-practice defaults) ----
@@ -803,7 +852,7 @@ app.whenReady().then(async () => {
 
     createWindow();
     // FIX: Clear keepalive now that window is created and keeping event loop alive
-    clearInterval(startupKeepalive);
+    clearTrackedTimer(startupKeepalive);
     handleSettingsChanged(initialSettings);
 
     // Run first-time setup in background (non-blocking)
@@ -814,14 +863,14 @@ app.whenReady().then(async () => {
     try {
       // Clear any existing interval before creating a new one
       if (metricsInterval) {
-        clearInterval(metricsInterval);
+        clearTrackedTimer(metricsInterval);
         metricsInterval = null;
       }
 
       // PERFORMANCE FIX: Increased interval from 10s to 30s to reduce overhead
       // Renderer component polls directly, so main process doesn't need to poll as frequently
       const { TIMEOUTS } = require('../shared/performanceConstants');
-      metricsInterval = setInterval(async () => {
+      metricsInterval = trackInterval(async () => {
         try {
           const win = BrowserWindow.getAllWindows()[0];
           if (!win || win.isDestroyed()) return;
@@ -904,7 +953,7 @@ app.whenReady().then(async () => {
     // Fire-and-forget resume of incomplete batches shortly after window is ready
     // FIX: Track timeout for cleanup to prevent execution during shutdown
     let resumeTimeoutCleared = false;
-    const resumeTimeout = setTimeout(() => {
+    const resumeTimeout = trackTimeout(() => {
       if (resumeTimeoutCleared) return; // Guard against execution during shutdown
       try {
         // Note: getMainWindow is already defined at line 566 and in scope here
@@ -921,7 +970,7 @@ app.whenReady().then(async () => {
     // FIX: Add cleanup function to clear the timeout on app quit
     eventListeners.push(() => {
       resumeTimeoutCleared = true;
-      clearTimeout(resumeTimeout);
+      clearTrackedTimer(resumeTimeout);
     });
 
     // Load Ollama config and apply any saved selections (LOW-3: renamed cfg to ollamaConfig)
@@ -969,7 +1018,7 @@ app.whenReady().then(async () => {
     logger.warn('[STARTUP] Creating window in degraded mode due to startup errors');
     createWindow();
     // FIX: Clear keepalive now that window is created and keeping event loop alive
-    clearInterval(startupKeepalive);
+    clearTrackedTimer(startupKeepalive);
   }
 });
 

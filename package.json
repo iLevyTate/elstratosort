@@ -13,13 +13,13 @@
     "elstratosort",
     "document-analysis"
   ],
-  "homepage": "https://github.com/stratosort/stratosort#readme",
+  "homepage": "https://github.com/iLevyTate/elstratosort#readme",
   "bugs": {
-    "url": "https://github.com/stratosort/stratosort/issues"
+    "url": "https://github.com/iLevyTate/elstratosort/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/stratosort/stratosort.git"
+    "url": "git+https://github.com/iLevyTate/elstratosort.git"
   },
   "license": "MIT",
   "author": {
@@ -39,7 +39,8 @@
     "npm": ">=8.0.0"
   },
   "scripts": {
-    "dev": "npm run build:dev && npm run build:main:dev && cross-env NODE_ENV=development USE_DEV_SERVER=true electron . --enable-logging",
+    "dev": "npm run clean && npm run build:dev && npm run build:main:dev && cross-env NODE_ENV=development USE_DEV_SERVER=true electron . --enable-logging",
+    "dev:fast": "cross-env NODE_ENV=development USE_DEV_SERVER=false electron . --enable-logging",
     "build": "rimraf dist && npm run build:main && cross-env NODE_ENV=production webpack --mode=production",
     "build:dev": "webpack --mode=development",
     "build:analyze": "cross-env ANALYZE=true npm run build",
@@ -52,6 +53,7 @@
     "generate:channels:update": "node scripts/generate-preload-channels.js --update",
     "generate:assets": "npm run generate:icons && npm run generate:nsis",
     "postinstall": "node scripts/postinstall.js",
+    "clean": "rimraf dist .webpack-cache",
     "setup:ollama": "node scripts/setup-ollama.js",
     "setup:ollama:check": "node scripts/setup-ollama.js --check",
     "setup:chromadb": "node scripts/setup-chromadb.js --auto",
@@ -105,7 +107,9 @@
     "elkjs": "^0.11.0",
     "fast-xml-parser": "^5.3.3",
     "fastest-levenshtein": "^1.0.16",
-    "framer-motion": "^12.26.2",
+    "framer-motion": "^12.24.12",
+    "@langchain/core": "^1.1.15",
+    "langchain": "^1.2.10",
     "lucide-react": "^0.562.0",
     "lunr": "^2.3.9",
     "mammoth": "^1.11.0",

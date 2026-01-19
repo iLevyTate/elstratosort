@@ -391,9 +391,9 @@ function SetupPhase() {
 
   return (
     <div className="phase-container">
-      <div className="container-responsive flex flex-col flex-1 min-h-0 py-4 md:py-6 gap-4">
+      <div className="container-responsive flex flex-col flex-1 min-h-0 p-6 md:p-8 lg:p-12 gap-6 md:gap-8 lg:gap-12">
         {/* Header */}
-        <div className="text-center flex flex-col flex-shrink-0 gap-2">
+        <div className="text-center flex flex-col flex-shrink-0 gap-compact">
           <h1 className="heading-primary text-xl md:text-2xl">
             Configure <span className="text-gradient">Smart Folders</span>
           </h1>
@@ -405,7 +405,7 @@ function SetupPhase() {
         {/* Main content */}
         <div className="flex-1 min-h-0 flex flex-col">
           {/* Toolbar */}
-          <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <div className="flex items-center justify-between gap-cozy mb-spacious flex-wrap">
             <div className="flex items-center gap-2">
               <span className="text-sm text-system-gray-600">
                 {isLoading
@@ -486,7 +486,10 @@ function SetupPhase() {
               }`}
             >
               {smartFolders.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div
+                  className="flex flex-col items-center justify-center py-12 text-center"
+                  data-testid="smart-folders-empty-state"
+                >
                   <div className="w-16 h-16 rounded-2xl bg-system-gray-100 flex items-center justify-center mb-4">
                     <svg
                       className="w-8 h-8 text-system-gray-400"
@@ -545,7 +548,10 @@ function SetupPhase() {
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                <div
+                  className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8 lg:gap-12"
+                  data-testid="folder-list"
+                >
                   {smartFolders.map((folder, index) => (
                     <SmartFolderItem
                       key={folder.id}
@@ -574,13 +580,13 @@ function SetupPhase() {
         </div>
 
         {/* Footer navigation */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between flex-shrink-0 gap-3 pt-3 border-t border-border-soft/50">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end flex-shrink-0 gap-default pt-spacious border-t border-border-soft/50">
           <Button
             onClick={() => actions.advancePhase(PHASES.WELCOME)}
             variant="secondary"
             className="w-full sm:w-auto text-sm"
           >
-            <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -588,7 +594,7 @@ function SetupPhase() {
                 d="M15 19l-7-7 7-7"
               />
             </svg>
-            Back
+            <span>Back</span>
           </Button>
           <Button
             onClick={async () => {
@@ -614,18 +620,13 @@ function SetupPhase() {
           >
             {isLoading ? (
               <>
-                <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                Loading...
+                <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Loading...</span>
               </>
             ) : (
               <>
-                Continue to Discovery
-                <svg
-                  className="w-4 h-4 ml-1.5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
+                <span>Continue to Discovery</span>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"

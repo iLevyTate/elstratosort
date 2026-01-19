@@ -14,6 +14,7 @@ const fs = require('fs').promises;
 const { EventEmitter } = require('events');
 const { logger } = require('../../../shared/logger');
 const { get: getConfig } = require('../../../shared/config/index');
+const { parseChromaConfig } = require('../../../shared/config/chromaDefaults');
 const { CircuitBreaker, CircuitState } = require('../../utils/CircuitBreaker');
 const { OfflineQueue, OperationType } = require('../../utils/OfflineQueue');
 const { NETWORK, TIMEOUTS } = require('../../../shared/performanceConstants');
@@ -96,8 +97,6 @@ const BATCH_INSERT_DELAY_MS = getConfig('PERFORMANCE.batchInsertDelay', 100);
 const DEFAULT_SERVER_PROTOCOL = getConfig('SERVER.chromaProtocol', 'http');
 const DEFAULT_SERVER_HOST = getConfig('SERVER.chromaHost', '127.0.0.1');
 const DEFAULT_SERVER_PORT = getConfig('SERVER.chromaPort', 8000);
-const DEFAULT_HTTPS_PORT = 443;
-const DEFAULT_HTTP_PORT = 80;
 
 // Validation constants
 const MAX_PORT_NUMBER = NETWORK.MAX_PORT;
@@ -121,6 +120,7 @@ class ChromaDBServiceCore extends EventEmitter {
     this.fileCollection = null;
     this.fileChunkCollection = null;
     this.folderCollection = null;
+    this.feedbackCollection = null;
     this.initialized = false;
 
     // Initialization mutex to prevent race conditions
@@ -137,7 +137,8 @@ class ChromaDBServiceCore extends EventEmitter {
     this._collectionDimensions = {
       files: null,
       folders: null,
-      fileChunks: null
+      fileChunks: null,
+      feedback: null
     };
 
     // Query cache
@@ -248,7 +249,7 @@ class ChromaDBServiceCore extends EventEmitter {
    * Get the embedding dimension of an existing collection by peeking at stored embeddings.
    * FIX: Helps detect dimension mismatches when embedding models change.
    *
-   * @param {'files' | 'folders' | 'fileChunks'} collectionType - Which collection to check
+   * @param {'files' | 'folders' | 'fileChunks' | 'feedback'} collectionType - Which collection to check
    * @returns {Promise<number | null>} Dimension of stored embeddings, or null if collection is empty
    */
   async getCollectionDimension(collectionType, { skipCache = false } = {}) {
@@ -258,7 +259,9 @@ class ChromaDBServiceCore extends EventEmitter {
           ? this.fileCollection
           : collectionType === 'folders'
             ? this.folderCollection
-            : this.fileChunkCollection;
+            : collectionType === 'fileChunks'
+              ? this.fileChunkCollection
+              : this.feedbackCollection;
       if (!collection) {
         // FIX P1-5: Invalidate cache if collection doesn't exist
         this._collectionDimensions[collectionType] = null;
@@ -280,10 +283,20 @@ class ChromaDBServiceCore extends EventEmitter {
 
       return null; // Collection is empty
     } catch (error) {
-      logger.debug('[ChromaDB] Could not get collection dimension:', {
+      // FIX MED-03: Distinguish connection errors from empty/missing collection
+      // Only return null if the error indicates "not found" or empty state
+      // For network/connection errors, we should propogate them so the caller knows the check failed
+      if (this._isChromaNotFoundError(error)) {
+        return null;
+      }
+
+      logger.warn('[ChromaDB] Error getting collection dimension:', {
         collectionType,
         error: error.message
       });
+      // Return null to allow operation to proceed (and likely fail with better error),
+      // or throw if strict validation is required. For now, returning null disables validation
+      // which is safer than blocking valid operations on network hiccups.
       return null;
     }
   }
@@ -293,7 +306,7 @@ class ChromaDBServiceCore extends EventEmitter {
    * FIX: Provides clear error when embedding model changed and dimensions mismatch.
    *
    * @param {Array<number>} vector - Embedding vector to validate
-   * @param {'files' | 'folders' | 'fileChunks'} collectionType - Which collection this is for
+   * @param {'files' | 'folders' | 'fileChunks' | 'feedback'} collectionType - Which collection this is for
    * @returns {Promise<{ valid: boolean, error?: string, expectedDim?: number, actualDim?: number }>}
    */
   async validateEmbeddingDimension(vector, collectionType) {
@@ -305,7 +318,8 @@ class ChromaDBServiceCore extends EventEmitter {
 
     // If collection is empty, any dimension is valid (first insert sets the dimension)
     if (expectedDim === null) {
-      // Cache the dimension for future validations
+      // Cache the first observed dimension to keep validation consistent on first insert.
+      // This matches existing expectations and avoids a null cache when collection is empty.
       this._collectionDimensions[collectionType] = vector.length;
       return { valid: true };
     }
@@ -344,7 +358,8 @@ class ChromaDBServiceCore extends EventEmitter {
     this._collectionDimensions = {
       files: null,
       folders: null,
-      fileChunks: null
+      fileChunks: null,
+      feedback: null
     };
   }
 
@@ -360,6 +375,7 @@ class ChromaDBServiceCore extends EventEmitter {
     this.fileCollection = null;
     this.fileChunkCollection = null;
     this.folderCollection = null;
+    this.feedbackCollection = null;
     // Clear cached dimensions since collections/embedding state may change after re-init.
     this._clearDimensionCache();
     this._initPromise = null;
@@ -423,22 +439,27 @@ class ChromaDBServiceCore extends EventEmitter {
     const envUrl = process.env.CHROMA_SERVER_URL;
     if (envUrl) {
       try {
-        const parsed = new URL(envUrl);
+        let parsedUrl;
+        try {
+          parsedUrl = new URL(envUrl);
+        } catch {
+          parsedUrl = null;
+        }
 
-        const protocol = parsed.protocol?.replace(':', '') || DEFAULT_SERVER_PROTOCOL;
+        if (!parsedUrl) {
+          throw new Error('Invalid CHROMA_SERVER_URL');
+        }
+
+        const { protocol, host, port } = parseChromaConfig(envUrl);
+
         if (!VALID_PROTOCOLS.includes(protocol)) {
           throw new Error(`Invalid protocol "${protocol}". Must be http or https.`);
         }
 
-        const hostname = parsed.hostname || DEFAULT_SERVER_HOST;
-        if (!hostname || typeof hostname !== 'string' || hostname.length > 253) {
+        if (!host || typeof host !== 'string' || host.length > 253) {
           throw new Error('Invalid hostname in CHROMA_SERVER_URL');
         }
 
-        let port = Number(parsed.port);
-        if (!port) {
-          port = protocol === 'https' ? DEFAULT_HTTPS_PORT : DEFAULT_HTTP_PORT;
-        }
         if (isNaN(port) || port < MIN_PORT_NUMBER || port > MAX_PORT_NUMBER) {
           throw new Error(
             `Invalid port number ${port}. Must be between ${MIN_PORT_NUMBER} and ${MAX_PORT_NUMBER}.`
@@ -446,9 +467,9 @@ class ChromaDBServiceCore extends EventEmitter {
         }
 
         this.serverProtocol = protocol;
-        this.serverHost = hostname;
+        this.serverHost = host;
         this.serverPort = port;
-        this.serverUrl = `${protocol}://${hostname}:${port}`;
+        this.serverUrl = `${protocol}://${host}:${port}`;
       } catch (error) {
         logger.warn('[ChromaDB] Invalid CHROMA_SERVER_URL, using defaults', {
           url: envUrl,
@@ -600,8 +621,15 @@ class ChromaDBServiceCore extends EventEmitter {
 
     // First pass: Remove stale entries based on timeout
     for (const [key, entry] of this.inflightQueries.entries()) {
-      // Handle both old format (just promise) and new format ({ promise, addedAt })
-      const addedAt = entry?.addedAt || 0;
+      // FIX MED-06: Upgrade legacy Promise entries to the new object format
+      const isLegacyPromise = entry && typeof entry.then === 'function';
+      if (isLegacyPromise) {
+        this.inflightQueries.set(key, { promise: entry, addedAt: now });
+        continue;
+      }
+
+      const addedAt = entry && typeof entry === 'object' && 'addedAt' in entry ? entry.addedAt : 0;
+
       if (now - addedAt > this.STALE_PROMISE_TIMEOUT_MS) {
         this.inflightQueries.delete(key);
         cleanedCount++;
@@ -658,6 +686,8 @@ class ChromaDBServiceCore extends EventEmitter {
     const existing = this.inflightQueries.get(key);
     if (existing) {
       logger.debug('[ChromaDB] Returning existing in-flight query', { key });
+      // FIX: Refresh timestamp to prevent premature staleness cleanup
+      existing.addedAt = Date.now();
       return existing.promise;
     }
 
@@ -866,6 +896,12 @@ class ChromaDBServiceCore extends EventEmitter {
     }
 
     if (this.initialized) {
+      // FIX: Check circuit breaker before health check to avoid hammering failing service
+      if (!this.circuitBreaker.isAllowed()) {
+        logger.debug('[ChromaDB] Skipping health check - circuit open');
+        return Promise.resolve(); // Consider initialized if circuit is managing recovery
+      }
+
       try {
         const isHealthy = await this.checkHealth();
         if (isHealthy) {
@@ -915,6 +951,25 @@ class ChromaDBServiceCore extends EventEmitter {
 
     // Perform actual initialization in a separate async block
     (async () => {
+      // FIX: Suppress annoying ChromaDB warning about missing embedding configuration
+      // We provide embeddings explicitly, so this warning is a false positive
+      // eslint-disable-next-line no-console
+      const originalWarn = console.warn;
+      // eslint-disable-next-line no-console
+      console.warn = (...args) => {
+        if (
+          args.length > 0 &&
+          typeof args[0] === 'string' &&
+          args[0].includes(
+            'No embedding function configuration found for collection schema deserialization'
+          )
+        ) {
+          return; // Suppress
+        }
+        // eslint-disable-next-line no-console
+        originalWarn.apply(console, args);
+      };
+
       try {
         // FIX: Start stale promise cleanup early in initialization
         // This prevents memory leaks even if later initialization steps fail
@@ -970,18 +1025,27 @@ class ChromaDBServiceCore extends EventEmitter {
           'ChromaDB folder collection init'
         );
 
+        this.feedbackCollection = await withTimeout(
+          this.client.getOrCreateCollection({
+            name: 'feedback_memory',
+            embeddingFunction: explicitEmbeddingsOnlyEmbeddingFunction,
+            metadata: {
+              description: 'User feedback memories for recommendation tuning',
+              'hnsw:space': 'cosine'
+            }
+          }),
+          CHROMADB_INIT_TIMEOUT_MS,
+          'ChromaDB feedback memory collection init'
+        );
+
         this.initialized = true;
         this.isOnline = true;
 
         // Start periodic health monitoring now that we're connected
         this.startHealthCheck();
 
-        process.nextTick(() => {
-          this._isInitializing = false;
-        });
-
         // Count operations with timeout protection
-        const [fileCount, folderCount, fileChunkCount] = await Promise.all([
+        const [fileCount, folderCount, fileChunkCount, feedbackCount] = await Promise.all([
           withTimeout(
             this.fileCollection.count(),
             CHROMADB_OPERATION_TIMEOUT_MS,
@@ -996,6 +1060,11 @@ class ChromaDBServiceCore extends EventEmitter {
             this.fileChunkCollection.count(),
             CHROMADB_OPERATION_TIMEOUT_MS,
             'ChromaDB file chunk count'
+          ),
+          withTimeout(
+            this.feedbackCollection.count(),
+            CHROMADB_OPERATION_TIMEOUT_MS,
+            'ChromaDB feedback memory count'
           )
         ]);
 
@@ -1004,7 +1073,8 @@ class ChromaDBServiceCore extends EventEmitter {
           serverUrl: this.serverUrl,
           fileCount,
           folderCount,
-          fileChunkCount
+          fileChunkCount,
+          feedbackCount
         });
 
         // FIX: Mark initialization complete to enable event handler guards
@@ -1013,6 +1083,7 @@ class ChromaDBServiceCore extends EventEmitter {
 
         // FIX: Resolve the promise to signal successful initialization
         resolveInit();
+        this._isInitializing = false;
       } catch (error) {
         this._initPromise = null;
         this._isInitializing = false;
@@ -1096,6 +1167,8 @@ class ChromaDBServiceCore extends EventEmitter {
         try {
           if (this.fileCollection) this.fileCollection = null;
           if (this.folderCollection) this.folderCollection = null;
+          if (this.fileChunkCollection) this.fileChunkCollection = null;
+          if (this.feedbackCollection) this.feedbackCollection = null;
           if (this.client) this.client = null;
         } catch (cleanupError) {
           logger.error('[ChromaDB] Error during cleanup:', cleanupError);
@@ -1103,6 +1176,10 @@ class ChromaDBServiceCore extends EventEmitter {
 
         // FIX: Reject the promise instead of throwing to properly propagate errors
         rejectInit(new Error(`Failed to initialize ChromaDB: ${errorMsg}`));
+      } finally {
+        // Restore console.warn
+        // eslint-disable-next-line no-console
+        console.warn = originalWarn;
       }
     })();
 
@@ -1177,15 +1254,17 @@ class ChromaDBServiceCore extends EventEmitter {
   async queryFoldersByEmbedding(embedding, topK = 5) {
     await this.initialize();
     // Wrap query with timeout to prevent UI freeze on slow server
-    return this._executeWithNotFoundRecovery('queryFoldersByEmbedding', async () =>
-      withTimeout(
-        queryFoldersByEmbeddingOp({
-          embedding,
-          topK,
-          folderCollection: this.folderCollection
-        }),
-        CHROMADB_OPERATION_TIMEOUT_MS,
-        'ChromaDB queryFoldersByEmbedding'
+    return this.circuitBreaker.execute(async () =>
+      this._executeWithNotFoundRecovery('queryFoldersByEmbedding', async () =>
+        withTimeout(
+          queryFoldersByEmbeddingOp({
+            embedding,
+            topK,
+            folderCollection: this.folderCollection
+          }),
+          CHROMADB_OPERATION_TIMEOUT_MS,
+          'ChromaDB queryFoldersByEmbedding'
+        )
       )
     );
   }
@@ -1210,16 +1289,18 @@ class ChromaDBServiceCore extends EventEmitter {
     // Wrap query with timeout to prevent UI freeze on slow server
     const queryPromise = this._addInflightQuery(
       cacheKey,
-      this._executeWithNotFoundRecovery('queryFolders', async () =>
-        withTimeout(
-          executeQueryFolders({
-            fileId,
-            topK,
-            fileCollection: this.fileCollection,
-            folderCollection: this.folderCollection
-          }),
-          CHROMADB_OPERATION_TIMEOUT_MS,
-          'ChromaDB queryFolders'
+      this.circuitBreaker.execute(async () =>
+        this._executeWithNotFoundRecovery('queryFolders', async () =>
+          withTimeout(
+            executeQueryFolders({
+              fileId,
+              topK,
+              fileCollection: this.fileCollection,
+              folderCollection: this.folderCollection
+            }),
+            CHROMADB_OPERATION_TIMEOUT_MS,
+            'ChromaDB queryFolders'
+          )
         )
       )
     );
@@ -1234,18 +1315,20 @@ class ChromaDBServiceCore extends EventEmitter {
   async batchQueryFolders(fileIds, topK = 5) {
     await this.initialize();
     // FIX: Wrap with not-found recovery to handle stale collection handles after server restart
-    return this._executeWithNotFoundRecovery('batchQueryFolders', async () =>
-      // Wrap batch query with timeout (longer for batch operations)
-      withTimeout(
-        batchQueryFoldersOp({
-          fileIds,
-          topK,
-          fileCollection: this.fileCollection,
-          folderCollection: this.folderCollection,
-          queryCache: this.queryCache
-        }),
-        CHROMADB_OPERATION_TIMEOUT_MS * 2, // Double timeout for batch operations
-        'ChromaDB batchQueryFolders'
+    return this.circuitBreaker.execute(async () =>
+      this._executeWithNotFoundRecovery('batchQueryFolders', async () =>
+        // Wrap batch query with timeout (longer for batch operations)
+        withTimeout(
+          batchQueryFoldersOp({
+            fileIds,
+            topK,
+            fileCollection: this.fileCollection,
+            folderCollection: this.folderCollection,
+            queryCache: this.queryCache
+          }),
+          CHROMADB_OPERATION_TIMEOUT_MS * 2, // Double timeout for batch operations
+          'ChromaDB batchQueryFolders'
+        )
       )
     );
   }
@@ -1253,6 +1336,73 @@ class ChromaDBServiceCore extends EventEmitter {
   async getAllFolders() {
     await this.initialize();
     return getAllFoldersOp({ folderCollection: this.folderCollection });
+  }
+
+  // ============== Feedback Memory Operations ==============
+
+  async upsertFeedbackMemory({ id, vector, metadata = {}, document = '' }) {
+    if (!id || !vector || !Array.isArray(vector)) {
+      throw new Error('Invalid feedback memory data: missing id or vector');
+    }
+    await this.initialize();
+    const dimValidation = await this.validateEmbeddingDimension(vector, 'feedback');
+    if (!dimValidation.valid) {
+      throw new Error(
+        `Feedback memory embedding dimension mismatch: expected ${dimValidation.expectedDim}, got ${dimValidation.actualDim}`
+      );
+    }
+    await withTimeout(
+      this.feedbackCollection.upsert({
+        ids: [id],
+        embeddings: [vector],
+        metadatas: [metadata],
+        documents: [document]
+      }),
+      CHROMADB_OPERATION_TIMEOUT_MS,
+      'ChromaDB upsert feedback memory'
+    );
+  }
+
+  async queryFeedbackMemory(queryEmbedding, topK = 5) {
+    await this.initialize();
+    return this.circuitBreaker.execute(async () => {
+      const count = await this.feedbackCollection.count();
+      if (count === 0) return [];
+      const results = await withTimeout(
+        this.feedbackCollection.query({
+          queryEmbeddings: [queryEmbedding],
+          nResults: topK
+        }),
+        CHROMADB_OPERATION_TIMEOUT_MS,
+        'ChromaDB query feedback memory'
+      );
+
+      const ids = results.ids?.[0] || [];
+      const distances = results.distances?.[0] || [];
+      const metadatas = results.metadatas?.[0] || [];
+      const documents = results.documents?.[0] || [];
+
+      const matches = [];
+      for (let i = 0; i < ids.length; i++) {
+        const distance = i < distances.length ? distances[i] : 1;
+        matches.push({
+          id: ids[i],
+          score: Math.max(0, 1 - distance / 2),
+          metadata: i < metadatas.length ? metadatas[i] : {},
+          document: i < documents.length ? documents[i] : ''
+        });
+      }
+      return matches.sort((a, b) => b.score - a.score);
+    });
+  }
+
+  async deleteFeedbackMemory(id) {
+    await this.initialize();
+    await withTimeout(
+      this.feedbackCollection.delete({ ids: [id] }),
+      CHROMADB_OPERATION_TIMEOUT_MS,
+      'ChromaDB delete feedback memory'
+    );
   }
 
   async resetFolders() {
@@ -1265,25 +1415,25 @@ class ChromaDBServiceCore extends EventEmitter {
     this._collectionDimensions.folders = null;
   }
 
+  async resetFeedbackMemory() {
+    await this.initialize();
+    await this.client.deleteCollection({ name: 'feedback_memory' });
+    this.feedbackCollection = await this.client.createCollection({
+      name: 'feedback_memory',
+      embeddingFunction: explicitEmbeddingsOnlyEmbeddingFunction,
+      metadata: {
+        description: 'User feedback memories for recommendation tuning',
+        'hnsw:space': 'cosine'
+      }
+    });
+    this._collectionDimensions.feedback = null;
+  }
+
   // ============== File Operations ==============
 
   async upsertFile(file) {
     if (!file.id || !file.vector || !Array.isArray(file.vector)) {
       throw new Error('Invalid file data: missing id or vector');
-    }
-
-    // FIX P1-3: Validate embedding dimensions before upsert
-    const dimValidation = await this.validateEmbeddingDimension(file.vector, 'files');
-    if (!dimValidation.valid) {
-      logger.warn('[ChromaDB] Dimension mismatch in upsertFile', {
-        fileId: file.id,
-        expected: dimValidation.expectedDim,
-        actual: dimValidation.actualDim
-      });
-      throw new Error(
-        `Embedding dimension mismatch: expected ${dimValidation.expectedDim}, got ${dimValidation.actualDim}. ` +
-          `Run "Rebuild Embeddings" to fix.`
-      );
     }
 
     if (!this.circuitBreaker.isAllowed()) {
@@ -1295,7 +1445,29 @@ class ChromaDBServiceCore extends EventEmitter {
     }
 
     await this.initialize();
-    return this.circuitBreaker.execute(async () => this._directUpsertFile(file));
+
+    // FIX P1-3: Validate embedding dimensions before upsert
+    const dimValidation = await this.validateEmbeddingDimension(file.vector, 'files');
+    if (!dimValidation.valid) {
+      logger.warn('[ChromaDB] Dimension mismatch in upsertFile', {
+        fileId: file.id,
+        expected: dimValidation.expectedDim,
+        actual: dimValidation.actualDim
+      });
+      this.emit('dimension-mismatch', {
+        type: 'files',
+        expected: dimValidation.expectedDim,
+        actual: dimValidation.actualDim
+      });
+      this.offlineQueue.enqueue(OperationType.UPSERT_FILE, file, {
+        reason: 'dimension_mismatch'
+      });
+      return { queued: true, fileId: file.id, reason: 'dimension_mismatch' };
+    }
+
+    return this.circuitBreaker.execute(async () =>
+      this._executeWithNotFoundRecovery('upsertFile', () => this._directUpsertFile(file))
+    );
   }
 
   async _directUpsertFile(file) {
@@ -1311,6 +1483,20 @@ class ChromaDBServiceCore extends EventEmitter {
       return { queued: false, count: 0 };
     }
 
+    if (!this.circuitBreaker.isAllowed()) {
+      logger.debug('[ChromaDB] Circuit open, queueing batch file upsert', {
+        count: files.length
+      });
+      this.offlineQueue.enqueue(OperationType.BATCH_UPSERT_FILES, { files });
+      this.emit('operationQueued', {
+        type: 'batch_upsert_files',
+        count: files.length
+      });
+      return { queued: true, count: files.length };
+    }
+
+    await this.initialize();
+
     // FIX P1-3: Validate first file's dimensions against collection
     // (all files should have same dimensions from same embedding model)
     const firstFileWithVector = files.find((f) => Array.isArray(f.vector) && f.vector.length > 0);
@@ -1325,28 +1511,26 @@ class ChromaDBServiceCore extends EventEmitter {
           actual: dimValidation.actualDim,
           fileCount: files.length
         });
-        throw new Error(
-          `Embedding dimension mismatch: expected ${dimValidation.expectedDim}, got ${dimValidation.actualDim}. ` +
-            `Run "Rebuild Embeddings" to fix.`
+        this.emit('dimension-mismatch', {
+          type: 'files',
+          expected: dimValidation.expectedDim,
+          actual: dimValidation.actualDim
+        });
+        this.offlineQueue.enqueue(
+          OperationType.BATCH_UPSERT_FILES,
+          { files },
+          {
+            reason: 'dimension_mismatch'
+          }
         );
+        return { queued: true, count: files.length, reason: 'dimension_mismatch' };
       }
     }
 
-    if (!this.circuitBreaker.isAllowed()) {
-      logger.debug('[ChromaDB] Circuit open, queueing batch file upsert', {
-        count: files.length
-      });
-      this.offlineQueue.enqueue(OperationType.BATCH_UPSERT_FILES, { files });
-      this.emit('operationQueued', {
-        type: 'batch_upsert_files',
-        count: files.length
-      });
-      return { queued: true, count: files.length };
-    }
-
-    await this.initialize();
     const count = await this.circuitBreaker.execute(async () =>
-      this._directBatchUpsertFiles(files)
+      this._executeWithNotFoundRecovery('batchUpsertFiles', () =>
+        this._directBatchUpsertFiles(files)
+      )
     );
     return { queued: false, count };
   }
@@ -1623,17 +1807,21 @@ class ChromaDBServiceCore extends EventEmitter {
 
   async querySimilarFiles(queryEmbedding, topK = 10) {
     await this.initialize();
-    return querySimilarFilesOp({
-      queryEmbedding,
-      topK,
-      fileCollection: this.fileCollection
-    });
+    return this.circuitBreaker.execute(async () =>
+      querySimilarFilesOp({
+        queryEmbedding,
+        topK,
+        fileCollection: this.fileCollection
+      })
+    );
   }
 
   async batchUpsertFileChunks(chunks) {
     if (!chunks || chunks.length === 0) {
       return 0;
     }
+
+    await this.initialize();
 
     // FIX P1-3: Validate first chunk's dimensions against collection
     const firstChunkWithVector = chunks.find((c) => Array.isArray(c.vector) && c.vector.length > 0);
@@ -1655,7 +1843,6 @@ class ChromaDBServiceCore extends EventEmitter {
       }
     }
 
-    await this.initialize();
     return batchUpsertFileChunksOp({
       chunks,
       chunkCollection: this.fileChunkCollection
@@ -1982,10 +2169,12 @@ class ChromaDBServiceCore extends EventEmitter {
       let offset = 0;
       while (offset < totalCount) {
         try {
-          // Peek at batch of entries
-          const batch = await this.fileCollection.peek({
+          // FIX MED-04: Use get() instead of peek() for pagination support
+          // peek() does not support offset in all Chroma versions
+          const batch = await this.fileCollection.get({
             limit: batchSize,
-            offset
+            offset,
+            include: ['metadatas', 'documents', 'embeddings']
           });
 
           if (!batch?.ids || batch.ids.length === 0) {

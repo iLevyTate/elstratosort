@@ -209,7 +209,19 @@ module.exports = {
     'border-warning',
     'border-info',
     'border-error',
-    'border-neutral'
+    'border-neutral',
+    // Stratosort brand colors with opacity
+    'bg-stratosort-blue/10',
+    'bg-stratosort-success/10',
+    'bg-stratosort-warning/10',
+    'bg-stratosort-danger/10',
+    'text-stratosort-blue',
+    'text-stratosort-blue/80',
+    'text-stratosort-success',
+    'text-stratosort-success/90',
+    'text-stratosort-warning',
+    'text-stratosort-danger',
+    'text-stratosort-danger/80'
   ],
   theme: {
     container: {

@@ -477,32 +477,39 @@ class OllamaClient {
 
       // Process in batches
       const batchSize = Math.min(10, this.offlineQueue.length);
-      const batch = this.offlineQueue.splice(0, batchSize);
+      // FIX HIGH-63: Don't remove items until processed to prevent data loss on crash
+      // Peek items instead of splicing immediately
+      const batch = this.offlineQueue.slice(0, batchSize);
 
       const results = await Promise.allSettled(
         batch.map((request) => this._processQueuedRequest(request))
       );
 
-      // Re-queue failed requests (up to max retries)
-      let requeued = 0;
+      // Remove successful items and update failed ones
+      const newQueue = this.offlineQueue.slice(batchSize); // Remaining items
+      const retryQueue = []; // Items to re-queue
+
       results.forEach((result, index) => {
         if (result.status === 'rejected') {
           const request = batch[index];
           if (request.retryCount < 3) {
-            this.offlineQueue.push({
+            retryQueue.push({
               ...request,
               retryCount: request.retryCount + 1
             });
-            requeued++;
           }
         }
+        // If fulfilled, it's dropped (success)
       });
+
+      // Update queue atomically
+      this.offlineQueue = [...retryQueue, ...newQueue];
 
       const successful = results.filter((r) => r.status === 'fulfilled').length;
       logger.info('[OllamaClient] Processed offline queue batch', {
         successful,
         failed: results.length - successful,
-        requeued,
+        requeued: retryQueue.length,
         remaining: this.offlineQueue.length
       });
 

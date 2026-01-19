@@ -1,4 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { serializeData } from '../../utils/serialization';
 
 // Normalize the documents path returned from IPC to a plain string.
 // Some IPC implementations return { success, path }, while others return the
@@ -69,16 +70,17 @@ const systemSlice = createSlice({
       if (state.notifications.length >= 50) {
         state.notifications.shift();
       }
+      const safePayload = serializeData(action.payload);
       const notification = {
         // Preserve ID from main process if present, otherwise generate
-        id: action.payload.id || Date.now().toString(),
-        timestamp: action.payload.timestamp || new Date().toISOString(),
+        id: safePayload.id || Date.now().toString(),
+        timestamp: safePayload.timestamp || new Date().toISOString(),
         // Mark as displayed when added to Redux
         status: NotificationStatus.DISPLAYED,
         displayedAt: new Date().toISOString(),
         seenAt: null,
         dismissedAt: null,
-        ...action.payload
+        ...safePayload
       };
       state.notifications.push(notification);
       // Increment unread count

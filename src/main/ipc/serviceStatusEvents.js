@@ -1,5 +1,7 @@
 // Shared, lightweight service-status emitter.
 // Intentionally does NOT import StartupManager/DependencyManager to avoid circular dependencies.
+// FIX: Import safeSend for validated IPC event sending
+const { safeSend } = require('./ipcWrappers');
 
 let _getMainWindow = null;
 let _IPC_CHANNELS = null;
@@ -29,7 +31,8 @@ function emitServiceStatusChange(payload) {
   try {
     const win = typeof _getMainWindow === 'function' ? _getMainWindow() : null;
     if (win && !win.isDestroyed() && _IPC_CHANNELS?.DEPENDENCIES?.SERVICE_STATUS_CHANGED) {
-      win.webContents.send(_IPC_CHANNELS.DEPENDENCIES.SERVICE_STATUS_CHANGED, {
+      // FIX: Use safeSend for validated IPC event sending
+      safeSend(win.webContents, _IPC_CHANNELS.DEPENDENCIES.SERVICE_STATUS_CHANGED, {
         timestamp: Date.now(),
         ...payload
       });

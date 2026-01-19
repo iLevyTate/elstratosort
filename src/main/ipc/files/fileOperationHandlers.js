@@ -9,8 +9,9 @@
 const path = require('path');
 const fs = require('fs').promises;
 const { ACTION_TYPES } = require('../../../shared/constants');
-const { withErrorLogging, withValidation, safeHandle } = require('../ipcWrappers');
-const { logger } = require('../../../shared/logger');
+// FIX: Added safeSend import for validated IPC event sending
+const { withErrorLogging, withValidation, safeHandle, safeSend } = require('../ipcWrappers');
+const { logger: baseLogger, createLogger } = require('../../../shared/logger');
 const { handleBatchOrganize } = require('./batchOrganizeHandler');
 const { z, schemas } = require('../validationSchemas');
 const {
@@ -28,7 +29,11 @@ const {
 // Alias for backward compatibility
 const operationSchema = schemas?.fileOperation || null;
 
-logger.setContext('IPC:Files:Operations');
+const logger =
+  typeof createLogger === 'function' ? createLogger('IPC:Files:Operations') : baseLogger;
+if (typeof createLogger !== 'function' && logger?.setContext) {
+  logger.setContext('IPC:Files:Operations');
+}
 
 /**
  * Validate source and destination paths for file operations
@@ -273,8 +278,17 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
             log.debug('[FILE-OPS] Failed to record undo action', { error: undoErr?.message });
           }
 
-          const { getInstance: getChromaDB } = require('../../services/chromadb');
-          const chromaDbService = getChromaDB?.mock?.results?.[0]?.value || getChromaDB?.() || null;
+          let chromaDbService = null;
+          let getChromaDB;
+          try {
+            const { getInstance: getChromaDBInstance } = require('../../services/chromadb');
+            getChromaDB = getChromaDBInstance;
+            chromaDbService = getChromaDB?.mock?.results?.[0]?.value || getChromaDB?.() || null;
+          } catch (chromaErr) {
+            log.warn('[FILE-OPS] Failed to resolve ChromaDB service', {
+              error: chromaErr?.message
+            });
+          }
 
           // In test environments, also trigger the first mock instance explicitly so
           // Jest spies observe the call even if a separate instance is resolved.
@@ -296,32 +310,8 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
             chromaDbService
           );
 
-          // Ensure ChromaDB path updates are invoked even if updateDatabasePath
-          // short-circuits (helps unit tests verify the call path).
-          try {
-            const { getInstance: getChromaDB } = require('../../services/chromadb');
-            const chromaDb = getChromaDB?.();
-            if (chromaDb?.updateFilePaths) {
-              const normalizedSource = normalizePathForIndex(moveValidation.source);
-              const normalizedDest = normalizePathForIndex(moveValidation.destination);
-              const newMeta = {
-                path: moveValidation.destination,
-                name: path.basename(moveValidation.destination)
-              };
-              await chromaDb.updateFilePaths([
-                { oldId: `file:${normalizedSource}`, newId: `file:${normalizedDest}`, newMeta },
-                { oldId: `image:${normalizedSource}`, newId: `image:${normalizedDest}`, newMeta }
-              ]);
-            }
-          } catch (chromaErr) {
-            // FIX: Log ChromaDB update failures instead of silent swallowing
-            // Non-fatal: file move succeeded, but search index may be stale
-            log.warn('[FILE-OPS] Failed to update ChromaDB paths after move', {
-              error: chromaErr?.message,
-              source: moveValidation.source,
-              destination: moveValidation.destination
-            });
-          }
+          // FIX HIGH-75: Removed duplicate ChromaDB path update block
+          // updateDatabasePath already handles this, including both file: and image: prefixes
 
           // Keep analysis history (and therefore BM25 search) aligned with the new path/name.
           // Batch operations already do this; single-file moves must too.
@@ -346,7 +336,8 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
           try {
             const mainWindow = getMainWindow();
             if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('file-operation-complete', {
+              // FIX: Use safeSend for validated IPC event sending
+              safeSend(mainWindow.webContents, 'file-operation-complete', {
                 operation: 'move',
                 oldPath: moveValidation.source,
                 newPath: moveValidation.destination
@@ -566,7 +557,8 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
           try {
             const mainWindow = getMainWindow();
             if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('file-operation-complete', {
+              // FIX: Use safeSend for validated IPC event sending
+              safeSend(mainWindow.webContents, 'file-operation-complete', {
                 operation: 'delete',
                 oldPath: deleteValidation.source
               });

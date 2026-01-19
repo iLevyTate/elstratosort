@@ -48,6 +48,7 @@ but not yet fully optimized.
 - 6GB RAM
 - 6GB free disk space (for AI models)
 - Any modern CPU
+- **Python 3.9+** (required for local ChromaDB)
 
 ### Recommended
 
@@ -80,6 +81,18 @@ organize new files.
 Select multiple files/folders, analyze, and apply suggestions in bulk with full undo support.
 
 ---
+
+## Documentation
+
+Detailed documentation is available in the `docs/` directory:
+
+- [Architecture Overview](docs/ARCHITECTURE.md)
+- [Learning Guide](docs/LEARNING_GUIDE.md)
+- [Testing Guide](TESTING.md)
+- [Code Quality Standards](docs/CODE_QUALITY_STANDARDS.md)
+- [Dependency Patterns](docs/DI_PATTERNS.md)
+- [Error Handling](docs/ERROR_HANDLING_GUIDE.md)
+- [IPC Contracts](docs/IPC_CONTRACTS.md)
 
 ## For Developers & Contributors
 
@@ -130,6 +143,8 @@ npm run setup:deps     # Install Ollama + ChromaDB (beta)
 2. Create a feature branch.
 3. Make changes and verify with `npm test`.
 4. Submit a Pull Request.
+
+See `CONTRIBUTING.md` for full setup, standards, and testing guidance.
 
 ## License
 

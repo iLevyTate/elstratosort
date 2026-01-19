@@ -10,6 +10,7 @@ const {
 } = require('../../shared/constants');
 const { TRUNCATION, THRESHOLDS, TIMEOUTS } = require('../../shared/performanceConstants');
 const { logger } = require('../../shared/logger');
+const { normalizePathForIndex } = require('../../shared/pathSanitization');
 const { getOllamaModel, loadOllamaConfig } = require('../ollamaUtils');
 const { AppConfig } = require('./documentLlm');
 
@@ -36,6 +37,7 @@ const {
 } = require('./documentExtractors');
 const { analyzeTextWithOllama, normalizeCategoryToSmartFolders } = require('./documentLlm');
 const { normalizeAnalysisResult } = require('./utils');
+const { normalizeExtractedTextForStorage } = require('./analysisTextUtils');
 const {
   getIntelligentCategory,
   getIntelligentKeywords,
@@ -218,7 +220,9 @@ async function applyDocumentFolderMatching(
   filePath,
   fileName,
   extractedText,
-  smartFolders
+  smartFolders,
+  fileExtension,
+  fileSize
 ) {
   // CRITICAL FIX: Guard against null/undefined analysis to prevent crash
   if (!analysis || typeof analysis !== 'object') {
@@ -256,7 +260,8 @@ async function applyDocumentFolderMatching(
     await matcher.batchUpsertFolders(smartFolders);
   }
 
-  const fileId = `file:${filePath}`;
+  const normalizedPath = normalizePathForIndex(filePath);
+  const fileId = `file:${normalizedPath}`;
   const summaryForEmbedding = [
     analysis.project,
     analysis.purpose,
@@ -289,10 +294,23 @@ async function applyDocumentFolderMatching(
     meta: {
       path: filePath,
       name: fileName,
+      fileExtension,
+      fileSize,
       category: analysis.category || 'Uncategorized',
       confidence: confidencePercent,
       type: 'document',
-      summary: (summaryForEmbedding || '').substring(0, 500)
+      extractionMethod: analysis.extractionMethod || 'content',
+      summary: (summaryForEmbedding || analysis.summary || analysis.purpose || '').substring(
+        0,
+        500
+      ),
+      tags: Array.isArray(analysis.keywords) ? analysis.keywords : analysis.tags || [],
+      keywords: Array.isArray(analysis.keywords) ? analysis.keywords : [],
+      entity: analysis.entity,
+      project: analysis.project,
+      date: analysis.date,
+      suggestedName: analysis.suggestedName,
+      purpose: analysis.purpose
     },
     updatedAt: new Date().toISOString()
   });
@@ -346,8 +364,9 @@ async function applyDocumentFolderMatching(
  * @param {Array} smartFolders - Array of smart folder configurations
  * @returns {Promise<Object>} Analysis result with metadata
  */
-async function analyzeDocumentFile(filePath, smartFolders = []) {
+async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
   logger.info('Analyzing document file', { path: filePath });
+  const bypassCache = Boolean(options?.bypassCache);
   const fileExtension = path.extname(filePath).toLowerCase();
   const fileName = path.basename(filePath);
   const smartFolderSig = Array.isArray(smartFolders)
@@ -376,11 +395,15 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
     fileStats = await fs.stat(filePath);
     fileSignature = `${ANALYSIS_SIGNATURE_VERSION}|${modelName}|${smartFolderSig}|${filePath}|${fileStats.size}|${fileStats.mtimeMs}`;
     // CRITICAL FIX: Use TTL-aware cache getter instead of direct Map access
-    const cachedResult = getFileCache(fileSignature);
-    if (cachedResult) {
-      return cachedResult;
+    if (!bypassCache) {
+      const cachedResult = getFileCache(fileSignature);
+      if (cachedResult) {
+        return cachedResult;
+      }
+      logger.debug('Cache miss, analyzing', { path: filePath });
+    } else {
+      logger.debug('Bypassing analysis cache for reanalysis', { path: filePath });
     }
-    logger.debug('Cache miss, analyzing', { path: filePath });
   } catch (statError) {
     // Non-fatal: proceed without cache if stats fail
     logger.debug('Could not stat file for caching, proceeding with analysis', {
@@ -687,6 +710,41 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
         preview: extractedText.substring(0, TRUNCATION.PREVIEW_MEDIUM)
       });
 
+      // OPTIMIZATION: Retrieve similar file names to improve naming consistency (Vector-based Decision)
+      let namingContext = [];
+      try {
+        const { matcher } = getServicesLazy();
+        if (matcher) {
+          // Initialize matcher if needed (lazy init pattern)
+          if (!matcher.embeddingCache?.initialized) {
+            await matcher.initialize();
+          }
+
+          // Create a lightweight summary for embedding
+          const summaryForEmbedding = extractedText.slice(0, 1500);
+          const { vector } = await matcher.embedText(summaryForEmbedding);
+          // Find top 5 similar files
+          const similarFiles = await matcher.findSimilarFilesByVector(vector, 5);
+
+          // Extract basenames
+          namingContext = similarFiles
+            .filter((f) => f.metadata && f.metadata.name && f.metadata.name !== fileName)
+            .map((f) => f.metadata.name);
+
+          if (namingContext.length > 0) {
+            logger.debug('[DocumentAnalysis] Found similar files for naming context', {
+              count: namingContext.length,
+              examples: namingContext.slice(0, 3)
+            });
+          }
+        }
+      } catch (namingError) {
+        // Non-fatal, just log and proceed without context
+        logger.debug('[DocumentAnalysis] Failed to get naming context (non-fatal)', {
+          error: namingError.message
+        });
+      }
+
       // Backend Caching & Deduplication:
       // Generate a content hash to prevent duplicate AI processing
       const contentHash = crypto
@@ -695,16 +753,19 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
         .update(modelName)
         .digest('hex');
 
+      // FIX HIGH-65: Remove redundant model/folders from key since contentHash + fileName covers uniqueness
+      // Folders are only relevant if they change the prompt structure, but analyzeTextWithOllama uses
+      // folders in the prompt. So we SHOULD include folders. But model is in contentHash.
       const deduplicationKey = globalDeduplicator.generateKey({
         contentHash,
         fileName,
         task: 'analyzeTextWithOllama',
-        model: modelName,
+        // model: modelName, // Redundant, in contentHash
         folders: Array.isArray(smartFolders) ? smartFolders.map((f) => f?.name || '').join(',') : ''
       });
 
       const analysis = await globalDeduplicator.deduplicate(deduplicationKey, () =>
-        analyzeTextWithOllama(extractedText, fileName, smartFolders, fileDate)
+        analyzeTextWithOllama(extractedText, fileName, smartFolders, fileDate, namingContext)
       );
 
       // Semantic folder refinement using embeddings (delegated to helper)
@@ -716,7 +777,9 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
             filePath,
             fileName,
             extractedText,
-            smartFolders
+            smartFolders,
+            fileExtension,
+            fileStats?.size
           );
         } catch (e) {
           logger.warn('[DocumentAnalysis] Folder matching failed (non-fatal):', {
@@ -731,6 +794,7 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       // operations wastes memory. Capture what we need and null the reference.
       const extractedTextLength = extractedText?.length || 0;
       const extractedTextPreview = extractedText?.substring(0, 500) || '';
+      const extractedTextForStorage = normalizeExtractedTextForStorage(extractedText);
       extractedText = null;
 
       if (analysis && !analysis.error) {
@@ -743,7 +807,8 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
           {
             ...analysis,
             contentLength: extractedTextLength,
-            extractionMethod: 'content'
+            extractionMethod: 'content',
+            extractedText: extractedTextForStorage
           },
           { category: 'document', keywords: [], confidence: 0 }
         );
@@ -758,6 +823,7 @@ async function analyzeDocumentFile(filePath, smartFolders = []) {
       return normalizeAnalysisResult(
         {
           rawText: extractedTextPreview,
+          extractedText: extractedTextForStorage,
           keywords: Array.isArray(analysis.keywords)
             ? analysis.keywords
             : ['document', 'analysis_failed'],

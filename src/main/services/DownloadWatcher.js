@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const chokidar = require('chokidar');
-const { logger } = require('../../shared/logger');
+const { logger: baseLogger, createLogger } = require('../../shared/logger');
 const {
   isNotFoundError,
   isCrossDeviceError,
@@ -16,9 +16,13 @@ const { generateSuggestedNameFromAnalysis } = require('./autoOrganize/namingUtil
 const { recordAnalysisResult } = require('../ipc/analysisUtils');
 const { deriveWatcherConfidencePercent } = require('./confidence/watcherConfidence');
 const { getSemanticFileId, isImagePath } = require('../../shared/fileIdUtils');
+const { normalizePathForIndex } = require('../../shared/pathSanitization');
 const { getInstance: getFileOperationTracker } = require('../../shared/fileOperationTracker');
 
-logger.setContext('DownloadWatcher');
+const logger = typeof createLogger === 'function' ? createLogger('DownloadWatcher') : baseLogger;
+if (typeof createLogger !== 'function' && logger?.setContext) {
+  logger.setContext('DownloadWatcher');
+}
 
 // Temporary/incomplete file patterns to ignore
 const TEMP_FILE_PATTERNS = [
@@ -89,6 +93,8 @@ class DownloadWatcher {
     this.debounceTimers = new Map(); // Debounce timers for each file
     this.debounceDelay = 500; // 500ms debounce for rapid events
     this.restartTimer = null; // Track restart timer for cleanup
+    // FIX H-3: Track stopped state to prevent timer callbacks after stop()
+    this._stopped = false;
   }
 
   async start() {
@@ -103,6 +109,8 @@ class DownloadWatcher {
     }
 
     this.isStarting = true;
+    // FIX H-3: Reset stopped flag on start
+    this._stopped = false;
 
     try {
       const downloadsPath = path.join(os.homedir(), 'Downloads');
@@ -243,6 +251,12 @@ class DownloadWatcher {
 
     // Set new timer
     const timer = setTimeout(async () => {
+      // FIX H-3: Check if watcher was stopped during debounce
+      if (this._stopped) {
+        this.debounceTimers.delete(filePath);
+        return;
+      }
+
       this.debounceTimers.delete(filePath);
 
       // FIX: Verify file still exists after debounce (race condition prevention)
@@ -326,6 +340,9 @@ class DownloadWatcher {
   }
 
   stop() {
+    // FIX H-3: Set stopped flag to prevent timer callbacks
+    this._stopped = true;
+
     // Clear pending restart timer
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
@@ -1044,7 +1061,16 @@ class DownloadWatcher {
       // Remove from ChromaDB (both file: and image: prefixes)
       if (this.chromaDbService) {
         // Use batch delete for atomicity when available
-        const idsToDelete = [`file:${filePath}`, `image:${filePath}`];
+        const normalizedPath = normalizePathForIndex(filePath);
+        const idsToDelete =
+          normalizedPath === filePath
+            ? [`file:${normalizedPath}`, `image:${normalizedPath}`]
+            : [
+                `file:${normalizedPath}`,
+                `image:${normalizedPath}`,
+                `file:${filePath}`,
+                `image:${filePath}`
+              ];
 
         if (typeof this.chromaDbService.batchDeleteFileEmbeddings === 'function') {
           await this.chromaDbService.batchDeleteFileEmbeddings(idsToDelete);
@@ -1057,8 +1083,9 @@ class DownloadWatcher {
 
         // Delete associated chunks
         if (typeof this.chromaDbService.deleteFileChunks === 'function') {
-          await this.chromaDbService.deleteFileChunks(`file:${filePath}`);
-          await this.chromaDbService.deleteFileChunks(`image:${filePath}`);
+          for (const id of idsToDelete) {
+            await this.chromaDbService.deleteFileChunks(id);
+          }
         }
 
         logger.debug('[DOWNLOAD-WATCHER] Removed embeddings for deleted file:', filePath);
@@ -1070,7 +1097,11 @@ class DownloadWatcher {
         logger.debug('[DOWNLOAD-WATCHER] Removed history for deleted file:', filePath);
       }
     } catch (error) {
-      logger.warn('[DOWNLOAD-WATCHER] Error cleaning up deleted file:', filePath, error.message);
+      // FIX: Use object format for structured logging
+      logger.warn('[DOWNLOAD-WATCHER] Error cleaning up deleted file:', {
+        filePath,
+        error: error.message
+      });
     }
   }
 

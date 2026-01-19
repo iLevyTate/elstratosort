@@ -151,18 +151,21 @@ function Modal({
 
   const modalContent = (
     <div
-      className="fixed inset-0 z-modal flex items-center justify-center p-4"
+      className="fixed inset-0 z-modal flex items-center justify-center p-4 modal-overlay"
       onClick={handleOverlayClick}
     >
       {/* Unified backdrop: solid overlay (blur disabled to avoid native dropdown flicker) */}
-      <div className="absolute inset-0 bg-black/40 animate-modal-backdrop" aria-hidden="true" />
+      <div
+        className="absolute inset-0 bg-black/40 animate-modal-backdrop gpu-accelerate"
+        aria-hidden="true"
+      />
 
       {/* Modal */}
       <div
         ref={modalRef}
         className={`
           relative surface-panel !p-0 w-full ${getSizeClasses()}
-          max-h-[90vh] overflow-hidden animate-modal-enter will-change-transform ${className}
+          max-h-[90vh] overflow-hidden animate-modal-enter gpu-accelerate ${className}
         `}
         role="dialog"
         aria-modal="true"
@@ -172,7 +175,7 @@ function Modal({
       >
         {/* Header */}
         {(title || showCloseButton) && (
-          <div className="flex items-center justify-between border-b border-border-soft/70 px-5 py-4 bg-white rounded-t-2xl">
+          <div className="flex items-center justify-between border-b border-border-soft/70 px-[var(--panel-padding)] py-[calc(var(--panel-padding)*0.75)] bg-white rounded-t-2xl">
             {title && (
               <h2 id="modal-title" className="text-lg font-semibold text-system-gray-900">
                 {title}
@@ -194,7 +197,7 @@ function Modal({
         {/* Content */}
         <div
           ref={contentRef}
-          className="modern-scrollbar max-h-[calc(90vh-8rem)] overflow-y-auto px-5 py-4 bg-white rounded-b-2xl"
+          className="modern-scrollbar max-h-[calc(90vh-8rem)] overflow-y-auto px-[var(--panel-padding)] py-[var(--panel-padding)] bg-white rounded-b-2xl"
         >
           {children}
         </div>
@@ -363,7 +366,7 @@ export function ConfirmModal({
 Modal.propTypes = {
   isOpen: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
-  title: PropTypes.string,
+  title: PropTypes.node,
   children: PropTypes.node,
   size: PropTypes.oneOf(['small', 'medium', 'large', 'full']),
   closeOnOverlayClick: PropTypes.bool,

@@ -1,5 +1,6 @@
 const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
-const { createHandler, safeHandle } = require('./ipcWrappers');
+// FIX: Added safeSend import for validated IPC event sending
+const { createHandler, safeHandle, safeSend } = require('./ipcWrappers');
 const { getInstance: getDependencyManager } = require('../services/DependencyManagerService');
 const { getStartupManager } = require('../services/startup');
 const { configureServiceStatusEmitter, emitServiceStatusChange } = require('./serviceStatusEvents');
@@ -38,7 +39,8 @@ function registerDependenciesIpc(servicesOrParams) {
     try {
       const win = typeof getMainWindow === 'function' ? getMainWindow() : null;
       if (win && !win.isDestroyed()) {
-        win.webContents.send('operation-progress', {
+        // FIX: Use safeSend for validated IPC event sending
+        safeSend(win.webContents, 'operation-progress', {
           type: 'dependency',
           ...payload
         });

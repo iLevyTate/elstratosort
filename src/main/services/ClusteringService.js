@@ -27,6 +27,12 @@ const DEFAULT_OPTIONS = {
   convergenceThreshold: 0.001
 };
 
+/**
+ * Maximum number of clusters to compute for a user collection
+ * Cap to prevent performance degradation on large datasets
+ */
+const MAX_USER_CLUSTERS = 100;
+
 class ClusteringService {
   /**
    * Create a new ClusteringService instance
@@ -422,10 +428,12 @@ class ClusteringService {
     }
 
     this._computePromise = this._doComputeClusters(k);
+    this._startTime = Date.now();
     try {
       return await this._computePromise;
     } finally {
       this._computePromise = null;
+      this._startTime = null;
     }
   }
 
@@ -450,7 +458,6 @@ class ClusteringService {
       }
 
       // FIX M-2: Add upper bound on cluster count to prevent performance degradation
-      const MAX_USER_CLUSTERS = 100;
       let numClusters;
       if (k === 'auto') {
         numClusters = this.estimateOptimalK(files);

@@ -5,13 +5,18 @@ const path = require('path');
 const { backupAndReplace } = require('../../shared/atomicFileOperations');
 const { validateSettings, sanitizeSettings } = require('../../shared/settingsValidation');
 const { DEFAULT_SETTINGS } = require('../../shared/defaultSettings');
-const { logger } = require('../../shared/logger');
+const { logger: baseLogger, createLogger } = require('../../shared/logger');
 const { isNotFoundError } = require('../../shared/errorClassifier');
 const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { LIMITS, DEBOUNCE, TIMEOUTS } = require('../../shared/performanceConstants');
 const { SettingsBackupService } = require('./SettingsBackupService');
+// FIX: Import safeSend for validated IPC event sending
+const { safeSend } = require('../ipc/ipcWrappers');
 
-logger.setContext('SettingsService');
+const logger = typeof createLogger === 'function' ? createLogger('SettingsService') : baseLogger;
+if (typeof createLogger !== 'function' && logger?.setContext) {
+  logger.setContext('SettingsService');
+}
 
 /**
  * Custom error class for mutex timeout/deadlock errors
@@ -42,6 +47,7 @@ class SettingsService {
     this._debounceDelay = DEBOUNCE.SETTINGS_SAVE;
     this._isInternalChange = false; // Flag to ignore changes we made ourselves
     this._internalChangeTimer = null; // FIX: Track internal change reset timer for cleanup
+    this._isShuttingDown = false; // FIX CRIT-33: Track shutdown state
 
     // Fixed: Add mutex to prevent concurrent save operations
     this._saveMutex = Promise.resolve();
@@ -179,7 +185,23 @@ class SettingsService {
       for (const backup of backupsToTry) {
         try {
           logger.info(`[SettingsService] Attempting recovery from backup: ${backup.filename}`);
-          const result = await this._backupService.restoreBackup(backup.filename);
+          // FIX HIGH-70: Correct method name is restoreFromBackup, not restoreBackup
+          const result = await this._backupService.restoreFromBackup(
+            backup.filename,
+            async (merged) => {
+              // Save restored settings using backupAndReplace (same as regular restore)
+              const { backupAndReplace } = require('../../shared/atomicFileOperations');
+              const saveResult = await backupAndReplace(
+                this.settingsPath,
+                JSON.stringify(merged, null, 2)
+              );
+              if (!saveResult.success) {
+                throw new Error(saveResult.error || 'Failed to save restored settings');
+              }
+              return { success: true };
+            }
+          );
+
           if (result.success) {
             logger.info(
               `[SettingsService] Successfully recovered settings from backup: ${backup.filename}`
@@ -422,6 +444,7 @@ class SettingsService {
         logger.error(`[SettingsService] ${errorMsg}`);
         throw new Error(errorMsg);
       }
+      const backupPath = backupResult.path;
 
       // Now safe to save settings
       // Set flag to ignore our own file change
@@ -494,6 +517,19 @@ class SettingsService {
         logger.error(
           '[SettingsService] Save operation failed, rolled back cache to previous state'
         );
+        if (backupPath) {
+          try {
+            await this._backupService.deleteBackup(backupPath);
+            logger.warn('[SettingsService] Deleted orphan backup after failed save', {
+              backupPath
+            });
+          } catch (cleanupError) {
+            logger.warn('[SettingsService] Failed to delete orphan backup after save failure', {
+              backupPath,
+              error: cleanupError.message
+            });
+          }
+        }
         throw err;
       } finally {
         // Reset flag after a short delay to allow file system to settle
@@ -502,7 +538,10 @@ class SettingsService {
           clearTimeout(this._internalChangeTimer);
         }
         this._internalChangeTimer = setTimeout(() => {
-          this._isInternalChange = false;
+          // FIX CRIT-33: Check shutdown state before executing callback
+          if (!this._isShuttingDown) {
+            this._isInternalChange = false;
+          }
           this._internalChangeTimer = null;
         }, 100);
       }
@@ -697,8 +736,12 @@ class SettingsService {
     }
 
     // SECURITY FIX: Validate backup path is within backup directory to prevent path traversal
-    const normalizedPath = path.normalize(path.resolve(backupPath));
-    const normalizedBackupDir = path.normalize(path.resolve(this.backupDir));
+    let normalizedPath = path.normalize(path.resolve(backupPath));
+    let normalizedBackupDir = path.normalize(path.resolve(this.backupDir));
+    if (process.platform === 'win32') {
+      normalizedPath = normalizedPath.toLowerCase();
+      normalizedBackupDir = normalizedBackupDir.toLowerCase();
+    }
     if (
       !normalizedPath.startsWith(normalizedBackupDir + path.sep) &&
       normalizedPath !== normalizedBackupDir
@@ -771,8 +814,15 @@ class SettingsService {
 
           // Set new debounce timer
           this._debounceTimer = setTimeout(() => {
-            this._handleExternalFileChange(eventType, filename);
+            void this._handleExternalFileChange(eventType, filename).catch((error) => {
+              logger.error('[SettingsService] Debounced external change failed', {
+                error: error.message
+              });
+            });
           }, this._debounceDelay);
+          if (typeof this._debounceTimer.unref === 'function') {
+            this._debounceTimer.unref();
+          }
         }
         // Ignore 'rename' events - they're often false positives on Windows
       });
@@ -922,7 +972,8 @@ class SettingsService {
       windows.forEach((win) => {
         if (win && !win.isDestroyed() && win.webContents) {
           try {
-            win.webContents.send('settings-changed-external', data);
+            // FIX: Use safeSend for validated IPC event sending
+            safeSend(win.webContents, 'settings-changed-external', data);
           } catch (error) {
             logger.warn(
               `[SettingsService] Failed to send settings-changed event: ${error.message}`
@@ -940,6 +991,7 @@ class SettingsService {
    * @returns {Promise<void>}
    */
   async shutdown() {
+    this._isShuttingDown = true; // FIX CRIT-33: Set shutdown flag
     // FIX: Clear all timers to prevent memory leaks
     if (this._internalChangeTimer) {
       clearTimeout(this._internalChangeTimer);

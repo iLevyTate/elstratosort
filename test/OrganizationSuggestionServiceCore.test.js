@@ -120,6 +120,10 @@ jest.mock('../src/main/services/organization/filePatternAnalyzer', () => ({
   generateFileSummary: jest.fn((file) => `Summary of ${file.name}`)
 }));
 
+jest.mock('../src/main/services/chromadb/embeddingIndexMetadata', () => ({
+  readEmbeddingIndexMetadata: jest.fn().mockResolvedValue(null)
+}));
+
 describe('OrganizationSuggestionServiceCore', () => {
   let OrganizationSuggestionServiceCore;
   let service;
@@ -133,7 +137,8 @@ describe('OrganizationSuggestionServiceCore', () => {
 
     mockChromaDbService = {
       batchUpsertFolders: jest.fn().mockResolvedValue(3),
-      queryFolders: jest.fn().mockResolvedValue([])
+      queryFolders: jest.fn().mockResolvedValue([]),
+      getStats: jest.fn().mockResolvedValue({ files: 120, folders: 1 })
     };
 
     mockFolderMatchingService = {
@@ -144,7 +149,8 @@ describe('OrganizationSuggestionServiceCore', () => {
     };
 
     mockSettingsService = {
-      get: jest.fn().mockReturnValue({})
+      get: jest.fn().mockReturnValue({}),
+      load: jest.fn().mockResolvedValue({})
     };
 
     const module = require('../src/main/services/organization/OrganizationSuggestionServiceCore');
@@ -299,6 +305,77 @@ describe('OrganizationSuggestionServiceCore', () => {
       });
 
       expect(result.alternatives).toEqual([]);
+    });
+
+    test('falls back to LLM-only when embeddings are missing', async () => {
+      const {
+        readEmbeddingIndexMetadata
+      } = require('../src/main/services/chromadb/embeddingIndexMetadata');
+      const {
+        getLLMAlternativeSuggestions
+      } = require('../src/main/services/organization/llmSuggester');
+
+      mockChromaDbService.getStats.mockResolvedValueOnce({ files: 0, folders: 0 });
+      mockSettingsService.load.mockResolvedValueOnce({
+        smartFolderRoutingMode: 'auto',
+        embeddingModel: 'embeddinggemma'
+      });
+      readEmbeddingIndexMetadata.mockResolvedValueOnce(null);
+      getLLMAlternativeSuggestions.mockResolvedValueOnce([]);
+
+      const semanticSpy = jest.spyOn(service, 'getSemanticFolderMatches');
+
+      const result = await service.getSuggestionsForFile(mockFile, mockSmartFolders, {
+        includeAlternatives: false
+      });
+
+      expect(semanticSpy).not.toHaveBeenCalled();
+      expect(result.primary.folder).toBe('Documents');
+      semanticSpy.mockRestore();
+    });
+
+    test('uses hybrid routing when embeddings are partial', async () => {
+      const {
+        getLLMAlternativeSuggestions
+      } = require('../src/main/services/organization/llmSuggester');
+
+      mockChromaDbService.getStats.mockResolvedValueOnce({ files: 10, folders: 1 });
+      mockSettingsService.load.mockResolvedValueOnce({ smartFolderRoutingMode: 'auto' });
+
+      const semanticSpy = jest.spyOn(service, 'getSemanticFolderMatches').mockResolvedValueOnce([]);
+      getLLMAlternativeSuggestions.mockResolvedValueOnce([]);
+
+      await service.getSuggestionsForFile(mockFile, mockSmartFolders, {
+        includeAlternatives: false
+      });
+
+      expect(semanticSpy).toHaveBeenCalled();
+      expect(getLLMAlternativeSuggestions).toHaveBeenCalled();
+      semanticSpy.mockRestore();
+    });
+
+    test('uses embedding-first routing when embeddings are healthy', async () => {
+      const {
+        getLLMAlternativeSuggestions
+      } = require('../src/main/services/organization/llmSuggester');
+
+      mockChromaDbService.getStats.mockResolvedValueOnce({ files: 120, folders: 1 });
+      mockSettingsService.load.mockResolvedValueOnce({ smartFolderRoutingMode: 'auto' });
+
+      const semanticSpy = jest
+        .spyOn(service, 'getSemanticFolderMatches')
+        .mockResolvedValueOnce([
+          { folder: 'Documents', path: '/docs', score: 0.9, confidence: 0.9 }
+        ]);
+      getLLMAlternativeSuggestions.mockResolvedValueOnce([]);
+
+      await service.getSuggestionsForFile(mockFile, mockSmartFolders, {
+        includeAlternatives: false
+      });
+
+      expect(semanticSpy).toHaveBeenCalled();
+      expect(getLLMAlternativeSuggestions).not.toHaveBeenCalled();
+      semanticSpy.mockRestore();
     });
   });
 
