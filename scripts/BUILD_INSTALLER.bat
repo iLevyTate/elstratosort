@@ -13,7 +13,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [1/5] Installing dependencies...
+echo [1/6] Installing dependencies...
 call npm ci
 
 if errorlevel 1 (
@@ -23,7 +23,17 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/5] Building application...
+echo [2/6] Generating assets...
+call npm run generate:assets
+
+if errorlevel 1 (
+    echo ERROR: Failed to generate assets
+    pause
+    exit /b 1
+)
+
+echo.
+echo [3/6] Building application...
 call npm run build
 
 if errorlevel 1 (
@@ -33,7 +43,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/5] Checking Ollama setup...
+echo [4/6] Checking Ollama setup...
 call node scripts/setup-ollama.js --check >nul 2>&1
 if errorlevel 1 (
     echo WARNING: Ollama not configured. AI features will be limited.
@@ -43,7 +53,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/5] Creating Windows installer...
+echo [5/6] Creating Windows installer...
 call npm run dist:win
 
 if errorlevel 1 (
@@ -53,7 +63,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [5/5] Build complete!
+echo [6/6] Build complete!
 echo.
 echo ============================================
 echo   SUCCESS! Installer created

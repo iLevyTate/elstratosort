@@ -3,7 +3,7 @@ const { Logger, LOG_LEVELS } = require('../shared/logger');
 // Import IPC_CHANNELS from shared constants to avoid duplication
 const { IPC_CHANNELS } = require('../shared/constants');
 // Import performance constants for configuration values
-const { LIMITS: PERF_LIMITS } = require('../shared/performanceConstants');
+const { LIMITS: PERF_LIMITS, TIMEOUTS } = require('../shared/performanceConstants');
 // Import centralized security config to avoid channel definition drift
 const {
   ALLOWED_RECEIVE_CHANNELS: SECURITY_RECEIVE_CHANNELS,
@@ -249,7 +249,16 @@ class SecureIPCManager {
       }
 
       // FIX: Add overall timeout to prevent renderer hangs from stuck main process
-      const timeout = PERF_LIMITS.IPC_INVOKE_TIMEOUT || 30000;
+      // Use extended timeout for heavy AI/File operations to prevent premature failures on slow hardware
+      let timeout = PERF_LIMITS.IPC_INVOKE_TIMEOUT || 30000;
+      if (
+        channel === IPC_CHANNELS.ANALYSIS.ANALYZE_IMAGE ||
+        channel === IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT ||
+        channel === IPC_CHANNELS.FILES.PERFORM_OPERATION ||
+        channel === IPC_CHANNELS.ORGANIZE.BATCH
+      ) {
+        timeout = TIMEOUTS.AI_ANALYSIS_LONG || 120000;
+      }
 
       // Add retry logic for handler not registered errors
       // 5 attempts with exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms (total ~3.1s)

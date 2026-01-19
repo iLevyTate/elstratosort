@@ -1,7 +1,7 @@
 import React, { memo, useState, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { Handle, Position, NodeToolbar } from 'reactflow';
-import { FileText, ExternalLink, FolderOpen, Copy, GitBranch, Focus } from 'lucide-react';
+import { ExternalLink, FolderOpen, Copy, GitBranch, Focus } from 'lucide-react';
 import { useFileActions } from '../../../hooks';
 import { logger } from '../../../../shared/logger';
 import FileIcon, { getFileCategory } from '../../ui/FileIcon';
@@ -73,8 +73,6 @@ const FileNode = memo(({ data, selected }) => {
   const [showActions, setShowActions] = useState(false);
   const filePath = data?.path || '';
   const tags = Array.isArray(data?.tags) ? data.tags.slice(0, 3) : [];
-  const entities = Array.isArray(data?.entities) ? data.entities.slice(0, 3) : [];
-  const dates = Array.isArray(data?.dates) ? data.dates.slice(0, 2) : [];
   const suggestedFolder =
     typeof data?.suggestedFolder === 'string' ? data.suggestedFolder.trim() : '';
 

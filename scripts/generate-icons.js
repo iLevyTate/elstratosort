@@ -49,9 +49,9 @@ async function generateWindowsIco(sourcePath, outputDir) {
   await ensureDir(path.dirname(icoPath));
 
   try {
-    // Check if png-to-ico is installed
-    require.resolve('png-to-ico');
-    const pngToIco = require('png-to-ico');
+    // Dynamically import png-to-ico (ESM module)
+    const pngToIcoModule = await import('png-to-ico');
+    const pngToIco = pngToIcoModule.default;
 
     const buffers = await Promise.all(pngFiles.map((file) => fs.readFile(file)));
 
@@ -59,8 +59,11 @@ async function generateWindowsIco(sourcePath, outputDir) {
     await fs.writeFile(icoPath, icoBuffer);
     console.log('  ✓ Windows ICO created using png-to-ico');
   } catch (e) {
+    if (e.code !== 'ERR_MODULE_NOT_FOUND') {
+      console.error('  ⚠ Error using png-to-ico:', e.message);
+    }
     // Fallback: copy the 256x256 PNG and rename as ICO (basic fallback)
-    console.log('  ⚠ png-to-ico not found, using fallback ICO generation');
+    console.log('  ⚠ png-to-ico failed/not found, using fallback ICO generation');
     console.log('  Run "npm install --save-dev png-to-ico" for better ICO support');
 
     // At minimum, ensure we have an ICO file even if it's not multi-resolution

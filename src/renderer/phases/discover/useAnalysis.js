@@ -285,6 +285,8 @@ export function useAnalysis(options = {}) {
   // FIX: Throttle progress updates to prevent race conditions with concurrent workers
   const lastProgressDispatchRef = useRef(0);
   const PROGRESS_THROTTLE_MS = 50;
+  // FIX: Track mount state to prevent state resets on navigation
+  const isMountedRef = useRef(true);
 
   // Refs to track current state values (prevents stale closures in callbacks)
   // PERF FIX: Update refs synchronously during render instead of using separate useEffect hooks.
@@ -794,23 +796,31 @@ export function useAnalysis(options = {}) {
           clearTimeout(analysisTimeoutRef.current);
           analysisTimeoutRef.current = null;
         }
-        // Update both local and outer refs to ensure proper lock synchronization
+
+        // Update local refs to ensure proper lock synchronization
         localAnalyzingRef.current = false;
-        isAnalyzingRef.current = false;
-        setIsAnalyzing(false);
 
-        // FIX: Delay clearing the current file name to allow UI to show final state
-        // This prevents the "file name not updating" issue where quick analyses
-        // would clear the name before it could be rendered
-        setTimeout(() => {
-          setCurrentAnalysisFile('');
-          actions.setPhaseData('currentAnalysisFile', '');
-        }, 500);
+        // CRITICAL FIX: Only reset Redux state if component is still mounted.
+        // If unmounted (user navigated away), keep isAnalyzing=true in Redux
+        // so that analysis resumes automatically when they return.
+        if (isMountedRef.current) {
+          isAnalyzingRef.current = false;
+          setIsAnalyzing(false);
 
-        // FIX: Include lastActivity in reset to fully clear progress state
-        setAnalysisProgress({ current: 0, total: 0, lastActivity: 0 });
-        actions.setPhaseData('isAnalyzing', false);
-        // FIX: Removed redundant setPhaseData('analysisProgress') - already updated via setAnalysisProgress
+          // FIX: Delay clearing the current file name to allow UI to show final state
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              setCurrentAnalysisFile('');
+              actions.setPhaseData('currentAnalysisFile', '');
+            }
+          }, 500);
+
+          // FIX: Include lastActivity in reset to fully clear progress state
+          setAnalysisProgress({ current: 0, total: 0, lastActivity: 0 });
+          actions.setPhaseData('isAnalyzing', false);
+        } else {
+          logger.info('Analysis interrupted by navigation - preserving state for resume');
+        }
 
         analysisLockRef.current = false;
         setGlobalAnalysisActive(false);

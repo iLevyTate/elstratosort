@@ -1,6 +1,7 @@
 import { createSlice } from '@reduxjs/toolkit';
 import { FILE_STATES } from '../../../shared/constants';
 import { logger } from '../../../shared/logger';
+import { serializeData } from '../../utils/serialization';
 
 const initialState = {
   isAnalyzing: false,
@@ -62,9 +63,9 @@ const analysisSlice = createSlice({
       const { file, error } = action.payload;
       const index = state.results.findIndex((r) => r.path === file.path);
       const result = {
-        ...file,
+        ...serializeData(file),
         analysis: null,
-        error,
+        error: serializeData(error),
         status: FILE_STATES.ERROR,
         analyzedAt: new Date().toISOString()
       };
@@ -80,7 +81,7 @@ const analysisSlice = createSlice({
       state.currentAnalysisFile = '';
     },
     setAnalysisResults: (state, action) => {
-      state.results = action.payload;
+      state.results = serializeData(action.payload);
     },
     setAnalysisStats: (state, action) => {
       state.stats = action.payload;

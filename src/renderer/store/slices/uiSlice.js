@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { PHASES, PHASE_TRANSITIONS } from '../../../shared/constants';
 import { logger } from '../../../shared/logger';
+import { serializeData } from '../../utils/serialization';
 
 // FIX: Phase validation utility to prevent invalid navigation states
 const VALID_PHASES = Object.values(PHASES);
@@ -203,7 +204,7 @@ const uiSlice = createSlice({
     },
     updateSettings: (state, action) => {
       // CRITICAL FIX: Handle case where settings is null before first fetch
-      state.settings = { ...(state.settings || {}), ...action.payload };
+      state.settings = { ...(state.settings || {}), ...serializeData(action.payload) };
     }
   },
   extraReducers: (builder) => {

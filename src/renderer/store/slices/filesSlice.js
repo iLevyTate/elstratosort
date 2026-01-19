@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { logger } from '../../../shared/logger';
+import { serializeData } from '../../utils/serialization';
 
 // Thunk to fetch smart folders with optional cache bypass
 // FIX: Added forceRefresh parameter to allow cache invalidation when folders change
@@ -28,22 +29,7 @@ export const invalidateSmartFolders = createAsyncThunk(
 );
 
 // Helper to serialize file objects - converts Date to ISO string for Redux compatibility
-const serializeFile = (file) => {
-  if (!file || typeof file !== 'object') return file;
-  const serialized = { ...file };
-  // Convert Date objects to ISO strings
-  ['created', 'modified', 'accessed', 'birthtime', 'mtime', 'atime', 'ctime'].forEach((key) => {
-    if (serialized[key] instanceof Date) {
-      serialized[key] = serialized[key].toISOString();
-    }
-  });
-  return serialized;
-};
-
-const serializeFiles = (files) => {
-  if (!Array.isArray(files)) return files;
-  return files.map(serializeFile);
-};
+// REPLACED by shared serializeData utility
 
 const initialState = {
   selectedFiles: [], // Array of file objects
@@ -65,11 +51,11 @@ const filesSlice = createSlice({
   initialState,
   reducers: {
     setSelectedFiles: (state, action) => {
-      state.selectedFiles = serializeFiles(action.payload);
+      state.selectedFiles = serializeData(action.payload);
     },
     addSelectedFiles: (state, action) => {
       // Filter duplicates and serialize
-      const newFiles = serializeFiles(action.payload).filter(
+      const newFiles = serializeData(action.payload).filter(
         (newFile) => !state.selectedFiles.some((f) => f.path === newFile.path)
       );
       state.selectedFiles = [...state.selectedFiles, ...newFiles];
@@ -94,7 +80,7 @@ const filesSlice = createSlice({
     },
     updateFileState: (state, action) => {
       const { path, state: fileState, metadata } = action.payload;
-      const safeMetadata = serializeFile(metadata);
+      const safeMetadata = serializeData(metadata);
       state.fileStates[path] = {
         state: fileState,
         timestamp: new Date().toISOString(),
@@ -102,7 +88,13 @@ const filesSlice = createSlice({
       };
     },
     setFileStates: (state, action) => {
-      state.fileStates = action.payload;
+      const serializedStates = {};
+      if (action.payload && typeof action.payload === 'object') {
+        Object.entries(action.payload).forEach(([path, data]) => {
+          serializedStates[path] = serializeData(data);
+        });
+      }
+      state.fileStates = serializedStates;
     },
     setSmartFolders: (state, action) => {
       state.smartFolders = action.payload;

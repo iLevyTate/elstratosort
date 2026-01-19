@@ -36,7 +36,7 @@
     "output": "release/build"
   },
   "win": {
-    "icon": "assets/icons/icons/win/icon.ico",
+    "icon": "assets/icons/win/icon.ico",
     "target": [
       {
         "target": "nsis",
@@ -66,9 +66,9 @@
     "shortcutName": "StratoSort",
     "runAfterFinish": true,
     "allowElevation": true,
-    "installerIcon": "assets/icons/icons/win/icon.ico",
-    "uninstallerIcon": "assets/icons/icons/win/icon.ico",
-    "installerHeaderIcon": "assets/icons/icons/win/icon.ico",
+    "installerIcon": "assets/icons/win/icon.ico",
+    "uninstallerIcon": "assets/icons/win/icon.ico",
+    "installerHeaderIcon": "assets/icons/win/icon.ico",
     "include": "build/installer-themed.nsh",
     "artifactName": "StratoSort-Setup-${version}.exe"
   },
@@ -112,7 +112,7 @@
     ]
   },
   "linux": {
-    "icon": "assets/icons/icons/png/512x512.png",
+    "icon": "assets/icons/png/512x512.png",
     "target": [
       {
         "target": "AppImage",
@@ -142,8 +142,8 @@
       "to": "assets/",
       "filter": [
         "stratosort-logo.png",
-        "icons/icons/win/icon.ico",
-        "icons/icons/png/*.png",
+        "icons/win/icon.ico",
+        "icons/png/*.png",
         "entitlements.mac.plist"
       ]
     }

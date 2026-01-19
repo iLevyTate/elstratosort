@@ -48,6 +48,7 @@ but not yet fully optimized.
 - 6GB RAM
 - 6GB free disk space (for AI models)
 - Any modern CPU
+- **Python 3.9+** (required for local ChromaDB)
 
 ### Recommended
 
