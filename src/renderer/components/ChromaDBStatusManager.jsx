@@ -32,6 +32,8 @@ export default function ChromaDBStatusManager() {
         if (hasReceivedUpdateRef.current) {
           return;
         }
+        // FIX HIGH-NOTIF-2: Set 'connecting' state before fetch so UI shows initializing
+        dispatch(updateHealth({ chromadb: 'connecting' }));
         const status = await window.electronAPI.chromadb.getStatus();
         if (status) {
           const chromaStatus =

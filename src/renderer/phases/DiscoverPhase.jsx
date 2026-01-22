@@ -34,6 +34,16 @@ import {
   getFileStateDisplayInfo
 } from './discover';
 
+// Helper to normalize paths for comparison (handles mixed / and \)
+// FIX HIGH-6: Only lowercase on Windows - Linux/macOS filesystems are case-sensitive
+const isWindowsPath = (p) => p && (p.includes('\\') || /^[A-Za-z]:/.test(p));
+const normalizeForComparison = (path) => {
+  if (!path) return '';
+  const normalized = path.replace(/[\\/]+/g, '/');
+  // Only lowercase on Windows paths (contains backslash or drive letter)
+  return isWindowsPath(path) ? normalized.toLowerCase() : normalized;
+};
+
 logger.setContext('DiscoverPhase');
 
 function DiscoverPhase() {
@@ -92,8 +102,14 @@ function DiscoverPhase() {
   );
 
   // Filter out results for files no longer selected (e.g., moved/cleared)
+  // FIX: Normalize paths consistently to handle Windows/Unix separators and case
   const selectedPaths = useMemo(
-    () => new Set((selectedFiles || []).map((f) => f.path)),
+    () =>
+      new Set(
+        (selectedFiles || [])
+          .filter((f) => f && f.path) // FIX: Filter out null/undefined paths
+          .map((f) => normalizeForComparison(f.path))
+      ),
     [selectedFiles]
   );
 
@@ -101,19 +117,28 @@ function DiscoverPhase() {
   const organizedPaths = useMemo(() => {
     const paths = new Set();
     (organizedFiles || []).forEach((f) => {
+      // FIX: Ensure f exists and has path properties before processing
+      if (!f) return;
+      const path = f.originalPath || f.path;
+      if (!path) return;
+
       // Normalize paths for comparison (handle Windows/Unix path separators and case)
-      const normalizedPath = (f.originalPath || '').replace(/[\\/]+/g, '/').toLowerCase();
-      if (normalizedPath) paths.add(normalizedPath);
+      const normalizedPath = normalizeForComparison(path);
+      paths.add(normalizedPath);
     });
     return paths;
   }, [organizedFiles]);
 
   const visibleAnalysisResults = useMemo(() => {
     return (analysisResults || []).filter((result) => {
+      // FIX: Check if result and path exist
+      if (!result || !result.path) return false;
+
+      // FIX: Normalize path for consistent comparison across all path sets
+      const normalizedResultPath = normalizeForComparison(result.path);
       // Must be in selected files
-      if (!selectedPaths.has(result.path)) return false;
+      if (!selectedPaths.has(normalizedResultPath)) return false;
       // FIX H-3: Must NOT be in organized files (already processed)
-      const normalizedResultPath = (result.path || '').replace(/[\\/]+/g, '/').toLowerCase();
       if (organizedPaths.has(normalizedResultPath)) return false;
       return true;
     });
@@ -132,7 +157,7 @@ function DiscoverPhase() {
   const analyzedPaths = useMemo(() => {
     const paths = new Set();
     (analysisResults || []).forEach((result) => {
-      const normalizedPath = (result.path || '').replace(/[\\/]+/g, '/').toLowerCase();
+      const normalizedPath = normalizeForComparison(result.path || '');
       if (normalizedPath) paths.add(normalizedPath);
     });
     return paths;
@@ -141,19 +166,36 @@ function DiscoverPhase() {
   // FIX H-3: Count of selected files that are NOT yet organized
   const unorganizedSelectedCount = useMemo(() => {
     return (selectedFiles || []).filter((f) => {
-      const normalizedPath = (f.path || '').replace(/[\\/]+/g, '/').toLowerCase();
+      if (!f || !f.path) return false;
+      const normalizedPath = normalizeForComparison(f.path);
       return !organizedPaths.has(normalizedPath);
     }).length;
   }, [selectedFiles, organizedPaths]);
 
   // Files that have been selected but have no analysis result yet (still pending)
-  const pendingAnalysisCount = useMemo(() => {
+  const pendingAnalysisFiles = useMemo(() => {
     return (selectedFiles || []).filter((f) => {
-      const normalizedPath = (f.path || '').replace(/[\\/]+/g, '/').toLowerCase();
-      if (!normalizedPath) return false;
+      if (!f || !f.path) return false;
+      const normalizedPath = normalizeForComparison(f.path);
       return !organizedPaths.has(normalizedPath) && !analyzedPaths.has(normalizedPath);
-    }).length;
+    });
   }, [selectedFiles, organizedPaths, analyzedPaths]);
+  const pendingAnalysisCount = pendingAnalysisFiles.length;
+  const analysisStartHint = useMemo(() => {
+    if (pendingAnalysisCount === 0) return '';
+    const fileApiReady = Boolean(window?.electronAPI?.files?.analyze);
+    if (!fileApiReady) {
+      return 'Analysis service not ready yet. Wait a moment or click to retry.';
+    }
+    if (analysisProgress?.current > 0 && analysisProgress?.total > 0) {
+      const lastActivity = analysisProgress?.lastActivity;
+      if (lastActivity && Date.now() - lastActivity > TIMEOUTS.STUCK_ANALYSIS_CHECK) {
+        return 'Analysis paused after inactivity. Click to resume.';
+      }
+      return 'Analysis paused. Click to resume.';
+    }
+    return 'Ready to analyze. Click to begin.';
+  }, [pendingAnalysisCount, analysisProgress]);
 
   const shouldShowQueueBar =
     isAnalyzing || pendingAnalysisCount > 0 || visibleAnalysisResults.length > 0;
@@ -349,10 +391,21 @@ function DiscoverPhase() {
     }
   );
 
+  // FIX: Use refs to hold latest callbacks for stable event listener wrappers
+  // This prevents listeners from being removed/re-added when callbacks change
+  const handleFileSelectionRef = useRef(handleFileSelection);
+  const handleFolderSelectionRef = useRef(handleFolderSelection);
+  useEffect(() => {
+    handleFileSelectionRef.current = handleFileSelection;
+    handleFolderSelectionRef.current = handleFolderSelection;
+  }, [handleFileSelection, handleFolderSelection]);
+
   // Listen for menu-triggered file/folder selection (Ctrl+O, Ctrl+Shift+O from menu)
   useEffect(() => {
-    const onSelectFiles = () => handleFileSelection();
-    const onSelectFolder = () => handleFolderSelection();
+    // FIX: Stable wrapper functions that read from refs
+    // These never change identity, so listeners aren't constantly removed/added
+    const onSelectFiles = () => handleFileSelectionRef.current?.();
+    const onSelectFolder = () => handleFolderSelectionRef.current?.();
 
     window.addEventListener('app:select-files', onSelectFiles);
     window.addEventListener('app:select-folder', onSelectFolder);
@@ -361,7 +414,7 @@ function DiscoverPhase() {
       window.removeEventListener('app:select-files', onSelectFiles);
       window.removeEventListener('app:select-folder', onSelectFolder);
     };
-  }, [handleFileSelection, handleFolderSelection]);
+  }, []); // Empty deps - listeners only registered once
 
   // Check for stuck analysis on mount
   useEffect(() => {
@@ -440,7 +493,7 @@ function DiscoverPhase() {
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 flex flex-col gap-default">
+        <div className="flex-1 min-h-0 flex flex-col gap-6">
           {/* Primary Content Selection Card */}
           <section className="surface-panel flex flex-col flex-shrink-0 gap-default">
             <div className="flex items-center justify-between flex-wrap gap-cozy">
@@ -451,7 +504,7 @@ function DiscoverPhase() {
                 </h3>
                 {/* FIX H-3: Use unorganizedSelectedCount to exclude already-organized files */}
                 {unorganizedSelectedCount > 0 && (
-                  <span className="status-chip info">
+                  <span className="status-chip info ml-2">
                     {unorganizedSelectedCount} file
                     {unorganizedSelectedCount !== 1 ? 's' : ''} ready
                   </span>
@@ -549,6 +602,18 @@ function DiscoverPhase() {
                   </>
                 ) : (
                   <div className="flex items-center gap-2">
+                    {pendingAnalysisCount > 0 && (
+                      <Button
+                        onClick={() => analyzeFiles?.(pendingAnalysisFiles)}
+                        variant="primary"
+                        size="sm"
+                        className="shadow-md shadow-stratosort-blue/20"
+                        title={analysisStartHint || undefined}
+                      >
+                        Analyze {pendingAnalysisCount} File
+                        {pendingAnalysisCount !== 1 ? 's' : ''}
+                      </Button>
+                    )}
                     {/* FIX M-3: Retry Failed Files button */}
                     {visibleFailedCount > 0 && (
                       <Button
@@ -705,7 +770,7 @@ function DiscoverPhase() {
                   <Button
                     onClick={() => {
                       setTotalAnalysisFailure(false);
-                      actions.advancePhase(PHASES.ORGANIZE);
+                      actions.advancePhase(PHASES?.ORGANIZE ?? 'organize');
                     }}
                     variant="secondary"
                     size="sm"
@@ -731,7 +796,7 @@ function DiscoverPhase() {
         {/* Footer Navigation */}
         <div className="mt-auto border-t border-system-gray-200/50 flex flex-col sm:flex-row items-center justify-between flex-shrink-0 pt-6 pb-2 gap-4">
           <Button
-            onClick={() => actions.advancePhase(PHASES.SETUP)}
+            onClick={() => actions.advancePhase(PHASES?.SETUP ?? 'setup')}
             variant="secondary"
             className="w-full sm:w-auto"
           >
@@ -779,7 +844,7 @@ function DiscoverPhase() {
                   if (totalAnalysisFailure) {
                     setTotalAnalysisFailure(false);
                   }
-                  actions.advancePhase(PHASES.ORGANIZE);
+                  actions.advancePhase(PHASES?.ORGANIZE ?? 'organize');
                 }}
                 variant={totalAnalysisFailure ? 'secondary' : 'primary'}
                 className={`w-full sm:w-auto ${totalAnalysisFailure ? 'border-stratosort-warning/30 text-stratosort-warning hover:bg-stratosort-warning/5' : 'shadow-lg shadow-stratosort-blue/20'}`}

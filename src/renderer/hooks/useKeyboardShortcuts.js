@@ -121,7 +121,8 @@ export function useKeyboardShortcuts() {
         const phase = currentPhaseRef.current;
         if (event.key === 'ArrowLeft') {
           event.preventDefault();
-          const phases = Object.values(PHASES);
+          // FIX: Add null check to prevent crash if PHASES is undefined
+          const phases = PHASES ? Object.values(PHASES) : [];
           const currentIndex = phases.indexOf(phase);
           if (currentIndex > 0) {
             const previousPhase = phases[currentIndex - 1];
@@ -135,7 +136,8 @@ export function useKeyboardShortcuts() {
 
         if (event.key === 'ArrowRight') {
           event.preventDefault();
-          const phases = Object.values(PHASES);
+          // FIX: Add null check to prevent crash if PHASES is undefined
+          const phases = PHASES ? Object.values(PHASES) : [];
           const currentIndex = phases.indexOf(phase);
           if (currentIndex < phases.length - 1) {
             const nextPhase = phases[currentIndex + 1];

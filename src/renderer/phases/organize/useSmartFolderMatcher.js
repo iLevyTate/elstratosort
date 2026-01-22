@@ -16,9 +16,10 @@ import { useMemo } from 'react';
 export function useSmartFolderMatcher(smartFolders) {
   return useMemo(() => {
     const folderCache = new Map();
+    const safeFolders = Array.isArray(smartFolders) ? smartFolders : [];
 
     // Pre-normalize smart folders once for efficient matching
-    const normalizedFolders = smartFolders.map((folder) => {
+    const normalizedFolders = safeFolders.map((folder) => {
       const baseName = folder?.name?.toLowerCase()?.trim() || '';
       return {
         original: folder,

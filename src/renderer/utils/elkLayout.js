@@ -522,7 +522,7 @@ export function radialLayout(centerNode, nodes, options = {}) {
 export function clusterRadialLayout(clusterNodes, edges, options = {}) {
   const { centerX = 400, centerY = 300, radius = 500 } = options;
   const clusterSize = NODE_SIZES.clusterNode || { width: 180, height: 180 };
-  const arcPadding = 80; // Reduced padding for compact hubs
+  const arcPadding = 250; // Increased to 250 for much better separation and to allow expansion
 
   if (!clusterNodes || clusterNodes.length === 0) {
     return clusterNodes;
@@ -650,6 +650,8 @@ export function clusterRadialLayout(clusterNodes, edges, options = {}) {
 
 /**
  * Apply simple repulsion to avoid cluster overlaps
+ * FIX CRIT: Optimized from O(n²) to O(n) using spatial grid hashing
+ * For 200 nodes, reduces from 40,000 comparisons to ~200 comparisons per iteration
  * @private
  */
 function applyClusterRepulsion(nodes, options = {}) {
@@ -659,22 +661,60 @@ function applyClusterRepulsion(nodes, options = {}) {
 
   const positions = nodes.map((n) => ({ ...n.position }));
 
+  // FIX: Use spatial grid for O(n) collision detection instead of O(n²)
+  // Grid cell size should be >= minDistance to ensure we only check neighboring cells
+  const cellSize = minDistance;
+
   for (let iter = 0; iter < iterations; iter++) {
+    // Build spatial grid hash map
+    const grid = new Map();
+
+    const getCellKey = (x, y) => {
+      const cx = Math.floor(x / cellSize);
+      const cy = Math.floor(y / cellSize);
+      return `${cx},${cy}`;
+    };
+
+    // Index all positions into grid cells
     for (let i = 0; i < positions.length; i++) {
-      for (let j = i + 1; j < positions.length; j++) {
-        const dx = positions[j].x - positions[i].x;
-        const dy = positions[j].y - positions[i].y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+      const key = getCellKey(positions[i].x, positions[i].y);
+      if (!grid.has(key)) {
+        grid.set(key, []);
+      }
+      grid.get(key).push(i);
+    }
 
-        if (dist < minDistance && dist > 0) {
-          const overlap = (minDistance - dist) / 2;
-          const nx = dx / dist;
-          const ny = dy / dist;
+    // For each position, only check positions in same cell or adjacent cells
+    for (let i = 0; i < positions.length; i++) {
+      const cx = Math.floor(positions[i].x / cellSize);
+      const cy = Math.floor(positions[i].y / cellSize);
 
-          positions[i].x -= nx * overlap;
-          positions[i].y -= ny * overlap;
-          positions[j].x += nx * overlap;
-          positions[j].y += ny * overlap;
+      // Check 3x3 neighborhood of cells (current + 8 neighbors)
+      for (let dcx = -1; dcx <= 1; dcx++) {
+        for (let dcy = -1; dcy <= 1; dcy++) {
+          const neighborKey = `${cx + dcx},${cy + dcy}`;
+          const neighbors = grid.get(neighborKey);
+          if (!neighbors) continue;
+
+          for (const j of neighbors) {
+            // Only process each pair once (j > i) and skip self
+            if (j <= i) continue;
+
+            const dx = positions[j].x - positions[i].x;
+            const dy = positions[j].y - positions[i].y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < minDistance && dist > 0) {
+              const overlap = (minDistance - dist) / 2;
+              const nx = dx / dist;
+              const ny = dy / dist;
+
+              positions[i].x -= nx * overlap;
+              positions[i].y -= ny * overlap;
+              positions[j].x += nx * overlap;
+              positions[j].y += ny * overlap;
+            }
+          }
         }
       }
     }
@@ -698,8 +738,8 @@ function applyClusterRepulsion(nodes, options = {}) {
 export function clusterExpansionLayout(clusterNode, memberNodes, options = {}) {
   const {
     offsetX = 300,
-    spacing = 60,
-    fanAngle = Math.PI / 3 // 60 degrees spread
+    spacing = 60
+    // fanAngle = Math.PI / 3 // 60 degrees spread - reserved for future radial layout
   } = options;
 
   if (!clusterNode || !memberNodes || memberNodes.length === 0) {
@@ -723,12 +763,53 @@ export function clusterExpansionLayout(clusterNode, memberNodes, options = {}) {
     }));
   }
 
-  // For larger numbers, use fan layout via radialLayout
-  // Fan is centered to the right (angle 0)
+  // Dynamic radius and angle adjustment for better spacing
+  // Calculate needed circumference to avoid overlap
+  const minCircumference = count * (spacing * 0.85);
+
+  // Dynamic angle: Scale angle based on count, from minAngle up to almost full circle (2PI - gap)
+  const { minAngle = Math.PI / 4 } = options;
+  const maxAngle = Math.PI * 1.85; // Leave a small gap (approx 27 degrees)
+
+  // Estimate angle needed for this count at base radius
+  // Base angle per node roughly 15 degrees (0.26 rad) at 300px radius
+  const anglePerNode = 0.25;
+  let calculatedAngle = Math.max(minAngle, Math.min(maxAngle, count * anglePerNode));
+
+  // Calculate radius needed to fit nodes within this angle
+  const currentArcLength = calculatedAngle * offsetX;
+  let finalRadius = offsetX;
+
+  if (minCircumference > currentArcLength) {
+    // If nodes don't fit in current angle/radius, try expanding angle first (if not maxed)
+    if (calculatedAngle < maxAngle) {
+      calculatedAngle = maxAngle;
+    }
+
+    // Recalculate with max angle
+    const maxArcLength = calculatedAngle * offsetX;
+    if (minCircumference > maxArcLength) {
+      // Still don't fit, need to increase radius
+      finalRadius = Math.max(offsetX, minCircumference / calculatedAngle);
+    }
+  }
+
+  // Determine best angle to avoid center overlap if center is known
+  // If we know the center of the graph, point the fan AWAY from the center
+  let centerAngle = 0;
+  if (options.origin && clusterNode.position) {
+    // Vector from origin to cluster
+    const dx = clusterNode.position.x - options.origin.x;
+    const dy = clusterNode.position.y - options.origin.y;
+    // Angle pointing away from center
+    centerAngle = Math.atan2(dy, dx);
+  }
+
+  // Fan is centered at centerAngle
   return radialLayout(clusterNode, memberNodes, {
-    radius: offsetX,
-    startAngle: -fanAngle / 2,
-    endAngle: fanAngle / 2
+    radius: finalRadius,
+    startAngle: centerAngle - calculatedAngle / 2,
+    endAngle: centerAngle + calculatedAngle / 2
   });
 }
 

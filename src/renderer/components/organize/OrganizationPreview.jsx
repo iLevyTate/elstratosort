@@ -113,7 +113,7 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Header with Strategy Info */}
       <div className="flex items-center justify-between">
         {strategy ? (
@@ -145,7 +145,7 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
       </div>
 
       {/* Statistics */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-4 gap-6">
         <Card className="p-3 text-center">
           <div className="text-2xl font-semibold text-stratosort-blue">{stats.totalFiles}</div>
           <div className="text-xs text-system-gray-600">Total Files</div>
@@ -198,12 +198,22 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
                   >
                     {Math.round(normalizeConfidenceFraction(folder.confidence) * 100)}% match
                   </span>
-                  <span className="text-xs text-system-gray-500">{folderPath}</span>
                 </div>
               </div>
 
               {expandedFolders.has(folderPath) && (
                 <div className="border-t bg-system-gray-50 p-3">
+                  <details className="mb-3 text-xs text-system-gray-500 group">
+                    <summary className="cursor-pointer list-none hover:text-system-gray-700 flex items-center gap-1 w-fit select-none">
+                      Target Path{' '}
+                      <span className="text-[8px] opacity-70 group-open:rotate-180 transition-transform">
+                        ▼
+                      </span>
+                    </summary>
+                    <div className="mt-1 font-mono break-all bg-white p-1.5 rounded border shadow-sm">
+                      {folderPath}
+                    </div>
+                  </details>
                   <div className="space-y-1">
                     {/* FIX: Use stable file path as key instead of array index */}
                     {folder.files.map((fileInfo) => (
@@ -277,7 +287,7 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
       {/* Comparison View */}
       <Card className="p-4">
         <h4 className="font-medium text-system-gray-900 mb-3">Before & After Comparison</h4>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-6">
           <div>
             <h5 className="text-sm font-medium text-system-gray-700 mb-2">Current State</h5>
             <div className="bg-stratosort-danger/5 border border-stratosort-danger/20 rounded-md p-3 text-sm">

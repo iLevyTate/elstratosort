@@ -24,19 +24,9 @@ import {
 } from '../../store/slices/analysisSlice';
 import { setPhase } from '../../store/slices/uiSlice';
 import { logger } from '../../../shared/logger';
+import { serializeData } from '../../utils/serialization';
 
 logger.setContext('DiscoverPhase:State');
-
-const serializeMetadata = (metadata) => {
-  if (!metadata || typeof metadata !== 'object') return metadata;
-  const serialized = { ...metadata };
-  ['created', 'modified', 'accessed', 'birthtime', 'mtime', 'atime', 'ctime'].forEach((key) => {
-    if (serialized[key] instanceof Date) {
-      serialized[key] = serialized[key].toISOString();
-    }
-  });
-  return serialized;
-};
 
 /**
  * Custom hook for discover phase Redux state management
@@ -86,10 +76,17 @@ export function useDiscoverState() {
   // Redux action wrappers
   const setSelectedFiles = useCallback(
     (files) => {
+      // Helper to serialize data before dispatching to avoid non-serializable checks
+      const safeDispatch = (payload) => {
+        dispatch(setSelectedFilesAction(serializeData(payload)));
+      };
+
       if (typeof files === 'function') {
-        dispatch(setSelectedFilesAction(files(selectedFilesRef.current)));
+        // Resolve function with current state, then serialize
+        const resolved = files(selectedFilesRef.current);
+        safeDispatch(resolved);
       } else {
-        dispatch(setSelectedFilesAction(files));
+        safeDispatch(files);
       }
     },
     [dispatch]
@@ -98,9 +95,10 @@ export function useDiscoverState() {
   const setAnalysisResults = useCallback(
     (results) => {
       if (typeof results === 'function') {
-        dispatch(setAnalysisResultsAction(results(analysisResultsRef.current)));
+        const resolved = results(analysisResultsRef.current);
+        dispatch(setAnalysisResultsAction(serializeData(resolved)));
       } else {
-        dispatch(setAnalysisResultsAction(results));
+        dispatch(setAnalysisResultsAction(serializeData(results)));
       }
     },
     [dispatch]
@@ -148,9 +146,20 @@ export function useDiscoverState() {
   const setFileStates = useCallback(
     (val) => {
       if (typeof val === 'function') {
-        dispatch(setFileStatesAction(val(fileStatesRef.current)));
+        const resolved = val(fileStatesRef.current);
+        const serialized = {};
+        Object.entries(resolved).forEach(([path, state]) => {
+          serialized[path] = serializeData(state);
+        });
+        dispatch(setFileStatesAction(serialized));
       } else {
-        dispatch(setFileStatesAction(val));
+        const serialized = {};
+        if (val && typeof val === 'object') {
+          Object.entries(val).forEach(([path, state]) => {
+            serialized[path] = serializeData(state);
+          });
+        }
+        dispatch(setFileStatesAction(serialized));
       }
     },
     [dispatch]
@@ -158,7 +167,7 @@ export function useDiscoverState() {
 
   const updateFileState = useCallback(
     (filePath, state, metadata = {}) => {
-      const safeMetadata = serializeMetadata(metadata);
+      const safeMetadata = serializeData(metadata);
       dispatch(
         updateFileStateAction({
           path: filePath,

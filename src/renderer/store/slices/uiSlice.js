@@ -4,7 +4,10 @@ import { logger } from '../../../shared/logger';
 import { serializeData } from '../../utils/serialization';
 
 // FIX: Phase validation utility to prevent invalid navigation states
-const VALID_PHASES = Object.values(PHASES);
+// FIX: Add fallback to prevent crash if PHASES is undefined during module initialization
+const VALID_PHASES = PHASES
+  ? Object.values(PHASES)
+  : ['welcome', 'setup', 'discover', 'organize', 'complete'];
 
 function isValidPhase(phase) {
   return phase != null && typeof phase === 'string' && VALID_PHASES.includes(phase);
@@ -26,7 +29,8 @@ const NAVIGATION_RULES = {
   // context.isAnalyzing should be passed from analysisSlice.isAnalyzing for accurate value
   canGoBack: (state, context = {}) => {
     // Cannot go back from welcome phase
-    if (state.currentPhase === PHASES.WELCOME) return false;
+    // FIX: Add null check for PHASES to prevent crash during module initialization
+    if (state.currentPhase === (PHASES?.WELCOME ?? 'welcome')) return false;
     // Cannot go back while loading/processing
     if (state.isLoading) return false;
     // Cannot go back during file operations
@@ -45,17 +49,18 @@ const NAVIGATION_RULES = {
     if (state.isOrganizing || isAnalyzing) return false;
 
     // Phase-specific rules
+    // FIX: Add null checks for PHASES to prevent crash during module initialization
     switch (state.currentPhase) {
-      case PHASES.SETUP:
+      case PHASES?.SETUP ?? 'setup':
         // Setup requires at least one smart folder (context provides this)
         return context.hasSmartFolders !== false;
-      case PHASES.DISCOVER:
+      case PHASES?.DISCOVER ?? 'discover':
         // Discover requires files to be analyzed (or total failure acknowledged)
         return context.hasAnalyzedFiles || context.totalAnalysisFailure;
-      case PHASES.ORGANIZE:
+      case PHASES?.ORGANIZE ?? 'organize':
         // Organize requires at least one processed file to view results
         return context.hasProcessedFiles;
-      case PHASES.COMPLETE:
+      case PHASES?.COMPLETE ?? 'complete':
         // Complete phase can always start a new session
         return true;
       default:
@@ -70,18 +75,23 @@ const NAVIGATION_RULES = {
 };
 
 // Thunk to fetch settings (only once, then cached)
-export const fetchSettings = createAsyncThunk('ui/fetchSettings', async (_, { getState }) => {
-  const { ui } = getState();
-  // Return cached value if already fetched
-  if (ui.settings) {
-    return ui.settings;
+// FIX: Added forceRefresh parameter to allow cache invalidation
+export const fetchSettings = createAsyncThunk(
+  'ui/fetchSettings',
+  async (forceRefresh = false, { getState }) => {
+    const { ui } = getState();
+    // Return cached value if already fetched and not forcing refresh
+    if (!forceRefresh && ui.settings) {
+      return ui.settings;
+    }
+    const settings = await window.electronAPI?.settings?.get?.();
+    return settings || {};
   }
-  const settings = await window.electronAPI?.settings?.get?.();
-  return settings || {};
-});
+);
 
 const initialState = {
-  currentPhase: PHASES.WELCOME || 'welcome',
+  // FIX: Add null check for PHASES to prevent crash during module initialization
+  currentPhase: PHASES?.WELCOME ?? 'welcome',
   previousPhase: null, // Track previous phase for back navigation
   sidebarOpen: true,
   showSettings: false,
@@ -97,7 +107,12 @@ const initialState = {
   // Kept here for backward compatibility with NAVIGATION_RULES
   // Pass context.isAnalyzing from analysisSlice when calling NAVIGATION_RULES
   isAnalyzing: false,
-  navigationError: null // Last navigation error for debugging
+  // FIX MEDIUM-1: Add additional processing states for better UX feedback
+  isDiscovering: false, // True during file discovery/scanning operations
+  isProcessing: false, // Generic processing state for any background operation
+  navigationError: null, // Last navigation error for debugging
+  // FIX MEDIUM-2: Track operation errors with more detail
+  lastOperationError: null // { operation: string, message: string, timestamp: number }
 };
 
 const uiSlice = createSlice({
@@ -120,7 +135,8 @@ const uiSlice = createSlice({
         });
         state.navigationError = error;
         // Reset to safe state instead of corrupting the store
-        state.currentPhase = PHASES.WELCOME;
+        // FIX: Add null check for PHASES to prevent crash during module initialization
+        state.currentPhase = PHASES?.WELCOME ?? 'welcome';
         state.previousPhase = null;
         return;
       }
@@ -199,12 +215,36 @@ const uiSlice = createSlice({
       } else {
         // Default to welcome if no previous phase
         state.previousPhase = state.currentPhase;
-        state.currentPhase = PHASES.WELCOME;
+        // FIX: Add null check for PHASES to prevent crash during module initialization
+        state.currentPhase = PHASES?.WELCOME ?? 'welcome';
       }
     },
     updateSettings: (state, action) => {
       // CRITICAL FIX: Handle case where settings is null before first fetch
       state.settings = { ...(state.settings || {}), ...serializeData(action.payload) };
+    },
+    // FIX MEDIUM-1: Add reducers for new processing states
+    setDiscovering: (state, action) => {
+      state.isDiscovering = Boolean(action.payload);
+    },
+    setProcessing: (state, action) => {
+      state.isProcessing = Boolean(action.payload);
+    },
+    // FIX MEDIUM-2: Set operation error with details
+    setOperationError: (state, action) => {
+      if (action.payload) {
+        state.lastOperationError = {
+          operation: action.payload.operation || 'unknown',
+          message: action.payload.message || 'An error occurred',
+          timestamp: Date.now()
+        };
+      } else {
+        state.lastOperationError = null;
+      }
+    },
+    // Clear operation error
+    clearOperationError: (state) => {
+      state.lastOperationError = null;
     }
   },
   extraReducers: (builder) => {
@@ -240,6 +280,10 @@ export const {
   updateSettings,
   setOrganizing,
   setAnalyzing,
+  setDiscovering,
+  setProcessing,
+  setOperationError,
+  clearOperationError,
   clearNavigationError,
   goBack
 } = uiSlice.actions;

@@ -70,20 +70,7 @@ const MAX_GRAPH_NODES = 300;
 const GRAPH_LAYOUT_SPACING = 300; // Increased from 180 to reduce clutter
 const GRAPH_LAYER_SPACING = 400; // Increased from 280 to reduce clutter
 
-// Define nodeTypes and edgeTypes OUTSIDE the component to prevent React Flow warnings
-// See: https://reactflow.dev/error#002
-const NODE_TYPES = {
-  fileNode: FileNode,
-  folderNode: FolderNode,
-  queryNode: QueryNode,
-  clusterNode: ClusterNode
-};
-
-const EDGE_TYPES = {
-  similarity: SimilarityEdge,
-  queryMatch: QueryMatchEdge,
-  smartStep: SmartStepEdge
-};
+// React Flow node/edge types are memoized in the component to keep stable references.
 
 /**
  * Format error messages to be more user-friendly and actionable
@@ -602,6 +589,25 @@ export default function UnifiedSearchModal({
   const [focusedResultIndex, setFocusedResultIndex] = useState(-1);
   const [viewMode, setViewMode] = useState('all'); // 'all' or 'grouped'
 
+  const nodeTypes = useMemo(
+    () => ({
+      fileNode: FileNode,
+      folderNode: FolderNode,
+      queryNode: QueryNode,
+      clusterNode: ClusterNode
+    }),
+    []
+  );
+
+  const edgeTypes = useMemo(
+    () => ({
+      similarity: SimilarityEdge,
+      queryMatch: QueryMatchEdge,
+      smartStep: SmartStepEdge
+    }),
+    []
+  );
+
   // Chat tab state
   const [chatMessages, setChatMessages] = useState([]);
   const [isChatting, setIsChatting] = useState(false);
@@ -660,8 +666,6 @@ export default function UnifiedSearchModal({
 
   // Help tour state (for re-showing the tour via help button)
   const [showTourManually, setShowTourManually] = useState(false);
-  // nodeTypes and edgeTypes are defined as constants outside the component to prevent React Flow warnings
-  // See: https://reactflow.dev/error#002
 
   const dispatch = useAppDispatch();
   const handleOpenSettings = useCallback(() => {
@@ -1028,54 +1032,55 @@ export default function UnifiedSearchModal({
       return () => {};
     }
 
-    if (!wasOpenRef.current) {
+    const isOpening = !wasOpenRef.current;
+    if (isOpening) {
       logger.info('[KnowledgeOS] Opened', {
         initialTab,
         effectiveInitialTab
       });
-    }
-    wasOpenRef.current = true;
+      wasOpenRef.current = true;
 
-    setActiveTab(effectiveInitialTab);
-    setQuery('');
-    setDebouncedQuery('');
-    setError('');
-    setStats(null);
-    setHasLoadedStats(false);
-    setIsLoadingStats(false);
-    // Search state
-    setSearchResults([]);
-    setSelectedSearchId(null);
-    setIsSearching(false);
-    setQueryMeta(null);
-    setSearchMeta(null);
-    setBulkSelectedIds(new Set());
-    // Chat state
-    setChatMessages([]);
-    setChatError('');
-    setIsChatting(false);
-    setUseSearchContext(true);
-    chatSessionRef.current = crypto.randomUUID();
-    // Graph state
-    graphActions.setNodes([]);
-    graphActions.setEdges([]);
-    graphActions.selectNode(null);
-    setAddMode(true);
-    setWithinQuery('');
-    setDebouncedWithinQuery('');
-    setGraphStatus('');
-    // Layout state
-    setAutoLayout(true);
-    setIsLayouting(false);
-    // Multi-hop state
-    setHopCount(1);
-    setDecayFactor(0.7);
-    // Clustering state
-    setShowClusters(false);
-    setIsComputingClusters(false);
-    // Duplicates state
-    setDuplicateGroups([]);
-    setIsFindingDuplicates(false);
+      setActiveTab(effectiveInitialTab);
+      setQuery('');
+      setDebouncedQuery('');
+      setError('');
+      setStats(null);
+      setHasLoadedStats(false);
+      setIsLoadingStats(false);
+      // Search state
+      setSearchResults([]);
+      setSelectedSearchId(null);
+      setIsSearching(false);
+      setQueryMeta(null);
+      setSearchMeta(null);
+      setBulkSelectedIds(new Set());
+      // Chat state
+      setChatMessages([]);
+      setChatError('');
+      setIsChatting(false);
+      setUseSearchContext(true);
+      chatSessionRef.current = crypto.randomUUID();
+      // Graph state
+      graphActions.setNodes([]);
+      graphActions.setEdges([]);
+      graphActions.selectNode(null);
+      setAddMode(true);
+      setWithinQuery('');
+      setDebouncedWithinQuery('');
+      setGraphStatus('');
+      // Layout state
+      setAutoLayout(true);
+      setIsLayouting(false);
+      // Multi-hop state
+      setHopCount(1);
+      setDecayFactor(0.7);
+      // Clustering state
+      setShowClusters(false);
+      setIsComputingClusters(false);
+      // Duplicates state
+      setDuplicateGroups([]);
+      setIsFindingDuplicates(false);
+    }
 
     // Cleanup pending layouts on unmount
     return () => {
@@ -2674,20 +2679,76 @@ export default function UnifiedSearchModal({
       }));
 
       // Create cross-cluster edges with visible similarity labels
-      const clusterEdges = crossClusterEdges.map((edge) => ({
+      // Dynamic filtering: reduce clutter by keeping only top connections per cluster
+
+      // 1. Deduplicate edges (A->B and B->A are the same connection)
+      const uniqueEdgesMap = new Map();
+      crossClusterEdges.forEach((edge) => {
+        // Create a sorted key so A->B and B->A produce the same key "A-B" (if A < B)
+        const [u, v] = [edge.source, edge.target].sort();
+        const key = `${u}|${v}`;
+
+        // Keep the one with higher similarity if duplicates exist (though usually they are equal)
+        if (
+          !uniqueEdgesMap.has(key) ||
+          (edge.similarity || 0) > (uniqueEdgesMap.get(key).similarity || 0)
+        ) {
+          uniqueEdgesMap.set(key, edge);
+        }
+      });
+      const uniqueEdges = Array.from(uniqueEdgesMap.values());
+
+      // 2. Group by source to limit connections per cluster
+      const edgesByNode = new Map();
+      uniqueEdges.forEach((edge) => {
+        // Add to source bucket
+        if (!edgesByNode.has(edge.source)) edgesByNode.set(edge.source, []);
+        edgesByNode.get(edge.source).push(edge);
+
+        // Add to target bucket too so we count connections for both sides
+        if (!edgesByNode.has(edge.target)) edgesByNode.set(edge.target, []);
+        edgesByNode.get(edge.target).push(edge);
+      });
+
+      // 3. Strict filtering: Only keep edges that are among the "Top N" for BOTH nodes
+      // or at least very strong. This creates a "Nearest Neighbor" graph.
+      const MAX_CONNECTIONS = 2;
+      const STRICT_THRESHOLD = 0.65;
+
+      const meaningfulEdges = uniqueEdges.filter((edge) => {
+        const sim = edge.similarity || 0;
+        if (sim < STRICT_THRESHOLD) return false;
+
+        // Check if this edge is important for Source
+        const sourceEdges = edgesByNode.get(edge.source) || [];
+        sourceEdges.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+        const isTopForSource = sourceEdges.indexOf(edge) < MAX_CONNECTIONS;
+
+        // Check if this edge is important for Target
+        const targetEdges = edgesByNode.get(edge.target) || [];
+        targetEdges.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+        const isTopForTarget = targetEdges.indexOf(edge) < MAX_CONNECTIONS;
+
+        // Keep if it's a top connection for EITHER side (to ensure connectivity)
+        return isTopForSource || isTopForTarget;
+      });
+
+      const clusterEdges = meaningfulEdges.map((edge) => ({
         id: `cross:${edge.source}->${edge.target}`,
         source: edge.source,
         target: edge.target,
-        type: 'similarity', // Use similarity edge to show the connection strength
+        type: 'similarity',
         animated: true,
         style: {
           stroke: '#9ca3af',
-          strokeWidth: Math.max(1, (edge.similarity || 0.5) * 3), // Thicker for stronger connections
-          strokeDasharray: '5,5'
+          strokeWidth: Math.max(1, (edge.similarity || 0.5) * 1.5), // Even thinner
+          strokeDasharray: '4,8', // Very sparse dashing
+          opacity: 0 // Hidden by default (faded out), will be shown on hover via class/state
         },
+        className: 'cross-cluster-edge opacity-0 transition-opacity duration-300', // CSS class for control
         data: {
           kind: 'cross_cluster',
-          similarity: edge.similarity || 0.5 // SimilarityEdge expects 'similarity' field
+          similarity: edge.similarity || 0.5
         }
       }));
 
@@ -2865,23 +2926,27 @@ export default function UnifiedSearchModal({
         });
 
         // Apply expansion layout to position nodes nicely
+        // Use smart dynamic layout that adjusts radius and angle based on count
+        // Point the fan AWAY from the center of the graph (approx 450, 320) to avoid overlap
         const layoutedMemberNodes = clusterExpansionLayout(clusterNode, memberNodes, {
-          offsetX: 280,
-          spacing: 65,
-          fanAngle: Math.PI / 2.5
+          offsetX: 320, // Base radius
+          spacing: 80, // Arc length per node
+          minAngle: Math.PI / 4, // Minimum arc for small clusters
+          origin: { x: 450, y: 320 } // Center of the graph layout
         });
 
         // Create edges from cluster to members (Distinct visual style)
+        // Use smooth bezier curves instead of straight lines for a more organic feel
         const memberEdges = memberIds.map((id) => ({
           id: `cluster:${clusterId}->${id}`,
           source: clusterId,
           target: id,
-          type: 'straight', // Straight lines look better radiating from a hub
+          type: 'default', // Using default bezier curve instead of straight
           animated: false,
           style: {
             stroke: '#fbbf24', // Amber-400
-            strokeWidth: 2,
-            opacity: 0.6
+            strokeWidth: 1.5,
+            opacity: 0.4
           },
           data: { kind: 'cluster_member' }
         }));
@@ -3649,6 +3714,57 @@ export default function UnifiedSearchModal({
   );
 
   // Double-click on a node to expand it (file or cluster)
+  // Mouse enter/leave handlers for interactive edge visibility
+  const onNodeMouseEnter = useCallback(
+    (_, node) => {
+      // Only apply for cluster nodes
+      if (node.type !== 'clusterNode') return;
+
+      // Find all edges connected to this node
+      graphActions.setEdges((prevEdges) =>
+        prevEdges.map((edge) => {
+          // If edge is connected to this node, make it visible
+          if (edge.source === node.id || edge.target === node.id) {
+            return {
+              ...edge,
+              style: {
+                ...edge.style,
+                opacity: 0.8 // Visible on hover
+              },
+              className: edge.className?.replace('opacity-0', 'opacity-100') || ''
+            };
+          }
+          return edge;
+        })
+      );
+    },
+    [graphActions]
+  );
+
+  const onNodeMouseLeave = useCallback(
+    (_, node) => {
+      if (node.type !== 'clusterNode') return;
+
+      // Hide all cross-cluster edges again
+      graphActions.setEdges((prevEdges) =>
+        prevEdges.map((edge) => {
+          if (edge.data?.kind === 'cross_cluster') {
+            return {
+              ...edge,
+              style: {
+                ...edge.style,
+                opacity: 0 // Hidden again
+              },
+              className: edge.className?.replace('opacity-100', 'opacity-0') || ''
+            };
+          }
+          return edge;
+        })
+      );
+    },
+    [graphActions]
+  );
+
   const onNodeDoubleClick = useCallback(
     (_, node) => {
       if (!node?.id) return;
@@ -4628,13 +4744,15 @@ export default function UnifiedSearchModal({
                   <ReactFlow
                     nodes={rfNodes}
                     edges={rfEdges}
-                    nodeTypes={NODE_TYPES}
-                    edgeTypes={EDGE_TYPES}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
                     onNodesChange={onNodesChange}
                     onEdgesChange={graphActions.onEdgesChange}
                     className={`bg-[var(--surface-muted)] ${zoomLevel < 0.6 ? 'graph-zoomed-out' : ''}`}
                     onNodeClick={onNodeClick}
                     onNodeDoubleClick={onNodeDoubleClick}
+                    onNodeMouseEnter={onNodeMouseEnter}
+                    onNodeMouseLeave={onNodeMouseLeave}
                     onInit={(instance) => {
                       reactFlowInstance.current = instance;
                     }}

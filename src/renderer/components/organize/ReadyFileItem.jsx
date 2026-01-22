@@ -140,23 +140,26 @@ function ReadyFileItem({
                 <button
                   type="button"
                   onClick={() => onViewDetails && onViewDetails(file)}
-                  className="text-xs text-system-gray-500 hover:text-system-gray-700 flex items-center gap-1 mb-2 w-full"
+                  className="text-sm text-system-gray-600 hover:text-system-gray-900 font-medium flex items-center gap-2 mb-2 w-full transition-colors"
                   aria-label={`View analysis details for ${file.name}`}
                 >
-                  <Play className="w-3 h-3" aria-hidden="true" />
+                  <Play className="w-3 h-3 fill-current opacity-70" aria-hidden="true" />
                   View Analysis Details
                 </button>
               </div>
               {destination && (
-                <div className="text-sm text-system-gray-600 mt-2 overflow-visible pr-28">
-                  <strong>Destination:</strong>{' '}
+                <details className="text-sm text-system-gray-600 mt-2 overflow-visible pr-28 group">
+                  <summary className="cursor-pointer list-none font-medium hover:text-system-gray-900 transition-colors flex items-center gap-2 select-none focus:outline-none">
+                    <Play className="w-3 h-3 fill-current opacity-70 transition-transform group-open:rotate-90" />
+                    Destination
+                  </summary>
                   <span
-                    className="text-stratosort-blue block mt-1 break-all line-clamp-2"
+                    className="text-stratosort-blue block mt-1 break-all line-clamp-2 pl-5"
                     title={destination}
                   >
                     {destination}
                   </span>
-                </div>
+                </details>
               )}
             </>
           ) : (

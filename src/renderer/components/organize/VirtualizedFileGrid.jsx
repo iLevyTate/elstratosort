@@ -29,15 +29,15 @@ const VirtualizedFileRow = memo(function VirtualizedFileRow({ index, style, data
   const {
     files,
     columnsPerRow,
-    selectedFiles,
+    selectedFiles = new Set(),
     toggleFileSelection,
     getFileWithEdits,
-    editingFiles,
+    editingFiles = {},
     findSmartFolderForCategory,
     getFileStateDisplay,
     handleEditFile,
-    smartFolders,
-    defaultLocation,
+    smartFolders = [],
+    defaultLocation = '',
     onViewDetails
   } = data || {};
   const startIndex = index * columnsPerRow;
@@ -47,9 +47,13 @@ const VirtualizedFileRow = memo(function VirtualizedFileRow({ index, style, data
 
   for (let col = 0; col < columnsPerRow; col++) {
     const fileIndex = startIndex + col;
+    // FIX: Strict bounds checking
     if (fileIndex >= files.length) break;
 
     const file = files[fileIndex];
+    // FIX: Defensive check for undefined file
+    if (!file) continue;
+
     const fileWithEdits = getFileWithEdits(file, fileIndex);
     const rawCategory = editingFiles[fileIndex]?.category || fileWithEdits.analysis?.category;
     const smartFolder = findSmartFolderForCategory(rawCategory);
@@ -58,9 +62,15 @@ const VirtualizedFileRow = memo(function VirtualizedFileRow({ index, style, data
     const currentCategory = smartFolder?.name || rawCategory;
     const isSelected = selectedFiles.has(fileIndex);
     const stateDisplay = getFileStateDisplay(file.path, !!file.analysis);
+    // FIX: Validate defaultLocation before joinPath to prevent invalid paths
+    // An empty defaultLocation would produce paths like '/Finance' instead of 'C:\Users\...\Finance'
+    const safeDefaultLocation = defaultLocation && defaultLocation.trim() ? defaultLocation : null;
     const destination = smartFolder
-      ? smartFolder.path || joinPath(defaultLocation, smartFolder.name)
-      : joinPath(defaultLocation, rawCategory || 'Uncategorized');
+      ? smartFolder.path ||
+        (safeDefaultLocation ? joinPath(safeDefaultLocation, smartFolder.name) : smartFolder.name)
+      : safeDefaultLocation
+        ? joinPath(safeDefaultLocation, rawCategory || 'Uncategorized')
+        : rawCategory || 'Uncategorized';
 
     rowItems.push(
       <div key={file.path} className="flex-1 min-w-0">
@@ -89,7 +99,7 @@ const VirtualizedFileRow = memo(function VirtualizedFileRow({ index, style, data
   }
 
   return (
-    <div style={style} className="flex gap-2">
+    <div style={style} className="flex gap-6">
       {rowItems}
     </div>
   );
@@ -133,6 +143,27 @@ function VirtualizedFileGrid({
   containerWidth = 1200, // Default to xl breakpoint width
   onViewDetails
 }) {
+  const safeFiles = useMemo(() => (Array.isArray(files) ? files : []), [files]);
+  const safeSelectedFiles = useMemo(
+    () => (selectedFiles instanceof Set ? selectedFiles : new Set()),
+    [selectedFiles]
+  );
+  const safeEditingFiles = useMemo(
+    () =>
+      editingFiles && typeof editingFiles === 'object' && !Array.isArray(editingFiles)
+        ? editingFiles
+        : {},
+    [editingFiles]
+  );
+  const safeSmartFolders = useMemo(
+    () => (Array.isArray(smartFolders) ? smartFolders : []),
+    [smartFolders]
+  );
+  const safeDefaultLocation = useMemo(
+    () => (typeof defaultLocation === 'string' ? defaultLocation : ''),
+    [defaultLocation]
+  );
+
   // Fix: Use ref to measure actual container dimensions
   const containerRef = React.useRef(null);
   const [dimensions, setDimensions] = useState({ width: containerWidth, height: 600 });
@@ -184,8 +215,8 @@ function VirtualizedFileGrid({
   }, [containerWidth]);
 
   const columnsPerRow = getColumnCount(dimensions.width);
-  const rowCount = Math.max(1, Math.ceil(files.length / columnsPerRow));
-  const shouldVirtualize = files.length > VIRTUALIZATION_THRESHOLD;
+  const rowCount = Math.max(1, Math.ceil(safeFiles.length / columnsPerRow));
+  const shouldVirtualize = safeFiles.length > VIRTUALIZATION_THRESHOLD;
   const columnWidthEstimate = useMemo(
     () => Math.max(320, Math.floor(dimensions.width / columnsPerRow) - 16),
     [dimensions.width, columnsPerRow]
@@ -199,25 +230,35 @@ function VirtualizedFileGrid({
       Math.abs(prev - paddedHeight) > ROW_HEIGHT_TOLERANCE ? paddedHeight : prev
     );
   }, []);
-  const shouldMeasure = shouldVirtualize && files.length > 0 && rowHeight === DEFAULT_ROW_HEIGHT;
+  const shouldMeasure =
+    shouldVirtualize && safeFiles.length > 0 && rowHeight === DEFAULT_ROW_HEIGHT;
 
   const sampleItem = useMemo(() => {
-    if (!shouldVirtualize || files.length === 0) return null;
+    if (!shouldVirtualize || safeFiles.length === 0) return null;
     const sampleIndex = 0;
-    const file = files[sampleIndex];
+    const file = safeFiles[sampleIndex];
     const fileWithEdits = getFileWithEdits(file, sampleIndex);
-    const rawCategory = editingFiles[sampleIndex]?.category || fileWithEdits.analysis?.category;
+    const rawCategory = safeEditingFiles[sampleIndex]?.category || fileWithEdits.analysis?.category;
     const smartFolder = findSmartFolderForCategory(rawCategory);
     const currentCategory = smartFolder?.name || rawCategory;
     const stateDisplay = getFileStateDisplay(file.path, !!file.analysis);
+    // FIX: Validate defaultLocation before joinPath to prevent invalid paths
+    // An empty defaultLocation would produce paths like '/Finance' instead of 'C:\Users\...\Finance'
+    const resolvedDefaultLocation =
+      safeDefaultLocation && safeDefaultLocation.trim() ? safeDefaultLocation : null;
     const destination = smartFolder
-      ? smartFolder.path || joinPath(defaultLocation, smartFolder.name)
-      : joinPath(defaultLocation, rawCategory || 'Uncategorized');
+      ? smartFolder.path ||
+        (resolvedDefaultLocation
+          ? joinPath(resolvedDefaultLocation, smartFolder.name)
+          : smartFolder.name)
+      : resolvedDefaultLocation
+        ? joinPath(resolvedDefaultLocation, rawCategory || 'Uncategorized')
+        : rawCategory || 'Uncategorized';
 
     return {
       file: fileWithEdits,
       index: sampleIndex,
-      isSelected: selectedFiles.has(sampleIndex),
+      isSelected: safeSelectedFiles.has(sampleIndex),
       stateDisplay,
       smartFolder,
       currentCategory,
@@ -225,43 +266,45 @@ function VirtualizedFileGrid({
     };
   }, [
     shouldVirtualize,
-    files,
-    editingFiles,
+    safeFiles,
+    safeEditingFiles,
     findSmartFolderForCategory,
     getFileWithEdits,
     getFileStateDisplay,
-    defaultLocation,
-    selectedFiles
+    safeDefaultLocation,
+    safeSelectedFiles
   ]);
 
-  // react-window List passes shared data via itemData (consumed by the row renderer).
+  // react-window List passes shared data via rowProps (consumed by the row renderer).
   const rowProps = useMemo(
     () => ({
-      files,
-      columnsPerRow,
-      selectedFiles,
-      toggleFileSelection,
-      getFileWithEdits,
-      editingFiles,
-      findSmartFolderForCategory,
-      getFileStateDisplay,
-      handleEditFile,
-      smartFolders,
-      defaultLocation,
-      onViewDetails
+      data: {
+        files: safeFiles,
+        columnsPerRow,
+        selectedFiles: safeSelectedFiles,
+        toggleFileSelection,
+        getFileWithEdits,
+        editingFiles: safeEditingFiles,
+        findSmartFolderForCategory,
+        getFileStateDisplay,
+        handleEditFile,
+        smartFolders: safeSmartFolders,
+        defaultLocation: safeDefaultLocation,
+        onViewDetails
+      }
     }),
     [
-      files,
+      safeFiles,
       columnsPerRow,
-      selectedFiles,
+      safeSelectedFiles,
       toggleFileSelection,
       getFileWithEdits,
-      editingFiles,
+      safeEditingFiles,
       findSmartFolderForCategory,
       getFileStateDisplay,
       handleEditFile,
-      smartFolders,
-      defaultLocation,
+      safeSmartFolders,
+      safeDefaultLocation,
       onViewDetails
     ]
   );
@@ -325,13 +368,13 @@ function VirtualizedFileGrid({
           </div>
         )}
         <div className="text-xs text-system-gray-500 mb-2 absolute top-0 right-0 z-10 bg-white/80 px-2 py-1 rounded backdrop-blur-sm">
-          Showing {files.length} files
+          Showing {safeFiles.length} files
         </div>
         <List
-          key={`list-${rowHeight}-${columnsPerRow}`}
+          key={`list-${rowHeight}-${columnsPerRow}-${safeFiles.length}`}
           itemCount={rowCount}
           itemSize={rowHeight}
-          itemData={safeRowProps}
+          itemData={safeRowProps.data}
           overscanCount={2}
           className="scrollbar-thin scrollbar-thumb-system-gray-300 scrollbar-track-transparent"
           style={{ height: listHeight, width: dimensions.width }}
@@ -349,20 +392,27 @@ function VirtualizedFileGrid({
   return (
     <div
       ref={containerRef}
-      className="grid grid-adaptive-lg gap-4 h-full overflow-y-auto modern-scrollbar p-6"
+      className="grid grid-adaptive-lg gap-6 h-full overflow-y-auto modern-scrollbar p-6"
     >
-      {files.map((file, index) => {
+      {safeFiles.map((file, index) => {
         const fileWithEdits = getFileWithEdits(file, index);
-        const rawCategory = editingFiles[index]?.category || fileWithEdits.analysis?.category;
+        const rawCategory = safeEditingFiles[index]?.category || fileWithEdits.analysis?.category;
         const smartFolder = findSmartFolderForCategory(rawCategory);
         // CRITICAL FIX: Use the matched smart folder's actual name for the Select value
         // This ensures case-insensitive matching between analysis category and dropdown options
         const currentCategory = smartFolder?.name || rawCategory;
-        const isSelected = selectedFiles.has(index);
+        const isSelected = safeSelectedFiles.has(index);
         const stateDisplay = getFileStateDisplay(file.path, !!file.analysis);
+        const resolvedDefaultLocation =
+          safeDefaultLocation && safeDefaultLocation.trim() ? safeDefaultLocation : null;
         const destination = smartFolder
-          ? smartFolder.path || joinPath(defaultLocation, smartFolder.name)
-          : joinPath(defaultLocation, rawCategory || 'Uncategorized');
+          ? smartFolder.path ||
+            (resolvedDefaultLocation
+              ? joinPath(resolvedDefaultLocation, smartFolder.name)
+              : smartFolder.name)
+          : resolvedDefaultLocation
+            ? joinPath(resolvedDefaultLocation, rawCategory || 'Uncategorized')
+            : rawCategory || 'Uncategorized';
         return (
           <ReadyFileItem
             key={file.path}
@@ -371,8 +421,8 @@ function VirtualizedFileGrid({
             isSelected={isSelected}
             onToggleSelected={toggleFileSelection}
             stateDisplay={stateDisplay}
-            smartFolders={smartFolders}
-            editing={editingFiles[index]}
+            smartFolders={safeSmartFolders}
+            editing={safeEditingFiles[index]}
             onEdit={handleEditFile}
             destination={destination}
             category={currentCategory}

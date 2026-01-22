@@ -12,94 +12,57 @@
 import { createSelector } from '@reduxjs/toolkit';
 
 /**
- * Creates a selector that returns stable references when output is unchanged.
- * Prevents unnecessary re-renders in consuming components.
+ * FIX CRIT-3: Simplified stable selector that uses shallow equality checking
+ * to return the same reference when output is unchanged.
  *
- * FIX: Uses WeakMap to store per-state-tree caching, avoiding global closure race condition.
- * Each unique state root gets its own cached result, preventing cross-component interference.
+ * The previous implementation used WeakMap which fails for arrays because
+ * array references change even when contents are the same. This simpler
+ * approach stores the last result and compares with shallow equality.
  */
 const createStableSelector = (dependencies, combiner) => {
   const baseSelector = createSelector(dependencies, combiner);
 
-  // FIX: Use WeakMap keyed by first dependency result to avoid global state sharing
-  // This ensures each selector instance maintains its own cache per input reference
-  const cacheMap = new WeakMap();
-  let lastPrimitiveKey = null;
-  let lastPrimitiveResult = null;
+  // Store last result for reference stability
+  let lastResult = null;
+
+  /**
+   * Shallow equality check for arrays and objects
+   */
+  const shallowEqual = (a, b) => {
+    if (a === b) return true;
+    if (a == null || b == null) return false;
+
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+      }
+      return true;
+    }
+
+    if (typeof a === 'object' && typeof b === 'object') {
+      const keysA = Object.keys(a);
+      const keysB = Object.keys(b);
+      if (keysA.length !== keysB.length) return false;
+      for (const key of keysA) {
+        if (a[key] !== b[key]) return false;
+      }
+      return true;
+    }
+
+    return false;
+  };
 
   return (state) => {
     const result = baseSelector(state);
 
-    // Get a cache key from the first dependency (typically a slice of state)
-    const firstDep = dependencies[0];
-    const cacheKey = typeof firstDep === 'function' ? firstDep(state) : state;
-
-    // For object cache keys, use WeakMap
-    if (cacheKey && typeof cacheKey === 'object') {
-      // FIX HIGH-45: Use lastResult strategy for unstable object keys (like arrays)
-      // WeakMap fails when input reference changes but content is same
-      // So we fallback to comparing current result with last result
-
-      // First try WeakMap for stable references (fast path)
-      if (cacheMap.has(cacheKey)) {
-        return cacheMap.get(cacheKey);
-      }
-
-      // Fallback: compare with lastResult regardless of key
-      // This handles case where cacheKey is a new object/array but content implies same result
-      if (lastPrimitiveResult !== null) {
-        // Compare result vs lastPrimitiveResult (which holds the last output)
-        if (Array.isArray(result) && Array.isArray(lastPrimitiveResult)) {
-          if (
-            result.length === lastPrimitiveResult.length &&
-            result.every((item, i) => item === lastPrimitiveResult[i])
-          ) {
-            // Update WeakMap for this new key to point to old result (fast path next time)
-            cacheMap.set(cacheKey, lastPrimitiveResult);
-            return lastPrimitiveResult;
-          }
-        }
-
-        if (
-          result &&
-          typeof result === 'object' &&
-          !Array.isArray(result) &&
-          lastPrimitiveResult &&
-          typeof lastPrimitiveResult === 'object'
-        ) {
-          const keys = Object.keys(result);
-          const prevKeys = Object.keys(lastPrimitiveResult);
-          if (
-            keys.length === prevKeys.length &&
-            keys.every((key) => result[key] === lastPrimitiveResult[key])
-          ) {
-            cacheMap.set(cacheKey, lastPrimitiveResult);
-            return lastPrimitiveResult;
-          }
-        }
-      }
-
-      // Cache the new result
-      cacheMap.set(cacheKey, result);
-      // Also update lastPrimitiveResult for next comparison
-      lastPrimitiveResult = result;
-      return result;
+    // Return cached result if shallowly equal
+    if (shallowEqual(result, lastResult)) {
+      return lastResult;
     }
 
-    // Fallback for primitive cache keys
-    if (cacheKey === lastPrimitiveKey && lastPrimitiveResult !== null) {
-      if (Array.isArray(result) && Array.isArray(lastPrimitiveResult)) {
-        if (
-          result.length === lastPrimitiveResult.length &&
-          result.every((item, i) => item === lastPrimitiveResult[i])
-        ) {
-          return lastPrimitiveResult;
-        }
-      }
-    }
-
-    lastPrimitiveKey = cacheKey;
-    lastPrimitiveResult = result;
+    // Store and return new result
+    lastResult = result;
     return result;
   };
 };
@@ -137,8 +100,11 @@ export const selectFilesWithAnalysis = createSelector(
     }
 
     // Fix 7: Check if any files need extension extraction
-    const hasAnalysis = Array.isArray(analysisResults) && analysisResults.length > 0;
-    const hasStates = fileStates && Object.keys(fileStates).length > 0;
+    const safeAnalysisResults = Array.isArray(analysisResults) ? analysisResults : [];
+    const safeFileStates =
+      fileStates && typeof fileStates === 'object' && !Array.isArray(fileStates) ? fileStates : {};
+    const hasAnalysis = safeAnalysisResults.length > 0;
+    const hasStates = Object.keys(safeFileStates).length > 0;
     const needsExtensionExtraction = files.some((file) => !file.extension && file.path);
 
     // Early exit only if no data to merge AND all extensions are already set
@@ -148,28 +114,31 @@ export const selectFilesWithAnalysis = createSelector(
 
     // Create a map for O(1) lookup of analysis results by path
     const analysisMap = new Map();
-    if (Array.isArray(analysisResults)) {
-      analysisResults.forEach((result) => {
-        if (result && result.path) {
-          analysisMap.set(result.path, result);
-        }
-      });
-    }
+    safeAnalysisResults.forEach((result) => {
+      if (result && result.path) {
+        analysisMap.set(result.path, result);
+      }
+    });
 
     // FIX: Only create new objects for files that actually need merging
     // This reduces object churn when analysis hasn't changed
     let hasChanges = false;
     const mergedFiles = files.map((file) => {
       const analysisResult = analysisMap.get(file.path);
-      const fileState = fileStates?.[file.path];
+      const fileState = safeFileStates?.[file.path];
+      const nextStatus = analysisResult?.status || fileState?.state || file.status || 'pending';
+      const nextError = analysisResult?.error || file.error || null;
+      const nextAnalyzedAt = analysisResult?.analyzedAt || file.analyzedAt || null;
 
       // Check if this file needs modification
       const needsAnalysis = analysisResult && file.analysis !== analysisResult.analysis;
       const needsExtension = !file.extension && file.path;
-      const needsState = fileState?.state && file.status !== fileState.state;
+      const needsStatus = nextStatus !== file.status;
+      const needsError = nextError !== file.error;
+      const needsAnalyzedAt = nextAnalyzedAt !== file.analyzedAt;
 
       // If no changes needed, return original file object
-      if (!needsAnalysis && !needsExtension && !needsState && !analysisResult?.error) {
+      if (!needsAnalysis && !needsExtension && !needsStatus && !needsError && !needsAnalyzedAt) {
         return file;
       }
 
@@ -188,9 +157,9 @@ export const selectFilesWithAnalysis = createSelector(
         // Merge analysis from results
         analysis: analysisResult?.analysis || file.analysis || null,
         // Keep error info if present
-        error: analysisResult?.error || file.error || null,
-        status: analysisResult?.status || file.status || fileState?.state || 'pending',
-        analyzedAt: analysisResult?.analyzedAt || file.analyzedAt || null
+        error: nextError,
+        status: nextStatus,
+        analyzedAt: nextAnalyzedAt
       };
     });
 

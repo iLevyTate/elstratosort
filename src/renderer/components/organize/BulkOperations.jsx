@@ -13,7 +13,8 @@ function BulkOperations({
   bulkCategory,
   setBulkCategory,
   onApplyBulkCategory,
-  smartFolders
+  smartFolders,
+  isProcessing = false
 }) {
   return (
     <div className="surface-quiet flex items-center justify-between flex-wrap gap-4">
@@ -33,8 +34,13 @@ function BulkOperations({
         </label>
         {selectedCount > 0 && (
           <div className="flex items-center gap-3 flex-wrap">
-            <Button onClick={onApproveSelected} variant="primary" className="text-sm">
-              ✓ Approve Selected
+            <Button
+              onClick={onApproveSelected}
+              variant="primary"
+              className="text-sm"
+              disabled={isProcessing}
+            >
+              {isProcessing ? 'Processing...' : '✓ Approve Selected'}
             </Button>
             <Button
               onClick={() => setBulkEditMode(!bulkEditMode)}
@@ -64,10 +70,10 @@ function BulkOperations({
             onClick={onApplyBulkCategory}
             variant="primary"
             className="text-sm"
-            disabled={!bulkCategory}
+            disabled={!bulkCategory || isProcessing}
             title={!bulkCategory ? 'Select a category first' : 'Apply category to selected items'}
           >
-            Apply
+            {isProcessing ? 'Applying...' : 'Apply'}
           </Button>
           <Button
             onClick={() => {
@@ -100,7 +106,8 @@ BulkOperations.propTypes = {
       id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
       name: PropTypes.string.isRequired
     })
-  )
+  ),
+  isProcessing: PropTypes.bool
 };
 
 export default BulkOperations;

@@ -35,3 +35,17 @@ export function scoreToOpacity(score) {
   const s = clamp01(score);
   return 0.25 + s * 0.75;
 }
+
+/**
+ * Normalize confidence values to a consistent 0-100 percentage scale.
+ * Handles both 0-1 scale and 0-100 scale inputs.
+ *
+ * @param {number} value - Confidence value (0-1 or 0-100)
+ * @returns {number} Normalized confidence as integer 0-100
+ */
+export function normalizeConfidence(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  // If value > 1, assume it's already on 0-100 scale
+  const normalized = value > 1 ? value : value * 100;
+  return Math.round(Math.min(100, Math.max(0, normalized)));
+}

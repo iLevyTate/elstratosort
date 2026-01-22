@@ -193,12 +193,13 @@ function showAnalysisCompletionNotification({
       // Check if still in DISCOVER phase before auto-advancing
       // This prevents unexpected navigation if user moved away during the delay
       const currentPhase = getCurrentPhase?.();
-      if (currentPhase === PHASES.DISCOVER) {
-        actions.advancePhase(PHASES.ORGANIZE);
+      // FIX: Add null check for PHASES to prevent crash if undefined
+      if (currentPhase === (PHASES?.DISCOVER ?? 'discover')) {
+        actions.advancePhase(PHASES?.ORGANIZE ?? 'organize');
       } else {
         logger.debug('Skipping auto-advance: phase changed during delay', {
           currentPhase,
-          expectedPhase: PHASES.DISCOVER
+          expectedPhase: PHASES?.DISCOVER ?? 'discover'
         });
       }
     }, 2000);
@@ -215,12 +216,13 @@ function showAnalysisCompletionNotification({
       autoAdvanceTimeoutRef.current = null;
       // Check if still in DISCOVER phase before auto-advancing
       const currentPhase = getCurrentPhase?.();
-      if (currentPhase === PHASES.DISCOVER) {
-        actions.advancePhase(PHASES.ORGANIZE);
+      // FIX: Add null check for PHASES to prevent crash if undefined
+      if (currentPhase === (PHASES?.DISCOVER ?? 'discover')) {
+        actions.advancePhase(PHASES?.ORGANIZE ?? 'organize');
       } else {
         logger.debug('Skipping auto-advance: phase changed during delay', {
           currentPhase,
-          expectedPhase: PHASES.DISCOVER
+          expectedPhase: PHASES?.DISCOVER ?? 'discover'
         });
       }
     }, 2000);
@@ -280,9 +282,15 @@ export function useAnalysis(options = {}) {
   const lockTimeoutRef = useRef(null);
   const abortControllerRef = useRef(null);
   const pendingFilesRef = useRef([]);
+  const batchResultsRef = useRef([]);
+  const pendingResultsRef = useRef([]);
+  const lastResultsFlushRef = useRef(0);
+  const RESULTS_FLUSH_MS = 200;
   // FIX Issue 4: Auto-advance timeout stored per-hook instance
   const autoAdvanceTimeoutRef = useRef(null);
-  // FIX: Throttle progress updates to prevent race conditions with concurrent workers
+  // FIX CRIT-2: Atomic progress tracking to prevent race conditions with concurrent workers
+  // Using a counter ref that workers increment atomically when they complete
+  const completedCountRef = useRef(0);
   const lastProgressDispatchRef = useRef(0);
   const PROGRESS_THROTTLE_MS = 50;
   // FIX: Track mount state to prevent state resets on navigation
@@ -303,6 +311,45 @@ export function useAnalysis(options = {}) {
   analysisResultsRef.current = analysisResults;
   fileStatesRef.current = fileStates;
   analysisProgressRef.current = analysisProgress;
+
+  const flushPendingResults = useCallback(
+    (force = false) => {
+      if (!pendingResultsRef.current.length) return;
+
+      const now = Date.now();
+      if (!force && now - lastResultsFlushRef.current < RESULTS_FLUSH_MS) {
+        return;
+      }
+
+      lastResultsFlushRef.current = now;
+      const pending = pendingResultsRef.current;
+      pendingResultsRef.current = [];
+
+      const mergedResults = dedupeSuggestedNames(
+        mergeAnalysisResults(analysisResultsRef.current, pending)
+      );
+      const mergedStates = mergeFileStates(fileStatesRef.current, mergedResults);
+
+      // Keep refs in sync to avoid stale merges between flushes
+      analysisResultsRef.current = mergedResults;
+      fileStatesRef.current = mergedStates;
+
+      setAnalysisResults(mergedResults);
+      setFileStates(mergedStates);
+      actions.setPhaseData('analysisResults', mergedResults);
+      actions.setPhaseData('fileStates', mergedStates);
+    },
+    [setAnalysisResults, setFileStates, actions]
+  );
+
+  const recordAnalysisResult = useCallback(
+    (result) => {
+      batchResultsRef.current.push(result);
+      pendingResultsRef.current.push(result);
+      flushPendingResults();
+    },
+    [flushPendingResults]
+  );
 
   /**
    * Reset analysis state
@@ -510,15 +557,22 @@ export function useAnalysis(options = {}) {
         lockTimeoutRef.current = null;
       }, TIMEOUTS.ANALYSIS_LOCK);
 
+      // FIX: Filter duplicates upfront to ensure progress tracking matches total
+      // This prevents "stuck" progress bars where processed count < total due to internal skipping
+      const uniqueFiles = files.filter(
+        (file, index, self) => index === self.findIndex((f) => f.path === file.path)
+      );
+
       setIsAnalyzing(true);
       const initialProgress = {
         current: 0,
-        total: files.length,
+        total: uniqueFiles.length,
         lastActivity: Date.now()
       };
       setAnalysisProgress(initialProgress);
       setCurrentAnalysisFile('');
-      actions.setPhaseData('isAnalyzing', true);
+      // Redux is the single source of truth for isAnalyzing.
+      // Avoid redundant dispatch via actions.setPhaseData which can reset totals.
       // FIX: Removed redundant setPhaseData('analysisProgress') - Redux is single source of truth
 
       // FIX: Use analysisProgressRef (synced from Redux) instead of local ref
@@ -532,7 +586,7 @@ export function useAnalysis(options = {}) {
           const prev = analysisProgressRef.current;
           const currentProgress = {
             current: prev?.current || 0,
-            total: prev?.total || files.length,
+            total: prev?.total || uniqueFiles.length,
             lastActivity: Date.now()
           };
 
@@ -565,7 +619,9 @@ export function useAnalysis(options = {}) {
         );
       }, TIMEOUTS.GLOBAL_ANALYSIS);
 
-      const results = [];
+      batchResultsRef.current = [];
+      pendingResultsRef.current = [];
+      lastResultsFlushRef.current = 0;
       let maxConcurrent = CONCURRENCY.DEFAULT_WORKERS;
 
       try {
@@ -584,15 +640,16 @@ export function useAnalysis(options = {}) {
 
       try {
         addNotification(
-          `Starting AI analysis of ${files.length} files...`,
+          `Starting AI analysis of ${uniqueFiles.length} files...`,
           'info',
           3000,
           'analysis-start'
         );
 
         const processedFiles = new Set();
-        const fileQueue = [...files];
-        let completedCount = 0;
+        const fileQueue = [...uniqueFiles];
+        // FIX CRIT-2: Reset atomic counter at start of new batch
+        completedCountRef.current = 0;
 
         const processFile = async (file) => {
           if (processedFiles.has(file.path)) return;
@@ -606,6 +663,16 @@ export function useAnalysis(options = {}) {
           // by updating state and flushing phase data synchronously
           setCurrentAnalysisFile(fileName);
           actions.setPhaseData('currentAnalysisFile', fileName);
+
+          // FIX: Update progress BEFORE analysis to show "Processing: filename" immediately
+          // This provides visual feedback during long-running analysis (18-40s per image)
+          const progressBeforeAnalysis = {
+            current: completedCountRef.current,
+            total: uniqueFiles.length,
+            currentFile: fileName,
+            lastActivity: Date.now()
+          };
+          setAnalysisProgress(progressBeforeAnalysis);
 
           // Force a microtask yield to allow React to process the state update
           await Promise.resolve();
@@ -624,15 +691,16 @@ export function useAnalysis(options = {}) {
             // This prevents state updates if the user cancelled while analysis was in flight
             if (abortSignal.aborted) return;
 
-            // Increment progress AFTER analysis completes
-            completedCount++;
+            // FIX CRIT-2: Atomically increment and capture counter in single expression
+            // This prevents race conditions where multiple workers read same value
+            const newCompletedCount = ++completedCountRef.current;
             const progress = {
-              current: Math.min(completedCount, files.length),
-              total: files.length,
+              current: Math.min(newCompletedCount, uniqueFiles.length),
+              total: uniqueFiles.length,
               lastActivity: Date.now()
             };
 
-            // FIX: Throttle progress updates to prevent race conditions with concurrent workers
+            // Throttle progress updates to prevent excessive re-renders
             const now = Date.now();
             if (
               validateProgressState(progress) &&
@@ -654,7 +722,7 @@ export function useAnalysis(options = {}) {
                 }),
                 namingConvention: namingSettings
               };
-              results.push({
+              recordAnalysisResult({
                 ...fileInfo,
                 analysis: enhancedAnalysis,
                 status: FILE_STATES.CATEGORIZED,
@@ -669,7 +737,7 @@ export function useAnalysis(options = {}) {
                 modified: fileInfo.modified
               });
             } else {
-              results.push({
+              recordAnalysisResult({
                 ...fileInfo,
                 analysis: null,
                 error: analysis?.error || 'Analysis failed',
@@ -682,14 +750,15 @@ export function useAnalysis(options = {}) {
               });
             }
           } catch (error) {
-            // Still increment count on error so progress continues
-            completedCount++;
+            if (abortSignal.aborted) return;
+            // FIX CRIT-2: Atomically increment and capture counter on error path too
+            const newCompletedCount = ++completedCountRef.current;
             const progress = {
-              current: Math.min(completedCount, files.length),
-              total: files.length,
+              current: Math.min(newCompletedCount, uniqueFiles.length),
+              total: uniqueFiles.length,
               lastActivity: Date.now()
             };
-            // FIX: Throttle progress updates to prevent race conditions with concurrent workers
+            // Throttle progress updates to prevent excessive re-renders
             const now = Date.now();
             if (
               validateProgressState(progress) &&
@@ -699,7 +768,7 @@ export function useAnalysis(options = {}) {
               setAnalysisProgress(progress);
             }
 
-            results.push({
+            recordAnalysisResult({
               ...file,
               analysis: null,
               error: error.message,
@@ -756,25 +825,31 @@ export function useAnalysis(options = {}) {
 
         // FIX: Ensure final progress is dispatched (may have been throttled)
         const finalProgress = {
-          current: files.length,
-          total: files.length,
+          current: Math.min(completedCountRef.current, uniqueFiles.length),
+          total: uniqueFiles.length,
           lastActivity: Date.now()
         };
         setAnalysisProgress(finalProgress);
 
+        const batchResults = batchResultsRef.current;
         // Merge results using extracted helper functions
-        const mergedResults = dedupeSuggestedNames(mergeAnalysisResults(analysisResults, results));
+        const mergedResults = dedupeSuggestedNames(
+          mergeAnalysisResults(analysisResultsRef.current, batchResults)
+        );
         setAnalysisResults(mergedResults);
 
-        const mergedStates = mergeFileStates(fileStates, mergedResults);
+        const mergedStates = mergeFileStates(fileStatesRef.current, mergedResults);
         setFileStates(mergedStates);
 
         actions.setPhaseData('analysisResults', mergedResults);
         actions.setPhaseData('fileStates', mergedStates);
 
+        analysisResultsRef.current = mergedResults;
+        fileStatesRef.current = mergedStates;
+
         // Show completion notification
-        const successCount = results.filter((r) => r.analysis).length;
-        const failureCount = results.length - successCount;
+        const successCount = batchResults.filter((r) => r.analysis).length;
+        const failureCount = batchResults.length - successCount;
         showAnalysisCompletionNotification({
           successCount,
           failureCount,
@@ -800,10 +875,12 @@ export function useAnalysis(options = {}) {
         // Update local refs to ensure proper lock synchronization
         localAnalyzingRef.current = false;
 
-        // CRITICAL FIX: Only reset Redux state if component is still mounted.
-        // If unmounted (user navigated away), keep isAnalyzing=true in Redux
-        // so that analysis resumes automatically when they return.
-        if (isMountedRef.current) {
+        const didComplete = files.length > 0 && completedCountRef.current >= files.length;
+
+        // CRITICAL FIX: Only preserve Redux state if analysis is still in-flight.
+        // If we already completed, clear state even if component unmounted to avoid
+        // "analysis continuing in background" banners with 100% progress.
+        if (isMountedRef.current || didComplete) {
           isAnalyzingRef.current = false;
           setIsAnalyzing(false);
 
@@ -817,7 +894,7 @@ export function useAnalysis(options = {}) {
 
           // FIX: Include lastActivity in reset to fully clear progress state
           setAnalysisProgress({ current: 0, total: 0, lastActivity: 0 });
-          actions.setPhaseData('isAnalyzing', false);
+          // Redux is the single source of truth for isAnalyzing.
         } else {
           logger.info('Analysis interrupted by navigation - preserving state for resume');
         }
@@ -857,15 +934,14 @@ export function useAnalysis(options = {}) {
       setAnalysisProgress,
       setAnalysisResults,
       setFileStates,
-      analysisResults,
-      fileStates,
       updateFileState,
       addNotification,
       actions,
       generateSuggestedName,
       namingSettings,
       resetAnalysisState,
-      getCurrentPhase
+      getCurrentPhase,
+      recordAnalysisResult
     ]
   );
 
@@ -880,11 +956,17 @@ export function useAnalysis(options = {}) {
       abortControllerRef.current.abort();
       logger.info('Analysis aborted by user');
     }
+    if (window.electronAPI?.analysis?.cancel) {
+      window.electronAPI.analysis.cancel().catch((error) => {
+        logger.debug('Failed to cancel main analysis', { error: error?.message });
+      });
+    }
+    flushPendingResults(true);
     // Clear any pending files when cancelling
     pendingFilesRef.current = [];
     setIsAnalyzing(false);
     setAnalysisProgress({ current: 0, total: 0 });
-    actions.setPhaseData('isAnalyzing', false);
+    // Redux is the single source of truth for isAnalyzing.
     // FIX: Removed redundant setPhaseData('analysisProgress') - already updated via setAnalysisProgress
 
     // FIX: Delay clearing the file name to allow UI to settle
@@ -894,7 +976,14 @@ export function useAnalysis(options = {}) {
     }, 300);
 
     addNotification('Analysis stopped', 'info', 2000);
-  }, [setIsAnalyzing, setCurrentAnalysisFile, setAnalysisProgress, actions, addNotification]);
+  }, [
+    setIsAnalyzing,
+    setCurrentAnalysisFile,
+    setAnalysisProgress,
+    actions,
+    addNotification,
+    flushPendingResults
+  ]);
 
   /**
    * Clear analysis queue
@@ -906,16 +995,17 @@ export function useAnalysis(options = {}) {
     setFileStates({});
     setAnalysisProgress({ current: 0, total: 0 });
     setCurrentAnalysisFile('');
+    setIsAnalyzing(false);
     actions.setPhaseData('selectedFiles', []);
     actions.setPhaseData('analysisResults', []);
     actions.setPhaseData('fileStates', {});
-    actions.setPhaseData('isAnalyzing', false);
     addNotification('Analysis queue cleared', 'info', 2000, 'queue-management');
   }, [
     setAnalysisResults,
     setFileStates,
     setAnalysisProgress,
     setCurrentAnalysisFile,
+    setIsAnalyzing,
     actions,
     addNotification
   ]);
@@ -956,6 +1046,7 @@ export function useAnalysis(options = {}) {
   // FIX M-1: Consolidated cleanup on unmount (removed duplicate effect below)
   useEffect(() => {
     return () => {
+      isMountedRef.current = false;
       // Clear auto-advance timeout
       clearAutoAdvanceTimeoutRef(autoAdvanceTimeoutRef);
       // Clear abort controller

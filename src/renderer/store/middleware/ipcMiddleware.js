@@ -1,6 +1,6 @@
-import { updateProgress, stopAnalysis, updateResultPathsAfterMove } from '../slices/analysisSlice';
+import { updateProgress, stopAnalysis } from '../slices/analysisSlice';
 import { updateMetrics, updateHealth, addNotification } from '../slices/systemSlice';
-import { updateFilePathsAfterMove, removeSelectedFiles } from '../slices/filesSlice';
+import { atomicUpdateFilePathsAfterMove, atomicRemoveFilesWithCleanup } from '../slices/filesSlice';
 import { logger } from '../../../shared/logger';
 import { mapErrorToNotification } from '../../utils/errorMapping';
 import { validateEventPayload, hasEventSchema } from '../../../shared/ipcEventSchemas';
@@ -52,8 +52,6 @@ const CRITICAL_ACTION_CREATORS = new Set([
   stopAnalysis,
   updateMetrics,
   updateHealth,
-  updateResultPathsAfterMove,
-  updateFilePathsAfterMove,
   addNotification
 ]);
 
@@ -72,6 +70,21 @@ function safeDispatch(actionCreator, data) {
         queueSize: eventQueue.length,
         maxSize: MAX_EVENT_QUEUE_SIZE
       });
+
+      // FIX HIGH-1: Track if we've already warned about overflow to avoid spam
+      if (!safeDispatch.hasWarnedOverflow) {
+        safeDispatch.hasWarnedOverflow = true;
+        // Queue a notification about queue overflow
+        eventQueue.push({
+          actionCreator: addNotification,
+          data: {
+            message: 'System is busy - some updates may be delayed.',
+            severity: 'warning',
+            duration: 5000
+          }
+        });
+      }
+
       const dropIndex = eventQueue.findIndex(
         (entry) => !CRITICAL_ACTION_CREATORS.has(entry.actionCreator)
       );
@@ -119,6 +132,25 @@ export function markStoreReady() {
         storeRef.dispatch(actionCreator(data));
       } catch (e) {
         logger.error('[IPC Middleware] Error flushing queued event:', e.message);
+        // FIX: Dispatch error notification for critical event failures
+        // Only notify for non-notification actions to avoid infinite loops
+        if (actionCreator !== addNotification) {
+          try {
+            storeRef.dispatch(
+              addNotification({
+                message: 'Some updates may not have been applied correctly.',
+                severity: 'warning',
+                duration: 4000
+              })
+            );
+          } catch (notifyError) {
+            // Last resort - can't notify, just log
+            logger.error(
+              '[IPC Middleware] Failed to dispatch error notification:',
+              notifyError.message
+            );
+          }
+        }
       }
     });
   }
@@ -224,17 +256,17 @@ const ipcMiddleware = (store) => {
             validatedData.files &&
             validatedData.destinations
           ) {
-            // Update file paths in Redux state (both filesSlice and analysisSlice)
+            // FIX CRIT-1: Use atomic action to update BOTH filesSlice AND analysisSlice
+            // in a single dispatch, preventing path desync from race conditions
             const pathUpdate = {
               oldPaths: validatedData.files,
               newPaths: validatedData.destinations
             };
-            store.dispatch(updateFilePathsAfterMove(pathUpdate));
-            // FIX: Also update analysis results to prevent path desync
-            store.dispatch(updateResultPathsAfterMove(pathUpdate));
+            store.dispatch(atomicUpdateFilePathsAfterMove(pathUpdate));
           } else if (validatedData.operation === 'delete' && validatedData.files) {
-            // Remove deleted files from state using batch action
-            store.dispatch(removeSelectedFiles(validatedData.files));
+            // FIX HIGH-7: Use atomic action to remove files from BOTH filesSlice AND analysisSlice
+            // This prevents orphaned analysis results from accumulating
+            store.dispatch(atomicRemoveFilesWithCleanup(validatedData.files));
           }
 
           // FIX: Dispatch DOM event for components that need to react to file operations
@@ -377,8 +409,21 @@ const ipcMiddleware = (store) => {
         if (validatedData?.service && (validatedData?.status || validatedData?.health)) {
           const service = validatedData.service.toLowerCase();
           if (service === 'chromadb' || service === 'ollama') {
+            const prevHealth = store.getState().system?.health?.[service];
             const mapped = normalizeServiceHealth(validatedData.status, validatedData.health);
             store.dispatch(updateHealth({ [service]: mapped }));
+
+            // FIX HIGH-NOTIF-1: Notify user when critical services go offline
+            if (prevHealth === 'online' && mapped === 'offline') {
+              const serviceName = service === 'ollama' ? 'Ollama' : 'ChromaDB';
+              store.dispatch(
+                addNotification({
+                  message: `${serviceName} went offline. Some features may be unavailable.`,
+                  severity: 'warning',
+                  duration: 8000
+                })
+              );
+            }
           }
         }
       });

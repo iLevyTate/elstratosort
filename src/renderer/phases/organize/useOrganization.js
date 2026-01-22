@@ -226,7 +226,14 @@ export function useProgressTracking() {
  * @returns {Object} Processed file info with newName, normalized destination, and categoryChanged flag
  */
 // Helper to normalize paths for comparison (handles mixed / and \)
-const normalizeForComparison = (path) => (path || '').replace(/[\\/]+/g, '/').toLowerCase();
+// FIX HIGH-6: Only lowercase on Windows - Linux/macOS filesystems are case-sensitive
+const isWindowsPath = (p) => p && (p.includes('\\') || /^[A-Za-z]:/.test(p));
+const normalizeForComparison = (path) => {
+  if (!path) return '';
+  const normalized = path.replace(/[\\/]+/g, '/');
+  // Only lowercase on Windows paths (contains backslash or drive letter)
+  return isWindowsPath(path) ? normalized.toLowerCase() : normalized;
+};
 
 /**
  * Helper to join paths using the correct separator based on the root
@@ -852,7 +859,8 @@ export function useOrganization({
         });
 
         if (successCount > 0) {
-          actions.advancePhase(PHASES.COMPLETE);
+          // FIX: Add null check for PHASES to prevent crash if undefined
+          actions.advancePhase(PHASES?.COMPLETE ?? 'complete');
         } else {
           logger.warn('[ORGANIZE] No successful operations - phase will not advance');
           addNotification(

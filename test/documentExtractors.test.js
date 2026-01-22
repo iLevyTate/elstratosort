@@ -11,7 +11,7 @@ jest.mock('pdf-parse', () => jest.fn());
 jest.mock('sharp');
 jest.mock('node-tesseract-ocr');
 jest.mock('mammoth');
-jest.mock('officeparser');
+// jest.mock('officeparser');
 jest.mock('xlsx-populate');
 jest.mock('adm-zip');
 
@@ -37,6 +37,20 @@ const {
 describe('documentExtractors', () => {
   const mockFilePath = '/test/document.pdf';
   const mockFileName = 'document.pdf';
+  const ZIP_SIGNATURE = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]);
+  const OLE_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
+  const mockFileSignature = async (signature) => {
+    const handle = {
+      read: jest.fn().mockImplementation(async (buffer, offset, length) => {
+        signature.copy(buffer, offset, 0, length);
+        return { bytesRead: length, buffer };
+      }),
+      close: jest.fn().mockResolvedValue()
+    };
+    jest.spyOn(fs, 'open').mockResolvedValue(handle);
+    return handle;
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -151,6 +165,7 @@ describe('documentExtractors', () => {
         value: 'This is DOCX content'
       });
       jest.spyOn(fs, 'stat').mockResolvedValue({ size: 1000 });
+      await mockFileSignature(ZIP_SIGNATURE);
 
       const result = await extractTextFromDocx(mockFilePath);
 
@@ -160,8 +175,14 @@ describe('documentExtractors', () => {
 
     test('should throw error for empty DOCX', async () => {
       const mammoth = require('mammoth');
+      const officeParser = require('officeparser');
+
       mammoth.extractRawText.mockResolvedValue({ value: '' });
+      // Ensure fallback also returns empty so the error is propagated
+      officeParser.parseOfficeAsync.mockResolvedValue('');
+
       jest.spyOn(fs, 'stat').mockResolvedValue({ size: 1000 });
+      await mockFileSignature(ZIP_SIGNATURE);
 
       await expect(extractTextFromDocx(mockFilePath)).rejects.toThrow('No text content in DOCX');
     });
@@ -297,6 +318,18 @@ describe('documentExtractors', () => {
       expect(result).toContain('Object');
       expect(result).toContain('Scalar');
     });
+
+    test('should attempt fallback if primary extraction throws error', async () => {
+      const XLSX = require('xlsx-populate');
+      const officeParser = require('officeparser');
+
+      XLSX.fromFileAsync.mockRejectedValue(new Error('Corrupt XLSX'));
+      officeParser.parseOfficeAsync.mockResolvedValue('Fallback content');
+      jest.spyOn(fs, 'stat').mockResolvedValue({ size: 1000 });
+
+      const result = await extractTextFromXlsx(mockFilePath);
+      expect(result).toBe('Fallback content');
+    });
   });
 
   describe('extractTextFromPptx', () => {
@@ -356,6 +389,41 @@ describe('documentExtractors', () => {
 
       const result = await extractTextFromPptx(mockFilePath);
       expect(result).toBe('Presentation content from content property');
+    });
+
+    test('should handle non-string properties in object response', async () => {
+      const officeParser = require('officeparser');
+      officeParser.parseOfficeAsync.mockResolvedValue({
+        text: 12345 // Number instead of string
+      });
+      jest.spyOn(fs, 'stat').mockResolvedValue({ size: 1000 });
+
+      const result = await extractTextFromPptx(mockFilePath);
+      expect(result).toBe('12345');
+    });
+
+    test('should attempt ZIP fallback if primary extraction throws error', async () => {
+      const officeParser = require('officeparser');
+      const AdmZip = require('adm-zip');
+
+      officeParser.parseOfficeAsync.mockRejectedValue(new Error('Corrupt PPTX'));
+
+      const mockEntries = [
+        {
+          entryName: 'ppt/slides/slide1.xml',
+          getData: jest.fn().mockReturnValue(Buffer.from('<p>Slide content</p>'))
+        }
+      ];
+
+      const mockZip = {
+        getEntries: jest.fn().mockReturnValue(mockEntries)
+      };
+
+      AdmZip.mockImplementation(() => mockZip);
+      jest.spyOn(fs, 'stat').mockResolvedValue({ size: 1000 });
+
+      const result = await extractTextFromPptx(mockFilePath);
+      expect(result).toContain('Slide content');
     });
   });
 
@@ -526,25 +594,24 @@ Body content only.`;
   });
 
   describe('extractTextFromDoc', () => {
-    test('should extract text using mammoth', async () => {
-      const mammoth = require('mammoth');
-      mammoth.extractRawText.mockResolvedValue({
-        value: 'DOC content'
-      });
+    test('should extract text using officeparser', async () => {
+      const officeParser = require('officeparser');
+      officeParser.parseOfficeAsync.mockResolvedValue('DOC content');
+      await mockFileSignature(OLE_SIGNATURE);
 
       const result = await extractTextFromDoc(mockFilePath);
 
       expect(result).toBe('DOC content');
     });
 
-    test('should fallback to reading as UTF-8 on error', async () => {
-      const mammoth = require('mammoth');
-      mammoth.extractRawText.mockRejectedValue(new Error('Parse error'));
-      jest.spyOn(fs, 'readFile').mockResolvedValue('Fallback text content');
+    test('should return empty string on parser error', async () => {
+      const officeParser = require('officeparser');
+      officeParser.parseOfficeAsync.mockRejectedValue(new Error('Parse error'));
+      await mockFileSignature(OLE_SIGNATURE);
 
       const result = await extractTextFromDoc(mockFilePath);
 
-      expect(result).toBe('Fallback text content');
+      expect(result).toBe('');
     });
   });
 

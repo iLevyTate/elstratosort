@@ -412,6 +412,7 @@ async function handleBatchOrganize(params) {
       const completedOperations = [];
       let successCount = 0;
       let failCount = 0;
+      let skippedCount = 0;
       // batchId already defined above for lock acquisition
       const batchStartTime = Date.now();
       let shouldRollback = false;
@@ -508,6 +509,7 @@ async function handleBatchOrganize(params) {
               skipped: true,
               reason: 'duplicate'
             });
+            skippedCount++;
             return;
           }
 
@@ -591,6 +593,11 @@ async function handleBatchOrganize(params) {
               }
               throw moveError;
             }
+
+            if (moveResult && moveResult.skipped) {
+              skippedCount++;
+            }
+
             op.destination = moveResult.destination;
             processedKeys.add(idempotencyKey);
 
@@ -637,7 +644,7 @@ async function handleBatchOrganize(params) {
             if (win && !win.isDestroyed()) {
               safeSend(win.webContents, 'operation-progress', {
                 type: 'batch_organize',
-                current: successCount + failCount, // Approx progress
+                current: successCount + failCount + skippedCount, // Approx progress
                 total: batch.operations.length,
                 currentFile: path.basename(op.source)
               });
@@ -1083,40 +1090,40 @@ async function recordUndoAndUpdateDatabase(
         // Create path updates for both file: and image: prefixes
         // Documents use file: prefix, images use image: prefix
         const pathUpdates = [];
+        const seenUpdates = new Set();
+        const buildIdVariants = (filePath) => {
+          const normalized = normalizePathForIndex(filePath);
+          const normalizedCase = path.normalize(filePath).replace(/\\/g, '/');
+          const platformNormalized = path.normalize(filePath);
+          const variants = new Set([normalized, normalizedCase, platformNormalized, filePath]);
+          return Array.from(variants).filter(Boolean);
+        };
         for (const r of successfulResults) {
-          const normalizedSource = normalizePathForIndex(r.source);
           const normalizedDest = normalizePathForIndex(r.destination);
           const newMeta = {
             path: r.destination,
             name: path.basename(r.destination)
           };
 
-          // Add file: prefixed update (for documents)
-          pathUpdates.push({
-            oldId: `file:${normalizedSource}`,
-            newId: `file:${normalizedDest}`,
-            newMeta
-          });
+          const sourceVariants = buildIdVariants(r.source);
+          sourceVariants.forEach((variant) => {
+            const fileOldId = `file:${variant}`;
+            const imageOldId = `image:${variant}`;
+            const fileNewId = `file:${normalizedDest}`;
+            const imageNewId = `image:${normalizedDest}`;
 
-          // Add image: prefixed update (for images)
-          pathUpdates.push({
-            oldId: `image:${normalizedSource}`,
-            newId: `image:${normalizedDest}`,
-            newMeta
-          });
+            const fileKey = `${fileOldId}->${fileNewId}`;
+            if (fileOldId !== fileNewId && !seenUpdates.has(fileKey)) {
+              pathUpdates.push({ oldId: fileOldId, newId: fileNewId, newMeta });
+              seenUpdates.add(fileKey);
+            }
 
-          if (normalizedSource !== r.source || normalizedDest !== r.destination) {
-            pathUpdates.push({
-              oldId: `file:${r.source}`,
-              newId: `file:${r.destination}`,
-              newMeta
-            });
-            pathUpdates.push({
-              oldId: `image:${r.source}`,
-              newId: `image:${r.destination}`,
-              newMeta
-            });
-          }
+            const imageKey = `${imageOldId}->${imageNewId}`;
+            if (imageOldId !== imageNewId && !seenUpdates.has(imageKey)) {
+              pathUpdates.push({ oldId: imageOldId, newId: imageNewId, newMeta });
+              seenUpdates.add(imageKey);
+            }
+          });
         }
 
         if (pathUpdates.length > 0) {

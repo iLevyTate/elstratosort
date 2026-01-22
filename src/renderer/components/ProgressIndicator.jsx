@@ -14,16 +14,18 @@ function ProgressIndicator() {
     icon: '?',
     progress: 0
   };
-  const phases = Object.values(PHASES);
+  // FIX: Add null check to prevent crash if PHASES is undefined
+  const phases = PHASES ? Object.values(PHASES) : [];
   const currentIndex = phases.indexOf(currentPhase);
 
+  // FIX: Add null checks for PHASES to prevent crash if undefined
   const getPersistKeysForPhase = () => {
     switch (currentPhase) {
-      case PHASES.SETUP:
+      case PHASES?.SETUP ?? 'setup':
         return ['setup-current-folders', 'setup-add-folder'];
-      case PHASES.DISCOVER:
+      case PHASES?.DISCOVER ?? 'discover':
         return ['discover-naming', 'discover-selection', 'discover-dnd', 'discover-results'];
-      case PHASES.ORGANIZE:
+      case PHASES?.ORGANIZE ?? 'organize':
         return [
           'organize-target-folders',
           'organize-status',
@@ -32,7 +34,7 @@ function ProgressIndicator() {
           'organize-history',
           'organize-action'
         ];
-      case PHASES.COMPLETE:
+      case PHASES?.COMPLETE ?? 'complete':
         return ['complete-summary', 'complete-next-steps'];
       default:
         return [];

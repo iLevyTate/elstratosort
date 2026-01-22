@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import PropTypes from 'prop-types';
 import { AlertTriangle, Lightbulb, Info, Pin, CheckCircle, Folder } from 'lucide-react';
-import { useNotification } from '../../contexts/NotificationContext';
 import { Card, Button } from '../ui';
 
 function FolderImprovementSuggestions({
@@ -11,7 +10,6 @@ function FolderImprovementSuggestions({
   onCreateFolder,
   onMergeFolders
 }) {
-  const { addNotification } = useNotification();
   const [expandedSections, setExpandedSections] = useState(new Set());
 
   const toggleSection = (type) => {
@@ -67,7 +65,7 @@ function FolderImprovementSuggestions({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-medium text-system-gray-900">Folder Structure Improvements</h3>
         <span className="text-sm text-system-gray-600">
@@ -86,6 +84,12 @@ function FolderImprovementSuggestions({
           <div
             className="p-4 cursor-pointer hover:bg-system-gray-50 transition-colors"
             onClick={() => toggleSection(improvement.type)}
+            onKeyDown={(e) =>
+              (e.key === 'Enter' || e.key === ' ') && toggleSection(improvement.type)
+            }
+            role="button"
+            tabIndex={0}
+            aria-expanded={expandedSections.has(improvement.type)}
           >
             <div className="flex items-start justify-between">
               <div className="flex items-start gap-3">
@@ -196,33 +200,7 @@ function FolderImprovementSuggestions({
                             {folder.suggestion}
                           </div>
                         </div>
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              addNotification(
-                                'Folder editing will be available in a future update',
-                                'info'
-                              );
-                            }}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-red-600 hover:bg-red-50"
-                            onClick={() => {
-                              addNotification(
-                                'Folder removal will be available in a future update',
-                                'info'
-                              );
-                            }}
-                          >
-                            Remove
-                          </Button>
-                        </div>
+                        {/* Edit/Remove buttons hidden until feature is implemented */}
                       </div>
                     </div>
                   ))}
@@ -290,14 +268,7 @@ function FolderImprovementSuggestions({
 
       {/* Quick Actions */}
       <div className="flex gap-2 justify-end pt-4 border-t">
-        <Button
-          variant="secondary"
-          onClick={() => {
-            addNotification('Report export will be available in a future update', 'info');
-          }}
-        >
-          Export Report
-        </Button>
+        {/* Export Report button hidden until feature is implemented */}
         <Button
           variant="primary"
           onClick={() =>

@@ -6,7 +6,7 @@
  * @module organize/useFileEditing
  */
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { debounce } from '../../utils/performance';
 
@@ -92,9 +92,14 @@ ClockIcon.propTypes = iconPropTypes;
  * @returns {Object} File state helpers
  */
 export function useFileStateDisplay(fileStates) {
-  const getFileState = useCallback(
-    (filePath) => fileStates[filePath]?.state || 'pending',
+  const safeFileStates = useMemo(
+    () =>
+      fileStates && typeof fileStates === 'object' && !Array.isArray(fileStates) ? fileStates : {},
     [fileStates]
+  );
+  const getFileState = useCallback(
+    (filePath) => safeFileStates[filePath]?.state || 'pending',
+    [safeFileStates]
   );
 
   const getFileStateDisplay = useCallback(
@@ -355,8 +360,10 @@ export function useProcessedFiles(organizedFiles) {
   // Compute unprocessed and processed files
   const getFilteredFiles = useCallback(
     (filesWithAnalysis) => {
-      const unprocessedFiles = filesWithAnalysis.filter(
-        (file) => !processedFileIds.has(normalizePath(file.path)) && file && file.analysis
+      const safeFiles = Array.isArray(filesWithAnalysis) ? filesWithAnalysis : [];
+      const unprocessedFiles = safeFiles.filter(
+        (file) =>
+          file && file.path && file.analysis && !processedFileIds.has(normalizePath(file.path))
       );
       const processedFiles = Array.isArray(organizedFiles)
         ? organizedFiles.filter((file) =>
