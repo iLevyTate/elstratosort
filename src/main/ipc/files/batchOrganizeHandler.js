@@ -412,6 +412,7 @@ async function handleBatchOrganize(params) {
       const completedOperations = [];
       let successCount = 0;
       let failCount = 0;
+      let skippedCount = 0;
       // batchId already defined above for lock acquisition
       const batchStartTime = Date.now();
       let shouldRollback = false;
@@ -508,6 +509,7 @@ async function handleBatchOrganize(params) {
               skipped: true,
               reason: 'duplicate'
             });
+            skippedCount++;
             return;
           }
 
@@ -591,6 +593,11 @@ async function handleBatchOrganize(params) {
               }
               throw moveError;
             }
+
+            if (moveResult && moveResult.skipped) {
+              skippedCount++;
+            }
+
             op.destination = moveResult.destination;
             processedKeys.add(idempotencyKey);
 
@@ -637,7 +644,7 @@ async function handleBatchOrganize(params) {
             if (win && !win.isDestroyed()) {
               safeSend(win.webContents, 'operation-progress', {
                 type: 'batch_organize',
-                current: successCount + failCount, // Approx progress
+                current: successCount + failCount + skippedCount, // Approx progress
                 total: batch.operations.length,
                 currentFile: path.basename(op.source)
               });
