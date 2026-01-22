@@ -1,5 +1,17 @@
 import React, { useEffect, useState, memo } from 'react';
 import PropTypes from 'prop-types';
+import {
+  Folder,
+  FolderOpen,
+  Edit2,
+  Trash2,
+  Check,
+  X,
+  ChevronDown,
+  ChevronUp,
+  FolderPlus,
+  Sparkles
+} from 'lucide-react';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
 import Textarea from '../ui/Textarea';
@@ -45,8 +57,7 @@ const SmartFolderItem = memo(function SmartFolderItem({
   if (compact && !isExpanded && !isEditing) {
     return (
       <div
-        className="group flex items-center bg-white/70 rounded-xl border border-border-soft/60 shadow-sm hover:shadow-md hover:border-stratosort-blue/30 transition-all cursor-pointer h-full p-6 md:p-8"
-        style={{ gap: 'var(--spacing-default)' }}
+        className="group flex items-center bg-white/70 rounded-xl border border-border-soft/60 shadow-sm hover:shadow-md hover:border-stratosort-blue/30 transition-all cursor-pointer h-full p-6 md:p-8 gap-6"
         onClick={() => onToggleExpand?.(folder.id)}
         role="button"
         tabIndex={0}
@@ -62,18 +73,11 @@ const SmartFolderItem = memo(function SmartFolderItem({
       >
         {/* Folder icon with status */}
         <div className="h-10 w-10 rounded-xl bg-stratosort-blue/10 text-stratosort-blue flex items-center justify-center shrink-0">
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-            />
-          </svg>
+          <Folder className="w-5 h-5" />
         </div>
 
         {/* Name and path */}
-        <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 2 }}>
+        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
           <div className="font-medium text-system-gray-800 text-sm truncate">{folder.name}</div>
           <div className="text-xs text-system-gray-500 truncate">{folder.path}</div>
         </div>
@@ -89,14 +93,7 @@ const SmartFolderItem = memo(function SmartFolderItem({
             title="Open folder"
             disabled={!folder.physicallyExists}
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-              />
-            </svg>
+            <FolderOpen className="w-4 h-4" />
           </button>
           <button
             onClick={(e) => {
@@ -106,26 +103,12 @@ const SmartFolderItem = memo(function SmartFolderItem({
             className="p-1.5 text-system-gray-400 hover:text-stratosort-blue hover:bg-stratosort-blue/10 rounded-lg transition-colors"
             title="Edit folder"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-              />
-            </svg>
+            <Edit2 className="w-4 h-4" />
           </button>
         </div>
 
         {/* Expand chevron */}
-        <svg
-          className="w-4 h-4 text-system-gray-400 shrink-0 group-hover:text-stratosort-blue transition-colors"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        <ChevronDown className="w-4 h-4 text-system-gray-400 shrink-0 group-hover:text-stratosort-blue transition-colors" />
       </div>
     );
   }
@@ -138,25 +121,14 @@ const SmartFolderItem = memo(function SmartFolderItem({
         style={{ animationDelay: cardAnimationDelay }}
       >
         <div
-          className="flex flex-col flex-1"
-          style={{ gap: 'var(--spacing-default)' }}
+          className="flex flex-col flex-1 gap-default"
           role="form"
           aria-label="Edit smart folder"
         >
           {/* Header */}
-          <div
-            className="flex items-center"
-            style={{ gap: 'var(--spacing-default)', marginBottom: 'var(--spacing-compact)' }}
-          >
+          <div className="flex items-center gap-6 mb-4">
             <div className="h-10 w-10 rounded-xl bg-stratosort-blue/10 text-stratosort-blue flex items-center justify-center">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                />
-              </svg>
+              <Edit2 className="w-5 h-5" />
             </div>
             <div>
               <p className="text-sm font-medium text-system-gray-800">Editing Smart Folder</p>
@@ -164,7 +136,7 @@ const SmartFolderItem = memo(function SmartFolderItem({
             </div>
           </div>
 
-          <div className="flex flex-col md:flex-row" style={{ gap: 'var(--spacing-cozy)' }}>
+          <div className="flex flex-col md:flex-row gap-6">
             <Input
               type="text"
               value={editingFolder.name || ''}
@@ -228,20 +200,10 @@ const SmartFolderItem = memo(function SmartFolderItem({
               title="Generate description with AI"
               aria-label="Generate description with AI"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
-                />
-              </svg>
+              <Sparkles className="w-4 h-4" />
             </button>
           </div>
-          <div
-            className="flex justify-end"
-            style={{ gap: 'var(--spacing-cozy)', paddingTop: 'var(--spacing-compact)' }}
-          >
+          <div className="flex justify-end gap-cozy pt-compact">
             <Button
               onClick={onCancelEdit}
               disabled={isSavingEdit}
@@ -251,14 +213,7 @@ const SmartFolderItem = memo(function SmartFolderItem({
               aria-label="Cancel edits"
               className="p-2"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
+              <X className="w-4 h-4" />
               <span className="sr-only">Cancel edits</span>
             </Button>
             <Button
@@ -276,14 +231,7 @@ const SmartFolderItem = memo(function SmartFolderItem({
                   <span className="sr-only">Saving</span>
                 </>
               ) : (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
+                <Check className="w-4 h-4" />
               )}
             </Button>
           </div>
@@ -296,44 +244,27 @@ const SmartFolderItem = memo(function SmartFolderItem({
   return (
     <div
       className={`bg-white/70 rounded-xl border border-border-soft/60 shadow-sm hover:shadow-md transition-all h-full flex flex-col p-6 md:p-8 ${cardAnimationClass}`}
-      style={{ padding: 'var(--spacing-default)', animationDelay: cardAnimationDelay }}
+      style={{ animationDelay: cardAnimationDelay }}
       data-testid="folder-item"
     >
-      <div className="flex flex-col flex-1" style={{ gap: 'var(--spacing-cozy)' }}>
+      <div className="flex flex-col flex-1 gap-6">
         {/* Header with collapse button (if in compact mode) */}
-        <div className="flex items-start justify-between" style={{ gap: 'var(--spacing-default)' }}>
-          <div className="flex items-start" style={{ gap: 'var(--spacing-default)' }}>
+        <div className="flex items-start justify-between gap-6">
+          <div className="flex items-start gap-6">
             {/* Folder icon */}
             <div className="h-12 w-12 rounded-xl bg-stratosort-blue/10 text-stratosort-blue flex items-center justify-center shrink-0">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-                />
-              </svg>
+              <Folder className="w-6 h-6" />
             </div>
 
             <div className="flex-1 min-w-0">
-              <div
-                className="flex items-center"
-                style={{ gap: 'var(--spacing-compact)', marginBottom: 2 }}
-              >
+              <div className="flex items-center gap-compact mb-0.5">
                 {compact && onToggleExpand && (
                   <button
                     onClick={() => onToggleExpand(folder.id)}
                     className="p-1 -ml-1 text-system-gray-400 hover:text-system-gray-600 transition-colors rounded"
                     aria-label="Collapse"
                   >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 15l7-7 7 7"
-                      />
-                    </svg>
+                    <ChevronUp className="w-4 h-4" />
                   </button>
                 )}
                 <h3 className="font-semibold text-system-gray-800 truncate">{folder.name}</h3>
@@ -348,10 +279,7 @@ const SmartFolderItem = memo(function SmartFolderItem({
           </div>
 
           {/* Status badge */}
-          <div
-            className="flex items-center rounded-full border px-2.5 py-1 bg-stratosort-success/10 border-stratosort-success/20 shrink-0"
-            style={{ gap: 'var(--spacing-compact)' }}
-          >
+          <div className="flex items-center rounded-full border px-2.5 py-1 bg-stratosort-success/10 border-stratosort-success/20 shrink-0 gap-compact">
             <div className="w-2 h-2 rounded-full bg-stratosort-success" />
             <span className="text-xs font-medium text-stratosort-success">Active</span>
           </div>
@@ -359,27 +287,9 @@ const SmartFolderItem = memo(function SmartFolderItem({
 
         {/* Description */}
         {folder.description && (
-          <div
-            className="text-sm text-system-gray-600 bg-stratosort-blue/5 rounded-xl border border-stratosort-blue/10"
-            style={{ padding: 'var(--spacing-cozy)' }}
-          >
-            <div
-              className="flex items-center"
-              style={{ gap: 'var(--spacing-compact)', marginBottom: 'var(--spacing-compact)' }}
-            >
-              <svg
-                className="w-4 h-4 text-stratosort-blue"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-                />
-              </svg>
+          <div className="text-sm text-system-gray-600 bg-stratosort-blue/5 rounded-xl border border-stratosort-blue/10 p-cozy">
+            <div className="flex items-center gap-compact mb-compact">
+              <Sparkles className="w-4 h-4 text-stratosort-blue" />
               <span className="text-xs font-semibold text-stratosort-blue uppercase tracking-wide">
                 AI Context
               </span>
@@ -389,11 +299,8 @@ const SmartFolderItem = memo(function SmartFolderItem({
         )}
 
         {/* Actions */}
-        <div
-          className="flex items-center justify-between border-t border-border-soft/50 mt-auto"
-          style={{ gap: 'var(--spacing-cozy)', paddingTop: 'var(--spacing-cozy)' }}
-        >
-          <div className="flex items-center" style={{ gap: 'var(--spacing-compact)' }}>
+        <div className="flex items-center justify-between border-t border-border-soft/50 mt-auto gap-6 pt-4">
+          <div className="flex items-center gap-4">
             {!folder.physicallyExists && (
               <button
                 onClick={async () => {
@@ -407,14 +314,7 @@ const SmartFolderItem = memo(function SmartFolderItem({
                 className="p-2 text-stratosort-blue hover:bg-stratosort-blue/10 rounded-xl transition-colors"
                 title="Create directory"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"
-                  />
-                </svg>
+                <FolderPlus className="w-4 h-4" />
               </button>
             )}
             <button
@@ -427,31 +327,15 @@ const SmartFolderItem = memo(function SmartFolderItem({
               }`}
               title={folder.physicallyExists ? 'Open in explorer' : "Folder doesn't exist"}
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                />
-              </svg>
+              <FolderOpen className="w-4 h-4" />
             </button>
             <button
               onClick={() => onEditStart(folder)}
               className="p-2 text-stratosort-blue hover:bg-stratosort-blue/10 rounded-xl transition-colors"
               title="Edit folder"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                />
-              </svg>
+              <Edit2 className="w-4 h-4" />
             </button>
-            {/* FIX Issue 3.1-C, 3.1-D: Removed per-folder rebuild button.
-                Rebuild embeddings is available in Settings > Embeddings for advanced users. */}
           </div>
 
           <button
@@ -463,14 +347,7 @@ const SmartFolderItem = memo(function SmartFolderItem({
             {isDeleting ? (
               <span className="inline-block w-4 h-4 border-2 border-stratosort-danger border-t-transparent rounded-full animate-spin" />
             ) : (
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                />
-              </svg>
+              <Trash2 className="w-4 h-4" />
             )}
           </button>
         </div>

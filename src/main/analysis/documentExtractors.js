@@ -119,6 +119,49 @@ function truncateText(text) {
   return `${text.substring(0, MAX_TEXT_LENGTH)}\n\n[Text truncated due to length]`;
 }
 
+async function parseOfficeFile(officeParser, filePath) {
+  if (!officeParser) {
+    throw new Error('officeParser unavailable');
+  }
+  if (typeof officeParser.parseOfficeAsync === 'function') {
+    return officeParser.parseOfficeAsync(filePath);
+  }
+  if (typeof officeParser.parseOffice === 'function') {
+    return officeParser.parseOffice(filePath);
+  }
+  throw new Error('officeParser.parseOfficeAsync is not a function');
+}
+
+const DOC_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+const ZIP_SIGNATURE = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+
+async function readFileSignature(filePath, length = 8) {
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, 0);
+    return buffer;
+  } finally {
+    await handle.close();
+  }
+}
+
+function matchesSignature(buffer, signature) {
+  if (!buffer || buffer.length < signature.length) return false;
+  for (let i = 0; i < signature.length; i += 1) {
+    if (buffer[i] !== signature[i]) return false;
+  }
+  return true;
+}
+
+function isOleCompoundFile(buffer) {
+  return matchesSignature(buffer, DOC_SIGNATURE);
+}
+
+function isZipFile(buffer) {
+  return matchesSignature(buffer, ZIP_SIGNATURE);
+}
+
 function flattenXmlText(value, chunks) {
   if (value === null || value === undefined) return;
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -475,15 +518,26 @@ async function ocrPdfIfNeeded(filePath) {
 }
 
 async function extractTextFromDoc(filePath) {
-  const mammoth = require('mammoth');
   try {
-    const result = await mammoth.extractRawText({ path: filePath });
-    return result.value || '';
+    const signature = await readFileSignature(filePath, 8);
+    if (isZipFile(signature)) {
+      logger.warn('[DOC] File appears to be DOCX container, routing to DOCX extractor');
+      return await extractTextFromDocx(filePath);
+    }
+    if (!isOleCompoundFile(signature)) {
+      logger.warn('[DOC] Unsupported/binary DOC file detected, skipping parse', {
+        filePath
+      });
+      return '';
+    }
+    const officeParser = require('officeparser');
+    const result = await parseOfficeFile(officeParser, filePath);
+    return result || '';
   } catch (error) {
-    logger.debug('[DOC] Mammoth extraction failed, falling back to raw read', {
+    logger.warn('[DOC] Office parser failed, returning empty result', {
       error: error.message
     });
-    return await fs.readFile(filePath, 'utf8');
+    return '';
   }
 }
 
@@ -491,6 +545,17 @@ async function extractTextFromDocx(filePath) {
   const mammoth = require('mammoth');
   // Fixed: Check file size before reading
   await checkFileSize(filePath, filePath);
+
+  const signature = await readFileSignature(filePath, 8);
+  if (isOleCompoundFile(signature)) {
+    logger.warn('[DOCX] File appears to be legacy DOC, routing to DOC extractor');
+    return await extractTextFromDoc(filePath);
+  }
+  if (!isZipFile(signature)) {
+    const invalidDocx = new Error('Invalid DOCX container signature');
+    invalidDocx.code = 'INVALID_DOCX';
+    throw invalidDocx;
+  }
 
   const result = await mammoth.extractRawText({ path: filePath });
   if (!result.value || result.value.trim().length === 0) throw new Error('No text content in DOCX');
@@ -651,7 +716,7 @@ async function extractTextFromXlsx(filePath) {
       // CRITICAL FIX: Try fallback extraction using officeParser before giving up
       try {
         logger.info('[XLSX] Primary extraction failed, trying officeParser fallback');
-        const fallbackResult = await officeParser.parseOfficeAsync(filePath);
+        const fallbackResult = await parseOfficeFile(officeParser, filePath);
         const fallbackText =
           typeof fallbackResult === 'string'
             ? fallbackResult
@@ -698,7 +763,7 @@ async function extractTextFromPptx(filePath) {
 
   try {
     // CRITICAL FIX: Add better error handling for officeParser
-    const result = await officeParser.parseOfficeAsync(filePath);
+    const result = await parseOfficeFile(officeParser, filePath);
 
     // CRITICAL FIX: Validate result structure
     if (result === null || result === undefined) {
@@ -711,7 +776,8 @@ async function extractTextFromPptx(filePath) {
       text = result;
     } else if (result && typeof result === 'object') {
       // Try common property names
-      text = result.text || result.content || result.body || '';
+      const rawVal = result.text || result.content || result.body;
+      text = rawVal !== null && rawVal !== undefined ? String(rawVal) : '';
 
       // If still empty, try to stringify the object (might contain structured data)
       if (!text && Object.keys(result).length > 0) {
@@ -907,7 +973,7 @@ async function extractTextFromMsg(filePath) {
   const officeParser = require('officeparser');
   // Best-effort using officeparser; if unavailable, return empty string
   try {
-    const result = await officeParser.parseOfficeAsync(filePath);
+    const result = await parseOfficeFile(officeParser, filePath);
     const text = typeof result === 'string' ? result : (result && result.text) || '';
     return text || '';
   } catch (error) {
@@ -935,7 +1001,7 @@ async function extractTextFromKmz(filePath) {
 async function extractTextFromXls(filePath) {
   const officeParser = require('officeparser');
   try {
-    const result = await officeParser.parseOfficeAsync(filePath);
+    const result = await parseOfficeFile(officeParser, filePath);
     const text = typeof result === 'string' ? result : (result && result.text) || '';
     if (text && text.trim()) return text;
   } catch (error) {
@@ -948,7 +1014,7 @@ async function extractTextFromXls(filePath) {
 async function extractTextFromPpt(filePath) {
   const officeParser = require('officeparser');
   try {
-    const result = await officeParser.parseOfficeAsync(filePath);
+    const result = await parseOfficeFile(officeParser, filePath);
     const text = typeof result === 'string' ? result : (result && result.text) || '';
     return text || '';
   } catch (error) {

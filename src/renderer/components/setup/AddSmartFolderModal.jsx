@@ -213,7 +213,7 @@ function AddSmartFolderModal({
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-6">
           {/* Folder Name */}
           <div>
             <label
@@ -320,7 +320,7 @@ function AddSmartFolderModal({
           </div>
 
           {/* Actions */}
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-4 pt-4">
             <Button
               type="button"
               onClick={handleClose}

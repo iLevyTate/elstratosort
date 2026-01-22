@@ -1,5 +1,6 @@
 import React, { memo, useMemo } from 'react';
 import PropTypes from 'prop-types';
+import { CheckCircle2, ClipboardList, Target, Check, ArrowLeft } from 'lucide-react';
 import { PHASES } from '../../shared/constants';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { setPhase, resetUi } from '../store/slices/uiSlice';
@@ -7,67 +8,6 @@ import { resetFilesState } from '../store/slices/filesSlice';
 import { resetAnalysisState } from '../store/slices/analysisSlice';
 import Button from '../components/ui/Button';
 import { UndoRedoToolbar } from '../components/UndoRedoSystem';
-
-// Inline SVG Icons
-function CheckCircle2Icon({ className }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-      />
-    </svg>
-  );
-}
-
-function ClipboardListIcon({ className }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
-      />
-    </svg>
-  );
-}
-
-function TargetIcon({ className }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-      />
-    </svg>
-  );
-}
-
-function CheckIcon({ className }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-    </svg>
-  );
-}
-
-function ClockIcon({ className }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-      />
-    </svg>
-  );
-}
 
 function StatPill({ label, value, tone = 'neutral' }) {
   const toneClass =
@@ -95,14 +35,11 @@ function FileRow({ file, index }) {
   const destination = file.path || file.newLocation || file.destination || 'Organized';
 
   return (
-    <div
-      className="text-sm flex items-center bg-white/70 rounded-lg border border-border-soft/60 shadow-sm"
-      style={{ padding: 'var(--spacing-cozy)', gap: 'var(--spacing-compact)' }}
-    >
+    <div className="text-sm flex items-center bg-white/70 rounded-lg border border-border-soft/60 shadow-sm p-cozy gap-compact">
       <div className="h-8 w-8 rounded-lg bg-stratosort-success/10 text-stratosort-success flex items-center justify-center font-semibold">
         {index + 1}
       </div>
-      <div className="flex flex-col flex-1 min-w-0" style={{ gap: 2 }}>
+      <div className="flex flex-col flex-1 min-w-0 gap-0.5">
         <span className="truncate text-system-gray-800" title={`${originalName} → ${destination}`}>
           {originalName}
         </span>
@@ -110,7 +47,7 @@ function FileRow({ file, index }) {
           {destination}
         </span>
       </div>
-      <CheckIcon className="w-4 h-4 text-stratosort-success flex-shrink-0" />
+      <Check className="w-4 h-4 text-stratosort-success flex-shrink-0" />
     </div>
   );
 }
@@ -118,7 +55,6 @@ function FileRow({ file, index }) {
 function CompletePhase() {
   const dispatch = useAppDispatch();
   const organizedFiles = useAppSelector((state) => state.files.organizedFiles);
-  // Remove unused fileStates and showActionHistory state
 
   const { filesToRender, overflowCount, destinationCount, totalFiles } = useMemo(() => {
     const safeFiles = Array.isArray(organizedFiles) ? organizedFiles : [];
@@ -138,8 +74,6 @@ function CompletePhase() {
       totalFiles: safeFiles.length
     };
   }, [organizedFiles]);
-
-  // Remove unused actionHistory memo
 
   // FIX: Memoize actions object to prevent recreation on every render
   const actions = useMemo(
@@ -162,23 +96,12 @@ function CompletePhase() {
   );
 
   return (
-    <div
-      className="phase-container bg-system-gray-50/30"
-      style={{ paddingBottom: 'var(--spacing-spacious)' }}
-    >
-      <div
-        className="container-responsive flex flex-col flex-1 min-h-0"
-        style={{
-          gap: 'var(--spacing-default)',
-          paddingTop: 'var(--spacing-default)',
-          paddingBottom: 'var(--spacing-default)'
-        }}
-      >
+    <div className="phase-container bg-system-gray-50/30 pb-spacious">
+      <div className="container-responsive flex flex-col flex-1 min-h-0 py-default gap-6">
         {/* Hero Summary */}
         <section
-          className="surface-panel relative overflow-hidden"
+          className="surface-panel relative overflow-hidden p-default"
           style={{
-            padding: 'var(--spacing-default)',
             background:
               'linear-gradient(135deg, rgba(59, 130, 246, 0.05), rgba(16, 185, 129, 0.04))'
           }}
@@ -196,9 +119,9 @@ function CompletePhase() {
           <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex items-start gap-4">
               <div className="h-12 w-12 rounded-2xl bg-white/90 border border-border-soft/80 shadow-sm flex items-center justify-center text-stratosort-success">
-                <CheckCircle2Icon className="w-7 h-7" />
+                <CheckCircle2 className="w-7 h-7" />
               </div>
-              <div className="flex flex-col" style={{ gap: 'var(--spacing-compact)' }}>
+              <div className="flex flex-col gap-compact">
                 <p className="text-xs uppercase tracking-wide text-system-gray-500 font-semibold">
                   Session complete
                 </p>
@@ -207,7 +130,7 @@ function CompletePhase() {
                   Successfully organized {totalFiles} file{totalFiles !== 1 ? 's' : ''} using
                   AI-powered analysis.
                 </p>
-                <div className="flex flex-wrap items-center" style={{ gap: 'var(--spacing-cozy)' }}>
+                <div className="flex flex-wrap items-center gap-cozy">
                   <StatPill label="Files organized" value={totalFiles} tone="success" />
                   <StatPill label="Destinations" value={destinationCount || 1} />
                   <StatPill label="Undo/Redo" value="Available" />
@@ -221,24 +144,12 @@ function CompletePhase() {
         </section>
 
         {/* Main Grid Layout */}
-        <div
-          className="grid grid-cols-1 xl:grid-cols-3 flex-1 min-h-0"
-          style={{ gap: 'var(--spacing-default)' }}
-        >
+        <div className="grid grid-cols-1 xl:grid-cols-3 flex-1 min-h-0 gap-6">
           {/* Organization Summary Card */}
-          <section
-            className="surface-panel flex flex-col xl:col-span-2"
-            style={{ gap: 'var(--spacing-default)' }}
-          >
-            <div
-              className="flex flex-col sm:flex-row sm:items-center sm:justify-between"
-              style={{ gap: 'var(--spacing-cozy)' }}
-            >
-              <h3
-                className="heading-tertiary m-0 flex items-center"
-                style={{ gap: 'var(--spacing-compact)' }}
-              >
-                <ClipboardListIcon className="w-5 h-5 text-stratosort-blue" />
+          <section className="surface-panel flex flex-col xl:col-span-2 gap-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-cozy">
+              <h3 className="heading-tertiary m-0 flex items-center gap-compact">
+                <ClipboardList className="w-5 h-5 text-stratosort-blue" />
                 <span>What changed</span>
               </h3>
               <span className="status-chip success">
@@ -251,7 +162,7 @@ function CompletePhase() {
               style={{ maxHeight: '320px' }}
             >
               {filesToRender.length > 0 ? (
-                <div className="flex flex-col" style={{ gap: 'var(--spacing-cozy)' }}>
+                <div className="flex flex-col gap-cozy">
                   {filesToRender.map((file, index) => (
                     <FileRow
                       key={
@@ -266,19 +177,13 @@ function CompletePhase() {
                     />
                   ))}
                   {overflowCount > 0 && (
-                    <div
-                      className="text-sm text-system-gray-500 text-center"
-                      style={{ padding: 'var(--spacing-cozy)' }}
-                    >
+                    <div className="text-sm text-system-gray-500 text-center p-cozy">
                       +{overflowCount} more file{overflowCount !== 1 ? 's' : ''} organized
                     </div>
                   )}
                 </div>
               ) : (
-                <div
-                  className="text-sm text-system-gray-500 text-center"
-                  style={{ padding: 'var(--spacing-default)' }}
-                >
+                <div className="text-sm text-system-gray-500 text-center p-default">
                   No files were organized in this session.
                 </div>
               )}
@@ -286,56 +191,49 @@ function CompletePhase() {
           </section>
 
           {/* Next Steps */}
-          <div className="flex flex-col gap-[var(--spacing-default)]">
-            <section
-              className="surface-panel flex flex-col justify-between"
-              style={{ gap: 'var(--spacing-default)' }}
-            >
+          <div className="flex flex-col gap-default">
+            <section className="surface-panel flex flex-col justify-between gap-6">
               <div className="flex items-center justify-between">
-                <h3
-                  className="heading-tertiary m-0 flex items-center"
-                  style={{ gap: 'var(--spacing-compact)' }}
-                >
-                  <TargetIcon className="w-5 h-5 text-stratosort-blue" />
+                <h3 className="heading-tertiary m-0 flex items-center gap-compact">
+                  <Target className="w-5 h-5 text-stratosort-blue" />
                   <span>Next Steps</span>
                 </h3>
                 <span className="text-xs text-system-gray-500">All set</span>
               </div>
 
-              <div className="flex flex-col" style={{ gap: 'var(--spacing-default)' }}>
+              <div className="flex flex-col gap-default">
                 <div className="p-4 rounded-xl bg-system-gray-50 border border-border-soft/70">
                   <p className="text-sm text-system-gray-600 mb-2">Ready for your next session?</p>
                   <Button
                     onClick={() => actions.resetWorkflow()}
                     variant="primary"
-                    className="w-full"
-                    style={{ padding: 'var(--button-padding-lg)' }}
+                    className="w-full justify-center"
+                    size="lg"
                   >
                     Start New Session
                   </Button>
                 </div>
 
-                <div
-                  className="border-t border-border-soft/60"
-                  style={{ paddingTop: 'var(--spacing-default)' }}
-                >
+                <div className="border-t border-border-soft/60 pt-default">
                   <p className="text-xs text-system-gray-500 mb-3">Need to make adjustments?</p>
-                  <div className="flex flex-col" style={{ gap: 'var(--spacing-cozy)' }}>
+                  <div className="flex flex-col gap-cozy">
                     <Button
-                      onClick={() => actions.advancePhase(PHASES.ORGANIZE)}
+                      onClick={() => actions.advancePhase(PHASES?.ORGANIZE ?? 'organize')}
                       variant="secondary"
                       size="sm"
                       className="w-full"
                     >
-                      ← Back to Organization
+                      <ArrowLeft className="w-4 h-4 mr-2" />
+                      Back to Organization
                     </Button>
                     <Button
-                      onClick={() => actions.advancePhase(PHASES.DISCOVER)}
+                      onClick={() => actions.advancePhase(PHASES?.DISCOVER ?? 'discover')}
                       variant="ghost"
                       size="sm"
                       className="w-full"
                     >
-                      ← Back to Discovery
+                      <ArrowLeft className="w-4 h-4 mr-2" />
+                      Back to Discovery
                     </Button>
                   </div>
                 </div>
@@ -347,16 +245,6 @@ function CompletePhase() {
     </div>
   );
 }
-
-const iconPropTypes = {
-  className: PropTypes.string
-};
-
-CheckCircle2Icon.propTypes = iconPropTypes;
-ClipboardListIcon.propTypes = iconPropTypes;
-TargetIcon.propTypes = iconPropTypes;
-CheckIcon.propTypes = iconPropTypes;
-ClockIcon.propTypes = iconPropTypes;
 
 StatPill.propTypes = {
   label: PropTypes.string.isRequired,

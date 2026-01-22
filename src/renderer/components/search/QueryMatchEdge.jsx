@@ -115,12 +115,12 @@ const QueryMatchEdge = memo(
 
     // Color mapping for reason types
     const typeColors = {
-      keyword: 'text-amber-400',
-      tag: 'text-blue-400',
-      category: 'text-purple-400',
-      field: 'text-cyan-400',
-      semantic: 'text-emerald-400',
-      default: 'text-gray-300'
+      keyword: 'text-amber-600',
+      tag: 'text-blue-600',
+      category: 'text-purple-600',
+      field: 'text-cyan-600',
+      semantic: 'text-emerald-600',
+      default: 'text-slate-500'
     };
 
     return (
@@ -147,15 +147,15 @@ const QueryMatchEdge = memo(
           badgeText={`${scorePercent}%`}
           badgeColorClass={isHovered ? 'bg-indigo-500 text-white' : 'bg-indigo-100 text-indigo-700'}
           title="Why this matched"
-          headerColorClass="text-indigo-400"
+          headerColorClass="text-indigo-600"
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
         >
           {/* Match score */}
           <div className="flex items-center gap-2">
-            <span className="text-gray-400">Relevance:</span>
-            <span className="font-medium text-indigo-400">{scorePercent}%</span>
-            <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+            <span className="text-slate-500">Relevance:</span>
+            <span className="font-medium text-indigo-600">{scorePercent}%</span>
+            <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
               <div
                 className="h-full bg-indigo-500 rounded-full"
                 style={{ width: `${scorePercent}%` }}
@@ -167,15 +167,15 @@ const QueryMatchEdge = memo(
           <div className="space-y-1">
             {reasons.map((reason) => (
               <div key={`${reason.type}:${reason.text}`} className="flex items-start gap-1.5">
-                <span className="text-gray-500 mt-0.5">•</span>
-                <span className={typeColors[reason.type] || 'text-gray-300'}>{reason.text}</span>
+                <span className="text-slate-400 mt-0.5">•</span>
+                <span className={typeColors[reason.type] || 'text-slate-500'}>{reason.text}</span>
               </div>
             ))}
           </div>
 
           {/* Source indicator */}
           {sources.length > 0 && (
-            <div className="text-gray-500 text-[10px] pt-1 border-t border-gray-700">
+            <div className="text-slate-400 text-[10px] pt-1 border-t border-slate-200">
               Match sources: {sources.join(' + ')}
             </div>
           )}

@@ -156,15 +156,15 @@ const SimilarityEdge = memo(
                 : 'bg-emerald-100 text-emerald-700'
           }
           title="Relationship Analysis"
-          headerColorClass="text-emerald-400"
+          headerColorClass="text-emerald-600"
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
         >
           {/* Similarity score */}
           <div className="flex items-center gap-2">
-            <span className="text-gray-400">Similarity:</span>
-            <span className="font-medium text-emerald-400">{similarityPercent}%</span>
-            <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+            <span className="text-slate-500">Similarity:</span>
+            <span className="font-medium text-emerald-600">{similarityPercent}%</span>
+            <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
               <div
                 className="h-full bg-emerald-500 rounded-full"
                 style={{ width: `${similarityPercent}%` }}
@@ -175,8 +175,8 @@ const SimilarityEdge = memo(
           {/* Common tags */}
           {commonTags.length > 0 && (
             <div>
-              <span className="text-gray-400">Common tags: </span>
-              <span className="text-blue-400">
+              <span className="text-slate-500">Common tags: </span>
+              <span className="text-blue-600">
                 {commonTags.slice(0, 4).join(', ')}
                 {commonTags.length > 4 && ` +${commonTags.length - 4} more`}
               </span>
@@ -186,8 +186,8 @@ const SimilarityEdge = memo(
           {/* Category match */}
           {sameCategory && (
             <div>
-              <span className="text-gray-400">Category: </span>
-              <span className="text-purple-400">{sourceCategory}</span>
+              <span className="text-slate-500">Category: </span>
+              <span className="text-purple-600">{sourceCategory}</span>
             </div>
           )}
 
@@ -196,21 +196,21 @@ const SimilarityEdge = memo(
             <div className="space-y-0.5">
               {sourceSubject && (
                 <div className="text-[11px]">
-                  <span className="text-gray-500">A: </span>
-                  <span className="text-amber-400 truncate">{sourceSubject.slice(0, 40)}</span>
+                  <span className="text-slate-500">A: </span>
+                  <span className="text-amber-600 truncate">{sourceSubject.slice(0, 40)}</span>
                 </div>
               )}
               {targetSubject && (
                 <div className="text-[11px]">
-                  <span className="text-gray-500">B: </span>
-                  <span className="text-amber-400 truncate">{targetSubject.slice(0, 40)}</span>
+                  <span className="text-slate-500">B: </span>
+                  <span className="text-amber-600 truncate">{targetSubject.slice(0, 40)}</span>
                 </div>
               )}
             </div>
           )}
 
           {/* Explanation */}
-          <div className="text-gray-300 italic text-[11px] pt-1 border-t border-gray-700">
+          <div className="text-slate-500 italic text-[11px] pt-1 border-t border-slate-200">
             {explanation}
           </div>
         </BaseEdgeTooltip>

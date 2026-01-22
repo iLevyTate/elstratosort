@@ -11,6 +11,7 @@ import { useConfirmDialog } from '../hooks';
 import { Button } from '../components/ui';
 import { SmartFolderSkeleton } from '../components/LoadingSkeleton';
 import { SmartFolderItem, AddSmartFolderModal } from '../components/setup';
+import { Plus, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
 
 logger.setContext('SetupPhase');
 
@@ -72,12 +73,18 @@ function SetupPhase() {
   }, []);
 
   // Update defaultLocation when Redux store gets the path
+  // FIX: Remove defaultLocation from deps to prevent potential infinite loop
+  // Only run when documentsPathFromStore changes and we haven't loaded yet
   useEffect(() => {
-    if (documentsPathFromStore && defaultLocation === 'Documents') {
-      setDefaultLocation(normalizePathValue(documentsPathFromStore, defaultLocation));
+    if (documentsPathFromStore && !isDefaultLocationLoaded) {
+      const normalized = normalizePathValue(documentsPathFromStore, 'Documents');
+      // Only update if the normalized value is different from the literal 'Documents'
+      if (normalized !== 'Documents') {
+        setDefaultLocation(normalized);
+      }
       setIsDefaultLocationLoaded(true);
     }
-  }, [documentsPathFromStore, defaultLocation]);
+  }, [documentsPathFromStore, isDefaultLocationLoaded]);
 
   // Keep notification functions stable via ref to avoid effect churn
   useEffect(() => {
@@ -391,7 +398,7 @@ function SetupPhase() {
 
   return (
     <div className="phase-container">
-      <div className="container-responsive flex flex-col flex-1 min-h-0 p-6 md:p-8 lg:p-12 gap-6 md:gap-8 lg:gap-12">
+      <div className="container-responsive flex flex-col flex-1 min-h-0 p-default md:p-relaxed lg:p-spacious gap-6 lg:gap-8 max-w-6xl w-full mx-auto">
         {/* Header */}
         <div className="text-center flex flex-col flex-shrink-0 gap-compact">
           <h1 className="heading-primary text-xl md:text-2xl">
@@ -405,9 +412,9 @@ function SetupPhase() {
         {/* Main content */}
         <div className="flex-1 min-h-0 flex flex-col">
           {/* Toolbar */}
-          <div className="flex items-center justify-between gap-cozy mb-spacious flex-wrap">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-system-gray-600">
+          <div className="flex items-center justify-between gap-cozy mb-default">
+            <div className="flex items-center gap-compact">
+              <span className="text-sm font-medium text-system-gray-600">
                 {isLoading
                   ? 'Loading...'
                   : `${smartFolders.length} folder${smartFolders.length !== 1 ? 's' : ''}`}
@@ -420,23 +427,9 @@ function SetupPhase() {
                   aria-label={isCompactMode ? 'Expand all folders' : 'Collapse all folders'}
                 >
                   {isCompactMode ? (
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 15l7-7 7 7"
-                      />
-                    </svg>
+                    <ChevronDown className="w-4 h-4" />
                   ) : (
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
+                    <ChevronUp className="w-4 h-4" />
                   )}
                   <span className="sr-only">
                     {isCompactMode ? 'Expand all folders' : 'Collapse all folders'}
@@ -447,21 +440,9 @@ function SetupPhase() {
 
             {/* FIX: Simplified toolbar - removed Reset/Rebuild buttons (Issue 3.1-C, 3.1-D)
                 These options are available in Settings > Embeddings for advanced users */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-compact">
               <Button onClick={handleOpenAddModal} variant="primary" className="text-sm">
-                <svg
-                  className="w-4 h-4 mr-1.5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 4v16m8-8H4"
-                  />
-                </svg>
+                <Plus className="w-4 h-4 mr-1.5" />
                 Add Folder
               </Button>
             </div>
@@ -514,42 +495,18 @@ function SetupPhase() {
                   </p>
                   <div className="flex gap-3">
                     <Button onClick={handleResetToDefaults} variant="secondary">
-                      <svg
-                        className="w-4 h-4 mr-1.5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                        />
-                      </svg>
+                      <RotateCcw className="w-4 h-4 mr-1.5" />
                       Load Defaults
                     </Button>
                     <Button onClick={handleOpenAddModal} variant="primary">
-                      <svg
-                        className="w-4 h-4 mr-1.5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 4v16m8-8H4"
-                        />
-                      </svg>
+                      <Plus className="w-4 h-4 mr-1.5" />
                       Add Custom Folder
                     </Button>
                   </div>
                 </div>
               ) : (
                 <div
-                  className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8 lg:gap-12"
+                  className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"
                   data-testid="folder-list"
                 >
                   {smartFolders.map((folder, index) => (
@@ -580,9 +537,9 @@ function SetupPhase() {
         </div>
 
         {/* Footer navigation */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end flex-shrink-0 gap-default pt-spacious border-t border-border-soft/50">
+        <div className="mt-auto border-t border-system-gray-200/50 flex flex-col sm:flex-row items-center justify-between flex-shrink-0 pt-6 pb-2 gap-cozy">
           <Button
-            onClick={() => actions.advancePhase(PHASES.WELCOME)}
+            onClick={() => actions.advancePhase(PHASES?.WELCOME ?? 'welcome')}
             variant="secondary"
             className="w-full sm:w-auto text-sm"
           >
@@ -606,7 +563,7 @@ function SetupPhase() {
               } else {
                 actions.setPhaseData('smartFolders', currentFolders);
                 setSmartFolders(currentFolders);
-                actions.advancePhase(PHASES.DISCOVER);
+                actions.advancePhase(PHASES?.DISCOVER ?? 'discover');
               }
             }}
             variant="primary"

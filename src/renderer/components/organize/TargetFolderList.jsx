@@ -85,14 +85,16 @@ const TargetFolderList = memo(function TargetFolderList({
 }) {
   const shouldVirtualize = folders.length > VIRTUALIZATION_THRESHOLD;
 
-  const itemData = useMemo(
+  const rowProps = useMemo(
     () => ({
-      folders,
-      defaultLocation
+      data: {
+        folders,
+        defaultLocation
+      }
     }),
     [folders, defaultLocation]
   );
-  const safeItemData = itemData ?? {};
+  const safeRowProps = rowProps ?? {};
 
   // Calculate optimal list height based on folder count (data-aware sizing)
   const listHeight = useMemo(() => {
@@ -122,7 +124,7 @@ const TargetFolderList = memo(function TargetFolderList({
         <List
           itemCount={folders.length}
           itemSize={ITEM_HEIGHT}
-          itemData={safeItemData}
+          itemData={safeRowProps.data}
           overscanCount={4}
           style={{ height: listHeight, width: '100%' }}
           className="scrollbar-thin scrollbar-thumb-system-gray-300 scrollbar-track-transparent"
@@ -136,7 +138,7 @@ const TargetFolderList = memo(function TargetFolderList({
   // For smaller lists, render normally without virtualization overhead
   // Use auto-fit grid that adapts to content amount
   return (
-    <div className="grid grid-cols-auto-fit-md gap-4">
+    <div className="grid grid-cols-auto-fit-md gap-6">
       {folders.map((folder) => (
         <FolderItem key={folder.id} folder={folder} defaultLocation={defaultLocation} />
       ))}

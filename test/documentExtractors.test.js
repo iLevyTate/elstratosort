@@ -37,6 +37,20 @@ const {
 describe('documentExtractors', () => {
   const mockFilePath = '/test/document.pdf';
   const mockFileName = 'document.pdf';
+  const ZIP_SIGNATURE = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]);
+  const OLE_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
+  const mockFileSignature = async (signature) => {
+    const handle = {
+      read: jest.fn().mockImplementation(async (buffer, offset, length) => {
+        signature.copy(buffer, offset, 0, length);
+        return { bytesRead: length, buffer };
+      }),
+      close: jest.fn().mockResolvedValue()
+    };
+    jest.spyOn(fs, 'open').mockResolvedValue(handle);
+    return handle;
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -151,6 +165,7 @@ describe('documentExtractors', () => {
         value: 'This is DOCX content'
       });
       jest.spyOn(fs, 'stat').mockResolvedValue({ size: 1000 });
+      await mockFileSignature(ZIP_SIGNATURE);
 
       const result = await extractTextFromDocx(mockFilePath);
 
@@ -162,6 +177,7 @@ describe('documentExtractors', () => {
       const mammoth = require('mammoth');
       mammoth.extractRawText.mockResolvedValue({ value: '' });
       jest.spyOn(fs, 'stat').mockResolvedValue({ size: 1000 });
+      await mockFileSignature(ZIP_SIGNATURE);
 
       await expect(extractTextFromDocx(mockFilePath)).rejects.toThrow('No text content in DOCX');
     });
@@ -357,6 +373,17 @@ describe('documentExtractors', () => {
       const result = await extractTextFromPptx(mockFilePath);
       expect(result).toBe('Presentation content from content property');
     });
+
+    test('should handle non-string properties in object response', async () => {
+      const officeParser = require('officeparser');
+      officeParser.parseOfficeAsync.mockResolvedValue({
+        text: 12345 // Number instead of string
+      });
+      jest.spyOn(fs, 'stat').mockResolvedValue({ size: 1000 });
+
+      const result = await extractTextFromPptx(mockFilePath);
+      expect(result).toBe('12345');
+    });
   });
 
   describe('extractTextFromEpub', () => {
@@ -526,25 +553,24 @@ Body content only.`;
   });
 
   describe('extractTextFromDoc', () => {
-    test('should extract text using mammoth', async () => {
-      const mammoth = require('mammoth');
-      mammoth.extractRawText.mockResolvedValue({
-        value: 'DOC content'
-      });
+    test('should extract text using officeparser', async () => {
+      const officeParser = require('officeparser');
+      officeParser.parseOfficeAsync.mockResolvedValue('DOC content');
+      await mockFileSignature(OLE_SIGNATURE);
 
       const result = await extractTextFromDoc(mockFilePath);
 
       expect(result).toBe('DOC content');
     });
 
-    test('should fallback to reading as UTF-8 on error', async () => {
-      const mammoth = require('mammoth');
-      mammoth.extractRawText.mockRejectedValue(new Error('Parse error'));
-      jest.spyOn(fs, 'readFile').mockResolvedValue('Fallback text content');
+    test('should return empty string on parser error', async () => {
+      const officeParser = require('officeparser');
+      officeParser.parseOfficeAsync.mockRejectedValue(new Error('Parse error'));
+      await mockFileSignature(OLE_SIGNATURE);
 
       const result = await extractTextFromDoc(mockFilePath);
 
-      expect(result).toBe('Fallback text content');
+      expect(result).toBe('');
     });
   });
 

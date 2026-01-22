@@ -48,7 +48,7 @@ const ProcessedFileRow = memo(function ProcessedFileRow({ index, style, data }) 
   const organizedDate = formatDate(file.organizedAt);
 
   return (
-    <div style={style} className="px-2 py-1">
+    <div style={style} className="px-2 py-2">
       <div className="list-row flex items-center justify-between p-4 h-full">
         <div className="flex items-center gap-4">
           <StatusBadge variant="success">OK</StatusBadge>
@@ -82,13 +82,15 @@ ProcessedFileRow.propTypes = {
 function VirtualizedProcessedFiles({ files, isLoading = false }) {
   const shouldVirtualize = files.length > VIRTUALIZATION_THRESHOLD;
 
-  const itemData = useMemo(
+  const rowProps = useMemo(
     () => ({
-      files
+      data: {
+        files
+      }
     }),
     [files]
   );
-  const safeItemData = itemData ?? {};
+  const safeRowProps = rowProps ?? {};
 
   // Calculate optimal list height based on file count (data-aware sizing)
   const listHeight = useMemo(() => {
@@ -118,7 +120,7 @@ function VirtualizedProcessedFiles({ files, isLoading = false }) {
         <List
           itemCount={files.length}
           itemSize={ITEM_HEIGHT}
-          itemData={safeItemData}
+          itemData={safeRowProps.data}
           overscanCount={5}
           style={{ height: listHeight, width: '100%' }}
           className="scrollbar-thin scrollbar-thumb-system-gray-300 scrollbar-track-transparent"
@@ -132,7 +134,7 @@ function VirtualizedProcessedFiles({ files, isLoading = false }) {
   // For smaller lists, render normally without virtualization overhead
   // Add max-height constraint to prevent unbounded growth
   return (
-    <div className="space-y-3 max-h-viewport-sm overflow-y-auto modern-scrollbar">
+    <div className="space-y-4 max-h-viewport-sm overflow-y-auto modern-scrollbar">
       {files.map((file) => {
         // FIX L-1: Add null checks for optional file properties
         const originalName = file.originalName || 'Unknown';

@@ -1,12 +1,3 @@
-/**
- * OrganizePhase Component
- *
- * Review and organize analyzed files into smart folders.
- * Refactored to use decomposed hooks for better maintainability.
- *
- * @module phases/OrganizePhase
- */
-
 import React, { useMemo, useCallback, useEffect, useRef } from 'react';
 import { PHASES } from '../../shared/constants';
 import { logger } from '../../shared/logger';
@@ -15,14 +6,14 @@ import { Button, Card } from '../components/ui';
 // FIX M-3: Import ErrorBoundaryCore for virtualized component protection
 import { ErrorBoundaryCore } from '../components/ErrorBoundary';
 import {
-  FolderOpenIcon,
-  BarChart3Icon,
-  CheckCircle2Icon,
-  InboxIcon,
-  FileStackIcon,
-  SparklesIcon,
-  AlertTriangleIcon
-} from '../components/icons';
+  FolderOpen,
+  BarChart3,
+  CheckCircle2,
+  Inbox,
+  Files,
+  Sparkles,
+  AlertTriangle
+} from 'lucide-react';
 import {
   StatusOverview,
   TargetFolderList,
@@ -79,6 +70,10 @@ function OrganizePhase() {
     phaseData,
     actions
   } = useOrganizeState();
+  const safeSmartFolders = useMemo(
+    () => (Array.isArray(smartFolders) ? smartFolders : []),
+    [smartFolders]
+  );
 
   // Load initial data
   const addNotificationRef = useRef(addNotification);
@@ -100,7 +95,7 @@ function OrganizePhase() {
     normalizePath
   } = useProcessedFiles(organizedFiles);
 
-  // FIX Issue-5/6: Sync processedFileIds when organizedFiles changes (handles undo/redo)
+  // FIX: Sync processedFileIds when organizedFiles changes (handles undo/redo)
   useEffect(() => {
     if (!organizedFiles || organizedFiles.length === 0) {
       setProcessedFileIds(new Set());
@@ -117,38 +112,35 @@ function OrganizePhase() {
     }
   }, [organizedFiles, setProcessedFileIds, normalizePath]);
 
-  // Compute filtered files first so we can use them in editing callback
-  const { unprocessedFiles, processedFiles } = useMemo(
-    () => getFilteredFiles(filesWithAnalysis),
-    [getFilteredFiles, filesWithAnalysis]
-  );
+  // Compute base filtered files (without isOrganizing filtering)
+  // This is used by useOrganization hook below
+  const { unprocessedFiles: baseUnprocessedFiles, processedFiles } = useMemo(() => {
+    return getFilteredFiles(filesWithAnalysis);
+  }, [getFilteredFiles, filesWithAnalysis]);
 
-  // Callback to sync edits to Redux for global consistency (fixes "Analysis" view mismatch)
-  const handleEditChange = useCallback(
-    (index, field, value) => {
-      const file = unprocessedFiles[index];
-      if (file && file.path) {
-        // Sync category changes immediately so they reflect in other views
-        if (field === 'category') {
-          dispatch(updateAnalysisResult({ path: file.path, changes: { category: value } }));
-        }
-        // Sync name changes (could be debounced if performance becomes an issue)
-        if (field === 'suggestedName') {
-          dispatch(updateAnalysisResult({ path: file.path, changes: { suggestedName: value } }));
-        }
-      }
-    },
-    [unprocessedFiles, dispatch]
-  );
-
-  // File editing
+  // File editing (uses a ref callback to avoid circular dependency)
   const { editingFiles, setEditingFiles, handleEditFile, getFileWithEdits } = useFileEditing({
-    onEditChange: handleEditChange
+    onEditChange: useCallback(
+      (index, field, value) => {
+        const file = baseUnprocessedFiles[index];
+        if (file && file.path) {
+          // Sync category changes immediately so they reflect in other views
+          if (field === 'category') {
+            dispatch(updateAnalysisResult({ path: file.path, changes: { category: value } }));
+          }
+          // Sync name changes (could be debounced if performance becomes an issue)
+          if (field === 'suggestedName') {
+            dispatch(updateAnalysisResult({ path: file.path, changes: { suggestedName: value } }));
+          }
+        }
+      },
+      [baseUnprocessedFiles, dispatch]
+    )
   });
 
-  // File selection
+  // File selection (will be updated after we compute final unprocessedFiles)
   const { selectedFiles, setSelectedFiles, toggleFileSelection, selectAllFiles } = useFileSelection(
-    unprocessedFiles.length
+    baseUnprocessedFiles.length
   );
 
   // Bulk operations
@@ -162,18 +154,18 @@ function OrganizePhase() {
     });
 
   // Smart folder matcher
-  const findSmartFolderForCategory = useSmartFolderMatcher(smartFolders);
+  const findSmartFolderForCategory = useSmartFolderMatcher(safeSmartFolders);
 
   // Organization logic
   // FIX M-4: Destructure organizeConflicts for conflict warning UI
   const { isOrganizing, batchProgress, organizePreview, handleOrganizeFiles, organizeConflicts } =
     useOrganization({
-      unprocessedFiles,
+      unprocessedFiles: baseUnprocessedFiles,
       editingFiles,
       getFileWithEdits,
       findSmartFolderForCategory,
       defaultLocation,
-      smartFolders,
+      smartFolders: safeSmartFolders,
       analysisResults,
       markFilesAsProcessed,
       unmarkFilesAsProcessed,
@@ -184,6 +176,48 @@ function OrganizePhase() {
       setOrganizedFiles,
       setOrganizingState
     });
+
+  // FIX P1: Filter out files that are currently being organized to prevent "flicker"
+  // when files move but organizedFiles/processedFiles hasn't updated yet.
+  // This must come AFTER useOrganization since it depends on isOrganizing and organizePreview
+  const filesBeingOrganized = useMemo(() => {
+    if (!isOrganizing || !organizePreview || organizePreview.length === 0) return new Set();
+    return new Set(organizePreview.map((item) => normalizePath(item.sourcePath)));
+  }, [isOrganizing, organizePreview, normalizePath]);
+
+  // Compute final filtered unprocessedFiles for display
+  const unprocessedFiles = useMemo(() => {
+    // If organizing, filter out the files currently being processed from the "Ready" list
+    if (isOrganizing && filesBeingOrganized.size > 0) {
+      return baseUnprocessedFiles.filter((f) => !filesBeingOrganized.has(normalizePath(f.path)));
+    }
+    return baseUnprocessedFiles;
+  }, [baseUnprocessedFiles, isOrganizing, filesBeingOrganized, normalizePath]);
+
+  // FIX CRIT-7: Listen for batch results chunks from IPC
+  useEffect(() => {
+    const handleBatchResultsChunk = (event) => {
+      const { results, chunk, total } = event.detail || {};
+      if (results && Array.isArray(results)) {
+        logger.debug('[OrganizePhase] Received batch results chunk', {
+          chunk,
+          total,
+          resultCount: results.length
+        });
+        // Process the batch results - mark files as processed
+        results.forEach((result) => {
+          if (result.success && result.path) {
+            markFilesAsProcessed([{ path: result.path, originalPath: result.originalPath }]);
+          }
+        });
+      }
+    };
+
+    window.addEventListener('batch-results-chunk', handleBatchResultsChunk);
+    return () => {
+      window.removeEventListener('batch-results-chunk', handleBatchResultsChunk);
+    };
+  }, [markFilesAsProcessed]);
 
   // Load persisted data once on mount
   const hasLoadedPersistedDataRef = useRef(false);
@@ -274,32 +308,13 @@ function OrganizePhase() {
   }, [selectedFiles.size, approveSelectedFiles, handleOrganizeFiles]);
 
   return (
-    <div
-      className="organize-page phase-container bg-white"
-      style={{ paddingBottom: 'var(--spacing-spacious)' }}
-    >
-      <div
-        className="container-responsive flex flex-col flex-1 min-h-0"
-        style={{
-          gap: 'var(--spacing-default)',
-          paddingTop: 'var(--spacing-default)',
-          paddingBottom: 'var(--spacing-default)'
-        }}
-      >
+    <div className="organize-page phase-container bg-white pb-spacious">
+      <div className="container-responsive flex flex-col flex-1 min-h-0 pt-default pb-default gap-6">
         {/* Header */}
-        <div
-          className="flex flex-col sm:flex-row sm:items-center sm:justify-between flex-shrink-0"
-          style={{ gap: 'var(--spacing-cozy)' }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 'var(--spacing-compact)'
-            }}
-          >
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between flex-shrink-0 gap-cozy">
+          <div className="flex flex-col gap-compact">
             <h1 className="heading-primary flex items-center gap-3">
-              <FileStackIcon className="w-7 h-7 text-stratosort-blue" />
+              <Files className="w-7 h-7 text-stratosort-blue" />
               <span>Review & Organize</span>
             </h1>
             <p className="text-base text-system-gray-600 leading-relaxed max-w-2xl">
@@ -307,14 +322,7 @@ function OrganizePhase() {
               ready.
             </p>
             {isAnalysisRunning && (
-              <div
-                className="flex items-center border border-stratosort-blue/30 bg-stratosort-blue/5 text-sm text-stratosort-blue"
-                style={{
-                  gap: 'var(--spacing-cozy)',
-                  borderRadius: 'var(--radius-lg)',
-                  padding: 'var(--spacing-cozy) var(--spacing-default)'
-                }}
-              >
+              <div className="flex items-center border border-stratosort-blue/30 bg-stratosort-blue/5 text-sm text-stratosort-blue gap-cozy rounded-lg px-default py-cozy">
                 <span className="loading-spinner h-5 w-5 border-t-transparent" />
                 Analysis continuing in background: {analysisProgressFromDiscover.current}/
                 {analysisProgressFromDiscover.total} files
@@ -331,14 +339,14 @@ function OrganizePhase() {
           role="toolbar"
           aria-label="Organization tools"
         >
-          {smartFolders.length > 0 && (
+          {safeSmartFolders.length > 0 && (
             <button
               onClick={() => setShowFoldersModal(true)}
               className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-system-gray-700 bg-white/80 border border-border-soft rounded-xl hover:bg-white hover:border-stratosort-blue/30 hover:text-stratosort-blue transition-colors"
-              aria-label={`View ${smartFolders.length} smart folders`}
+              aria-label={`View ${safeSmartFolders.length} smart folders`}
             >
-              <FolderOpenIcon className="w-4 h-4" aria-hidden="true" />
-              <span>{smartFolders.length} Smart Folders</span>
+              <FolderOpen className="w-4 h-4" aria-hidden="true" />
+              <span>{safeSmartFolders.length} Smart Folders</span>
             </button>
           )}
           <button
@@ -346,7 +354,7 @@ function OrganizePhase() {
             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-system-gray-700 bg-white/80 border border-border-soft rounded-xl hover:bg-white hover:border-stratosort-blue/30 hover:text-stratosort-blue transition-colors"
             aria-label={`View file status: ${unprocessedFiles.length} ready, ${processedFiles.length} done, ${failedCount} failed`}
           >
-            <BarChart3Icon className="w-4 h-4" aria-hidden="true" />
+            <BarChart3 className="w-4 h-4" aria-hidden="true" />
             <span>{unprocessedFiles.length} Ready</span>
             {processedFiles.length > 0 && (
               <span className="text-stratosort-success">• {processedFiles.length} Done</span>
@@ -361,17 +369,17 @@ function OrganizePhase() {
               className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-stratosort-success bg-stratosort-success/5 border border-stratosort-success/20 rounded-xl hover:bg-stratosort-success/10 hover:border-stratosort-success/40 transition-colors"
               aria-label={`View ${processedFiles.length} organized files history`}
             >
-              <CheckCircle2Icon className="w-4 h-4" aria-hidden="true" />
+              <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
               <span>{processedFiles.length} Organized</span>
             </button>
           )}
         </div>
 
         {/* Main Content - Files Ready for Organization takes primary focus */}
-        <div className="flex-1 min-h-0 flex flex-col" style={{ gap: 'var(--spacing-default)' }}>
+        <div className="flex-1 min-h-0 flex flex-col gap-6">
           {/* Inline Bulk Operations when files selected */}
           {unprocessedFiles.length > 0 && selectedFiles.size > 0 && (
-            <div className="surface-panel p-[var(--panel-padding)] flex-shrink-0">
+            <div className="surface-panel p-default flex-shrink-0">
               <BulkOperations
                 total={unprocessedFiles.length}
                 selectedCount={selectedFiles.size}
@@ -382,14 +390,14 @@ function OrganizePhase() {
                 bulkCategory={bulkCategory}
                 setBulkCategory={setBulkCategory}
                 onApplyBulkCategory={applyBulkCategoryChange}
-                smartFolders={smartFolders}
+                smartFolders={safeSmartFolders}
               />
             </div>
           )}
 
           {/* Files Ready - Main Focus Area */}
           <div className="surface-panel flex-1 min-h-0 flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between p-[var(--panel-padding)] pb-0 flex-shrink-0">
+            <div className="flex items-center justify-between p-default pb-0 flex-shrink-0">
               <div className="flex items-center gap-3">
                 <h2 className="font-semibold text-system-gray-900">Files Ready for Organization</h2>
                 {unprocessedFiles.length > 0 && (
@@ -409,18 +417,18 @@ function OrganizePhase() {
               )}
             </div>
 
-            <div className="flex-1 min-h-0 p-[var(--panel-padding)] overflow-hidden">
+            <div className="flex-1 min-h-0 p-default overflow-hidden">
               {unprocessedFiles.length === 0 ? (
-                <div className="h-full flex items-start justify-start p-[var(--panel-padding)] overflow-y-auto modern-scrollbar">
-                  <div className="text-left flex flex-col items-start gap-[var(--spacing-default)]">
+                <div className="h-full flex items-start justify-start p-default overflow-y-auto modern-scrollbar">
+                  <div className="text-left flex flex-col items-start gap-6">
                     <div className="w-16 h-16 rounded-2xl bg-system-gray-100 flex items-center justify-center">
                       {processedFiles.length > 0 ? (
-                        <CheckCircle2Icon className="w-8 h-8 text-stratosort-success" />
+                        <CheckCircle2 className="w-8 h-8 text-stratosort-success" />
                       ) : (
-                        <InboxIcon className="w-8 h-8 text-system-gray-400" />
+                        <Inbox className="w-8 h-8 text-system-gray-400" />
                       )}
                     </div>
-                    <div className="flex flex-col items-start gap-[var(--spacing-compact)]">
+                    <div className="flex flex-col items-start gap-cozy">
                       <p className="text-system-gray-800 font-medium text-lg">
                         {processedFiles.length > 0 ? 'All files organized!' : 'No files ready yet'}
                       </p>
@@ -432,9 +440,9 @@ function OrganizePhase() {
                     </div>
                     {processedFiles.length === 0 && (
                       <Button
-                        onClick={() => actions.advancePhase(PHASES.DISCOVER)}
+                        onClick={() => actions.advancePhase(PHASES?.DISCOVER ?? 'discover')}
                         variant="primary"
-                        style={{ marginTop: 'var(--spacing-cozy)' }}
+                        className="mt-0"
                       >
                         ← Go to Discover
                       </Button>
@@ -453,7 +461,7 @@ function OrganizePhase() {
                     findSmartFolderForCategory={findSmartFolderForCategory}
                     getFileStateDisplay={getFileStateDisplay}
                     handleEditFile={handleEditFile}
-                    smartFolders={smartFolders}
+                    smartFolders={safeSmartFolders}
                     defaultLocation={defaultLocation}
                     onViewDetails={setViewingFileDetails}
                   />
@@ -464,12 +472,12 @@ function OrganizePhase() {
 
           {/* Action Area - Sticky at bottom */}
           {unprocessedFiles.length > 0 && (
-            <div className="surface-panel p-[var(--panel-padding)] flex-shrink-0">
+            <div className="surface-panel p-default flex-shrink-0">
               {/* FIX M-4: Conflict Warning Banner */}
               {organizeConflicts && organizeConflicts.length > 0 && (
                 <div className="mb-3 p-3 bg-stratosort-warning/10 border border-stratosort-warning/30 rounded-lg">
                   <div className="flex items-start gap-2">
-                    <AlertTriangleIcon className="w-5 h-5 text-stratosort-warning flex-shrink-0 mt-0.5" />
+                    <AlertTriangle className="w-5 h-5 text-stratosort-warning flex-shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-stratosort-warning">
                         Destination Conflicts Detected
@@ -523,10 +531,7 @@ function OrganizePhase() {
                   <Button
                     onClick={handleOrganizeClick}
                     variant="success"
-                    className="text-base"
-                    style={{
-                      padding: 'var(--spacing-cozy) var(--spacing-relaxed)'
-                    }}
+                    className="text-base px-relaxed py-cozy"
                     disabled={
                       (selectedFiles.size === 0 ? readyFilesCount === 0 : false) || isOrganizing
                     }
@@ -536,7 +541,7 @@ function OrganizePhase() {
                       'Organizing...'
                     ) : (
                       <>
-                        <SparklesIcon className="w-4 h-4" />
+                        <Sparkles className="w-4 h-4" />
                         <span>
                           {selectedFiles.size > 0
                             ? `Organize ${selectedFiles.size} Selected`
@@ -552,15 +557,9 @@ function OrganizePhase() {
         </div>
 
         {/* Footer Buttons */}
-        <div
-          className="flex flex-col sm:flex-row sm:items-center sm:justify-between flex-shrink-0 mt-auto border-t border-system-gray-200/50"
-          style={{
-            gap: 'var(--spacing-cozy)',
-            paddingTop: 'var(--spacing-default)'
-          }}
-        >
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between flex-shrink-0 mt-auto border-t border-system-gray-200/50 gap-cozy pt-default">
           <Button
-            onClick={() => actions.advancePhase(PHASES.DISCOVER)}
+            onClick={() => actions.advancePhase(PHASES?.DISCOVER ?? 'discover')}
             variant="secondary"
             disabled={isOrganizing}
             className="w-full sm:w-auto"
@@ -568,7 +567,7 @@ function OrganizePhase() {
             ← Back to Discovery
           </Button>
           <Button
-            onClick={() => actions.advancePhase(PHASES.COMPLETE)}
+            onClick={() => actions.advancePhase(PHASES?.COMPLETE ?? 'complete')}
             disabled={processedFiles.length === 0 || isOrganizing}
             className={`w-full sm:w-auto ${
               processedFiles.length === 0 || isOrganizing ? 'opacity-50 cursor-not-allowed' : ''
@@ -594,9 +593,9 @@ function OrganizePhase() {
         size="medium"
       >
         {viewingFileDetails && viewingFileDetails.analysis && (
-          <div className="flex flex-col gap-[var(--spacing-default)]">
+          <div className="flex flex-col gap-default">
             <Card variant="compact" className="shadow-sm">
-              <div className="space-y-[var(--spacing-compact)]">
+              <div className="space-y-compact">
                 <h4 className="text-sm font-medium text-system-gray-900">
                   {viewingFileDetails.name}
                 </h4>
@@ -606,7 +605,7 @@ function OrganizePhase() {
                 <AnalysisDetails analysis={viewingFileDetails.analysis} />
               </div>
             </Card>
-            <div className="flex justify-end" style={{ paddingTop: 'var(--spacing-default)' }}>
+            <div className="flex justify-end pt-default">
               <Button onClick={() => setViewingFileDetails(null)} variant="secondary">
                 Close
               </Button>
@@ -622,14 +621,14 @@ function OrganizePhase() {
         title="Target Smart Folders"
         size="large"
       >
-        <div className="flex flex-col gap-[var(--spacing-default)]">
+        <div className="flex flex-col gap-default">
           <p className="text-sm text-system-gray-600">
             Files will be organized into these destination folders based on their content.
           </p>
           <div className="max-h-[60vh] overflow-y-auto modern-scrollbar">
-            <TargetFolderList folders={smartFolders} defaultLocation={defaultLocation} />
+            <TargetFolderList folders={safeSmartFolders} defaultLocation={defaultLocation} />
           </div>
-          <div className="flex justify-end pt-[var(--spacing-default)] border-t border-border-soft">
+          <div className="flex justify-end pt-default border-t border-border-soft">
             <Button onClick={() => setShowFoldersModal(false)} variant="secondary">
               Close
             </Button>
@@ -643,19 +642,19 @@ function OrganizePhase() {
         onClose={() => setShowStatusModal(false)}
         title={
           <span className="flex items-center gap-2">
-            <BarChart3Icon className="w-5 h-5 text-stratosort-blue" />
+            <BarChart3 className="w-5 h-5 text-stratosort-blue" />
             File Status Overview
           </span>
         }
         size="medium"
       >
-        <div className="flex flex-col gap-[var(--spacing-default)]">
+        <div className="flex flex-col gap-default">
           <StatusOverview
             unprocessedCount={unprocessedFiles.length}
             processedCount={processedFiles.length}
             failedCount={failedCount}
           />
-          <div className="flex justify-end pt-[var(--spacing-default)] border-t border-border-soft">
+          <div className="flex justify-end pt-default border-t border-border-soft">
             <Button onClick={() => setShowStatusModal(false)} variant="secondary">
               Close
             </Button>
@@ -670,7 +669,7 @@ function OrganizePhase() {
         title="Previously Organized Files"
         size="large"
       >
-        <div className="flex flex-col gap-[var(--spacing-default)]">
+        <div className="flex flex-col gap-default">
           <p className="text-sm text-system-gray-600">
             {processedFiles.length} file
             {processedFiles.length !== 1 ? 's have' : ' has'} been successfully organized.
@@ -681,7 +680,7 @@ function OrganizePhase() {
               <VirtualizedProcessedFiles files={processedFiles} />
             </ErrorBoundaryCore>
           </div>
-          <div className="flex justify-end pt-[var(--spacing-default)] border-t border-border-soft">
+          <div className="flex justify-end pt-default border-t border-border-soft">
             <Button onClick={() => setShowHistoryModal(false)} variant="secondary">
               Close
             </Button>

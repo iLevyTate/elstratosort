@@ -76,7 +76,11 @@ const formatConfidence = (value) => {
  */
 const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }) {
   const { items, handleAction, getFileStateDisplay } = data || {};
-  const file = items && items[index];
+
+  // FIX: Strict bounds checking to prevent invalid index access
+  if (!items || index >= items.length) return null;
+
+  const file = items[index];
 
   if (!file) return null;
 
@@ -91,7 +95,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
         : 'info';
 
   return (
-    <div style={style} className="px-2 py-1.5">
+    <div style={style} className="px-2 py-2">
       <div className="list-row h-full overflow-hidden p-4 flex flex-col gap-2">
         <div className="flex items-start gap-4">
           <FileText className="w-6 h-6 text-system-gray-400 flex-shrink-0" />
@@ -185,8 +189,13 @@ AnalysisResultRow.propTypes = {
  * FIX: Implements react-window for performance with 100+ items
  */
 function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }) {
-  const isEmpty = !Array.isArray(results) || results.length === 0;
-  const items = useMemo(() => (Array.isArray(results) ? results : []), [results]);
+  const safeResults = useMemo(() => {
+    if (!Array.isArray(results)) return [];
+    return results.filter((r) => r && typeof r === 'object' && (r.path || r.name));
+  }, [results]);
+
+  const isEmpty = safeResults.length === 0;
+  const items = safeResults;
   const handleAction = useCallback((action, path) => onFileAction(action, path), [onFileAction]);
 
   // FIX: Use callback ref pattern to properly observe container when it becomes available
@@ -238,21 +247,23 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
   }, [containerNode]);
 
   // Keep a stable object so the list can memoize rows efficiently.
-  const itemData = useMemo(
+  const rowProps = useMemo(
     () => ({
-      items,
-      handleAction,
-      getFileStateDisplay
+      data: {
+        items,
+        handleAction,
+        getFileStateDisplay
+      }
     }),
     [items, handleAction, getFileStateDisplay]
   );
-  const safeItemData = itemData ?? {};
+  const safeRowProps = rowProps ?? {};
 
   // FIX: Use virtualization only for large lists to avoid overhead on small lists
   const shouldVirtualize = items.length > VIRTUALIZATION_THRESHOLD;
 
   // Simple wrapper - inline to avoid component identity issues
-  const listContainerClass = `w-full h-full modern-scrollbar overflow-y-auto flex flex-col gap-3`;
+  const listContainerClass = `w-full h-full modern-scrollbar overflow-y-auto flex flex-col gap-4`;
 
   if (isEmpty) {
     return (
@@ -278,9 +289,10 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
           Showing {items.length} files (virtualized)
         </div>
         <List
+          key={`list-${items.length}`}
           itemCount={items.length}
           itemSize={ITEM_HEIGHT}
-          itemData={safeItemData}
+          itemData={safeRowProps.data}
           overscanCount={5}
           className="scrollbar-thin scrollbar-thumb-system-gray-300 scrollbar-track-transparent"
           style={{ height: dimensions.height, width: '100%' }}

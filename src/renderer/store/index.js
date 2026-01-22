@@ -6,6 +6,7 @@ import systemReducer from './slices/systemSlice';
 import ipcMiddleware, { markStoreReady } from './middleware/ipcMiddleware';
 import persistenceMiddleware from './middleware/persistenceMiddleware';
 import { PHASES } from '../../shared/constants';
+import { logger } from '../../shared/logger';
 
 // Helper to serialize file objects loaded from localStorage
 // Converts Date objects to ISO strings for Redux compatibility
@@ -34,7 +35,12 @@ const serializeLoadedFile = (file) => {
 };
 
 const serializeLoadedFiles = (files) => {
-  if (!Array.isArray(files)) return files;
+  // FIX: Handle null/undefined and non-array inputs safely
+  if (files == null) return [];
+  if (!Array.isArray(files)) {
+    logger.warn('[Store] serializeLoadedFiles received non-array input, returning empty array');
+    return [];
+  }
   return files.map(serializeLoadedFile);
 };
 
@@ -51,7 +57,8 @@ const loadState = () => {
           // FIX: Ensure all slice properties have explicit defaults for complete state
           return {
             ui: {
-              currentPhase: parsedLegacy.currentPhase || PHASES.WELCOME,
+              // FIX: Add null check for PHASES to prevent crash during module initialization
+              currentPhase: parsedLegacy.currentPhase || (PHASES?.WELCOME ?? 'welcome'),
               previousPhase: null,
               sidebarOpen: true,
               showSettings: false,
@@ -100,14 +107,21 @@ const loadState = () => {
     // rather than resuming a potentially outdated workflow state.
     const STATE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
     if (Date.now() - parsed.timestamp > STATE_TTL_MS) {
+      // FIX: Store flag so UI can notify user their state was expired
+      // This prevents silent data loss confusion
+      window.__STRATOSORT_STATE_EXPIRED__ = true;
+      window.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__ = Math.round(
+        (Date.now() - parsed.timestamp) / (1000 * 60 * 60)
+      );
       return undefined;
     }
 
-    // FIX: Explicitly set defaults for all properties to prevent null/undefined
+    // FIX CRIT-4: Explicitly set defaults for ALL slice properties to prevent null/undefined
     // from persisted state overriding slice initial state defaults
     return {
       ui: {
-        currentPhase: parsed.ui?.currentPhase || PHASES.WELCOME,
+        // FIX: Add null check for PHASES to prevent crash during module initialization
+        currentPhase: parsed.ui?.currentPhase || (PHASES?.WELCOME ?? 'welcome'),
         previousPhase: parsed.ui?.previousPhase || null,
         sidebarOpen: parsed.ui?.sidebarOpen !== false, // default true
         showSettings: parsed.ui?.showSettings || false,
@@ -126,6 +140,7 @@ const loadState = () => {
         organizedFiles: serializeLoadedFiles(parsed.files?.organizedFiles || []),
         smartFolders: parsed.files?.smartFolders || [],
         smartFoldersLoading: false,
+        smartFoldersError: null, // FIX: Missing error state
         fileStates: parsed.files?.fileStates || {},
         namingConvention: parsed.files?.namingConvention || {
           convention: 'subject-date',
@@ -141,6 +156,19 @@ const loadState = () => {
         // Serialize dates in analysis results too
         results: serializeLoadedFiles(parsed.analysis?.results || []),
         stats: parsed.analysis?.stats || null
+      },
+      // FIX CRIT-4: Add systemSlice defaults - this was completely missing from loadState
+      system: {
+        metrics: { cpu: 0, memory: 0, uptime: 0 },
+        health: {
+          chromadb: 'unknown',
+          ollama: 'unknown'
+        },
+        notifications: [], // Don't restore notifications - they're transient
+        unreadNotificationCount: 0,
+        version: '1.0.0',
+        documentsPath: parsed.system?.documentsPath || null,
+        documentsPathLoading: false
       }
     };
   } catch (err) {
@@ -165,7 +193,8 @@ const store = configureStore({
           'analysis/analysisFailure',
           'files/setSelectedFiles',
           'files/addSelectedFiles',
-          'files/setFileStates'
+          'files/setFileStates',
+          'files/setOrganizedFiles'
         ],
         // Ignore date fields that might have Date objects from IPC responses
         ignoredActionPaths: [
@@ -192,5 +221,26 @@ const store = configureStore({
 
 // FIX Issue 3: Mark store as ready to flush any queued IPC events
 markStoreReady();
+
+// FIX HIGH-8: Notify user if their state was expired
+// This runs after store is ready so notification can be dispatched
+if (window.__STRATOSORT_STATE_EXPIRED__) {
+  // Import dynamically to avoid circular dependency
+  const { addNotification } = require('./slices/systemSlice');
+  const ageHours = window.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__ || 24;
+  // Delay notification to ensure UI is ready to display it
+  setTimeout(() => {
+    store.dispatch(
+      addNotification({
+        message: `Your previous session data expired after ${ageHours} hours of inactivity. Starting fresh.`,
+        severity: 'info',
+        duration: 8000
+      })
+    );
+    // Clean up flags
+    delete window.__STRATOSORT_STATE_EXPIRED__;
+    delete window.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__;
+  }, 1000);
+}
 
 export default store;

@@ -52,7 +52,16 @@ function BatchOrganizationSuggestions({
   }, [onAcceptStrategy, selectedStrategy, suggestedStrategy]);
 
   if (!batchSuggestions || !batchSuggestions.groups) {
-    return null;
+    return (
+      <Card className="p-6 text-center">
+        <div className="flex flex-col items-center gap-3">
+          <Info className="w-8 h-8 text-muted-foreground" />
+          <p className="text-muted-foreground">
+            No batch suggestions available. Select multiple files to see organization options.
+          </p>
+        </div>
+      </Card>
+    );
   }
 
   const { groups, patterns, recommendations } = batchSuggestions;
@@ -76,7 +85,7 @@ function BatchOrganizationSuggestions({
   };
 
   return (
-    <div className="flex flex-col gap-[var(--spacing-default)]">
+    <div className="flex flex-col gap-6">
       <Card className="p-4 border-system-gray-200 bg-system-gray-50">
         <h3 className="font-medium text-system-gray-900 mb-2">Batch Feedback Note</h3>
         <textarea
@@ -144,7 +153,7 @@ function BatchOrganizationSuggestions({
       {recommendations && recommendations.length > 0 && (
         <Card className="p-4 border-green-200 bg-green-50">
           <h3 className="font-medium text-system-gray-900 mb-3">Recommendations</h3>
-          <div className="flex flex-col gap-[var(--spacing-cozy)]">
+          <div className="flex flex-col gap-6">
             {/* FIX: Use stable identifier instead of array index as key */}
             {recommendations.map((rec) => (
               <div key={rec.id || rec.description || rec.type} className="flex items-start gap-3">
@@ -229,7 +238,7 @@ function BatchOrganizationSuggestions({
         <h3 className="font-medium text-system-gray-900 mb-3">
           Suggested File Groups ({groups.length})
         </h3>
-        <div className="flex flex-col gap-[var(--spacing-cozy)] max-h-viewport-md overflow-y-auto modern-scrollbar">
+        <div className="flex flex-col gap-6 max-h-viewport-md overflow-y-auto modern-scrollbar">
           {/* FIX: Use stable identifier instead of array index as key */}
           {groups.map((group, groupIndex) => (
             <Card
@@ -239,6 +248,10 @@ function BatchOrganizationSuggestions({
               <div
                 className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
                 onClick={() => toggleGroup(groupIndex)}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleGroup(groupIndex)}
+                role="button"
+                tabIndex={0}
+                aria-expanded={expandedGroups.has(groupIndex)}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -254,7 +267,11 @@ function BatchOrganizationSuggestions({
                         {group.files.length !== 1 ? 's' : ''}
                         {group.confidence && (
                           <span className="ml-2">
-                            • {Math.round(group.confidence * 100)}% confidence
+                            {/* FIX: Handle confidence values that may already be 0-100 scale */}•{' '}
+                            {Math.round(
+                              group.confidence <= 1 ? group.confidence * 100 : group.confidence
+                            )}
+                            % confidence
                           </span>
                         )}
                       </div>

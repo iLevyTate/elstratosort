@@ -1,5 +1,6 @@
 import { PHASES } from '../../../shared/constants';
 import { logger } from '../../../shared/logger';
+import { addNotification } from '../slices/systemSlice';
 
 const SAVE_DEBOUNCE_MS = 1000;
 // FIX #24: Add max wait time to prevent infinite debounce delay
@@ -18,9 +19,10 @@ let isSaving = false;
 
 /**
  * FIX #1: Graceful quota handling - try progressively smaller saves
+ * FIX CRIT-5: Returns degradation info for user notification
  * @param {string} key - localStorage key
  * @param {Object} stateToSave - Full state object
- * @returns {boolean} - Whether save succeeded
+ * @returns {{ success: boolean, degraded?: string }} - Result with optional degradation level
  */
 function saveWithQuotaHandling(key, stateToSave) {
   const estimateSize = (value) => {
@@ -59,11 +61,11 @@ function saveWithQuotaHandling(key, stateToSave) {
   // Try full save first
   try {
     localStorage.setItem(key, JSON.stringify(candidate));
-    return true;
+    return { success: true };
   } catch (error) {
     if (error.name !== 'QuotaExceededError') {
       logger.error('Failed to save state (non-quota error):', { error: error.message });
-      return false;
+      return { success: false };
     }
   }
 
@@ -89,7 +91,8 @@ function saveWithQuotaHandling(key, stateToSave) {
     };
     localStorage.setItem(key, JSON.stringify(reducedState));
     logger.info('Saved reduced state (50 items per array)');
-    return true;
+    // FIX CRIT-5: Return degradation level for user notification
+    return { success: true, degraded: 'reduced' };
   } catch {
     // Continue to next attempt
   }
@@ -116,7 +119,8 @@ function saveWithQuotaHandling(key, stateToSave) {
     };
     localStorage.setItem(key, JSON.stringify(minimalState));
     logger.warn('Saved minimal state (UI + settings only) due to quota limits');
-    return true;
+    // FIX CRIT-5: Return degradation level for user notification
+    return { success: true, degraded: 'minimal' };
   } catch {
     // Continue to next attempt
   }
@@ -126,31 +130,46 @@ function saveWithQuotaHandling(key, stateToSave) {
     localStorage.removeItem(key);
     localStorage.removeItem('stratosort_workflow_state'); // Also clear old workflow state
     const emergencyState = {
-      ui: { currentPhase: stateToSave.ui?.currentPhase || PHASES.WELCOME },
+      // FIX: Add null check for PHASES to prevent crash during module initialization
+      ui: { currentPhase: stateToSave.ui?.currentPhase || (PHASES?.WELCOME ?? 'welcome') },
       timestamp: Date.now(),
       _emergency: true
     };
     localStorage.setItem(key, JSON.stringify(emergencyState));
     logger.error('Emergency save: cleared old data, saved only current phase');
-    return true;
+    // FIX CRIT-5: Return degradation level for user notification
+    return { success: true, degraded: 'emergency' };
   } catch (finalError) {
     logger.error('All save attempts failed:', { error: finalError.message });
-    return false;
+    return { success: false, degraded: 'failed' };
   }
 }
 
 /**
- * Generate a simple hash of fileStates to detect changes efficiently
+ * FIX MEDIUM-3: Generate a simple hash of fileStates to detect changes efficiently
+ * Uses a numeric hash for performance instead of concatenating strings
  * @param {Object} fileStates - Map of file paths to state objects
  * @returns {string} A hash string representing the current state
  */
 function computeFileStatesHash(fileStates) {
   if (!fileStates || typeof fileStates !== 'object') return '';
-  const entries = Object.entries(fileStates);
-  if (entries.length === 0) return '';
-  // Hash based on keys and state values (not full metadata to save computation)
-  const stateValues = entries.map(([key, val]) => `${key}:${val?.state || 'unknown'}`).join('|');
-  return stateValues;
+  const keys = Object.keys(fileStates);
+  if (keys.length === 0) return '';
+
+  // FIX MEDIUM-3: Use numeric hashing instead of string concatenation
+  // This is O(n) instead of O(n²) for string building
+  let hash = 0;
+  for (const key of keys) {
+    const state = fileStates[key]?.state || 'unknown';
+    // Simple string hash using charCodeAt
+    for (let i = 0; i < key.length; i++) {
+      hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
+    }
+    for (let i = 0; i < state.length; i++) {
+      hash = ((hash << 5) - hash + state.charCodeAt(i)) | 0;
+    }
+  }
+  return hash.toString(36);
 }
 
 const persistenceMiddleware = (store) => (next) => (action) => {
@@ -163,7 +182,11 @@ const persistenceMiddleware = (store) => (next) => (action) => {
   }
 
   // Only save if not in welcome phase and not loading
-  if (state.ui.currentPhase !== PHASES.WELCOME && action.type.indexOf('setLoading') === -1) {
+  // FIX: Add null check for PHASES to prevent crash during module initialization
+  if (
+    state.ui.currentPhase !== (PHASES?.WELCOME ?? 'welcome') &&
+    action.type.indexOf('setLoading') === -1
+  ) {
     // Performance: Skip save if key state hasn't changed
     const { currentPhase } = state.ui;
     const currentFilesCount = state.files.selectedFiles.length;
@@ -265,11 +288,31 @@ const persistenceMiddleware = (store) => (next) => (action) => {
         }
 
         // FIX #1: Use graceful quota handling instead of silent data loss
-        const saveSuccess = saveWithQuotaHandling('stratosort_redux_state', stateToSave);
+        const saveResult = saveWithQuotaHandling('stratosort_redux_state', stateToSave);
+
+        // FIX CRIT-5: Notify user if data was degraded due to storage limits
+        if (saveResult.degraded) {
+          const messages = {
+            reduced:
+              'Storage space limited - some file history may not be preserved between sessions.',
+            minimal:
+              'Storage space very limited - only settings and current phase will be preserved.',
+            emergency: 'Storage space critically low - cleared old data to continue.',
+            failed: 'Unable to save any data - changes will be lost when you close the app.'
+          };
+          const severity = saveResult.degraded === 'failed' ? 'error' : 'warning';
+          store.dispatch(
+            addNotification({
+              message: messages[saveResult.degraded],
+              severity,
+              duration: saveResult.degraded === 'failed' ? 0 : 8000 // 0 = persistent
+            })
+          );
+        }
 
         // FIX CRIT-18: Only update tracking variables if save succeeded
         // This prevents state staleness where we think we saved but actually failed
-        if (saveSuccess) {
+        if (saveResult.success) {
           lastSavedPhase = currentPhase;
           lastSavedFilesCount = currentFilesCount;
           lastSavedResultsCount = currentResultsCount;

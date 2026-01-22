@@ -62,21 +62,26 @@ const SpinnerIcon = memo(function SpinnerIcon({ className = '' }) {
 SpinnerIcon.propTypes = { className: PropTypes.string };
 
 // Phase to icon mapping
-const PHASE_ICONS = {
-  [PHASES.WELCOME]: HomeIcon,
-  [PHASES.SETUP]: CogIcon,
-  [PHASES.DISCOVER]: SearchIcon,
-  [PHASES.ORGANIZE]: FolderIcon,
-  [PHASES.COMPLETE]: CheckCircleIcon
-};
+// FIX: Add null checks to prevent crash if PHASES is undefined during module initialization
+const PHASE_ICONS = PHASES
+  ? {
+      [PHASES.WELCOME]: HomeIcon,
+      [PHASES.SETUP]: CogIcon,
+      [PHASES.DISCOVER]: SearchIcon,
+      [PHASES.ORGANIZE]: FolderIcon,
+      [PHASES.COMPLETE]: CheckCircleIcon
+    }
+  : {
+      welcome: HomeIcon,
+      setup: CogIcon,
+      discover: SearchIcon,
+      organize: FolderIcon,
+      complete: CheckCircleIcon
+    };
 
-const PHASE_ORDER = [
-  PHASES.WELCOME,
-  PHASES.SETUP,
-  PHASES.DISCOVER,
-  PHASES.ORGANIZE,
-  PHASES.COMPLETE
-];
+const PHASE_ORDER = PHASES
+  ? [PHASES.WELCOME, PHASES.SETUP, PHASES.DISCOVER, PHASES.ORGANIZE, PHASES.COMPLETE]
+  : ['welcome', 'setup', 'discover', 'organize', 'complete'];
 
 // =============================================================================
 // Sub-Components

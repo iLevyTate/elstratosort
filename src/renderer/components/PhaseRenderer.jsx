@@ -45,33 +45,34 @@ function PhaseRenderer() {
   }, [currentPhase]);
 
   // Fixed: Wrap each phase with PhaseErrorBoundary for isolated error handling
+  // FIX: Add null checks for PHASES to prevent crash if undefined
   const renderCurrentPhase = () => {
     switch (currentPhase) {
-      case PHASES.WELCOME:
+      case PHASES?.WELCOME ?? 'welcome':
         return (
           <PhaseErrorBoundary phaseName="Welcome">
             <WelcomePhase />
           </PhaseErrorBoundary>
         );
-      case PHASES.SETUP:
+      case PHASES?.SETUP ?? 'setup':
         return (
           <PhaseErrorBoundary phaseName="Setup">
             <SetupPhase />
           </PhaseErrorBoundary>
         );
-      case PHASES.DISCOVER:
+      case PHASES?.DISCOVER ?? 'discover':
         return (
           <PhaseErrorBoundary phaseName="Discover">
             <DiscoverPhase />
           </PhaseErrorBoundary>
         );
-      case PHASES.ORGANIZE:
+      case PHASES?.ORGANIZE ?? 'organize':
         return (
           <PhaseErrorBoundary phaseName="Organize">
             <OrganizePhase />
           </PhaseErrorBoundary>
         );
-      case PHASES.COMPLETE:
+      case PHASES?.COMPLETE ?? 'complete':
         return (
           <PhaseErrorBoundary phaseName="Complete">
             <CompletePhase />
