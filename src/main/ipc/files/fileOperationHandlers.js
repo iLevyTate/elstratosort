@@ -130,17 +130,39 @@ async function updateDatabasePath(source, destination, log, chromaDbServiceOverr
       const safeDest = destValidation.normalizedPath;
       // Use normalizePathForIndex for Windows case-insensitivity consistency
       // This ensures ChromaDB IDs match SearchService BM25 index keys
-      const normalizedSource = normalizePathForIndex(safeSource);
       const normalizedDest = normalizePathForIndex(safeDest);
       const newMeta = {
         path: safeDest,
         name: path.basename(safeDest)
       };
-      // Update both file: and image: prefixes to handle all file types
-      await chromaDbService.updateFilePaths([
-        { oldId: `file:${normalizedSource}`, newId: `file:${normalizedDest}`, newMeta },
-        { oldId: `image:${normalizedSource}`, newId: `image:${normalizedDest}`, newMeta }
-      ]);
+
+      const buildIdVariants = (filePath) => {
+        const normalized = normalizePathForIndex(filePath);
+        const normalizedCase = path.normalize(filePath).replace(/\\/g, '/');
+        const platformNormalized = path.normalize(filePath);
+        const variants = new Set([normalized, normalizedCase, platformNormalized, filePath]);
+        return Array.from(variants).filter(Boolean);
+      };
+
+      const sourceVariants = buildIdVariants(safeSource);
+      const pathUpdates = [];
+      sourceVariants.forEach((variant) => {
+        const fileOldId = `file:${variant}`;
+        const imageOldId = `image:${variant}`;
+        const fileNewId = `file:${normalizedDest}`;
+        const imageNewId = `image:${normalizedDest}`;
+
+        if (fileOldId !== fileNewId) {
+          pathUpdates.push({ oldId: fileOldId, newId: fileNewId, newMeta });
+        }
+        if (imageOldId !== imageNewId) {
+          pathUpdates.push({ oldId: imageOldId, newId: imageNewId, newMeta });
+        }
+      });
+
+      if (pathUpdates.length > 0) {
+        await chromaDbService.updateFilePaths(pathUpdates);
+      }
 
       // Keep pending embedding queue IDs in sync with moves/renames too.
       // Otherwise a queued embedding may flush later under a stale oldId.
@@ -477,6 +499,16 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
                   name: path.basename(copyValidation.destination)
                 }
               );
+              if (typeof chromaDbService.cloneFileChunks === 'function') {
+                await chromaDbService.cloneFileChunks(
+                  `file:${normalizedSource}`,
+                  `file:${normalizedDest}`,
+                  {
+                    path: copyValidation.destination,
+                    name: path.basename(copyValidation.destination)
+                  }
+                );
+              }
             }
           } catch (chromaErr) {
             log.warn('[FILE-OPS] Failed to clone ChromaDB embedding for copy', {

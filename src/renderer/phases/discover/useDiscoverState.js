@@ -28,17 +28,6 @@ import { serializeData } from '../../utils/serialization';
 
 logger.setContext('DiscoverPhase:State');
 
-const serializeMetadata = (metadata) => {
-  if (!metadata || typeof metadata !== 'object') return metadata;
-  const serialized = { ...metadata };
-  ['created', 'modified', 'accessed', 'birthtime', 'mtime', 'atime', 'ctime'].forEach((key) => {
-    if (serialized[key] instanceof Date) {
-      serialized[key] = serialized[key].toISOString();
-    }
-  });
-  return serialized;
-};
-
 /**
  * Custom hook for discover phase Redux state management
  * @returns {Object} State values, setters, and actions

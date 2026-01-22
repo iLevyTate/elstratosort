@@ -195,8 +195,8 @@ describe('chromaService', () => {
       expect(axiosWithRetry).toHaveBeenCalledWith(
         expect.any(Function),
         expect.objectContaining({
-          maxRetries: 2,
-          initialDelay: 500
+          maxRetries: 3,
+          initialDelay: 1000
         })
       );
     });
