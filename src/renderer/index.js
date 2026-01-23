@@ -4,7 +4,7 @@ import { Provider } from 'react-redux';
 import { logger } from '../shared/logger';
 import store from './store';
 import { fetchDocumentsPath } from './store/slices/systemSlice';
-import { fetchSmartFolders } from './store/slices/filesSlice';
+import { fetchSmartFolders, setOrganizedFiles } from './store/slices/filesSlice';
 import { fetchSettings } from './store/slices/uiSlice';
 import App from './App.js';
 import { applyPlatformClass } from './utils/platform';
@@ -17,6 +17,66 @@ store.dispatch(fetchDocumentsPath());
 // This overrides potentially stale data from localStorage
 store.dispatch(fetchSmartFolders(true));
 store.dispatch(fetchSettings(true));
+
+const HISTORY_REPAIR_KEY = 'stratosort_history_repair_done';
+
+async function repairOrganizedHistory() {
+  try {
+    if (localStorage.getItem(HISTORY_REPAIR_KEY)) return;
+    const state = store.getState();
+    if (state.files.organizedFiles.length > 0) return;
+    const history = await window.electronAPI?.analysisHistory?.get?.({ all: true });
+    if (!Array.isArray(history) || history.length === 0) return;
+
+    const normalize = (p) => (p || '').replace(/\\+/g, '/').toLowerCase();
+    const getFolderFromPath = (filePath) => {
+      if (!filePath) return '';
+      const normalized = filePath.replace(/\\+/g, '/');
+      const parts = normalized.split('/').filter(Boolean);
+      if (parts.length < 2) return '';
+      return parts[parts.length - 2];
+    };
+
+    const latestByPath = new Map();
+    history.forEach((entry) => {
+      const actualPath = entry?.organization?.actual;
+      const originalPath = entry?.originalPath || entry?.filePath;
+      if (!actualPath || !originalPath) return;
+
+      const organizedAt = entry.timestamp || new Date().toISOString();
+      const key = normalize(originalPath);
+      const existing = latestByPath.get(key);
+      if (existing && existing.organizedAt >= organizedAt) return;
+
+      const newName = entry?.organization?.newName || actualPath.split(/[\\/]/).pop() || '';
+      const originalName =
+        originalPath.split(/[\\/]/).pop() || entry.fileName || newName || 'Unknown';
+      const smartFolder =
+        entry?.organization?.smartFolder || getFolderFromPath(actualPath) || 'Organized';
+
+      latestByPath.set(key, {
+        originalPath,
+        path: actualPath,
+        originalName,
+        newName,
+        smartFolder,
+        organizedAt
+      });
+    });
+
+    if (latestByPath.size > 0) {
+      store.dispatch(setOrganizedFiles(Array.from(latestByPath.values())));
+      logger.info('[Renderer] Rebuilt organized files history from analysis history', {
+        count: latestByPath.size
+      });
+    }
+    localStorage.setItem(HISTORY_REPAIR_KEY, 'true');
+  } catch (error) {
+    logger.warn('[Renderer] Failed to rebuild organized files history', { error: error?.message });
+  }
+}
+
+repairOrganizedHistory();
 
 // Add platform class to body for OS-specific styling hooks
 applyPlatformClass();

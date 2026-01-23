@@ -113,7 +113,57 @@ const loadState = () => {
       window.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__ = Math.round(
         (Date.now() - parsed.timestamp) / (1000 * 60 * 60)
       );
-      return undefined;
+
+      // Preserve durable data (smart folders + organization history) while resetting session state.
+      return {
+        ui: {
+          currentPhase: PHASES?.WELCOME ?? 'welcome',
+          previousPhase: null,
+          sidebarOpen: true,
+          showSettings: false,
+          isLoading: false,
+          loadingMessage: '',
+          activeModal: null,
+          settings: null,
+          settingsLoading: false,
+          isOrganizing: false,
+          isAnalyzing: false,
+          navigationError: null
+        },
+        files: {
+          selectedFiles: [],
+          organizedFiles: serializeLoadedFiles(parsed.files?.organizedFiles || []),
+          smartFolders: parsed.files?.smartFolders || [],
+          smartFoldersLoading: false,
+          smartFoldersError: null,
+          fileStates: {},
+          namingConvention: parsed.files?.namingConvention || {
+            convention: 'subject-date',
+            dateFormat: 'YYYY-MM-DD',
+            caseConvention: 'kebab-case',
+            separator: '-'
+          }
+        },
+        analysis: {
+          isAnalyzing: false,
+          analysisProgress: { current: 0, total: 0, lastActivity: 0 },
+          currentAnalysisFile: '',
+          results: [],
+          stats: null
+        },
+        system: {
+          metrics: { cpu: 0, memory: 0, uptime: 0 },
+          health: {
+            chromadb: 'unknown',
+            ollama: 'unknown'
+          },
+          notifications: [],
+          unreadNotificationCount: 0,
+          version: '1.0.0',
+          documentsPath: parsed.system?.documentsPath || null,
+          documentsPathLoading: false
+        }
+      };
     }
 
     // FIX CRIT-4: Explicitly set defaults for ALL slice properties to prevent null/undefined

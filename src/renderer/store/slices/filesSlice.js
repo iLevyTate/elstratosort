@@ -105,6 +105,19 @@ const filesSlice = createSlice({
     setOrganizedFiles: (state, action) => {
       state.organizedFiles = serializeData(action.payload);
     },
+    addOrganizedFiles: (state, action) => {
+      const newFiles = serializeData(action.payload);
+      state.organizedFiles = [...state.organizedFiles, ...newFiles];
+    },
+    removeOrganizedFiles: (state, action) => {
+      if (!Array.isArray(action.payload)) return;
+      const normalize = (p) => (p || '').replace(/[\\/]+/g, '/').toLowerCase();
+      const pathsToRemove = new Set(action.payload.map(normalize));
+
+      state.organizedFiles = state.organizedFiles.filter(
+        (file) => !pathsToRemove.has(normalize(file.originalPath))
+      );
+    },
     setNamingConvention: (state, action) => {
       state.namingConvention = { ...state.namingConvention, ...action.payload };
     },
@@ -224,7 +237,9 @@ export const {
   setNamingConvention,
   clearFiles,
   resetFilesState,
-  updateFilePathsAfterMove
+  updateFilePathsAfterMove,
+  addOrganizedFiles,
+  removeOrganizedFiles
 } = filesSlice.actions;
 
 // FIX: Re-export atomic actions from dedicated module to avoid circular dependency
