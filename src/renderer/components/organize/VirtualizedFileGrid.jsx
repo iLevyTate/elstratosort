@@ -309,6 +309,20 @@ function VirtualizedFileGrid({
     ]
   );
   const safeRowProps = rowProps ?? {};
+  const listItemData = safeRowProps.data || {
+    files: [],
+    columnsPerRow,
+    selectedFiles: safeSelectedFiles,
+    toggleFileSelection,
+    getFileWithEdits,
+    editingFiles: safeEditingFiles,
+    findSmartFolderForCategory,
+    getFileStateDisplay,
+    handleEditFile,
+    smartFolders: safeSmartFolders,
+    defaultLocation: safeDefaultLocation,
+    onViewDetails
+  };
 
   // Calculate optimal list height based on file count (data-aware sizing)
   const listHeight = useMemo(() => {
@@ -374,7 +388,7 @@ function VirtualizedFileGrid({
           key={`list-${rowHeight}-${columnsPerRow}-${safeFiles.length}`}
           itemCount={rowCount}
           itemSize={rowHeight}
-          itemData={safeRowProps.data}
+          itemData={listItemData}
           overscanCount={2}
           className="scrollbar-thin scrollbar-thumb-system-gray-300 scrollbar-track-transparent"
           style={{ height: listHeight, width: dimensions.width }}

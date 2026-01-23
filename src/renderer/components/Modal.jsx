@@ -152,7 +152,7 @@ function Modal({
 
   const modalContent = (
     <div
-      className="fixed inset-0 z-modal flex items-center justify-center p-4 modal-overlay"
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 modal-overlay"
       onClick={handleOverlayClick}
     >
       {/* Unified backdrop: solid overlay (blur disabled to avoid native dropdown flicker) */}
@@ -166,7 +166,7 @@ function Modal({
         ref={modalRef}
         className={`
           relative surface-panel !p-0 w-full ${getSizeClasses()}
-          max-h-[90vh] flex flex-col animate-modal-enter gpu-accelerate ${className}
+          max-h-[86vh] flex flex-col animate-modal-enter gpu-accelerate shadow-2xl ${className}
         `}
         role="dialog"
         aria-modal="true"

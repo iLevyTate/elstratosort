@@ -109,7 +109,17 @@ const AnalysisDetails = React.memo(function AnalysisDetails({ analysis, options 
 
       {hasKeywords && (
         <div className="text-sm text-system-gray-500">
-          <strong>Keywords:</strong> {keywordList.join(', ')}
+          <strong className="block mb-1.5">Keywords:</strong>
+          <div className="flex flex-wrap gap-1.5">
+            {keywordList.map((keyword, i) => (
+              <span
+                key={i}
+                className="px-2 py-1 bg-system-gray-100 text-system-gray-700 rounded-md text-xs font-medium border border-system-gray-200"
+              >
+                {keyword}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
