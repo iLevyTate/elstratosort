@@ -9,6 +9,7 @@ require('@testing-library/jest-dom');
 const { vol, fs: memfs } = require('memfs');
 const path = require('path');
 const { EventEmitter } = require('events');
+const { clearTimeout: nodeClearTimeout, clearInterval: nodeClearInterval } = require('timers');
 
 // Avoid noisy MaxListeners warnings in Jest runs
 EventEmitter.defaultMaxListeners = 50;
@@ -286,6 +287,22 @@ beforeEach(() => {
   });
 
   mockOllamaService.isConnected.mockReturnValue(true);
+});
+
+afterEach(() => {
+  const registry = global.__testTimerRegistry;
+  if (!registry) return;
+  const timeouts = Array.from(registry.timeouts);
+  const intervals = Array.from(registry.intervals);
+  const clearTimeoutSafe =
+    typeof global.clearTimeout === 'function' ? global.clearTimeout : nodeClearTimeout;
+  const clearIntervalSafe =
+    typeof global.clearInterval === 'function' ? global.clearInterval : nodeClearInterval;
+  timeouts.forEach((timer) => clearTimeoutSafe(timer));
+  intervals.forEach((timer) => clearIntervalSafe(timer));
+  registry.timeouts.clear();
+  registry.intervals.clear();
+  jest.useRealTimers();
 });
 
 // Test environment validation

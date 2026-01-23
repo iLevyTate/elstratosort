@@ -181,6 +181,8 @@ describe('useOrganization', () => {
         results: [{ success: true, source: '/test.txt', destination: '/Documents/test.txt' }]
       }),
       setOrganizedFiles: jest.fn(),
+      addOrganizedFiles: jest.fn(),
+      removeOrganizedFiles: jest.fn(),
       setOrganizingState: jest.fn(),
       ...overrides
     });
@@ -428,7 +430,7 @@ describe('useOrganization', () => {
           await result.current.handleOrganizeFiles();
         });
 
-        expect(options.setOrganizedFiles).toHaveBeenCalled();
+        expect(options.addOrganizedFiles).toHaveBeenCalled();
         expect(options.markFilesAsProcessed).toHaveBeenCalled();
       });
 
@@ -451,6 +453,7 @@ describe('useOrganization', () => {
           await result.current.handleOrganizeFiles();
         });
 
+        expect(options.removeOrganizedFiles).toHaveBeenCalled();
         expect(options.unmarkFilesAsProcessed).toHaveBeenCalled();
       });
 
@@ -509,7 +512,7 @@ describe('useOrganization', () => {
         // or effectively filtered out.
         // Wait, if no unique results, setOrganizedFiles is skipped?
         // Code: if (uniqueResults.length > 0) { ... }
-        expect(options.setOrganizedFiles).not.toHaveBeenCalled();
+        expect(options.addOrganizedFiles).not.toHaveBeenCalled();
       });
     });
   });

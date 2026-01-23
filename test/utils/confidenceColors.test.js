@@ -83,7 +83,7 @@ describe('confidenceColors', () => {
 
     it('should return correct classes for low confidence', () => {
       const result = getConfidenceColor('low');
-      expect(result).toBe('bg-gray-100 text-gray-600 border-gray-200');
+      expect(result).toBe('bg-system-gray-100 text-system-gray-600 border-system-gray-200');
     });
 
     it('should default to low for invalid input', () => {

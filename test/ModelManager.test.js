@@ -268,11 +268,18 @@ describe('ModelManager', () => {
       expect(modelManager.selectedModel).toBe('llama3.2');
     });
 
-    test('finds new model if current is unavailable', async () => {
+    test('finds best model when no model is configured', async () => {
       const mockModels = [{ name: 'mistral', size: 7000000000 }];
       modelManager.availableModels = mockModels;
-      modelManager.selectedModel = 'llama3.2'; // Model no longer available
+      modelManager.selectedModel = null; // No model configured
       modelManager.analyzeModelCapabilities(mockModels[0]);
+
+      // Mock loadConfig to return no configured model
+      mockSettingsService.load.mockResolvedValue({
+        textModel: null,
+        visionModel: null,
+        embeddingModel: null
+      });
 
       mockOllamaClient.generate.mockResolvedValue({ response: 'test' });
 
@@ -297,18 +304,22 @@ describe('ModelManager', () => {
       );
     });
 
-    test('tests current model before keeping it', async () => {
+    test('trusts configured model without testing it', async () => {
+      // The new behavior trusts user-configured models without testing
+      // This avoids timeout loops - actual errors are handled at analysis time
       const mockModels = [{ name: 'llama3.2', size: 4000000000 }];
       modelManager.availableModels = mockModels;
       modelManager.selectedModel = 'llama3.2';
       modelManager.analyzeModelCapabilities(mockModels[0]);
 
-      // Simulate model test failure
+      // Even if generate would fail, ensureWorkingModel should return the configured model
       mockOllamaClient.generate.mockRejectedValue(new Error('Model error'));
 
-      await expect(modelManager.ensureWorkingModel()).rejects.toThrow(
-        'No working Ollama models found'
-      );
+      const result = await modelManager.ensureWorkingModel();
+
+      // Configured model is trusted and returned without testing
+      expect(result).toBe('llama3.2');
+      expect(modelManager.selectedModel).toBe('llama3.2');
     });
   });
 
