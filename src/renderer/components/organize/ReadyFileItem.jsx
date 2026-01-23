@@ -22,7 +22,6 @@ function ReadyFileItem({
   const suggestedName = editing?.suggestedName ?? analysis?.suggestedName;
   const category = categoryProp ?? editing?.category ?? analysis?.category;
   const hasCategoryOption = smartFolders?.some((folder) => folder.name === category);
-  const keywords = analysis?.keywords || [];
   const confidenceValue =
     typeof analysis?.confidence === 'number' &&
     Number.isFinite(analysis.confidence) &&
@@ -138,25 +137,7 @@ function ReadyFileItem({
                 </div>
               </div>
 
-              {keywords.length > 0 && (
-                <div className="mb-3 w-full">
-                  <div className="flex flex-wrap gap-1">
-                    {keywords.slice(0, 5).map((tag, i) => (
-                      <span
-                        key={i}
-                        className="px-1.5 py-0.5 bg-system-gray-100 text-system-gray-600 rounded text-[10px] font-medium border border-system-gray-200 whitespace-nowrap"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                    {keywords.length > 5 && (
-                      <span className="px-1.5 py-0.5 text-system-gray-500 text-[10px]">
-                        +{keywords.length - 5}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
+              {/* Keywords removed from main card view - available in details modal */}
 
               <div className="mt-3 pt-3 border-t border-border-soft/70">
                 <button

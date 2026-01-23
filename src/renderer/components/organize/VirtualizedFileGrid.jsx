@@ -12,14 +12,18 @@ const MEASUREMENT_PADDING = UI_VIRTUALIZATION.MEASUREMENT_PADDING;
 const ROW_HEIGHT_TOLERANCE = 12; // avoid reflows for small delta (component-specific)
 const VIRTUALIZATION_THRESHOLD = UI_VIRTUALIZATION.THRESHOLD;
 
+// Use dynamic column calculation that matches CSS grid-adaptive-lg behavior
+// minmax(min(100%, 320px), 1fr) behavior in JS
+const MIN_COLUMN_WIDTH = 320;
+
 /**
  * Calculate how many columns to render based on container width
  * Used only for virtualized mode - non-virtualized uses CSS auto-fit
  */
 const getColumnCount = (containerWidth) => {
-  if (containerWidth >= 1280) return 3; // xl breakpoint
-  if (containerWidth >= 1024) return 2; // lg breakpoint
-  return 1; // default
+  // Ensure at least one column, floor division gives us the number of full columns that fit
+  const cols = Math.floor(containerWidth / MIN_COLUMN_WIDTH);
+  return Math.max(1, cols);
 };
 
 /**

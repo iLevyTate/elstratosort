@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { logger } from '../../../shared/logger';
 import { useNotification } from '../../contexts/NotificationContext';
-import { Card, Button } from '../ui';
+import { Card, Button, IconButton } from '../ui';
 import OrganizationSuggestions from './OrganizationSuggestions';
 import FeedbackMemoryPanel from './FeedbackMemoryPanel';
 import BatchOrganizationSuggestions from './BatchOrganizationSuggestions';
@@ -368,7 +368,7 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
               <div className="mb-4 flex justify-center">
                 <Target className="w-16 h-16 text-stratosort-blue" />
               </div>
-              <h3 className="text-xl font-medium mb-2">Ready to Organize!</h3>
+              <h3 className="heading-secondary mb-2">Ready to Organize!</h3>
               <p className="text-system-gray-600 mb-6">
                 {mode === 'quick'
                   ? "We'll automatically organize files with high confidence matches"
@@ -604,13 +604,14 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
           <Card className="w-full max-w-md p-6 m-4">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-system-gray-900">Customize Group</h3>
-              <button
+              <h3 className="heading-secondary">Customize Group</h3>
+              <IconButton
                 onClick={handleCancelGroupCustomization}
-                className="p-1 hover:bg-system-gray-100 rounded-full transition-colors"
-              >
-                <X className="w-5 h-5 text-system-gray-500" />
-              </button>
+                variant="ghost"
+                size="sm"
+                aria-label="Close customization"
+                icon={<X className="w-5 h-5" />}
+              />
             </div>
 
             <div className="space-y-4">
