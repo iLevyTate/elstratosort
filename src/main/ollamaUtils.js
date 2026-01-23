@@ -2,6 +2,8 @@ const { Ollama } = require('ollama');
 const { logger } = require('../shared/logger');
 const { SERVICE_URLS } = require('../shared/configDefaults');
 const { normalizeServiceUrl } = require('../shared/urlUtils');
+// Import deduplicator to clear zombie promises when HTTP agent is destroyed
+const { globalDeduplicator } = require('./utils/llmOptimization');
 // Lazy load SettingsService to avoid circular dependency if any (though typically fine)
 let settingsService = null;
 function getSettings() {
@@ -41,6 +43,19 @@ function destroyCurrentAgent() {
     try {
       currentHttpAgent.destroy();
       logger.debug('[OLLAMA] Previous HTTP agent destroyed');
+
+      // FIX: Clear LLM deduplicator cache when HTTP agent is destroyed
+      // In-flight requests using the old agent become "zombies" that will never complete.
+      // Without clearing, future retries return these dead promises instead of making new requests.
+      if (globalDeduplicator) {
+        const stats = globalDeduplicator.getStats();
+        if (stats.pendingCount > 0) {
+          logger.warn('[OLLAMA] Clearing deduplicator cache due to agent destruction', {
+            pendingRequests: stats.pendingCount
+          });
+          globalDeduplicator.clear();
+        }
+      }
     } catch (e) {
       logger.debug('[OLLAMA] Could not destroy previous HTTP agent:', e.message);
     }
@@ -166,6 +181,14 @@ async function setOllamaHost(host, shouldSave = true, options = {}) {
     }
 
     const normalizedHost = normalizeOllamaUrl(host);
+
+    // FIX: Early return if host hasn't changed - prevents killing in-flight requests
+    // When settings are saved, setOllamaHost may be called with the same host value.
+    // Without this guard, destroyCurrentAgent() would terminate any ongoing LLM requests.
+    if (normalizedHost === ollamaHost && ollamaInstance) {
+      logger.debug('[OLLAMA] Host unchanged, skipping client recreation');
+      return { success: true, host: ollamaHost };
+    }
 
     // FIX: Validate connection BEFORE committing change (unless skipValidation)
     if (!skipValidation) {
