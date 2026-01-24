@@ -56,6 +56,13 @@ describe('AtomicFileOperations (memfs)', () => {
     ops = new AtomicFileOperations();
   });
 
+  afterEach(() => {
+    // Clean up to prevent timer leaks
+    if (ops && typeof ops.shutdown === 'function') {
+      ops.shutdown();
+    }
+  });
+
   test('initializeBackupDirectory creates and reuses directory', async () => {
     const dir1 = await ops.initializeBackupDirectory();
     const dir2 = await ops.initializeBackupDirectory();

@@ -23,6 +23,8 @@ describe('AtomicFileOperations', () => {
   let crossDeviceMove;
   let organizeFilesAtomically;
   let testDir;
+  // Track created instances for cleanup
+  const createdInstances = [];
 
   beforeEach(async () => {
     // Create temp directory for tests
@@ -33,13 +35,28 @@ describe('AtomicFileOperations', () => {
     jest.resetModules();
 
     const module = require('../src/shared/atomicFileOperations');
-    AtomicFileOperations = module.AtomicFileOperations;
+    // Wrap AtomicFileOperations to track instances
+    const OriginalClass = module.AtomicFileOperations;
+    AtomicFileOperations = function (...args) {
+      const instance = new OriginalClass(...args);
+      createdInstances.push(instance);
+      return instance;
+    };
+    AtomicFileOperations.prototype = OriginalClass.prototype;
     atomicFileOps = module.atomicFileOps;
     crossDeviceMove = module.crossDeviceMove;
     organizeFilesAtomically = module.organizeFilesAtomically;
   });
 
   afterEach(async () => {
+    // Clean up all created AtomicFileOperations instances
+    for (const instance of createdInstances) {
+      if (instance && typeof instance.shutdown === 'function') {
+        instance.shutdown();
+      }
+    }
+    createdInstances.length = 0;
+
     // Cleanup test directory
     try {
       await fs.rm(testDir, { recursive: true, force: true });
