@@ -43,6 +43,7 @@ jest.mock('electron', () => ({
 // Mock ollamaDetection
 jest.mock('../../../src/main/utils/ollamaDetection', () => ({
   isOllamaRunning: jest.fn().mockResolvedValue(true),
+  isOllamaRunningWithRetry: jest.fn().mockResolvedValue(true),
   isOllamaInstalled: jest.fn().mockResolvedValue(true),
   getOllamaVersion: jest.fn().mockResolvedValue('0.1.30'),
   getInstalledModels: jest.fn().mockResolvedValue(['llama3.2:latest'])
@@ -125,6 +126,7 @@ jest.mock('../../../src/main/analysis/embeddingQueue', () => ({
 // Mock ollamaUtils
 jest.mock('../../../src/main/ollamaUtils', () => ({
   getOllamaModel: jest.fn(() => 'llama3.2:latest'),
+  getOllamaHost: jest.fn(() => 'http://127.0.0.1:11434'),
   loadOllamaConfig: jest.fn().mockResolvedValue({
     selectedTextModel: 'llama3.2:latest',
     selectedModel: 'llama3.2:latest'
@@ -174,7 +176,7 @@ const {
 // Import mocked modules for assertions
 const FolderMatchingService = require('../../../src/main/services/FolderMatchingService');
 const embeddingQueue = require('../../../src/main/analysis/embeddingQueue');
-const { isOllamaRunning } = require('../../../src/main/utils/ollamaDetection');
+const { isOllamaRunningWithRetry } = require('../../../src/main/utils/ollamaDetection');
 
 // Get mock instances
 const mockFolderMatcher = FolderMatchingService._mockInstance;
@@ -215,7 +217,7 @@ describe('Document Files Full Pipeline - REAL FILE Integration Tests', () => {
     // Re-load fixtures into memfs (vol.reset() in global beforeEach clears it)
     loadAllFixtures(DOCUMENT_FIXTURES);
 
-    isOllamaRunning.mockResolvedValue(true);
+    isOllamaRunningWithRetry.mockResolvedValue(true);
   });
 
   describe('Pipeline Infrastructure', () => {
@@ -446,7 +448,7 @@ describe('Document Files Full Pipeline - REAL FILE Integration Tests', () => {
 
   describe('Ollama Offline Fallback', () => {
     beforeEach(() => {
-      isOllamaRunning.mockResolvedValue(false);
+      isOllamaRunningWithRetry.mockResolvedValue(false);
     });
 
     test('returns fallback when Ollama offline for TXT', async () => {

@@ -31,7 +31,8 @@ describe('defaultSettings', () => {
     });
 
     test('has maxConcurrentAnalysis', () => {
-      expect(DEFAULT_SETTINGS.maxConcurrentAnalysis).toBe(3);
+      // Default is 1 for sequential processing - better UX and prevents VRAM exhaustion
+      expect(DEFAULT_SETTINGS.maxConcurrentAnalysis).toBe(1);
     });
 
     test('has autoOrganize disabled by default', () => {

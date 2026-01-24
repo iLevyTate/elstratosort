@@ -60,6 +60,7 @@ jest.mock('exif-reader', () => jest.fn(() => null));
 // Mock ollamaDetection
 jest.mock('../../../src/main/utils/ollamaDetection', () => ({
   isOllamaRunning: jest.fn().mockResolvedValue(true),
+  isOllamaRunningWithRetry: jest.fn().mockResolvedValue(true),
   isOllamaInstalled: jest.fn().mockResolvedValue(true),
   getOllamaVersion: jest.fn().mockResolvedValue('0.1.30'),
   getInstalledModels: jest.fn().mockResolvedValue(['llava:latest'])
@@ -82,6 +83,7 @@ const mockGenerate = jest.fn().mockResolvedValue({
 
 jest.mock('../../../src/main/ollamaUtils', () => ({
   getOllamaVisionModel: jest.fn(() => 'llava:latest'),
+  getOllamaHost: jest.fn(() => 'http://127.0.0.1:11434'),
   loadOllamaConfig: jest.fn().mockResolvedValue({
     selectedVisionModel: 'llava:latest'
   }),
@@ -212,7 +214,7 @@ const sharp = require('sharp');
 // Import mocked modules for assertions
 const FolderMatchingService = require('../../../src/main/services/FolderMatchingService');
 const embeddingQueue = require('../../../src/main/analysis/embeddingQueue');
-const { isOllamaRunning } = require('../../../src/main/utils/ollamaDetection');
+const { isOllamaRunningWithRetry } = require('../../../src/main/utils/ollamaDetection');
 
 // Get mock instances
 const mockFolderMatcher = FolderMatchingService._mockInstance;
@@ -251,7 +253,7 @@ describe('Image Files Full Pipeline - REAL FILE Integration Tests', () => {
     loadAllFixtures(IMAGE_FIXTURES);
 
     // Reset mocks
-    isOllamaRunning.mockResolvedValue(true);
+    isOllamaRunningWithRetry.mockResolvedValue(true);
   });
 
   describe('Pipeline Infrastructure', () => {
@@ -416,7 +418,7 @@ describe('Image Files Full Pipeline - REAL FILE Integration Tests', () => {
 
   describe('Ollama Offline Fallback', () => {
     beforeEach(() => {
-      isOllamaRunning.mockResolvedValue(false);
+      isOllamaRunningWithRetry.mockResolvedValue(false);
     });
 
     test('returns fallback when Ollama offline for PNG', async () => {

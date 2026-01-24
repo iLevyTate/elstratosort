@@ -7,6 +7,7 @@ describe('per-file analysis cache (image)', () => {
     // Mock ollamaDetection to ensure analysis proceeds
     jest.mock('../src/main/utils/ollamaDetection', () => ({
       isOllamaRunning: jest.fn().mockResolvedValue(true),
+      isOllamaRunningWithRetry: jest.fn().mockResolvedValue(true),
       isOllamaInstalled: jest.fn().mockResolvedValue(true)
     }));
   });

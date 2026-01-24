@@ -8,6 +8,7 @@ const { analyzeDocumentFile } = require('../src/main/analysis/ollamaDocumentAnal
 // Mock ollamaDetection to simulate online state
 jest.mock('../src/main/utils/ollamaDetection', () => ({
   isOllamaRunning: jest.fn().mockResolvedValue(true),
+  isOllamaRunningWithRetry: jest.fn().mockResolvedValue(true),
   isOllamaInstalled: jest.fn().mockResolvedValue(true)
 }));
 
