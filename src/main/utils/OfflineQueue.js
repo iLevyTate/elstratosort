@@ -754,6 +754,8 @@ class OfflineQueue extends EventEmitter {
             reject(new Error(`Mutex acquisition timeout after ${timeoutMs}ms - possible deadlock`));
           }
         }, timeoutMs);
+        // Allow process to exit if this timer is the only thing keeping it alive
+        // Critical for Jest test cleanup - the timeout still fires during Promise.race
         if (timeoutId.unref) {
           timeoutId.unref();
         }

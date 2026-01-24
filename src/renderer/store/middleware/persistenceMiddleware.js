@@ -191,7 +191,8 @@ const persistenceMiddleware = (store) => (next) => (action) => {
   const currentOrganizedFilesCount = state.files.organizedFiles.length;
   const currentSmartFoldersCount = state.files.smartFolders.length;
   const hasDurableData = currentOrganizedFilesCount > 0 || currentSmartFoldersCount > 0;
-  const hasDurableChange =
+  // Track if durable data changed (for potential future optimizations)
+  const _hasDurableChange =
     hasDurableData &&
     (currentOrganizedFilesCount !== lastSavedOrganizedFilesCount ||
       currentSmartFoldersCount !== lastSavedSmartFoldersCount);
