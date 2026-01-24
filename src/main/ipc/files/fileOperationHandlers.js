@@ -32,6 +32,10 @@ const {
   traceDbUpdate,
   PathChangeReason
 } = require('../../../shared/pathTraceLogger');
+const {
+  getInstance: getLearningFeedbackService,
+  FEEDBACK_SOURCES
+} = require('../../services/organization/learningFeedback');
 
 // Alias for backward compatibility
 const operationSchema = schemas?.fileOperation || null;
@@ -396,6 +400,25 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
           } catch (invalidateErr) {
             log.warn('[FILE-OPS] Failed to invalidate clustering cache', {
               error: invalidateErr.message
+            });
+          }
+
+          // Record learning feedback if file was moved to a smart folder
+          // This teaches the system from user's manual organization decisions
+          try {
+            const learningService = getLearningFeedbackService();
+            if (learningService) {
+              await learningService.recordFileMove(
+                moveValidation.source,
+                moveValidation.destination,
+                null, // No analysis available for manual moves
+                FEEDBACK_SOURCES.MANUAL_MOVE
+              );
+            }
+          } catch (learnErr) {
+            // Non-fatal - learning failure shouldn't block the move operation
+            log.debug('[FILE-OPS] Learning feedback recording failed', {
+              error: learnErr.message
             });
           }
 

@@ -455,6 +455,18 @@ class ServiceIntegration {
       });
     }
 
+    // Register learning feedback service (records implicit organization patterns)
+    // This service learns from file placements in smart folders
+    if (!container.has(ServiceIds.LEARNING_FEEDBACK)) {
+      container.registerSingleton(ServiceIds.LEARNING_FEEDBACK, (c) => {
+        const { LearningFeedbackService } = require('./organization/learningFeedback');
+        return new LearningFeedbackService({
+          suggestionService: c.resolve(ServiceIds.ORGANIZATION_SUGGESTION),
+          getSmartFolders: () => [] // Will be updated during app init
+        });
+      });
+    }
+
     // Register AI/Embedding services - using registerWithContainer pattern
     if (!container.has(ServiceIds.OLLAMA_CLIENT)) {
       const { registerWithContainer: registerOllamaClient } = require('./OllamaClient');
@@ -773,6 +785,65 @@ class ServiceIntegration {
         '[ServiceIntegration] Error auto-starting SmartFolderWatcher:',
         error?.message || String(error)
       );
+    }
+  }
+
+  /**
+   * Configure the LearningFeedbackService with required dependencies
+   * This must be called after the main process has set up smart folders
+   *
+   * @param {Object} config - Configuration object
+   * @param {Function} config.getSmartFolders - Function to get current smart folders
+   */
+  configureLearningFeedback({ getSmartFolders }) {
+    try {
+      const learningService = container.resolve(ServiceIds.LEARNING_FEEDBACK);
+
+      if (learningService) {
+        learningService.getSmartFolders = getSmartFolders;
+        logger.info('[ServiceIntegration] LearningFeedbackService configured');
+      }
+    } catch (error) {
+      logger.warn(
+        '[ServiceIntegration] Failed to configure LearningFeedbackService:',
+        error?.message || String(error)
+      );
+    }
+  }
+
+  /**
+   * Run a learning scan on existing smart folder contents
+   * This teaches the system from how files are already organized
+   *
+   * @param {Object} options - Scan options
+   * @param {number} options.maxFilesPerFolder - Max files to scan per folder
+   * @param {boolean} options.onlyWithAnalysis - Only learn from analyzed files
+   * @returns {Promise<{scanned: number, learned: number}>}
+   */
+  async runLearningStartupScan(options = {}) {
+    try {
+      const learningService = container.resolve(ServiceIds.LEARNING_FEEDBACK);
+      const analysisHistory = container.resolve(ServiceIds.ANALYSIS_HISTORY);
+
+      if (!learningService) {
+        logger.warn('[ServiceIntegration] LearningFeedbackService not available for startup scan');
+        return { scanned: 0, learned: 0 };
+      }
+
+      logger.info('[ServiceIntegration] Running learning startup scan...');
+      const result = await learningService.learnFromExistingFiles(analysisHistory, {
+        maxFilesPerFolder: options.maxFilesPerFolder || 50,
+        onlyWithAnalysis: options.onlyWithAnalysis !== false
+      });
+
+      logger.info('[ServiceIntegration] Learning startup scan complete', result);
+      return result;
+    } catch (error) {
+      logger.warn(
+        '[ServiceIntegration] Error during learning startup scan:',
+        error?.message || String(error)
+      );
+      return { scanned: 0, learned: 0 };
     }
   }
 }
