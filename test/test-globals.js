@@ -9,16 +9,48 @@ if (typeof setImmediate === 'undefined') {
   global.clearImmediate = (id) => clearTimeout(id);
 }
 
-// Patch setTimeout to add unref() method (needed by DownloadWatcher)
-// jsdom timers don't have unref() which is a Node.js-specific method
+// Track and normalize timers so we can clean them up between tests.
+// jsdom timers don't have unref() which is a Node.js-specific method.
 const originalSetTimeout = global.setTimeout;
+const originalClearTimeout = global.clearTimeout;
+const originalSetInterval = global.setInterval;
+const originalClearInterval = global.clearInterval;
+
+const timerRegistry = {
+  timeouts: new Set(),
+  intervals: new Set()
+};
+
+global.__testTimerRegistry = timerRegistry;
+
 global.setTimeout = (...args) => {
   const timer = originalSetTimeout(...args);
+  timerRegistry.timeouts.add(timer);
   if (timer && typeof timer === 'object' && !timer.unref) {
     timer.unref = () => timer;
     timer.ref = () => timer;
   }
   return timer;
+};
+
+global.clearTimeout = (timer) => {
+  timerRegistry.timeouts.delete(timer);
+  return originalClearTimeout(timer);
+};
+
+global.setInterval = (...args) => {
+  const timer = originalSetInterval(...args);
+  timerRegistry.intervals.add(timer);
+  if (timer && typeof timer === 'object' && !timer.unref) {
+    timer.unref = () => timer;
+    timer.ref = () => timer;
+  }
+  return timer;
+};
+
+global.clearInterval = (timer) => {
+  timerRegistry.intervals.delete(timer);
+  return originalClearInterval(timer);
 };
 
 // Mock DOM globals that packages like officeparser expect
@@ -30,6 +62,12 @@ global.window = global.window || {
     userAgent: 'Test'
   }
 };
+
+// Ensure window timers are tracked by the global timer registry
+global.window.setTimeout = global.setTimeout;
+global.window.clearTimeout = global.clearTimeout;
+global.window.setInterval = global.setInterval;
+global.window.clearInterval = global.clearInterval;
 
 global.document = global.document || {
   querySelector: jest.fn(),

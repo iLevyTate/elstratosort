@@ -5,8 +5,24 @@
  * Covers async data fetching with state management and memory leak prevention
  */
 
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act, cleanup } from '@testing-library/react';
 import { useAsyncData } from '../src/renderer/hooks/useAsyncData';
+
+// Helper to flush promises and microtasks
+const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
+
+// Ensure real timers and proper cleanup between tests
+beforeEach(() => {
+  jest.useRealTimers();
+});
+
+afterEach(async () => {
+  cleanup();
+  // Flush any pending promises
+  await act(async () => {
+    await flushPromises();
+  });
+});
 
 describe('useAsyncData', () => {
   describe('initial state', () => {
@@ -53,11 +69,13 @@ describe('useAsyncData', () => {
       const fetcher = jest.fn().mockResolvedValue('fetched data');
       const { result } = renderHook(() => useAsyncData(fetcher));
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
+      // Wait for effect and promise to resolve
+      await act(async () => {
+        await flushPromises();
       });
 
       expect(fetcher).toHaveBeenCalled();
+      expect(result.current.loading).toBe(false);
       expect(result.current.data).toBe('fetched data');
     });
 
@@ -67,7 +85,7 @@ describe('useAsyncData', () => {
 
       // Wait a tick to ensure no async execution
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await flushPromises();
       });
 
       expect(fetcher).not.toHaveBeenCalled();
@@ -79,19 +97,24 @@ describe('useAsyncData', () => {
 
       const { result, rerender } = renderHook(() => useAsyncData(fetcher, [dep]));
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
+      // Wait for initial execution
+      await act(async () => {
+        await flushPromises();
       });
 
+      expect(result.current.loading).toBe(false);
       expect(fetcher).toHaveBeenCalledTimes(1);
 
-      // Change dependency
+      // Change dependency and rerender
       dep = 'changed';
       rerender();
 
-      await waitFor(() => {
-        expect(fetcher).toHaveBeenCalledTimes(2);
+      // Wait for re-execution
+      await act(async () => {
+        await flushPromises();
       });
+
+      expect(fetcher).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -148,10 +171,11 @@ describe('useAsyncData', () => {
       const fetcher = jest.fn().mockResolvedValue({ id: 1, name: 'test' });
       const { result } = renderHook(() => useAsyncData(fetcher));
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
+      await act(async () => {
+        await flushPromises();
       });
 
+      expect(result.current.loading).toBe(false);
       expect(result.current.data).toEqual({ id: 1, name: 'test' });
       expect(result.current.error).toBeNull();
     });
@@ -162,10 +186,11 @@ describe('useAsyncData', () => {
 
       const { result } = renderHook(() => useAsyncData(fetcher, [], { onSuccess }));
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
+      await act(async () => {
+        await flushPromises();
       });
 
+      expect(result.current.loading).toBe(false);
       expect(onSuccess).toHaveBeenCalledWith('success data');
     });
 
@@ -175,9 +200,11 @@ describe('useAsyncData', () => {
 
       expect(result.current.loading).toBe(true);
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
+      await act(async () => {
+        await flushPromises();
       });
+
+      expect(result.current.loading).toBe(false);
     });
   });
 
@@ -188,10 +215,11 @@ describe('useAsyncData', () => {
 
       const { result } = renderHook(() => useAsyncData(fetcher));
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
+      await act(async () => {
+        await flushPromises();
       });
 
+      expect(result.current.loading).toBe(false);
       expect(result.current.error).toBe(error);
       expect(result.current.data).toBeNull();
     });
@@ -203,10 +231,11 @@ describe('useAsyncData', () => {
 
       const { result } = renderHook(() => useAsyncData(fetcher, [], { onError }));
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
+      await act(async () => {
+        await flushPromises();
       });
 
+      expect(result.current.loading).toBe(false);
       expect(onError).toHaveBeenCalledWith(error);
     });
 

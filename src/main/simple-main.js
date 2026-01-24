@@ -800,6 +800,23 @@ app.whenReady().then(async () => {
         analyzeDocumentFile,
         analyzeImageFile
       });
+
+      // Configure LearningFeedback to learn from file organization
+      serviceIntegration.configureLearningFeedback({
+        getSmartFolders: getCustomFolders
+      });
+
+      // Optional: Run startup learning scan to learn from existing organization
+      // This teaches the system from files already in smart folders
+      // Run in background to not block startup
+      serviceIntegration
+        .runLearningStartupScan({
+          maxFilesPerFolder: 50,
+          onlyWithAnalysis: true
+        })
+        .catch((err) => {
+          logger.debug('[MAIN] Learning startup scan failed (non-critical):', err?.message);
+        });
     }
 
     // Create application menu with theme

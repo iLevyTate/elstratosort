@@ -281,20 +281,20 @@ const SmartFolderItem = memo(function SmartFolderItem({
           {/* Status badge */}
           <div className="flex items-center rounded-full border px-2.5 py-1 bg-stratosort-success/10 border-stratosort-success/20 shrink-0 gap-compact">
             <div className="w-2 h-2 rounded-full bg-stratosort-success" />
-            <span className="text-xs font-medium text-stratosort-success">Active</span>
+            <span className="text-xs font-medium text-stratosort-success ml-1">Active</span>
           </div>
         </div>
 
         {/* Description */}
         {folder.description && (
           <div className="text-sm text-system-gray-600 bg-stratosort-blue/5 rounded-xl border border-stratosort-blue/10 p-cozy">
-            <div className="flex items-center gap-compact mb-compact">
+            <div className="flex items-center gap-compact mb-2">
               <Sparkles className="w-4 h-4 text-stratosort-blue" />
               <span className="text-xs font-semibold text-stratosort-blue uppercase tracking-wide">
                 AI Context
               </span>
             </div>
-            <p className="text-system-gray-600">{folder.description}</p>
+            <p className="text-system-gray-600 leading-relaxed">{folder.description}</p>
           </div>
         )}
 

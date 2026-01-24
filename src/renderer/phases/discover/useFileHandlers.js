@@ -8,7 +8,6 @@
  */
 
 import { useCallback, useState } from 'react';
-import { RENDERER_LIMITS } from '../../../shared/constants';
 import { TIMEOUTS } from '../../../shared/performanceConstants';
 import { logger } from '../../../shared/logger';
 import { extractExtension, extractFileName } from './namingUtils';
@@ -85,6 +84,7 @@ const SUPPORTED_EXTENSIONS = [
 ];
 
 const SCAN_TIMEOUT = TIMEOUTS.DIRECTORY_SCAN || 30000;
+const FILE_STATS_BATCH_SIZE = 25;
 
 const normalizePathValue = (value) => {
   if (typeof value !== 'string') return '';
@@ -135,12 +135,27 @@ export function useFileHandlers({
   analyzeFiles
 }) {
   const [isScanning, setIsScanning] = useState(false);
+  const buildBaseFileEntry = (file) => {
+    const filePath = typeof file === 'string' ? file : file.path;
+    const fileName = file?.name || extractFileName(filePath || '');
+    return {
+      name: fileName,
+      path: filePath,
+      extension: extractExtension(fileName),
+      size: 0,
+      isDirectory: false,
+      type: 'file',
+      created: file?.created,
+      modified: file?.modified,
+      source: file?.source
+    };
+  };
 
   /**
    * Get batch file stats for multiple files
    */
   const getBatchFileStats = useCallback(
-    async (filePaths, batchSize = RENDERER_LIMITS.FILE_STATS_BATCH_SIZE) => {
+    async (filePaths, batchSize = FILE_STATS_BATCH_SIZE) => {
       if (!ensureFileApi(addNotification, 'getBatchFileStats')) {
         return [];
       }
@@ -149,17 +164,26 @@ export function useFileHandlers({
       const isLargeBatch = totalFiles > 500;
       const effectiveBatchSize = isLargeBatch
         ? Math.min(batchSize, 10)
-        : Math.min(batchSize, RENDERER_LIMITS.FILE_STATS_BATCH_SIZE);
+        : Math.min(batchSize, FILE_STATS_BATCH_SIZE);
       const maxConcurrency = isLargeBatch ? 2 : Math.max(1, Math.min(5, effectiveBatchSize));
 
       const getStatsWithRetry = async (filePath) => {
+        const fetchStats = () => window.electronAPI.files.getStats(filePath);
+        const withTimeout = (promise) =>
+          Promise.race([
+            promise,
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('File metadata timeout')), TIMEOUTS.FILE_READ)
+            )
+          ]);
+
         try {
-          const stats = await window.electronAPI.files.getStats(filePath);
+          const stats = await withTimeout(fetchStats());
           return stats;
         } catch (error) {
           if (String(error?.message || '').includes('Rate limit exceeded')) {
             await new Promise((resolve) => setTimeout(resolve, TIMEOUTS.DELAY_SHORT));
-            return window.electronAPI.files.getStats(filePath);
+            return withTimeout(fetchStats());
           }
           throw error;
         }
@@ -269,6 +293,47 @@ export function useFileHandlers({
       return results;
     },
     [addNotification]
+  );
+
+  const enrichSelectedFiles = useCallback(
+    async (filePaths, source) => {
+      try {
+        const fileObjects = await getBatchFileStats(filePaths);
+        const enhancedFiles = fileObjects.map((file) => ({
+          ...file,
+          source
+        }));
+
+        setSelectedFiles((prev) => {
+          const existing = Array.isArray(prev) ? prev : [];
+          const merged = [...existing];
+          enhancedFiles.forEach((file) => {
+            const idx = merged.findIndex((f) => f.path === file.path);
+            if (idx >= 0) {
+              merged[idx] = { ...merged[idx], ...file };
+            } else {
+              merged.push(file);
+            }
+          });
+          return merged;
+        });
+
+        const failedFiles = fileObjects.filter((f) => !f.success);
+        if (failedFiles.length > 0) {
+          addNotification(
+            `Warning: ${failedFiles.length} files had issues loading metadata`,
+            'warning',
+            3000,
+            'file-issues'
+          );
+        }
+      } catch (error) {
+        logger.warn('[DiscoverPhase] Failed to enrich file stats', {
+          error: error?.message
+        });
+      }
+    },
+    [addNotification, getBatchFileStats, setSelectedFiles]
   );
 
   /**
@@ -418,34 +483,21 @@ export function useFileHandlers({
           updateFileState(filePath, 'pending');
         });
 
-        // Extract paths for getBatchFileStats which expects string array
-        const filePaths = newFiles.map((f) => (typeof f === 'string' ? f : f.path));
-        const fileObjects = await getBatchFileStats(filePaths);
-        const enhancedFiles = fileObjects.map((file) => ({
-          ...file,
+        const baseFiles = newFiles.map((file) => ({
+          ...buildBaseFileEntry(file),
           source: 'file_selection'
         }));
 
         // Merge with existing files
-        const allFiles = [...selectedFiles, ...enhancedFiles];
+        const allFiles = [...selectedFiles, ...baseFiles];
         const uniqueFiles = allFiles.filter(
           (file, index, self) => index === self.findIndex((f) => f.path === file.path)
         );
 
         setSelectedFiles(uniqueFiles);
 
-        const failedFiles = fileObjects.filter((f) => !f.success);
-        if (failedFiles.length > 0) {
-          addNotification(
-            `Warning: ${failedFiles.length} files had issues loading metadata`,
-            'warning',
-            3000,
-            'file-issues'
-          );
-        }
-
         addNotification(
-          `Added ${enhancedFiles.length} new file${enhancedFiles.length !== 1 ? 's' : ''} for analysis`,
+          `Added ${baseFiles.length} new file${baseFiles.length !== 1 ? 's' : ''} for analysis`,
           'success',
           2500,
           'files-added'
@@ -453,8 +505,15 @@ export function useFileHandlers({
 
         // Analyze the new files
         if (analyzeFiles) {
-          await analyzeFiles(enhancedFiles);
+          logger.info(`Requesting analysis for ${baseFiles.length} files`);
+          await analyzeFiles(baseFiles);
+        } else {
+          logger.warn('analyzeFiles function not available');
         }
+
+        // Enrich stats in the background to avoid blocking analysis start
+        const filePaths = newFiles.map((f) => (typeof f === 'string' ? f : f.path));
+        enrichSelectedFiles(filePaths, 'file_selection');
       } else {
         addNotification('No files selected', 'info', 2000, 'file-selection');
       }
@@ -473,9 +532,9 @@ export function useFileHandlers({
     setSelectedFiles,
     updateFileState,
     addNotification,
-    getBatchFileStats,
     filterNewFiles,
-    analyzeFiles
+    analyzeFiles,
+    enrichSelectedFiles
   ]);
 
   /**
@@ -534,14 +593,13 @@ export function useFileHandlers({
           // Update file states
           newFiles.forEach((file) => updateFileState(file.path, 'pending'));
 
-          const fileObjects = await getBatchFileStats(newFiles.map((f) => f.path));
-          const enhancedFiles = fileObjects.map((file) => ({
-            ...file,
+          const baseFiles = newFiles.map((file) => ({
+            ...buildBaseFileEntry(file),
             source: 'folder_scan'
           }));
 
           // Merge files
-          const allFiles = [...selectedFiles, ...enhancedFiles];
+          const allFiles = [...selectedFiles, ...baseFiles];
           const uniqueFiles = allFiles.filter(
             (file, index, self) => index === self.findIndex((f) => f.path === file.path)
           );
@@ -549,15 +607,20 @@ export function useFileHandlers({
           setSelectedFiles(uniqueFiles);
 
           addNotification(
-            `Added ${enhancedFiles.length} new file${enhancedFiles.length !== 1 ? 's' : ''} from folder for analysis`,
+            `Added ${baseFiles.length} new file${baseFiles.length !== 1 ? 's' : ''} from folder for analysis`,
             'success',
             2500,
             'files-added'
           );
 
           if (analyzeFiles) {
-            await analyzeFiles(enhancedFiles);
+            await analyzeFiles(baseFiles);
           }
+
+          enrichSelectedFiles(
+            newFiles.map((f) => f.path),
+            'folder_scan'
+          );
         } else {
           addNotification('No files found in the selected folder', 'warning', 3000, 'folder-scan');
         }
@@ -581,9 +644,9 @@ export function useFileHandlers({
     setSelectedFiles,
     updateFileState,
     addNotification,
-    getBatchFileStats,
     filterNewFiles,
-    analyzeFiles
+    analyzeFiles,
+    enrichSelectedFiles
   ]);
 
   /**
@@ -622,13 +685,12 @@ export function useFileHandlers({
 
         const withPath = newFiles; // Already filtered for absolute paths
 
-        // Fetch file stats for dropped items (aligns behavior with file picker)
-        const paths = withPath.map((file) => (typeof file === 'string' ? file : file.path));
-        const statsResults = await getBatchFileStats(paths);
-
         // Split directories and files
         const droppedDirectories = [];
         const droppedFiles = [];
+
+        const paths = withPath.map((file) => (typeof file === 'string' ? file : file.path));
+        const statsResults = await getBatchFileStats(paths);
 
         withPath.forEach((file, idx) => {
           const pathValue = typeof file === 'string' ? file : file.path;

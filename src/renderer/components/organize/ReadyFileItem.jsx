@@ -136,6 +136,9 @@ function ReadyFileItem({
                   </Select>
                 </div>
               </div>
+
+              {/* Keywords removed from main card view - available in details modal */}
+
               <div className="mt-3 pt-3 border-t border-border-soft/70">
                 <button
                   type="button"

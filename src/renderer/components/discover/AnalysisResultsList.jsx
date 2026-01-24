@@ -75,24 +75,39 @@ const formatConfidence = (value) => {
  * Individual row component for virtualized list
  */
 const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }) {
-  const { items, handleAction, getFileStateDisplay } = data || {};
+  // Defensive check for data integrity
+  if (!data || !data.items) return null;
+  const { items, handleAction, getFileStateDisplay } = data;
 
   // FIX: Strict bounds checking to prevent invalid index access
-  if (!items || index >= items.length) return null;
+  if (!Array.isArray(items) || index < 0 || index >= items.length) return null;
 
   const file = items[index];
-
   if (!file) return null;
 
-  const stateDisplay = getFileStateDisplay(file.path, !!file.analysis);
+  let stateDisplay = { label: 'Unknown', icon: null, color: '', spinning: false };
+  try {
+    stateDisplay = getFileStateDisplay
+      ? getFileStateDisplay(file.path, !!file.analysis)
+      : stateDisplay;
+  } catch (err) {
+    // Fallback if getFileStateDisplay fails
+    stateDisplay = { label: 'Error', icon: null, color: 'text-red-500', spinning: false };
+  }
+
+  // Ensure stateDisplay properties exist to prevent crashes
+  const displayColor = stateDisplay?.color || '';
+
   const confidence = formatConfidence(file.analysis?.confidence);
-  const tone = stateDisplay.color?.includes('green')
+  const tone = displayColor.includes('green')
     ? 'success'
-    : stateDisplay.color?.includes('amber') || stateDisplay.color?.includes('warning')
+    : displayColor.includes('amber') || displayColor.includes('warning')
       ? 'warning'
-      : stateDisplay.color?.includes('red') || stateDisplay.color?.includes('danger')
+      : displayColor.includes('red') || displayColor.includes('danger')
         ? 'error'
         : 'info';
+
+  const keywords = file.analysis?.keywords || [];
 
   return (
     <div style={style} className="px-2 py-2">
@@ -104,7 +119,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
               className="font-medium text-system-gray-900 clamp-2 break-words leading-snug"
               title={`${file.name}${file.path ? ` (${file.path})` : ''}`}
             >
-              {file.name}
+              {file.name || 'Unknown File'}
             </div>
             <div className="text-xs text-system-gray-500 clamp-1 break-words">
               {file.source && file.source !== 'file_selection' && (
@@ -121,13 +136,30 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
                 <span className="text-stratosort-blue font-medium">{file.analysis.category}</span>
               </div>
             )}
+            {keywords.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {keywords.slice(0, 5).map((tag, i) => (
+                  <span
+                    key={i}
+                    className="px-1.5 py-0.5 bg-system-gray-100 text-system-gray-600 rounded text-[10px] font-medium border border-system-gray-200 whitespace-nowrap"
+                  >
+                    {tag}
+                  </span>
+                ))}
+                {keywords.length > 5 && (
+                  <span className="px-1.5 py-0.5 text-system-gray-500 text-[10px]">
+                    +{keywords.length - 5}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex flex-col items-end gap-1 flex-shrink-0">
             <StatusBadge variant={tone}>
-              <span className={stateDisplay.spinning ? 'animate-spin' : ''}>
-                {stateDisplay.icon}
+              <span className={stateDisplay?.spinning ? 'animate-spin' : ''}>
+                {stateDisplay?.icon}
               </span>
-              <span>{stateDisplay.label}</span>
+              <span>{stateDisplay?.label || 'Status'}</span>
             </StatusBadge>
             {confidence !== null && (
               <span className="text-xs text-system-gray-500">Confidence {confidence}%</span>
@@ -138,7 +170,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => handleAction('open', file.path)}
+            onClick={() => handleAction && handleAction('open', file.path)}
             aria-label="Open file"
           >
             Open
@@ -146,7 +178,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => handleAction('reveal', file.path)}
+            onClick={() => handleAction && handleAction('reveal', file.path)}
             aria-label="Reveal in file explorer"
           >
             Reveal
@@ -154,7 +186,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
           <Button
             size="sm"
             variant="subtle"
-            onClick={() => handleAction('remove', file.path)}
+            onClick={() => handleAction && handleAction('remove', file.path)}
             aria-label="Remove from queue"
             className="ml-auto"
           >
@@ -163,7 +195,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
           <Button
             size="sm"
             variant="danger"
-            onClick={() => handleAction('delete', file.path)}
+            onClick={() => handleAction && handleAction('delete', file.path)}
             aria-label="Delete file permanently"
           >
             Delete
@@ -258,6 +290,11 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
     [items, handleAction, getFileStateDisplay]
   );
   const safeRowProps = rowProps ?? {};
+  const listItemData = safeRowProps.data || {
+    items: [],
+    handleAction,
+    getFileStateDisplay
+  };
 
   // FIX: Use virtualization only for large lists to avoid overhead on small lists
   const shouldVirtualize = items.length > VIRTUALIZATION_THRESHOLD;
@@ -292,7 +329,7 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
           key={`list-${items.length}`}
           itemCount={items.length}
           itemSize={ITEM_HEIGHT}
-          itemData={safeRowProps.data}
+          itemData={listItemData}
           overscanCount={5}
           className="scrollbar-thin scrollbar-thumb-system-gray-300 scrollbar-track-transparent"
           style={{ height: dimensions.height, width: '100%' }}
@@ -321,6 +358,9 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
         // Generate stable key from file properties (avoid index which breaks on reorder)
         const stableKey =
           file.path || file.id || `${file.name}-${file.size || 0}-${file.lastModified || 'nomod'}`;
+
+        const keywords = file.analysis?.keywords || [];
+
         return (
           <div key={stableKey} className="list-row p-4 overflow-hidden flex flex-col gap-2">
             <div className="flex items-start gap-4">
@@ -347,6 +387,23 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
                     <span className="text-stratosort-blue font-medium">
                       {file.analysis.category}
                     </span>
+                  </div>
+                )}
+                {keywords.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {keywords.slice(0, 5).map((tag, i) => (
+                      <span
+                        key={i}
+                        className="px-1.5 py-0.5 bg-system-gray-100 text-system-gray-600 rounded text-[10px] font-medium border border-system-gray-200 whitespace-nowrap"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                    {keywords.length > 5 && (
+                      <span className="px-1.5 py-0.5 text-system-gray-500 text-[10px]">
+                        +{keywords.length - 5}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

@@ -12,7 +12,7 @@ import {
   Eye
 } from 'lucide-react';
 import { useNotification } from '../../contexts/NotificationContext';
-import { Card, Button } from '../ui';
+import { Card, Button, IconButton } from '../ui';
 
 function BatchOrganizationSuggestions({
   batchSuggestions,
@@ -217,7 +217,7 @@ function BatchOrganizationSuggestions({
               <code className="bg-white px-2 py-1 rounded-md">{suggestedStrategy.pattern}</code>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-cozy">
             <Button
               size="sm"
               variant="primary"
@@ -246,7 +246,7 @@ function BatchOrganizationSuggestions({
               className="overflow-hidden"
             >
               <div
-                className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                className="p-4 cursor-pointer hover:bg-system-gray-50 transition-colors"
                 onClick={() => toggleGroup(groupIndex)}
                 onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleGroup(groupIndex)}
                 role="button"
@@ -356,7 +356,7 @@ function BatchOrganizationSuggestions({
         <Button variant="secondary" onClick={onRejectAll}>
           Cancel Batch Organization
         </Button>
-        <div className="flex gap-2">
+        <div className="flex gap-cozy">
           <Button
             variant="secondary"
             onClick={() => setShowPreview(true)}
@@ -380,15 +380,14 @@ function BatchOrganizationSuggestions({
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
           <Card className="w-full max-w-2xl max-h-[80vh] overflow-hidden m-4 flex flex-col">
             <div className="p-4 border-b flex items-center justify-between">
-              <h3 className="text-lg font-medium text-system-gray-900">
-                Preview Organization Changes
-              </h3>
-              <button
+              <h3 className="heading-secondary">Preview Organization Changes</h3>
+              <IconButton
                 onClick={() => setShowPreview(false)}
-                className="p-1 hover:bg-system-gray-100 rounded-full transition-colors"
-              >
-                <X className="w-5 h-5 text-system-gray-500" />
-              </button>
+                variant="ghost"
+                size="sm"
+                aria-label="Close preview"
+                icon={<X className="w-5 h-5" />}
+              />
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">

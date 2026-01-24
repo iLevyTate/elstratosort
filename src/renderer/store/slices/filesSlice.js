@@ -105,6 +105,19 @@ const filesSlice = createSlice({
     setOrganizedFiles: (state, action) => {
       state.organizedFiles = serializeData(action.payload);
     },
+    addOrganizedFiles: (state, action) => {
+      const newFiles = serializeData(action.payload);
+      state.organizedFiles = [...state.organizedFiles, ...newFiles];
+    },
+    removeOrganizedFiles: (state, action) => {
+      if (!Array.isArray(action.payload)) return;
+      const normalize = (p) => (p || '').replace(/[\\/]+/g, '/').toLowerCase();
+      const pathsToRemove = new Set(action.payload.map(normalize));
+
+      state.organizedFiles = state.organizedFiles.filter(
+        (file) => !pathsToRemove.has(normalize(file.originalPath))
+      );
+    },
     setNamingConvention: (state, action) => {
       state.namingConvention = { ...state.namingConvention, ...action.payload };
     },
@@ -224,40 +237,13 @@ export const {
   setNamingConvention,
   clearFiles,
   resetFilesState,
-  updateFilePathsAfterMove
+  updateFilePathsAfterMove,
+  addOrganizedFiles,
+  removeOrganizedFiles
 } = filesSlice.actions;
 
-/**
- * FIX CRIT-1: Atomic path update thunk that updates BOTH filesSlice AND analysisSlice
- * in a single dispatch. This prevents path desync when two independent dispatches
- * could be interrupted or processed out of order.
- *
- * @param {Object} payload - { oldPaths: string[], newPaths: string[] }
- */
-export const atomicUpdateFilePathsAfterMove = (payload) => (dispatch) => {
-  // Import here to avoid circular dependency
-  const { updateResultPathsAfterMove } = require('./analysisSlice');
-
-  // Dispatch both actions synchronously - they will be processed in order
-  // within the same microtask, preventing any intermediate state observation
-  dispatch(updateFilePathsAfterMove(payload));
-  dispatch(updateResultPathsAfterMove(payload));
-};
-
-/**
- * FIX HIGH-7: Atomic file removal thunk that removes files from BOTH
- * filesSlice AND analysisSlice. This prevents orphaned analysis results
- * from accumulating when files are removed.
- *
- * @param {string[]} paths - Array of file paths to remove
- */
-export const atomicRemoveFilesWithCleanup = (paths) => (dispatch) => {
-  // Import here to avoid circular dependency
-  const { removeAnalysisResultsByPaths } = require('./analysisSlice');
-
-  // Remove from filesSlice first, then clean up analysis results
-  dispatch(removeSelectedFiles(paths));
-  dispatch(removeAnalysisResultsByPaths(paths));
-};
+// FIX: Re-export atomic actions from dedicated module to avoid circular dependency
+// The actual implementations are in atomicActions.js which properly imports from both slices
+export { atomicUpdateFilePathsAfterMove, atomicRemoveFilesWithCleanup } from './atomicActions';
 
 export default filesSlice.reducer;

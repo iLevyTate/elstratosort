@@ -2393,10 +2393,10 @@ export default function UnifiedSearchModal({
         }
       }
       const category = metadata.category || getFileCategory(path);
+      const suggestedFolder = recommendationMap[path] || '';
       const subject = metadata.subject || (suggestedFolder ? `Folder: ${suggestedFolder}` : '');
       const summary = metadata.summary || '';
       const content = result?.document || '';
-      const suggestedFolder = recommendationMap[path] || '';
 
       return {
         id,
@@ -2991,280 +2991,296 @@ export default function UnifiedSearchModal({
   // Assign to ref so handleClusterExpand can access it
   expandClusterRef.current = expandCluster;
 
-  const runGraphSearch = useCallback(async () => {
-    const q = query.trim();
-    if (q.length < 2) return;
+  const runGraphSearch = useCallback(
+    async (overrideQuery) => {
+      // Accept overrideQuery to support immediate search from autocomplete
+      // without waiting for state update
+      const q = (typeof overrideQuery === 'string' ? overrideQuery : query).trim();
+      if (q.length < 2) return;
 
-    // Capture addMode at search start to prevent race condition if user toggles during async operation
-    const shouldAddMode = addMode;
-
-    setError('');
-    setGraphStatus('Searching...');
-
-    try {
-      // Use hybrid search with LLM re-ranking for graph results
-      const resp = await window.electronAPI?.embeddings?.search?.(q, {
-        topK: defaultTopK,
-        mode: 'hybrid',
-        rerank: true, // Enable LLM re-ranking
-        rerankTopN: 10 // Re-rank top 10 results
-      });
-      if (!resp || resp.success !== true) {
-        throw new Error(resp?.error || 'Search failed');
+      // Update query state if using override (keeps UI in sync)
+      if (typeof overrideQuery === 'string' && overrideQuery !== query) {
+        setQuery(overrideQuery);
       }
 
-      const results = Array.isArray(resp.results) ? resp.results : [];
-      const salt = Date.now();
-      const queryNodeId = makeQueryNodeId(q, salt);
+      // Capture addMode at search start to prevent race condition if user toggles during async operation
+      const shouldAddMode = addMode;
 
-      const nextNodes = [];
-      const nextEdges = [];
+      setError('');
+      setGraphStatus('Searching...');
 
-      const queryNode = {
-        id: queryNodeId,
-        type: 'queryNode', // Custom query node type
-        position: { x: 40, y: 40 },
-        data: { kind: 'query', label: q },
-        draggable: true
-      };
-
-      nextNodes.push(queryNode);
-
-      results.forEach((r, idx) => {
-        const node = upsertFileNode(r, defaultNodePosition(idx));
-        if (!node) return;
-        nextNodes.push(node);
-        nextEdges.push({
-          id: `e:${queryNodeId}->${node.id}`,
-          source: queryNodeId,
-          target: node.id,
-          type: 'queryMatch',
-          animated: false, // Using custom edge with hover effects
-          data: {
-            kind: 'query_match',
-            score: r.score,
-            matchDetails: r.matchDetails || {}
-          }
+      try {
+        // Use hybrid search with LLM re-ranking for graph results
+        const resp = await window.electronAPI?.embeddings?.search?.(q, {
+          topK: defaultTopK,
+          mode: 'hybrid',
+          rerank: true, // Enable LLM re-ranking
+          rerankTopN: 10 // Re-rank top 10 results
         });
-      });
-
-      const { folderNodes, edges: organizeEdges } = buildRecommendationGraph(
-        nextNodes.filter((node) => node.type === 'fileNode')
-      );
-      if (folderNodes.length > 0) {
-        nextNodes.push(...folderNodes);
-        nextEdges.push(...organizeEdges);
-      }
-
-      // Compute final nodes and edges FIRST to avoid stale closure issues
-      // These values are used for both state update and layout calculation
-      let finalNodes;
-      let finalEdges;
-      let nodeLimitReached = false;
-
-      if (!shouldAddMode) {
-        // Replace mode - use nextNodes directly
-        if (nextNodes.length > MAX_GRAPH_NODES) {
-          finalNodes = nextNodes.slice(0, MAX_GRAPH_NODES);
-          nodeLimitReached = true;
-          setError(
-            `Graph limit (${MAX_GRAPH_NODES} nodes) exceeded. Showing first ${MAX_GRAPH_NODES} results.`
-          );
-        } else {
-          finalNodes = nextNodes;
-        }
-        finalEdges = nextEdges;
-      } else {
-        // Add mode - merge with current state using refs to get latest values
-        // This prevents stale closure issues when state changes during async operation
-        const currentNodes = nodesRef.current || [];
-        const currentEdges = edgesRef.current || [];
-
-        const nodeMap = new Map(currentNodes.map((n) => [n.id, n]));
-        nextNodes.forEach((n) => {
-          if (!nodeMap.has(n.id)) nodeMap.set(n.id, n);
-        });
-        const merged = Array.from(nodeMap.values());
-
-        if (merged.length > MAX_GRAPH_NODES) {
-          // Don't add more nodes if limit reached
-          finalNodes = currentNodes;
-          nodeLimitReached = true;
-          setError(`Graph limit (${MAX_GRAPH_NODES} nodes) reached. Clear graph to start fresh.`);
-        } else {
-          finalNodes = merged;
+        if (!resp || resp.success !== true) {
+          throw new Error(resp?.error || 'Search failed');
         }
 
-        const edgeMap = new Map(currentEdges.map((e) => [e.id, e]));
-        nextEdges.forEach((e) => edgeMap.set(e.id, e));
+        const results = Array.isArray(resp.results) ? resp.results : [];
+        const salt = Date.now();
+        const queryNodeId = makeQueryNodeId(q, salt);
 
-        // Filter edges to only include those where both source and target exist in finalNodes
-        // This prevents ELK layout errors and orphaned edges
-        const finalNodeIds = new Set(finalNodes.map((n) => n.id));
-        finalEdges = Array.from(edgeMap.values()).filter(
-          (e) => finalNodeIds.has(e.source) && finalNodeIds.has(e.target)
+        const nextNodes = [];
+        const nextEdges = [];
+
+        const queryNode = {
+          id: queryNodeId,
+          type: 'queryNode', // Custom query node type
+          position: { x: 40, y: 40 },
+          data: { kind: 'query', label: q },
+          draggable: true
+        };
+
+        nextNodes.push(queryNode);
+
+        results.forEach((r, idx) => {
+          const node = upsertFileNode(r, defaultNodePosition(idx));
+          if (!node) return;
+          nextNodes.push(node);
+          nextEdges.push({
+            id: `e:${queryNodeId}->${node.id}`,
+            source: queryNodeId,
+            target: node.id,
+            type: 'queryMatch',
+            animated: false, // Using custom edge with hover effects
+            data: {
+              kind: 'query_match',
+              score: r.score,
+              matchDetails: r.matchDetails || {}
+            }
+          });
+        });
+
+        const { folderNodes, edges: organizeEdges } = buildRecommendationGraph(
+          nextNodes.filter((node) => node.type === 'fileNode')
         );
-      }
-
-      // Now update state with computed values (only if there are changes)
-      graphActions.setNodes((prev) => {
-        // Skip update if nothing changed (add mode and limit reached)
-        if (nodeLimitReached && shouldAddMode) return prev;
-        // Check if update is needed
-        if (prev.length === finalNodes.length && prev.every((n, i) => n.id === finalNodes[i]?.id)) {
-          return prev;
+        if (folderNodes.length > 0) {
+          nextNodes.push(...folderNodes);
+          nextEdges.push(...organizeEdges);
         }
-        return finalNodes;
-      });
 
-      graphActions.setEdges((prev) => {
-        if (nodeLimitReached && shouldAddMode) return prev;
-        if (prev.length === finalEdges.length && prev.every((e, i) => e.id === finalEdges[i]?.id)) {
-          return prev;
+        // Compute final nodes and edges FIRST to avoid stale closure issues
+        // These values are used for both state update and layout calculation
+        let finalNodes;
+        let finalEdges;
+        let nodeLimitReached = false;
+
+        if (!shouldAddMode) {
+          // Replace mode - use nextNodes directly
+          if (nextNodes.length > MAX_GRAPH_NODES) {
+            finalNodes = nextNodes.slice(0, MAX_GRAPH_NODES);
+            nodeLimitReached = true;
+            setError(
+              `Graph limit (${MAX_GRAPH_NODES} nodes) exceeded. Showing first ${MAX_GRAPH_NODES} results.`
+            );
+          } else {
+            finalNodes = nextNodes;
+          }
+          finalEdges = nextEdges;
+        } else {
+          // Add mode - merge with current state using refs to get latest values
+          // This prevents stale closure issues when state changes during async operation
+          const currentNodes = nodesRef.current || [];
+          const currentEdges = edgesRef.current || [];
+
+          const nodeMap = new Map(currentNodes.map((n) => [n.id, n]));
+          nextNodes.forEach((n) => {
+            if (!nodeMap.has(n.id)) nodeMap.set(n.id, n);
+          });
+          const merged = Array.from(nodeMap.values());
+
+          if (merged.length > MAX_GRAPH_NODES) {
+            // Don't add more nodes if limit reached
+            finalNodes = currentNodes;
+            nodeLimitReached = true;
+            setError(`Graph limit (${MAX_GRAPH_NODES} nodes) reached. Clear graph to start fresh.`);
+          } else {
+            finalNodes = merged;
+          }
+
+          const edgeMap = new Map(currentEdges.map((e) => [e.id, e]));
+          nextEdges.forEach((e) => edgeMap.set(e.id, e));
+
+          // Filter edges to only include those where both source and target exist in finalNodes
+          // This prevents ELK layout errors and orphaned edges
+          const finalNodeIds = new Set(finalNodes.map((n) => n.id));
+          finalEdges = Array.from(edgeMap.values()).filter(
+            (e) => finalNodeIds.has(e.source) && finalNodeIds.has(e.target)
+          );
         }
-        return finalEdges;
-      });
 
-      graphActions.selectNode(results[0]?.id || queryNodeId);
-      setGraphStatus(`Found ${results.length} matching file${results.length === 1 ? '' : 's'}`);
+        // Now update state with computed values (only if there are changes)
+        graphActions.setNodes((prev) => {
+          // Skip update if nothing changed (add mode and limit reached)
+          if (nodeLimitReached && shouldAddMode) return prev;
+          // Check if update is needed
+          if (
+            prev.length === finalNodes.length &&
+            prev.every((n, i) => n.id === finalNodes[i]?.id)
+          ) {
+            return prev;
+          }
+          return finalNodes;
+        });
 
-      // Apply auto-layout if enabled (debounced to prevent rapid re-layouts)
-      // Uses pre-computed finalNodes/finalEdges to avoid stale state issues
-      if (autoLayout && finalNodes.length > 1 && !nodeLimitReached) {
-        setGraphStatus('Applying layout...');
-        try {
-          // Use smart layout for large graphs (progressive rendering)
-          // Use debounced layout for smaller graphs
-          let layoutedNodes;
-          if (finalNodes.length > LARGE_GRAPH_THRESHOLD) {
-            const result = await smartLayout(finalNodes, finalEdges, {
-              direction: 'RIGHT',
-              spacing: GRAPH_LAYOUT_SPACING,
-              layerSpacing: GRAPH_LAYER_SPACING,
-              progressive: true
-            });
-            layoutedNodes = result.nodes;
-            if (result.isPartial) {
+        graphActions.setEdges((prev) => {
+          if (nodeLimitReached && shouldAddMode) return prev;
+          if (
+            prev.length === finalEdges.length &&
+            prev.every((e, i) => e.id === finalEdges[i]?.id)
+          ) {
+            return prev;
+          }
+          return finalEdges;
+        });
+
+        graphActions.selectNode(results[0]?.id || queryNodeId);
+        setGraphStatus(`Found ${results.length} matching file${results.length === 1 ? '' : 's'}`);
+
+        // Apply auto-layout if enabled (debounced to prevent rapid re-layouts)
+        // Uses pre-computed finalNodes/finalEdges to avoid stale state issues
+        if (autoLayout && finalNodes.length > 1 && !nodeLimitReached) {
+          setGraphStatus('Applying layout...');
+          try {
+            // Use smart layout for large graphs (progressive rendering)
+            // Use debounced layout for smaller graphs
+            let layoutedNodes;
+            if (finalNodes.length > LARGE_GRAPH_THRESHOLD) {
+              const result = await smartLayout(finalNodes, finalEdges, {
+                direction: 'RIGHT',
+                spacing: GRAPH_LAYOUT_SPACING,
+                layerSpacing: GRAPH_LAYER_SPACING,
+                progressive: true
+              });
+              layoutedNodes = result.nodes;
+              if (result.isPartial) {
+                setGraphStatus(
+                  `${results.length} results (${result.layoutedCount} laid out, ${finalNodes.length - result.layoutedCount} in grid)`
+                );
+              }
+            } else {
+              layoutedNodes = await debouncedElkLayout(finalNodes, finalEdges, {
+                direction: 'RIGHT',
+                spacing: GRAPH_LAYOUT_SPACING,
+                layerSpacing: GRAPH_LAYER_SPACING,
+                debounceMs: 150
+              });
+            }
+            graphActions.setNodes(layoutedNodes);
+            if (finalNodes.length <= LARGE_GRAPH_THRESHOLD) {
               setGraphStatus(
-                `${results.length} results (${result.layoutedCount} laid out, ${finalNodes.length - result.layoutedCount} in grid)`
+                `Found ${results.length} file${results.length === 1 ? '' : 's'}, organized by relevance`
               );
             }
-          } else {
-            layoutedNodes = await debouncedElkLayout(finalNodes, finalEdges, {
-              direction: 'RIGHT',
-              spacing: GRAPH_LAYOUT_SPACING,
-              layerSpacing: GRAPH_LAYER_SPACING,
-              debounceMs: 150
-            });
+          } catch (layoutError) {
+            logger.warn('[Graph] Auto-layout failed:', layoutError);
           }
-          graphActions.setNodes(layoutedNodes);
-          if (finalNodes.length <= LARGE_GRAPH_THRESHOLD) {
-            setGraphStatus(
-              `Found ${results.length} file${results.length === 1 ? '' : 's'}, organized by relevance`
+        }
+
+        // Fetch and add similarity edges between file nodes
+        const expandedFileIds = nextNodes.filter((n) => n.type === 'fileNode').map((n) => n.id);
+
+        if (expandedFileIds.length >= 2) {
+          try {
+            const simEdgesResp = await window.electronAPI?.embeddings?.getSimilarityEdges?.(
+              expandedFileIds,
+              { threshold: 0.75, maxEdgesPerNode: 1 }
             );
-          }
-        } catch (layoutError) {
-          logger.warn('[Graph] Auto-layout failed:', layoutError);
-        }
-      }
 
-      // Fetch and add similarity edges between file nodes
-      const expandedFileIds = nextNodes.filter((n) => n.type === 'fileNode').map((n) => n.id);
+            if (simEdgesResp?.success && Array.isArray(simEdgesResp.edges)) {
+              // Build a map of node data for tooltip info
+              const nodeDataMap = new Map();
+              nextNodes.forEach((n) => {
+                if (n.type === 'fileNode') {
+                  nodeDataMap.set(n.id, {
+                    label: n.data?.label || '',
+                    tags: n.data?.tags || [],
+                    category: n.data?.category || '',
+                    subject: n.data?.subject || ''
+                  });
+                }
+              });
 
-      if (expandedFileIds.length >= 2) {
-        try {
-          const simEdgesResp = await window.electronAPI?.embeddings?.getSimilarityEdges?.(
-            expandedFileIds,
-            { threshold: 0.75, maxEdgesPerNode: 1 }
-          );
+              const similarityEdges = simEdgesResp.edges.map((e) => ({
+                id: e.id,
+                source: e.source,
+                target: e.target,
+                type: 'similarity', // Use custom edge component
+                animated: false,
+                data: {
+                  kind: 'similarity',
+                  similarity: e.similarity,
+                  sourceData: nodeDataMap.get(e.source) || {},
+                  targetData: nodeDataMap.get(e.target) || {}
+                }
+              }));
 
-          if (simEdgesResp?.success && Array.isArray(simEdgesResp.edges)) {
-            // Build a map of node data for tooltip info
-            const nodeDataMap = new Map();
-            nextNodes.forEach((n) => {
-              if (n.type === 'fileNode') {
-                nodeDataMap.set(n.id, {
-                  label: n.data?.label || '',
-                  tags: n.data?.tags || [],
-                  category: n.data?.category || '',
-                  subject: n.data?.subject || ''
+              if (similarityEdges.length > 0) {
+                graphActions.setEdges((prev) => {
+                  const existingIds = new Set(prev.map((e) => e.id));
+                  const newEdges = similarityEdges.filter((e) => !existingIds.has(e.id));
+                  if (newEdges.length === 0) return prev;
+                  return [...prev, ...newEdges];
                 });
+                setGraphStatus((prev) => `${prev} • ${similarityEdges.length} connections`);
               }
-            });
-
-            const similarityEdges = simEdgesResp.edges.map((e) => ({
-              id: e.id,
-              source: e.source,
-              target: e.target,
-              type: 'similarity', // Use custom edge component
-              animated: false,
-              data: {
-                kind: 'similarity',
-                similarity: e.similarity,
-                sourceData: nodeDataMap.get(e.source) || {},
-                targetData: nodeDataMap.get(e.target) || {}
-              }
-            }));
-
-            if (similarityEdges.length > 0) {
-              graphActions.setEdges((prev) => {
-                const existingIds = new Set(prev.map((e) => e.id));
-                const newEdges = similarityEdges.filter((e) => !existingIds.has(e.id));
-                if (newEdges.length === 0) return prev;
-                return [...prev, ...newEdges];
-              });
-              setGraphStatus((prev) => `${prev} • ${similarityEdges.length} connections`);
             }
+          } catch (simErr) {
+            logger.debug('[Graph] Failed to fetch similarity edges:', simErr);
           }
-        } catch (simErr) {
-          logger.debug('[Graph] Failed to fetch similarity edges:', simErr);
         }
-      }
 
-      if (expandedFileIds.length >= 2) {
-        try {
-          const relEdgesResp = await window.electronAPI?.knowledge?.getRelationshipEdges?.(
-            expandedFileIds,
-            { minWeight: 2, maxEdges: 200 }
-          );
+        if (expandedFileIds.length >= 2) {
+          try {
+            const relEdgesResp = await window.electronAPI?.knowledge?.getRelationshipEdges?.(
+              expandedFileIds,
+              { minWeight: 2, maxEdges: 200 }
+            );
 
-          if (relEdgesResp?.success && Array.isArray(relEdgesResp.edges)) {
-            const relationshipEdges = relEdgesResp.edges.map((edge) => ({
-              id: edge.id,
-              source: edge.source,
-              target: edge.target,
-              type: 'smartStep',
-              label: 'Knowledge',
-              style: {
-                stroke: '#22c55e',
-                strokeDasharray: '4,4',
-                strokeWidth: 1.5
-              },
-              data: {
-                kind: 'knowledge',
-                weight: edge.weight
+            if (relEdgesResp?.success && Array.isArray(relEdgesResp.edges)) {
+              const relationshipEdges = relEdgesResp.edges.map((edge) => ({
+                id: edge.id,
+                source: edge.source,
+                target: edge.target,
+                type: 'smartStep',
+                label: 'Knowledge',
+                style: {
+                  stroke: '#22c55e',
+                  strokeDasharray: '4,4',
+                  strokeWidth: 1.5
+                },
+                data: {
+                  kind: 'knowledge',
+                  weight: edge.weight
+                }
+              }));
+
+              if (relationshipEdges.length > 0) {
+                graphActions.setEdges((prev) => {
+                  const existingIds = new Set(prev.map((e) => e.id));
+                  const newEdges = relationshipEdges.filter((e) => !existingIds.has(e.id));
+                  if (newEdges.length === 0) return prev;
+                  return [...prev, ...newEdges];
+                });
+                setGraphStatus((prev) => `${prev} • ${relationshipEdges.length} knowledge links`);
               }
-            }));
-
-            if (relationshipEdges.length > 0) {
-              graphActions.setEdges((prev) => {
-                const existingIds = new Set(prev.map((e) => e.id));
-                const newEdges = relationshipEdges.filter((e) => !existingIds.has(e.id));
-                if (newEdges.length === 0) return prev;
-                return [...prev, ...newEdges];
-              });
-              setGraphStatus((prev) => `${prev} • ${relationshipEdges.length} knowledge links`);
             }
+          } catch (relErr) {
+            logger.debug('[Graph] Failed to fetch knowledge edges:', relErr);
           }
-        } catch (relErr) {
-          logger.debug('[Graph] Failed to fetch knowledge edges:', relErr);
         }
+      } catch (e) {
+        setGraphStatus('');
+        setError(getErrorMessage(e, 'Graph search'));
       }
-    } catch (e) {
-      setGraphStatus('');
-      setError(getErrorMessage(e, 'Graph search'));
-    }
-  }, [query, defaultTopK, addMode, autoLayout, graphActions, upsertFileNode]);
+    },
+    [query, defaultTopK, addMode, autoLayout, graphActions, upsertFileNode]
+  );
 
   const expandFromSelected = useCallback(
     async (overrideNode = null) => {
@@ -4112,7 +4128,7 @@ export default function UnifiedSearchModal({
                   <div className="flex flex-col gap-4 flex-1">
                     {/* File info header */}
                     <div>
-                      <h3 className="text-base font-semibold text-system-gray-900 break-words">
+                      <h3 className="heading-tertiary break-words">
                         {selectedSearchResult?.metadata?.name ||
                           safeBasename(selectedSearchResult?.metadata?.path) ||
                           'File'}
@@ -4634,9 +4650,7 @@ export default function UnifiedSearchModal({
                     <Network className="w-10 h-10 text-stratosort-blue opacity-50" />
                   </div>
 
-                  <h3 className="text-xl font-semibold text-system-gray-900 mb-2">
-                    Stop Searching. Start Finding.
-                  </h3>
+                  <h3 className="heading-secondary mb-2">Stop Searching. Start Finding.</h3>
                   <p className="text-sm text-system-gray-500 max-w-md mb-8 leading-relaxed">
                     Your files are scattered across folders. Clustering reveals how they naturally
                     belong together—even files you forgot you had.

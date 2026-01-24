@@ -55,6 +55,70 @@ const CRITICAL_ACTION_CREATORS = new Set([
   addNotification
 ]);
 
+// FIX Bug 7: localStorage key for persisting critical events that would be lost
+const CRITICAL_EVENTS_STORAGE_KEY = 'ipc_critical_events';
+
+/**
+ * Persist critical event to localStorage when queue overflows
+ * This prevents complete loss of important state updates
+ * @param {Function} actionCreator - The Redux action creator
+ * @param {*} data - The event payload
+ */
+function persistCriticalEvent(actionCreator, data) {
+  if (!CRITICAL_ACTION_CREATORS.has(actionCreator)) return;
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(CRITICAL_EVENTS_STORAGE_KEY) || '[]');
+    stored.push({
+      actionType: actionCreator?.name || 'unknown',
+      data,
+      timestamp: Date.now()
+    });
+    // Limit persisted events to prevent localStorage bloat
+    if (stored.length > 50) stored.shift();
+    localStorage.setItem(CRITICAL_EVENTS_STORAGE_KEY, JSON.stringify(stored));
+  } catch {
+    // localStorage may be unavailable or full - best effort only
+  }
+}
+
+/**
+ * Recover persisted critical events after store initialization
+ * Should be called after markStoreReady
+ */
+export function recoverPersistedCriticalEvents() {
+  if (!storeRef || !isStoreReady) return;
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(CRITICAL_EVENTS_STORAGE_KEY) || '[]');
+    if (stored.length === 0) return;
+
+    logger.info('[IPC Middleware] Recovering persisted critical events', { count: stored.length });
+
+    // Clear immediately to prevent duplicate recovery
+    localStorage.removeItem(CRITICAL_EVENTS_STORAGE_KEY);
+
+    // Process persisted events (they're informational at this point)
+    // Only dispatch a single notification about missed events
+    if (stored.length > 0) {
+      storeRef.dispatch(
+        addNotification({
+          message: `${stored.length} updates were queued during startup.`,
+          severity: 'info',
+          duration: 5000
+        })
+      );
+    }
+  } catch {
+    // Recovery failed - clear corrupted data
+    try {
+      localStorage.removeItem(CRITICAL_EVENTS_STORAGE_KEY);
+    } catch {
+      // Ignore
+    }
+  }
+}
+
 /**
  * Queue an event for later dispatch or dispatch immediately if store is ready
  * @param {Function} actionCreator - The Redux action creator
@@ -91,7 +155,12 @@ function safeDispatch(actionCreator, data) {
       if (dropIndex >= 0) {
         eventQueue.splice(dropIndex, 1);
       } else {
-        eventQueue.shift(); // Remove oldest event
+        // FIX Bug 7: When forced to drop a critical event, persist it to localStorage
+        // so it can be recovered after the store initializes
+        const droppedEvent = eventQueue.shift();
+        if (droppedEvent) {
+          persistCriticalEvent(droppedEvent.actionCreator, droppedEvent.data);
+        }
       }
     }
     eventQueue.push({ actionCreator, data });

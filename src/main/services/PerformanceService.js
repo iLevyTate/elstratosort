@@ -65,9 +65,9 @@ async function runCommand(command, args, timeout = 5000) {
       timeoutId = setTimeout(() => {
         safeResolve({ success: false, stdout: '' });
       }, timeout);
-
-      // Prevent timer from keeping Node.js process alive
-      if (timeoutId && typeof timeoutId.unref === 'function') {
+      // Allow process to exit if this timer is the only thing keeping it alive
+      // Critical for Jest test cleanup - the timeout still fires during Promise.race
+      if (timeoutId.unref) {
         timeoutId.unref();
       }
 
@@ -375,13 +375,23 @@ async function buildOllamaOptions(task = 'text') {
 async function getRecommendedEnvSettings() {
   const caps = await detectSystemCapabilities();
 
+  // Determine max loaded models based on VRAM
+  // - 8GB+: Can hold text + vision + embedding (3 models)
+  // - <8GB: Safer with 2 models (embedding + whichever is active)
+  const vram = caps.gpuMemoryMB || 0;
+  const maxModels = vram >= 8000 ? '3' : '2';
+
   const recommendations = {
-    // Limit to 1 model in memory to reduce VRAM usage
-    OLLAMA_MAX_LOADED_MODELS: '1',
+    // Allow multiple models to stay loaded to avoid swap overhead
+    // Embedding models are small (~300-500MB), text ~2GB, vision ~4GB
+    OLLAMA_MAX_LOADED_MODELS: maxModels,
     // Default base parallel request count (will be overridden by GPU logic)
     OLLAMA_NUM_PARALLEL: '1',
     // Keep model loaded for 10 minutes to avoid reload latency
-    OLLAMA_KEEP_ALIVE: '10m'
+    OLLAMA_KEEP_ALIVE: '10m',
+    // Increase model load timeout to prevent "timed out waiting for llama runner" errors
+    // Default is 5m, but model swapping on lower VRAM GPUs can take longer
+    OLLAMA_LOAD_TIMEOUT: '10m'
   };
 
   // Thread optimization: use physical cores, not logical
@@ -453,9 +463,63 @@ function getRecommendedEmbeddingModels() {
   };
 }
 
+/**
+ * Get recommended max concurrent analysis based on system capabilities.
+ *
+ * Philosophy:
+ * - Default to 1 for best UX (user sees progress immediately)
+ * - Higher concurrency only benefits high-VRAM systems
+ * - Vision models need ~4GB VRAM each, text ~2GB each
+ * - Running multiple LLM calls on same GPU doesn't speed up each call
+ *
+ * @returns {Promise<Object>} Recommended concurrency settings
+ */
+async function getRecommendedConcurrency() {
+  const caps = await detectSystemCapabilities();
+  const vram = caps.gpuMemoryMB || 0;
+
+  // Base recommendation on VRAM
+  // - Vision analysis: ~4GB per instance
+  // - Text analysis: ~2GB per instance
+  // - Some overhead for OS/other apps: ~2GB
+  let maxConcurrent = 1; // Default: sequential for best UX
+  let reason = 'Sequential processing for best UX and progress visibility';
+
+  if (!caps.hasGpu) {
+    // CPU only - keep at 1, it's slow anyway
+    maxConcurrent = 1;
+    reason = 'CPU-only mode: sequential processing recommended';
+  } else if (vram >= 24000) {
+    // 24GB+ (3090/4090) - can run multiple vision analyses
+    maxConcurrent = 3;
+    reason = 'High VRAM (24GB+): can parallelize vision analysis';
+  } else if (vram >= 16000) {
+    // 16GB+ - some parallelism possible
+    maxConcurrent = 2;
+    reason = 'Good VRAM (16GB+): moderate parallelism safe';
+  } else if (vram >= 12000) {
+    // 12GB+ - limited parallelism for text only
+    maxConcurrent = 2;
+    reason = 'Adequate VRAM (12GB+): limited parallelism for text models';
+  } else {
+    // <12GB (including user's 6GB) - sequential only
+    maxConcurrent = 1;
+    reason = 'Limited VRAM (<12GB): sequential processing prevents exhaustion';
+  }
+
+  return {
+    maxConcurrent,
+    reason,
+    vramMB: vram,
+    hasGpu: caps.hasGpu,
+    gpuName: caps.gpuName
+  };
+}
+
 module.exports = {
   detectSystemCapabilities,
   buildOllamaOptions,
   getRecommendedEnvSettings,
-  getRecommendedEmbeddingModels
+  getRecommendedEmbeddingModels,
+  getRecommendedConcurrency
 };

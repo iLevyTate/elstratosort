@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useRef, useEffect, useState } from 'react';
-import { PHASES, RENDERER_LIMITS, FILE_STATES } from '../../../shared/constants';
+import { PHASES, FILE_STATES } from '../../../shared/constants';
 import { TIMEOUTS, CONCURRENCY, RETRY } from '../../../shared/performanceConstants';
 import { logger } from '../../../shared/logger';
 import {
@@ -57,19 +57,8 @@ async function analyzeWithRetry(filePath, attempt = 1) {
     );
   }
 
-  let timeoutId;
   try {
-    return await Promise.race([
-      window.electronAPI.files.analyze(filePath),
-      new Promise((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new Error('Analysis timeout after 3 minutes')),
-          RENDERER_LIMITS.ANALYSIS_TIMEOUT_MS
-        );
-      })
-    ]).finally(() => {
-      if (timeoutId) clearTimeout(timeoutId);
-    });
+    return await window.electronAPI.files.analyze(filePath);
   } catch (error) {
     const isTransient =
       error.message?.includes('timeout') ||
@@ -83,6 +72,35 @@ async function analyzeWithRetry(filePath, attempt = 1) {
     }
     throw error;
   }
+}
+
+function withTimeout(promise, timeoutMs, label) {
+  if (!timeoutMs || timeoutMs <= 0) return promise;
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err = new Error(`${label} timed out after ${timeoutMs}ms`);
+      err.code = 'ANALYSIS_TIMEOUT';
+      reject(err);
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
+function hasFallbackSuggestion(analysis) {
+  return Boolean(analysis?.suggestedName || analysis?.category);
+}
+
+function normalizeAnalysisForUi(analysis) {
+  if (!analysis || !analysis.error) return analysis;
+  const { error, ...rest } = analysis;
+  return {
+    ...rest,
+    warning: error,
+    hadError: true
+  };
 }
 
 /**
@@ -497,11 +515,19 @@ export function useAnalysis(options = {}) {
    */
   const analyzeFiles = useCallback(
     async (files) => {
-      if (!files || files.length === 0) return;
+      if (!files || files.length === 0) {
+        addNotification('No files queued for analysis.', 'info', 2000, 'analysis-empty');
+        return;
+      }
 
       // Atomic lock acquisition (use refs to avoid stale closures)
       const lockAcquired = (() => {
         if (analysisLockRef.current || globalAnalysisActiveRef.current || isAnalyzingRef.current) {
+          logger.debug('Analysis lock not acquired', {
+            locked: analysisLockRef.current,
+            global: globalAnalysisActiveRef.current,
+            isAnalyzing: isAnalyzingRef.current
+          });
           return false;
         }
         analysisLockRef.current = true;
@@ -517,6 +543,12 @@ export function useAnalysis(options = {}) {
           ...pendingFilesRef.current,
           ...files.filter((f) => !pendingFilesRef.current.some((p) => p.path === f.path))
         ];
+        addNotification(
+          'Analysis already running. Files queued to run next.',
+          'info',
+          2500,
+          'analysis-queued'
+        );
         return;
       }
 
@@ -611,6 +643,23 @@ export function useAnalysis(options = {}) {
           clearInterval(heartbeatIntervalRef.current);
           heartbeatIntervalRef.current = null;
         }
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
+        analysisLockRef.current = false;
+        localAnalyzingRef.current = false;
+        setGlobalAnalysisActive(false);
+        if (lockTimeoutRef.current) {
+          clearTimeout(lockTimeoutRef.current);
+          lockTimeoutRef.current = null;
+        }
+        flushPendingResults(true);
+        pendingFilesRef.current = [];
+        setIsAnalyzing(false);
+        setAnalysisProgress({ current: 0, total: 0, lastActivity: 0 });
+        setCurrentAnalysisFile('');
+        actions.setPhaseData('currentAnalysisFile', '');
         addNotification(
           'Analysis took too long and was stopped.',
           'warning',
@@ -625,9 +674,40 @@ export function useAnalysis(options = {}) {
       let maxConcurrent = CONCURRENCY.DEFAULT_WORKERS;
 
       try {
+        // Get system-recommended value based on VRAM (primary source)
+        let systemRecommended = CONCURRENCY.DEFAULT_WORKERS;
+        try {
+          const recommendation = await window.electronAPI.system.getRecommendedConcurrency();
+          if (recommendation?.success && recommendation.maxConcurrent) {
+            systemRecommended = recommendation.maxConcurrent;
+            logger.info('System-recommended concurrency:', {
+              maxConcurrent: recommendation.maxConcurrent,
+              reason: recommendation.reason,
+              vramMB: recommendation.vramMB
+            });
+          }
+        } catch {
+          // Fall back to default if recommendation fails
+        }
+
+        // Use system recommendation as the baseline
+        maxConcurrent = systemRecommended;
+
+        // Only allow user override if they explicitly set it AND it doesn't exceed system recommendation
+        // This prevents users with old settings (e.g., 3) from exhausting VRAM on low-memory GPUs
         const persistedSettings = await window.electronAPI.settings.get();
         if (persistedSettings?.maxConcurrentAnalysis !== undefined) {
-          maxConcurrent = Number(persistedSettings.maxConcurrentAnalysis);
+          const userSetting = Number(persistedSettings.maxConcurrentAnalysis);
+          // User can only go LOWER than system recommendation, not higher
+          // This protects against VRAM exhaustion
+          maxConcurrent = Math.min(userSetting, systemRecommended);
+          if (userSetting > systemRecommended) {
+            logger.warn('User concurrency setting exceeds system recommendation, capping:', {
+              userSetting,
+              systemRecommended,
+              using: maxConcurrent
+            });
+          }
         }
       } catch {
         // Use default
@@ -639,6 +719,7 @@ export function useAnalysis(options = {}) {
       );
 
       try {
+        logger.info(`Starting analysis of ${uniqueFiles.length} files`);
         addNotification(
           `Starting AI analysis of ${uniqueFiles.length} files...`,
           'info',
@@ -685,7 +766,11 @@ export function useAnalysis(options = {}) {
           };
 
           try {
-            const analysis = await analyzeWithRetry(file.path);
+            const analysis = await withTimeout(
+              analyzeWithRetry(file.path),
+              TIMEOUTS.AI_ANALYSIS_LONG,
+              `Analysis for ${fileName}`
+            );
 
             // Fix: Check for abort signal immediately after async operation
             // This prevents state updates if the user cancelled while analysis was in flight
@@ -710,13 +795,17 @@ export function useAnalysis(options = {}) {
               setAnalysisProgress(progress);
             }
 
-            if (analysis && !analysis.error) {
-              const baseSuggestedName = analysis.suggestedName || fileName;
+            const analysisForUi = normalizeAnalysisForUi(analysis);
+            const shouldTreatAsReady =
+              analysisForUi && (!analysisForUi.hadError || hasFallbackSuggestion(analysisForUi));
+
+            if (shouldTreatAsReady) {
+              const baseSuggestedName = analysisForUi.suggestedName || fileName;
               const enhancedAnalysis = {
-                ...analysis,
+                ...analysisForUi,
                 // Preserve the raw suggestion so we can re-apply naming changes later
                 originalSuggestedName: baseSuggestedName,
-                suggestedName: generateSuggestedName(fileName, analysis, {
+                suggestedName: generateSuggestedName(fileName, analysisForUi, {
                   created: fileInfo.created,
                   modified: fileInfo.modified
                 }),
@@ -937,6 +1026,8 @@ export function useAnalysis(options = {}) {
       updateFileState,
       addNotification,
       actions,
+      setGlobalAnalysisActive,
+      flushPendingResults,
       generateSuggestedName,
       namingSettings,
       resetAnalysisState,
@@ -954,7 +1045,24 @@ export function useAnalysis(options = {}) {
   const cancelAnalysis = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
+      abortControllerRef.current = null;
       logger.info('Analysis aborted by user');
+    }
+    // Ensure locks/timeouts are cleared so a new run can start immediately.
+    analysisLockRef.current = false;
+    isAnalyzingRef.current = false;
+    setGlobalAnalysisActive(false);
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
+    if (analysisTimeoutRef.current) {
+      clearTimeout(analysisTimeoutRef.current);
+      analysisTimeoutRef.current = null;
+    }
+    if (lockTimeoutRef.current) {
+      clearTimeout(lockTimeoutRef.current);
+      lockTimeoutRef.current = null;
     }
     if (window.electronAPI?.analysis?.cancel) {
       window.electronAPI.analysis.cancel().catch((error) => {

@@ -211,6 +211,7 @@ class AtomicFileOperations {
       id: transactionId,
       operations: [],
       backups: [],
+      createdDestinations: [], // Track destinations created by move/copy for rollback
       startTime: Date.now(),
       status: 'active'
     };
@@ -283,15 +284,28 @@ class AtomicFileOperations {
     }
 
     // Execute the operation
+    const normalizedDestination = destination ? normalizePath(destination) : null;
     switch (type) {
       case 'move':
-        await this.atomicMove(normalizedSource, normalizePath(destination));
+        await this.atomicMove(normalizedSource, normalizedDestination);
+        // Track destination for rollback cleanup
+        if (normalizedDestination) {
+          transaction.createdDestinations.push(normalizedDestination);
+        }
         break;
       case 'copy':
-        await this.atomicCopy(normalizedSource, normalizePath(destination));
+        await this.atomicCopy(normalizedSource, normalizedDestination);
+        // Track destination for rollback cleanup
+        if (normalizedDestination) {
+          transaction.createdDestinations.push(normalizedDestination);
+        }
         break;
       case 'create':
-        await this.atomicCreate(normalizePath(destination), data);
+        await this.atomicCreate(normalizedDestination, data);
+        // Track created file for rollback cleanup
+        if (normalizedDestination) {
+          transaction.createdDestinations.push(normalizedDestination);
+        }
         break;
       case 'delete':
         if (await this.fileExists(normalizedSource)) {
@@ -666,7 +680,11 @@ class AtomicFileOperations {
         timeoutId = setTimeout(() => {
           reject(new Error(`Transaction ${transactionId} timed out`));
         }, this.operationTimeout);
-        timeoutId.unref();
+        // Allow process to exit if this timer is the only thing keeping it alive
+        // Critical for Jest test cleanup - the timeout still fires during Promise.race
+        if (timeoutId.unref) {
+          timeoutId.unref();
+        }
       });
 
       const operationPromise = (async () => {
@@ -817,11 +835,37 @@ class AtomicFileOperations {
       }
     }
 
+    // Delete destinations created by move/copy/create operations (in reverse order)
+    let deletedCount = 0;
+    if (transaction.createdDestinations && transaction.createdDestinations.length > 0) {
+      for (let i = transaction.createdDestinations.length - 1; i >= 0; i--) {
+        const dest = transaction.createdDestinations[i];
+        try {
+          if (await this.fileExists(dest)) {
+            await fs.unlink(dest);
+            deletedCount++;
+            logger.debug('[ATOMIC-OPS] Deleted destination during rollback:', { dest });
+          }
+        } catch (deleteError) {
+          logger.warn('[ATOMIC-OPS] Failed to delete destination during rollback:', {
+            dest,
+            error: deleteError.message
+          });
+          rollbackErrors.push({
+            source: dest,
+            error: `Failed to delete destination: ${deleteError.message}`,
+            code: deleteError.code || 'DELETE_FAILED'
+          });
+        }
+      }
+    }
+
     transaction.status = 'rolled_back';
 
     logger.info('[ATOMIC-OPS] Rollback completed:', {
       transactionId,
       restoredCount,
+      deletedCount,
       errorCount: rollbackErrors.length
     });
 

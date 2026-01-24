@@ -930,16 +930,23 @@ describe('Settings Backup, Export, and Import', () => {
     test('preserves zero values correctly', async () => {
       const settingsWithZero = {
         ...DEFAULT_SETTINGS,
-        maxConcurrentAnalysis: 3 // Can't use 0 as it's below the minimum in validation
+        maxConcurrentAnalysis: 5 // Can't use 0 as it's below the minimum in validation (use value different from default of 1)
       };
 
-      settingsService._cache = settingsWithZero;
+      // The backup service calls load() which reads from file, so we need to mock the file read
+      fs.readFile.mockImplementation(async (filePath) => {
+        if (filePath === mockSettingsPath) {
+          return JSON.stringify(settingsWithZero);
+        }
+        throw new Error('ENOENT: no such file or directory');
+      });
+
       await settingsService.createBackup();
 
       const writeCall = fs.writeFile.mock.calls[0];
       const backupData = JSON.parse(writeCall[1]);
 
-      expect(backupData.settings.maxConcurrentAnalysis).toBe(3);
+      expect(backupData.settings.maxConcurrentAnalysis).toBe(5);
     });
   });
 });

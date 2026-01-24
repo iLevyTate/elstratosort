@@ -11,6 +11,8 @@ let lastSaveAttempt = 0; // Track when we last tried to save
 let lastSavedPhase = null;
 let lastSavedFilesCount = -1;
 let lastSavedResultsCount = -1;
+let lastSavedOrganizedFilesCount = -1;
+let lastSavedSmartFoldersCount = -1;
 // FIX: Track fileStates changes to ensure file state updates trigger persistence
 let lastSavedFileStatesCount = -1;
 let lastSavedFileStatesHash = '';
@@ -185,12 +187,24 @@ const persistenceMiddleware = (store) => (next) => (action) => {
     return result;
   }
 
-  // Only save if not in welcome phase and not loading
-  // FIX: Add null check for PHASES to prevent crash during module initialization
-  if (
-    state.ui.currentPhase !== (PHASES?.WELCOME ?? 'welcome') &&
-    action.type.indexOf('setLoading') === -1
-  ) {
+  const isWelcomePhase = state.ui.currentPhase === (PHASES?.WELCOME ?? 'welcome');
+  const currentOrganizedFilesCount = state.files.organizedFiles.length;
+  const currentSmartFoldersCount = state.files.smartFolders.length;
+  const hasDurableData = currentOrganizedFilesCount > 0 || currentSmartFoldersCount > 0;
+  // Track if durable data changed (for potential future optimizations)
+  const _hasDurableChange =
+    hasDurableData &&
+    (currentOrganizedFilesCount !== lastSavedOrganizedFilesCount ||
+      currentSmartFoldersCount !== lastSavedSmartFoldersCount);
+
+  // FIX: Never save in WELCOME phase unless there's actual durable data to preserve.
+  // This prevents persisting empty/default state when user hasn't done anything yet.
+  if (isWelcomePhase && !hasDurableData) {
+    return result;
+  }
+
+  // Only save if not loading action
+  if (action.type.indexOf('setLoading') === -1) {
     // Performance: Skip save if key state hasn't changed
     const { currentPhase, sidebarOpen, showSettings } = state.ui;
     const currentFilesCount = state.files.selectedFiles.length;
@@ -203,6 +217,9 @@ const persistenceMiddleware = (store) => (next) => (action) => {
       currentPhase !== lastSavedPhase ||
       currentFilesCount !== lastSavedFilesCount ||
       currentResultsCount !== lastSavedResultsCount ||
+      // FIX: Check organizedFiles count
+      currentOrganizedFilesCount !== lastSavedOrganizedFilesCount ||
+      currentSmartFoldersCount !== lastSavedSmartFoldersCount ||
       // FIX: Check fileStates changes by count and hash
       currentFileStatesCount !== lastSavedFileStatesCount ||
       currentFileStatesHash !== lastSavedFileStatesHash ||
@@ -238,7 +255,7 @@ const persistenceMiddleware = (store) => (next) => (action) => {
           files: {
             selectedFiles: state.files.selectedFiles.slice(0, 200), // Limit size
             smartFolders: state.files.smartFolders,
-            organizedFiles: state.files.organizedFiles.slice(0, 200),
+            organizedFiles: state.files.organizedFiles,
             namingConvention: state.files.namingConvention,
             fileStates: {}
           },
@@ -323,6 +340,8 @@ const persistenceMiddleware = (store) => (next) => (action) => {
           lastSavedPhase = currentPhase;
           lastSavedFilesCount = currentFilesCount;
           lastSavedResultsCount = currentResultsCount;
+          lastSavedOrganizedFilesCount = currentOrganizedFilesCount;
+          lastSavedSmartFoldersCount = currentSmartFoldersCount;
           lastSavedFileStatesCount = currentFileStatesCount;
           lastSavedFileStatesHash = currentFileStatesHash;
           lastSavedSidebarOpen = sidebarOpen;
@@ -348,6 +367,8 @@ export const cleanupPersistence = () => {
   lastSavedPhase = null;
   lastSavedFilesCount = -1;
   lastSavedResultsCount = -1;
+  lastSavedOrganizedFilesCount = -1;
+  lastSavedSmartFoldersCount = -1;
   // FIX: Reset fileStates tracking variables
   lastSavedFileStatesCount = -1;
   lastSavedFileStatesHash = '';

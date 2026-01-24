@@ -46,7 +46,7 @@ const TIMEOUTS = {
   DIRECTORY_SCAN: 60000,
   AI_ANALYSIS_SHORT: 30000,
   AI_ANALYSIS_MEDIUM: 60000,
-  AI_ANALYSIS_LONG: 120000,
+  AI_ANALYSIS_LONG: 180000, // Increased from 120s to 180s to handle complex image analysis
   AI_ANALYSIS_BATCH: 300000,
   API_REQUEST: 10000,
   API_REQUEST_SLOW: 30000,
@@ -264,7 +264,9 @@ const LIMITS = {
   PATTERN_STALE_DAYS: 180,
   MEMORY_CHECK_INTERVAL: 100,
   MAX_OVERLAP_ITERATIONS: 10000,
-  MAX_OVERLAPS_REPORT: 100
+  MAX_OVERLAPS_REPORT: 100,
+  BATCH_ORGANIZE_SIZE: 100, // Maximum files in a single batch organize operation
+  ANALYSIS_QUEUE_SIZE: 500 // Maximum size of analysis queue in SmartFolderWatcher
 };
 
 const IMAGE = { MAX_DIMENSION: 1536 };
@@ -294,8 +296,10 @@ const CONCURRENCY = {
   FOLDER_SCAN: 50,
   EMBEDDING_FLUSH: 5,
   // Analysis worker limits
+  // Default to 1 for sequential processing - better UX (see progress) and prevents VRAM exhaustion
+  // Users with high VRAM can increase via settings
   MIN_WORKERS: 1,
-  DEFAULT_WORKERS: 3,
+  DEFAULT_WORKERS: 1,
   MAX_WORKERS: 8
 };
 
@@ -319,8 +323,9 @@ const GPU_TUNING = {
  * Based on 2025 best practices for local LLM inference
  */
 const OLLAMA = {
-  // Recommended max loaded models (reduces VRAM pressure)
-  MAX_LOADED_MODELS: 1,
+  // Max loaded models - actual value is VRAM-dependent (set in PerformanceService)
+  // 8GB+: 3 models (text + vision + embedding), <8GB: 2 models
+  MAX_LOADED_MODELS: 2, // Default for <8GB VRAM
   // Parallel requests for embeddings (1 is more stable)
   NUM_PARALLEL_EMBEDDINGS: 1,
   // Keep model in memory duration
@@ -398,6 +403,41 @@ const VIEWPORT = {
   FOUR_K: 2560
 };
 
+/**
+ * Temp file patterns to ignore during file watching
+ * Shared between DownloadWatcher and SmartFolderWatcher
+ * @readonly
+ * @type {Array<RegExp>}
+ */
+const TEMP_FILE_PATTERNS = [
+  /\.tmp$/i,
+  /\.crdownload$/i,
+  /\.part$/i,
+  /\.partial$/i,
+  /^~\$/,
+  /\.swp$/i,
+  /\.swx$/i,
+  /\.swo$/i,
+  /^\.#/,
+  /^#.*#$/,
+  /~$/,
+  /\.bak$/i,
+  /\.temp$/i,
+  /\.download$/i,
+  /^\.DS_Store$/,
+  /^Thumbs\.db$/i,
+  /^desktop\.ini$/i
+];
+
+/**
+ * Check if a filename matches temp file patterns
+ * @param {string} filename - Filename to check
+ * @returns {boolean} True if file is a temp file
+ */
+function isTempFile(filename) {
+  return TEMP_FILE_PATTERNS.some((pattern) => pattern.test(filename));
+}
+
 module.exports = {
   TIMEOUTS,
   RETRY,
@@ -419,5 +459,7 @@ module.exports = {
   WINDOW,
   PROCESS,
   TRUNCATION,
-  VIEWPORT
+  VIEWPORT,
+  TEMP_FILE_PATTERNS,
+  isTempFile
 };

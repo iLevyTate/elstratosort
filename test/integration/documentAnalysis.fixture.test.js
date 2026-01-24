@@ -61,9 +61,20 @@ jest.mock('../../src/main/services/FolderMatchingService', () => {
 // Mock ollamaDetection
 jest.mock('../../src/main/utils/ollamaDetection', () => ({
   isOllamaRunning: jest.fn().mockResolvedValue(true),
+  isOllamaRunningWithRetry: jest.fn().mockResolvedValue(true),
   isOllamaInstalled: jest.fn().mockResolvedValue(true),
   getOllamaVersion: jest.fn().mockResolvedValue('0.1.30'),
   getInstalledModels: jest.fn().mockResolvedValue(['llama3.2:latest', 'mxbai-embed-large:latest'])
+}));
+
+// Mock ollamaUtils
+jest.mock('../../src/main/ollamaUtils', () => ({
+  getOllamaModel: jest.fn(() => 'llama3.2:latest'),
+  getOllamaHost: jest.fn(() => 'http://127.0.0.1:11434'),
+  loadOllamaConfig: jest.fn().mockResolvedValue({
+    selectedTextModel: 'llama3.2:latest',
+    selectedModel: 'llama3.2:latest'
+  })
 }));
 
 // Mock ServiceContainer

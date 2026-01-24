@@ -8,6 +8,7 @@ const EmbeddingCache = require('./EmbeddingCache');
 const SmartFolderWatcher = require('./SmartFolderWatcher');
 const NotificationService = require('./NotificationService');
 const { container, ServiceIds, SHUTDOWN_ORDER } = require('./ServiceContainer');
+const { getCanonicalFileId } = require('../../shared/pathSanitization');
 const { logger } = require('../../shared/logger');
 
 logger.setContext('ServiceIntegration');
@@ -257,7 +258,7 @@ class ServiceIntegration {
                     .map((p) => {
                       const ext = (path.extname(p) || '').toLowerCase();
                       const isImage = SUPPORTED_IMAGE_EXTENSIONS.includes(ext);
-                      return `${isImage ? 'image' : 'file'}:${p}`;
+                      return getCanonicalFileId(p, isImage);
                     })
                 )
               );
@@ -454,6 +455,18 @@ class ServiceIntegration {
       });
     }
 
+    // Register learning feedback service (records implicit organization patterns)
+    // This service learns from file placements in smart folders
+    if (!container.has(ServiceIds.LEARNING_FEEDBACK)) {
+      container.registerSingleton(ServiceIds.LEARNING_FEEDBACK, (c) => {
+        const { LearningFeedbackService } = require('./organization/learningFeedback');
+        return new LearningFeedbackService({
+          suggestionService: c.resolve(ServiceIds.ORGANIZATION_SUGGESTION),
+          getSmartFolders: () => [] // Will be updated during app init
+        });
+      });
+    }
+
     // Register AI/Embedding services - using registerWithContainer pattern
     if (!container.has(ServiceIds.OLLAMA_CLIENT)) {
       const { registerWithContainer: registerOllamaClient } = require('./OllamaClient');
@@ -494,6 +507,47 @@ class ServiceIntegration {
     if (!container.has(ServiceIds.FILE_ACCESS_POLICY)) {
       const { registerWithContainer: registerFileAccessPolicy } = require('./FileAccessPolicy');
       registerFileAccessPolicy(container, ServiceIds.FILE_ACCESS_POLICY);
+    }
+
+    // Register CacheInvalidationBus (used by all caches for coordinated invalidation)
+    if (!container.has(ServiceIds.CACHE_INVALIDATION_BUS)) {
+      container.registerSingleton(ServiceIds.CACHE_INVALIDATION_BUS, () => {
+        const { getInstance: getCacheInvalidationBus } = require('../../shared/cacheInvalidation');
+        return getCacheInvalidationBus();
+      });
+    }
+
+    // Register FilePathCoordinator (coordinates all path-dependent systems)
+    if (!container.has(ServiceIds.FILE_PATH_COORDINATOR)) {
+      container.registerSingleton(ServiceIds.FILE_PATH_COORDINATOR, (c) => {
+        const { FilePathCoordinator } = require('./FilePathCoordinator');
+        const coordinator = new FilePathCoordinator();
+
+        // Wire up services lazily to avoid circular dependencies
+        // Services are set after initial construction
+        const chromaDb = c.tryResolve(ServiceIds.CHROMA_DB);
+        const analysisHistory = c.tryResolve(ServiceIds.ANALYSIS_HISTORY);
+        const processingState = c.tryResolve(ServiceIds.PROCESSING_STATE);
+        const cacheInvalidationBus = c.tryResolve(ServiceIds.CACHE_INVALIDATION_BUS);
+
+        // EmbeddingQueue is not in the container, use direct require
+        let embeddingQueue = null;
+        try {
+          embeddingQueue = require('../analysis/embeddingQueue');
+        } catch (err) {
+          logger.debug('[ServiceIntegration] EmbeddingQueue not available for FilePathCoordinator');
+        }
+
+        coordinator.setServices({
+          chromaDbService: chromaDb,
+          analysisHistoryService: analysisHistory,
+          embeddingQueue,
+          processingStateService: processingState,
+          cacheInvalidationBus
+        });
+
+        return coordinator;
+      });
     }
 
     // Register NotificationService (used by watchers for user feedback)
@@ -731,6 +785,65 @@ class ServiceIntegration {
         '[ServiceIntegration] Error auto-starting SmartFolderWatcher:',
         error?.message || String(error)
       );
+    }
+  }
+
+  /**
+   * Configure the LearningFeedbackService with required dependencies
+   * This must be called after the main process has set up smart folders
+   *
+   * @param {Object} config - Configuration object
+   * @param {Function} config.getSmartFolders - Function to get current smart folders
+   */
+  configureLearningFeedback({ getSmartFolders }) {
+    try {
+      const learningService = container.resolve(ServiceIds.LEARNING_FEEDBACK);
+
+      if (learningService) {
+        learningService.getSmartFolders = getSmartFolders;
+        logger.info('[ServiceIntegration] LearningFeedbackService configured');
+      }
+    } catch (error) {
+      logger.warn(
+        '[ServiceIntegration] Failed to configure LearningFeedbackService:',
+        error?.message || String(error)
+      );
+    }
+  }
+
+  /**
+   * Run a learning scan on existing smart folder contents
+   * This teaches the system from how files are already organized
+   *
+   * @param {Object} options - Scan options
+   * @param {number} options.maxFilesPerFolder - Max files to scan per folder
+   * @param {boolean} options.onlyWithAnalysis - Only learn from analyzed files
+   * @returns {Promise<{scanned: number, learned: number}>}
+   */
+  async runLearningStartupScan(options = {}) {
+    try {
+      const learningService = container.resolve(ServiceIds.LEARNING_FEEDBACK);
+      const analysisHistory = container.resolve(ServiceIds.ANALYSIS_HISTORY);
+
+      if (!learningService) {
+        logger.warn('[ServiceIntegration] LearningFeedbackService not available for startup scan');
+        return { scanned: 0, learned: 0 };
+      }
+
+      logger.info('[ServiceIntegration] Running learning startup scan...');
+      const result = await learningService.learnFromExistingFiles(analysisHistory, {
+        maxFilesPerFolder: options.maxFilesPerFolder || 50,
+        onlyWithAnalysis: options.onlyWithAnalysis !== false
+      });
+
+      logger.info('[ServiceIntegration] Learning startup scan complete', result);
+      return result;
+    } catch (error) {
+      logger.warn(
+        '[ServiceIntegration] Error during learning startup scan:',
+        error?.message || String(error)
+      );
+      return { scanned: 0, learned: 0 };
     }
   }
 }

@@ -11,7 +11,7 @@ import {
   Square,
   X
 } from 'lucide-react';
-import { PHASES, PHASE_TRANSITIONS, PHASE_METADATA } from '../../shared/constants';
+import { PHASES, PHASE_TRANSITIONS, PHASE_METADATA, PHASE_ORDER } from '../../shared/constants';
 import { logger } from '../../shared/logger';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { setPhase, toggleSettings } from '../store/slices/uiSlice';
@@ -61,8 +61,7 @@ const SpinnerIcon = memo(function SpinnerIcon({ className = '' }) {
 });
 SpinnerIcon.propTypes = { className: PropTypes.string };
 
-// Phase to icon mapping
-// FIX: Add null checks to prevent crash if PHASES is undefined during module initialization
+// FIX: Add null check for PHASES to prevent crash during module initialization
 const PHASE_ICONS = PHASES
   ? {
       [PHASES.WELCOME]: HomeIcon,
@@ -78,10 +77,6 @@ const PHASE_ICONS = PHASES
       organize: FolderIcon,
       complete: CheckCircleIcon
     };
-
-const PHASE_ORDER = PHASES
-  ? [PHASES.WELCOME, PHASES.SETUP, PHASES.DISCOVER, PHASES.ORGANIZE, PHASES.COMPLETE]
-  : ['welcome', 'setup', 'discover', 'organize', 'complete'];
 
 // =============================================================================
 // Sub-Components
@@ -173,14 +168,20 @@ const NavTab = memo(function NavTab({
     const navLabel = metadata?.navLabel;
     if (navLabel) return navLabel;
 
-    const title = metadata?.title || '';
+    const title = metadata?.title || metadata?.label || '';
     const words = title
       .replace(/&/g, ' ')
       .split(/\s+/)
       .filter(Boolean)
       .filter((w) => !/^to|and|of|the|for|a|an$/i.test(w));
-    return words.slice(0, 2).join(' ');
-  }, [metadata]);
+    if (words.length > 0) {
+      return words.slice(0, 2).join(' ');
+    }
+    // Fallback to phase name if metadata is missing
+    return String(phase)
+      .replace(/[-_]/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }, [metadata, phase]);
 
   const showSpinner = isActive && isLoading;
 
@@ -192,9 +193,7 @@ const NavTab = memo(function NavTab({
       onMouseLeave={() => onHover(null)}
       disabled={!canNavigate}
       className={`
-        relative flex items-center gap-1 sm:gap-2 rounded-full
-        px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium whitespace-nowrap flex-shrink-0
-        transition-all duration-200 ease-out
+        phase-nav-tab
         focus:outline-none focus-visible:ring-2 focus-visible:ring-stratosort-blue focus-visible:ring-offset-2
         ${
           isActive
@@ -215,18 +214,18 @@ const NavTab = memo(function NavTab({
       style={{ WebkitAppRegion: 'no-drag' }}
     >
       {showSpinner ? (
-        <SpinnerIcon className="h-4 w-4 text-stratosort-blue flex-shrink-0" />
+        <SpinnerIcon className="phase-nav-icon text-stratosort-blue flex-shrink-0" />
       ) : (
         IconComponent && (
           <IconComponent
-            className={`h-4 w-4 flex-shrink-0 transition-colors duration-200
+            className={`phase-nav-icon flex-shrink-0 transition-colors duration-200
               ${isActive || isHovered ? 'text-stratosort-blue' : 'text-current opacity-70'}
             `}
           />
         )
       )}
-      {/* FIX: Hide label on small screens for responsive navbar - show on md and up */}
-      <span className="hidden md:inline">{label}</span>
+      {/* FIX: Always show label, with clear size/line-height for visibility */}
+      <span className="phase-nav-label">{label}</span>
 
       {/* Active indicator */}
       {isActive && !showSpinner && (
@@ -259,7 +258,7 @@ const NavActions = memo(function NavActions({ onSettingsClick }) {
         type="button"
         onClick={isWidgetOpen ? closeWidget : openWidget}
         className={`
-          h-9 px-3 rounded-lg flex items-center justify-center gap-2
+          h-9 px-2 sm:px-3 rounded-lg flex items-center justify-center gap-2
           text-system-gray-500 hover:text-stratosort-blue
           bg-white/80 hover:bg-white border border-system-gray-200 hover:border-stratosort-blue/30
           shadow-sm hover:shadow-md
@@ -272,9 +271,6 @@ const NavActions = memo(function NavActions({ onSettingsClick }) {
       >
         <SearchIcon className="h-4 w-4" />
         <span className="text-xs font-medium hidden sm:inline">Search</span>
-        <kbd className="hidden md:inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-system-gray-100 rounded text-[10px] font-mono text-system-gray-500">
-          {isMac ? '⌘' : 'Ctrl+'}K
-        </kbd>
       </button>
       <button
         type="button"
@@ -541,8 +537,22 @@ function NavigationBar() {
     (newPhase) => {
       if (!newPhase || typeof newPhase !== 'string') return;
 
-      const allowedTransitions = PHASE_TRANSITIONS[currentPhase] || [];
-      if (allowedTransitions.includes(newPhase) || newPhase === currentPhase) {
+      const order = PHASE_ORDER || ['welcome', 'setup', 'discover', 'organize', 'complete'];
+      const currentIndex = order.indexOf(currentPhase);
+      const newPhaseIndex = order.indexOf(newPhase);
+
+      // Allow navigation if:
+      // 1. It's the current phase (no-op but allowed)
+      // 2. It's a previous phase (backward navigation)
+      // 3. It's the immediate next phase (forward progress)
+      // 4. Or if it's explicitly in the allowed transitions list (legacy/graph support)
+
+      const allowedTransitions = PHASE_TRANSITIONS[currentPhase];
+      const isExplicitlyAllowed = allowedTransitions && allowedTransitions.includes(newPhase);
+      const isSequential = newPhaseIndex === currentIndex + 1;
+      const isBackward = newPhaseIndex < currentIndex;
+
+      if (newPhase === currentPhase || isBackward || isSequential || isExplicitlyAllowed) {
         actions.advancePhase(newPhase);
       }
     },
@@ -574,41 +584,65 @@ function NavigationBar() {
         willChange: 'auto'
       }}
     >
-      <div className="relative flex h-14 items-center justify-between px-4 lg:px-6">
+      <div className="relative flex h-[var(--app-nav-height)] items-center px-4 lg:px-6">
         {/* Left: Brand */}
-        <div style={{ WebkitAppRegion: 'no-drag' }}>
+        <div className="flex-shrink-0 z-20" style={{ WebkitAppRegion: 'no-drag' }}>
           <Brand status={connectionStatus} />
         </div>
 
-        {/* Center: Phase Navigation - FIX: Improved responsive overflow handling */}
-        <nav
-          className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto max-w-[40vw] sm:max-w-[50vw] md:max-w-[60vw] lg:max-w-none scrollbar-none flex-shrink min-w-0"
-          style={{ WebkitAppRegion: 'no-drag' }}
-          aria-label="Phase navigation"
-        >
-          {PHASE_ORDER.map((phase) => {
-            const allowedTransitions = PHASE_TRANSITIONS[currentPhase] || [];
-            const isActive = phase === currentPhase;
-            const canNavigate =
-              (allowedTransitions.includes(phase) || isActive) && !isBlockedByOperation;
+        {/* Center: Phase Navigation - Absolute center relative to viewport width */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <nav
+            className="phase-nav max-w-[60vw]"
+            style={{ WebkitAppRegion: 'no-drag' }}
+            aria-label="Phase navigation"
+          >
+            {(PHASE_ORDER || ['welcome', 'setup', 'discover', 'organize', 'complete']).map(
+              (phase) => {
+                const order = PHASE_ORDER || [
+                  'welcome',
+                  'setup',
+                  'discover',
+                  'organize',
+                  'complete'
+                ];
+                const currentIndex = order.indexOf(currentPhase);
+                const phaseIndex = order.indexOf(phase);
+                const isActive = phase === currentPhase;
 
-            return (
-              <NavTab
-                key={phase}
-                phase={phase}
-                isActive={isActive}
-                canNavigate={canNavigate}
-                isLoading={isActive && navSpinnerActive}
-                onClick={() => canNavigate && handlePhaseChange(phase)}
-                onHover={setHoveredTab}
-                isHovered={hoveredTab === phase}
-              />
-            );
-          })}
-        </nav>
+                // Calculate navigation permissions
+                const allowedTransitions = PHASE_TRANSITIONS[currentPhase];
+                const isExplicitlyAllowed =
+                  allowedTransitions && allowedTransitions.includes(phase);
+                const isBackward = phaseIndex < currentIndex;
+                const isSequential = phaseIndex === currentIndex + 1;
+
+                const canNavigate =
+                  (isActive || isBackward || isSequential || isExplicitlyAllowed) &&
+                  !isBlockedByOperation;
+
+                return (
+                  <NavTab
+                    key={phase}
+                    phase={phase}
+                    isActive={isActive}
+                    canNavigate={canNavigate}
+                    isLoading={isActive && navSpinnerActive}
+                    onClick={() => canNavigate && handlePhaseChange(phase)}
+                    onHover={setHoveredTab}
+                    isHovered={hoveredTab === phase}
+                  />
+                );
+              }
+            )}
+          </nav>
+        </div>
 
         {/* Right: Actions + Window Controls */}
-        <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' }}>
+        <div
+          className="ml-auto flex items-center gap-2 z-20"
+          style={{ WebkitAppRegion: 'no-drag' }}
+        >
           <NavActions onSettingsClick={handleSettingsClick} />
           <WindowControls />
         </div>

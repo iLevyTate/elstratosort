@@ -80,7 +80,7 @@ function OrganizeProgress({
           </div>
         </div>
         <div>
-          <div className="text-lg font-medium">Organizing Files...</div>
+          <div className="heading-tertiary">Organizing Files...</div>
           <div className="text-xs text-system-gray-600">Do not close the app until completion</div>
         </div>
       </div>

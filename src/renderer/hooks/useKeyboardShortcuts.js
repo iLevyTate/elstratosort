@@ -5,6 +5,7 @@ import { toggleSettings, setPhase } from '../store/slices/uiSlice';
 import { useNotification } from '../contexts/NotificationContext';
 import { useUndoRedo } from '../components/UndoRedoSystem';
 import { PHASES, PHASE_TRANSITIONS, PHASE_METADATA } from '../../shared/constants';
+import { TIMEOUTS } from '../../shared/performanceConstants';
 
 logger.setContext('useKeyboardShortcuts');
 
@@ -158,18 +159,29 @@ export function useKeyboardShortcuts() {
 
   // Handle menu actions from main process (File menu shortcuts)
   useEffect(() => {
+    const dispatchDiscoverEvent = (eventName) => {
+      const targetPhase = PHASES?.DISCOVER ?? 'discover';
+      const current = currentPhaseRef.current;
+      if (current !== targetPhase) {
+        actions.advancePhase(targetPhase);
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent(eventName));
+        }, TIMEOUTS.WINDOW_LOAD_DELAY || 100);
+        return;
+      }
+      window.dispatchEvent(new CustomEvent(eventName));
+    };
+
     const cleanup = window.electronAPI?.events?.onMenuAction?.((action) => {
       switch (action) {
         case 'open-settings':
           actions.toggleSettings();
           break;
         case 'select-files':
-          // Dispatch custom event for DiscoverPhase to handle
-          window.dispatchEvent(new CustomEvent('app:select-files'));
+          dispatchDiscoverEvent('app:select-files');
           break;
         case 'select-folder':
-          // Dispatch custom event for DiscoverPhase to handle
-          window.dispatchEvent(new CustomEvent('app:select-folder'));
+          dispatchDiscoverEvent('app:select-folder');
           break;
         default:
           logger.debug('Unknown menu action:', action);

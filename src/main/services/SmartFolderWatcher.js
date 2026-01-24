@@ -29,6 +29,10 @@ const { CHUNKING } = require('../../shared/performanceConstants');
 const { AI_DEFAULTS } = require('../../shared/constants');
 const { getInstance: getFileOperationTracker } = require('../../shared/fileOperationTracker');
 const { normalizePathForIndex, getCanonicalFileId } = require('../../shared/pathSanitization');
+const {
+  getInstance: getLearningFeedbackService,
+  FEEDBACK_SOURCES
+} = require('./organization/learningFeedback');
 
 const logger = typeof createLogger === 'function' ? createLogger('SmartFolderWatcher') : baseLogger;
 if (typeof createLogger !== 'function' && logger?.setContext) {
@@ -890,6 +894,9 @@ class SmartFolderWatcher {
         // FIX: Record operation to prevent infinite loops with other watchers
         getFileOperationTracker().recordOperation(filePath, 'analyze', 'smartFolderWatcher');
 
+        // Record implicit learning feedback - file in smart folder = positive signal
+        await this._recordLearningFeedback(filePath, result);
+
         // Send notification about the analyzed file
         const fileName = path.basename(filePath);
         const analysis = result.analysis || result;
@@ -1121,6 +1128,49 @@ class SmartFolderWatcher {
           )
           .catch(() => {});
       }
+    }
+  }
+
+  /**
+   * Record learning feedback for a file in a smart folder
+   * This teaches the system that files like this belong in this folder
+   * @private
+   * @param {string} filePath - Path to the analyzed file
+   * @param {Object} analysisResult - Analysis result
+   */
+  async _recordLearningFeedback(filePath, analysisResult) {
+    try {
+      const learningService = getLearningFeedbackService();
+      if (!learningService) {
+        // Service not initialized yet - skip silently
+        return;
+      }
+
+      // Find which smart folder this file is in
+      const smartFolder = learningService.findContainingSmartFolder(filePath);
+      if (!smartFolder) {
+        // Not in a smart folder - shouldn't happen but guard anyway
+        return;
+      }
+
+      // Extract analysis data
+      const analysis = analysisResult?.analysis || analysisResult || {};
+
+      // Record the implicit feedback
+      await learningService.recordFilePlacement({
+        filePath,
+        smartFolder,
+        analysis,
+        source: FEEDBACK_SOURCES.WATCHER_DETECTION
+      });
+
+      logger.debug('[SMART-FOLDER-WATCHER] Recorded learning feedback:', {
+        file: path.basename(filePath),
+        folder: smartFolder.name
+      });
+    } catch (error) {
+      // Non-fatal - learning failure shouldn't block analysis
+      logger.debug('[SMART-FOLDER-WATCHER] Learning feedback failed:', error.message);
     }
   }
 

@@ -521,7 +521,8 @@ describe('Settings Validation', () => {
     test('returns default value for valid setting', () => {
       expect(getDefaultValue('theme')).toBeUndefined();
       expect(getDefaultValue('notifications')).toBe(true);
-      expect(getDefaultValue('maxConcurrentAnalysis')).toBe(3);
+      // Default is 1 for sequential processing - better UX and prevents VRAM exhaustion
+      expect(getDefaultValue('maxConcurrentAnalysis')).toBe(1);
     });
 
     test('returns undefined for unknown setting', () => {
@@ -578,7 +579,8 @@ describe('Settings Validation', () => {
       test('returns correct processing limits', () => {
         const limits = getConfigurableLimits();
 
-        expect(limits.processingLimits.maxConcurrentAnalysis).toBe(3);
+        // Default is 1 for sequential processing - better UX and prevents VRAM exhaustion
+        expect(limits.processingLimits.maxConcurrentAnalysis).toBe(1);
         expect(limits.processingLimits.analysisTimeout).toBe(60000);
         expect(limits.processingLimits.fileOperationTimeout).toBe(10000);
         expect(limits.processingLimits.maxBatchSize).toBe(100);
@@ -679,7 +681,8 @@ describe('Settings Validation', () => {
 
         // Should return all defaults
         expect(limits.fileSizeLimits.maxFileSize).toBe(100 * 1024 * 1024);
-        expect(limits.processingLimits.maxConcurrentAnalysis).toBe(3);
+        // Default is 1 for sequential processing - better UX and prevents VRAM exhaustion
+        expect(limits.processingLimits.maxConcurrentAnalysis).toBe(1);
         expect(limits.uiLimits.saveDebounceMs).toBe(1000);
       });
 

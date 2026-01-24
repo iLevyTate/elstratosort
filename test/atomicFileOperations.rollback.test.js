@@ -55,8 +55,16 @@ describe('AtomicFileOperations rollback and cross-device', () => {
     ops = new AtomicFileOperations();
   });
 
+  afterEach(() => {
+    // Clean up to prevent timer leaks
+    if (ops && typeof ops.shutdown === 'function') {
+      ops.shutdown();
+    }
+  });
+
   test('rollbackTransaction restores from backups when an operation fails', async () => {
     const tx = await ops.beginTransaction();
+    // Use literal Unix-style paths since memfs is platform-agnostic
     const src = '/tmp/fileC.txt';
     const dest = '/tmp/dest/fileC.txt';
     await fs.promises.mkdir('/tmp/dest', { recursive: true });
@@ -78,6 +86,7 @@ describe('AtomicFileOperations rollback and cross-device', () => {
 
   test('cross-device move fallback copies and deletes source', async () => {
     const tx = await ops.beginTransaction();
+    // Use literal Unix-style paths since memfs is platform-agnostic
     const src = '/tmp/fileD.txt';
     await fs.promises.writeFile(src, 'abc');
 
@@ -85,7 +94,7 @@ describe('AtomicFileOperations rollback and cross-device', () => {
     const renameSpy = jest.spyOn(fs.promises, 'rename').mockImplementation(() => {
       const err = new Error('cross device');
       err.code = 'EXDEV';
-      throw err;
+      return Promise.reject(err);
     });
 
     const dest = '/tmp/other/fileD.txt';

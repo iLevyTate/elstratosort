@@ -1,13 +1,12 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { PHASES, PHASE_TRANSITIONS } from '../../../shared/constants';
+import { PHASES, PHASE_TRANSITIONS, PHASE_ORDER } from '../../../shared/constants';
 import { logger } from '../../../shared/logger';
 import { serializeData } from '../../utils/serialization';
 
-// FIX: Phase validation utility to prevent invalid navigation states
+// FIX: Define explicit phase order for navigation logic
+// PHASE_ORDER is imported from constants
 // FIX: Add fallback to prevent crash if PHASES is undefined during module initialization
-const VALID_PHASES = PHASES
-  ? Object.values(PHASES)
-  : ['welcome', 'setup', 'discover', 'organize', 'complete'];
+const VALID_PHASES = PHASE_ORDER || ['welcome', 'setup', 'discover', 'organize', 'complete'];
 
 function isValidPhase(phase) {
   return phase != null && typeof phase === 'string' && VALID_PHASES.includes(phase);
@@ -17,8 +16,22 @@ function canTransitionTo(fromPhase, toPhase) {
   if (!isValidPhase(fromPhase) || !isValidPhase(toPhase)) {
     return false;
   }
-  const allowedTransitions = PHASE_TRANSITIONS[fromPhase] || [];
-  return allowedTransitions.includes(toPhase) || fromPhase === toPhase;
+
+  const fromIndex = (PHASE_ORDER || VALID_PHASES).indexOf(fromPhase);
+  const toIndex = (PHASE_ORDER || VALID_PHASES).indexOf(toPhase);
+
+  // Allow navigation if:
+  // 1. Backward or current phase (always allowed)
+  // 2. Next sequential phase (linear progression)
+  if (toIndex <= fromIndex + 1) return true;
+
+  const allowedTransitions = PHASE_TRANSITIONS[fromPhase];
+  // Handle explicit transitions (legacy/graph support)
+  // Check if allowedTransitions is array or string
+  if (Array.isArray(allowedTransitions)) {
+    return allowedTransitions.includes(toPhase);
+  }
+  return allowedTransitions === toPhase;
 }
 
 // Navigation state rules - determines when navigation buttons should be disabled
