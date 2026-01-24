@@ -109,7 +109,8 @@ const IPC_CHANNELS = {
     APPLY_UPDATE: 'system:apply-update',
     GET_CONFIG: 'system:get-config',
     GET_CONFIG_VALUE: 'system:get-config-value',
-    RENDERER_ERROR_REPORT: 'system:renderer-error'
+    RENDERER_ERROR_REPORT: 'system:renderer-error',
+    GET_RECOMMENDED_CONCURRENCY: 'system:get-recommended-concurrency'
   },
   WINDOW: {
     MINIMIZE: 'window:minimize',

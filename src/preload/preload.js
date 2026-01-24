@@ -754,6 +754,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // FIX: Expose config handlers that were registered but not exposed
     getConfig: () => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.GET_CONFIG),
     getConfigValue: (path) => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.GET_CONFIG_VALUE, path),
+    // Get recommended concurrency based on system capabilities (VRAM, etc.)
+    getRecommendedConcurrency: () =>
+      secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.GET_RECOMMENDED_CONCURRENCY),
     // Listen for semantic search trigger from tray/global shortcut
     // FIX: Use secureIPC.safeOn() for proper event source validation and cleanup tracking
     onOpenSemanticSearch: (callback) => secureIPC.safeOn('open-semantic-search', callback)

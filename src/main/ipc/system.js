@@ -135,6 +135,27 @@ function registerSystemIpc(servicesOrParams) {
       }
     })
   );
+
+  // Get recommended concurrency based on system capabilities
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.SYSTEM.GET_RECOMMENDED_CONCURRENCY,
+    createHandler({
+      logger,
+      context,
+      handler: async () => {
+        try {
+          const { getRecommendedConcurrency } = require('../services/PerformanceService');
+          const recommendation = await getRecommendedConcurrency();
+          logger.info('[System] Recommended concurrency:', recommendation);
+          return { success: true, ...recommendation };
+        } catch (error) {
+          logger.error('Failed to get recommended concurrency:', error);
+          return { success: false, maxConcurrent: 1, reason: 'Error determining capabilities' };
+        }
+      }
+    })
+  );
 }
 
 module.exports = registerSystemIpc;

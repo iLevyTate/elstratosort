@@ -296,8 +296,10 @@ const CONCURRENCY = {
   FOLDER_SCAN: 50,
   EMBEDDING_FLUSH: 5,
   // Analysis worker limits
+  // Default to 1 for sequential processing - better UX (see progress) and prevents VRAM exhaustion
+  // Users with high VRAM can increase via settings
   MIN_WORKERS: 1,
-  DEFAULT_WORKERS: 3,
+  DEFAULT_WORKERS: 1,
   MAX_WORKERS: 8
 };
 
@@ -321,8 +323,9 @@ const GPU_TUNING = {
  * Based on 2025 best practices for local LLM inference
  */
 const OLLAMA = {
-  // Recommended max loaded models (reduces VRAM pressure)
-  MAX_LOADED_MODELS: 1,
+  // Max loaded models - actual value is VRAM-dependent (set in PerformanceService)
+  // 8GB+: 3 models (text + vision + embedding), <8GB: 2 models
+  MAX_LOADED_MODELS: 2, // Default for <8GB VRAM
   // Parallel requests for embeddings (1 is more stable)
   NUM_PARALLEL_EMBEDDINGS: 1,
   // Keep model in memory duration

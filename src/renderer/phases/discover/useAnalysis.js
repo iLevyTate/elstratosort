@@ -674,9 +674,40 @@ export function useAnalysis(options = {}) {
       let maxConcurrent = CONCURRENCY.DEFAULT_WORKERS;
 
       try {
+        // Get system-recommended value based on VRAM (primary source)
+        let systemRecommended = CONCURRENCY.DEFAULT_WORKERS;
+        try {
+          const recommendation = await window.electronAPI.system.getRecommendedConcurrency();
+          if (recommendation?.success && recommendation.maxConcurrent) {
+            systemRecommended = recommendation.maxConcurrent;
+            logger.info('System-recommended concurrency:', {
+              maxConcurrent: recommendation.maxConcurrent,
+              reason: recommendation.reason,
+              vramMB: recommendation.vramMB
+            });
+          }
+        } catch {
+          // Fall back to default if recommendation fails
+        }
+
+        // Use system recommendation as the baseline
+        maxConcurrent = systemRecommended;
+
+        // Only allow user override if they explicitly set it AND it doesn't exceed system recommendation
+        // This prevents users with old settings (e.g., 3) from exhausting VRAM on low-memory GPUs
         const persistedSettings = await window.electronAPI.settings.get();
         if (persistedSettings?.maxConcurrentAnalysis !== undefined) {
-          maxConcurrent = Number(persistedSettings.maxConcurrentAnalysis);
+          const userSetting = Number(persistedSettings.maxConcurrentAnalysis);
+          // User can only go LOWER than system recommendation, not higher
+          // This protects against VRAM exhaustion
+          maxConcurrent = Math.min(userSetting, systemRecommended);
+          if (userSetting > systemRecommended) {
+            logger.warn('User concurrency setting exceeds system recommendation, capping:', {
+              userSetting,
+              systemRecommended,
+              using: maxConcurrent
+            });
+          }
         }
       } catch {
         // Use default
