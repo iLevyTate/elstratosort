@@ -172,7 +172,7 @@
     "adm-zip": "^0.5.16",
     "assert": "^2.1.0",
     "autoprefixer": "^10.4.23",
-    "axios": "^1.13.2",
+    "axios": "^1.13.3",
     "babel-jest": "^30.2.0",
     "babel-loader": "^10.0.0",
     "buffer": "^6.0.3",
