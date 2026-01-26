@@ -28,8 +28,7 @@
     "!**/__tests__/**"
   ],
   "extraMetadata": {
-    "main": "dist/main.js",
-    "version": "1.1.0"
+    "main": "dist/main.js"
   },
   "directories": {
     "buildResources": "assets",
