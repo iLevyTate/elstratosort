@@ -12,7 +12,7 @@ const SIZES = {
   md: 'max-w-lg',
   lg: 'max-w-2xl',
   xl: 'max-w-4xl',
-  full: 'max-w-[95vw] h-[90vh]'
+  full: 'max-w-[95vw]'
 };
 
 const VARIANTS = {
@@ -22,8 +22,8 @@ const VARIANTS = {
     icon: null
   },
   destructive: {
-    header: 'bg-red-50 border-b border-red-100',
-    title: 'text-red-700',
+    header: 'bg-stratosort-danger/10 border-b border-stratosort-danger/20',
+    title: 'text-stratosort-danger',
     icon: null
   }
 };
@@ -102,10 +102,17 @@ const Modal = memo(function Modal({
 
   const variantStyles = VARIANTS[variant] || VARIANTS.default;
   const sizeClass = SIZES[size] || SIZES.md;
+  const panelMaxHeight =
+    size === 'full'
+      ? 'max-h-[calc(100vh-var(--app-nav-height)-1rem)]'
+      : 'max-h-[calc(100vh-var(--app-nav-height)-2rem)]';
+  const overlayPaddingTop = 'calc(var(--app-nav-height) + 1rem)';
+  const overlayPaddingBottom = '1.5rem';
 
   const content = (
     <div
       className="fixed inset-0 z-modal flex items-center justify-center p-4 sm:p-6"
+      style={{ paddingTop: overlayPaddingTop, paddingBottom: overlayPaddingBottom }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-title"
@@ -122,8 +129,9 @@ const Modal = memo(function Modal({
       <div
         ref={modalRef}
         className={`
-          relative w-full ${sizeClass} bg-white rounded-2xl shadow-2xl 
-          flex flex-col max-h-[90vh] overflow-hidden
+          relative w-full ${sizeClass} ${panelMaxHeight} ${
+            size === 'full' ? 'h-[calc(100vh-var(--app-nav-height)-1rem)]' : ''
+          } bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden
           animate-modal-enter transform transition-all
         `}
         tabIndex={-1}
@@ -153,11 +161,11 @@ const Modal = memo(function Modal({
         </div>
 
         {/* Body */}
-        <div className="p-6 overflow-y-auto custom-scrollbar">{children}</div>
+        <div className="p-6 overflow-y-auto custom-scrollbar flex-1 min-h-0">{children}</div>
 
         {/* Footer */}
         {footer && (
-          <div className="px-6 py-4 bg-system-gray-50 border-t border-system-gray-100 flex justify-end gap-3 shrink-0 rounded-b-2xl">
+          <div className="px-6 py-4 bg-system-gray-50 border-t border-system-gray-100 flex justify-end gap-cozy shrink-0 rounded-b-2xl">
             {footer}
           </div>
         )}
