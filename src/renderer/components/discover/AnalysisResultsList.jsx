@@ -4,7 +4,6 @@ import { useSelector } from 'react-redux';
 import { List } from 'react-window';
 import { FileText, Compass, AlertTriangle } from 'lucide-react';
 import { Button, StatusBadge } from '../ui';
-import { Inline } from '../layout';
 import { logger } from '../../../shared/logger';
 import { UI_VIRTUALIZATION } from '../../../shared/constants';
 import { formatDisplayPath } from '../../utils/pathDisplay';
@@ -30,12 +29,12 @@ class AnalysisResultsErrorBoundary extends Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-          <div className="flex items-center gap-2 text-red-700">
+        <div className="p-4 bg-stratosort-danger/10 border border-stratosort-danger/30 rounded-lg">
+          <div className="flex items-center gap-2 text-stratosort-danger">
             <AlertTriangle className="w-5 h-5" />
             <span className="font-medium">Failed to render analysis results</span>
           </div>
-          <p className="mt-2 text-sm text-red-600">
+          <p className="mt-2 text-sm text-stratosort-danger">
             {this.state.error?.message || 'An unexpected error occurred'}
           </p>
           <Button
@@ -86,7 +85,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
       ? getFileStateDisplay(file.path, !!file.analysis)
       : stateDisplay;
   } catch (err) {
-    stateDisplay = { label: 'Error', icon: null, color: 'text-red-500', spinning: false };
+    stateDisplay = { label: 'Error', icon: null, color: 'text-stratosort-danger', spinning: false };
   }
 
   const displayColor = stateDisplay?.color || '';
@@ -124,7 +123,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
                     {confidence}%
                   </Text>
                 )}
-                <StatusBadge variant={tone} className="py-0.5 px-2 text-xs">
+                <StatusBadge variant={tone} size="sm">
                   <span className={stateDisplay?.spinning ? 'animate-spin mr-1' : 'mr-1'}>
                     {stateDisplay?.icon}
                   </span>
@@ -142,26 +141,32 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
                 <Text variant="tiny" className="text-system-gray-500">
                   Category:
                 </Text>
-                <span className="text-xs font-medium text-stratosort-blue bg-stratosort-blue/5 px-1.5 py-0.5 rounded">
+                <Text
+                  as="span"
+                  variant="tiny"
+                  className="font-medium text-stratosort-blue bg-stratosort-blue/5 px-1.5 py-0.5 rounded"
+                >
                   {file.analysis.category}
-                </span>
+                </Text>
               </div>
             )}
 
             {keywords.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {keywords.slice(0, 5).map((tag, i) => (
-                  <span
+                  <Text
+                    as="span"
+                    variant="tiny"
                     key={i}
-                    className="px-1.5 py-0.5 bg-system-gray-50 text-system-gray-600 rounded text-[10px] border border-system-gray-100"
+                    className="px-1.5 py-0.5 bg-system-gray-50 text-system-gray-600 rounded border border-system-gray-100"
                   >
                     {tag}
-                  </span>
+                  </Text>
                 ))}
                 {keywords.length > 5 && (
-                  <span className="px-1.5 py-0.5 text-system-gray-400 text-[10px]">
+                  <Text as="span" variant="tiny" className="px-1.5 py-0.5 text-system-gray-400">
                     +{keywords.length - 5}
-                  </span>
+                  </Text>
                 )}
               </div>
             )}
@@ -204,7 +209,8 @@ AnalysisResultRow.propTypes = {
   data: PropTypes.shape({
     items: PropTypes.array.isRequired,
     handleAction: PropTypes.func.isRequired,
-    getFileStateDisplay: PropTypes.func.isRequired
+    getFileStateDisplay: PropTypes.func.isRequired,
+    redactPaths: PropTypes.bool
   }).isRequired
 };
 
@@ -310,20 +316,23 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
   if (shouldVirtualize) {
     return (
       <div ref={containerRef} className="relative w-full h-full">
-        <div className="absolute top-2 right-4 z-10 bg-white/90 px-2 py-1 rounded text-xs text-system-gray-500 border border-border-soft backdrop-blur-sm shadow-sm">
+        <Text
+          as="div"
+          variant="tiny"
+          className="absolute top-2 right-4 z-10 bg-white/90 px-2 py-1 rounded text-system-gray-500 border border-border-soft backdrop-blur-sm shadow-sm"
+        >
           Showing {items.length} files
-        </div>
+        </Text>
         <List
           key={`list-${items.length}`}
-          itemCount={items.length}
-          itemSize={ITEM_HEIGHT}
-          itemData={listItemData}
+          rowCount={items.length}
+          rowHeight={ITEM_HEIGHT}
+          rowComponent={AnalysisResultRow}
+          rowProps={rowProps}
           overscanCount={5}
           className="scrollbar-thin scrollbar-thumb-system-gray-300 scrollbar-track-transparent"
           style={{ height: dimensions.height, width: '100%' }}
-        >
-          {AnalysisResultRow}
-        </List>
+        />
       </div>
     );
   }
