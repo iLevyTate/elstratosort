@@ -145,7 +145,7 @@ describe('OrganizationSuggestionServiceCore', () => {
       embedText: jest.fn().mockResolvedValue({ vector: [0.1, 0.2], model: 'test' }),
       generateFolderId: jest.fn((folder) => `folder-${folder.name}`),
       upsertFileEmbedding: jest.fn().mockResolvedValue(undefined),
-      matchFileToFolders: jest.fn().mockResolvedValue([])
+      matchVectorToFolders: jest.fn().mockResolvedValue([])
     };
 
     mockSettingsService = {
@@ -518,7 +518,7 @@ describe('OrganizationSuggestionServiceCore', () => {
     const mockFolders = [{ id: 'folder-1', name: 'Documents', path: '/docs' }];
 
     test('returns semantic matches', async () => {
-      mockFolderMatchingService.matchFileToFolders.mockResolvedValueOnce([
+      mockFolderMatchingService.matchVectorToFolders.mockResolvedValueOnce([
         { folderId: 'folder-1', name: 'Documents', score: 0.8 }
       ]);
 
@@ -528,14 +528,17 @@ describe('OrganizationSuggestionServiceCore', () => {
       expect(results[0].method).toBe('semantic_embedding');
     });
 
-    test('upserts file embedding', async () => {
+    test('runs embedding and matching', async () => {
       await service.getSemanticFolderMatches(mockFile, mockFolders);
 
-      expect(mockFolderMatchingService.upsertFileEmbedding).toHaveBeenCalled();
+      expect(mockFolderMatchingService.embedText).toHaveBeenCalled();
+      expect(mockFolderMatchingService.matchVectorToFolders).toHaveBeenCalled();
     });
 
     test('returns empty array on error', async () => {
-      mockFolderMatchingService.matchFileToFolders.mockRejectedValueOnce(new Error('Match failed'));
+      mockFolderMatchingService.matchVectorToFolders.mockRejectedValueOnce(
+        new Error('Match failed')
+      );
 
       const results = await service.getSemanticFolderMatches(mockFile, mockFolders);
 

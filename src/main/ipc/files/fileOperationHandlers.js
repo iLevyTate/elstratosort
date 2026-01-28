@@ -36,6 +36,7 @@ const {
   getInstance: getLearningFeedbackService,
   FEEDBACK_SOURCES
 } = require('../../services/organization/learningFeedback');
+const { syncEmbeddingForMove } = require('./embeddingSync');
 
 // Alias for backward compatibility
 const operationSchema = schemas?.fileOperation || null;
@@ -111,6 +112,22 @@ function getFilePathCoordinator() {
   } catch (error) {
     // FIX #14: Log error instead of silent swallowing for debugging purposes
     logger.debug('[FILE-OPS] FilePathCoordinator unavailable:', error?.message);
+  }
+  return null;
+}
+
+/**
+ * Get AnalysisHistoryService from ServiceContainer if available
+ * @returns {Object|null} AnalysisHistoryService instance or null
+ */
+function getAnalysisHistoryService() {
+  try {
+    const { container, ServiceIds } = require('../../services/ServiceContainer');
+    if (container.has(ServiceIds.ANALYSIS_HISTORY)) {
+      return container.resolve(ServiceIds.ANALYSIS_HISTORY);
+    }
+  } catch (error) {
+    logger.debug('[FILE-OPS] AnalysisHistoryService unavailable:', error?.message);
   }
   return null;
 }
@@ -422,6 +439,24 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
             });
           }
 
+          // Ensure embeddings reflect the final smart folder destination (best effort)
+          try {
+            const syncPromise = syncEmbeddingForMove({
+              sourcePath: moveValidation.source,
+              destPath: moveValidation.destination,
+              log
+            });
+            const EMBEDDING_SYNC_TIMEOUT_MS = 5000;
+            await Promise.race([
+              syncPromise,
+              new Promise((resolve) => setTimeout(resolve, EMBEDDING_SYNC_TIMEOUT_MS))
+            ]);
+          } catch (syncErr) {
+            log.debug('[FILE-OPS] Embedding sync failed (non-fatal):', {
+              error: syncErr.message
+            });
+          }
+
           return {
             success: true,
             message: `Moved ${moveValidation.source} to ${moveValidation.destination}`,
@@ -515,6 +550,23 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
           } catch (invalidateErr) {
             log.warn('[FILE-OPS] Failed to invalidate clustering cache after copy', {
               error: invalidateErr.message
+            });
+          }
+
+          // Ensure embeddings reflect the final smart folder destination (best effort)
+          try {
+            const syncPromise = syncEmbeddingForMove({
+              destPath: copyValidation.destination,
+              log
+            });
+            const EMBEDDING_SYNC_TIMEOUT_MS = 5000;
+            await Promise.race([
+              syncPromise,
+              new Promise((resolve) => setTimeout(resolve, EMBEDDING_SYNC_TIMEOUT_MS))
+            ]);
+          } catch (syncErr) {
+            log.debug('[FILE-OPS] Embedding sync failed after copy (non-fatal):', {
+              error: syncErr.message
             });
           }
 
@@ -859,6 +911,217 @@ function registerFileOperationHandlers(servicesOrParams) {
           errorCode,
           details: error.message
         };
+      }
+    })
+  );
+
+  // Cleanup analysis/index data for a file without deleting it
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.FILES.CLEANUP_ANALYSIS,
+    withErrorLogging(log, async (event, filePath) => {
+      try {
+        if (!filePath || typeof filePath !== 'string') {
+          return {
+            success: false,
+            error: 'Invalid file path provided',
+            errorCode: 'INVALID_PATH'
+          };
+        }
+
+        // SECURITY FIX: Validate path before cleanup
+        const validation = await validateFileOperationPath(filePath, {
+          checkSymlinks: false
+        });
+
+        if (!validation.valid) {
+          log.warn('[FILE-OPS] Cleanup path validation failed', {
+            filePath,
+            error: validation.error
+          });
+          return {
+            success: false,
+            error: validation.error,
+            errorCode: 'INVALID_PATH'
+          };
+        }
+
+        const validatedPath = validation.normalizedPath;
+
+        // If analysis history shows the file already moved, update paths instead of deleting.
+        const historyService = getAnalysisHistoryService();
+        if (historyService?.getAnalysisByPath) {
+          try {
+            const entry = await historyService.getAnalysisByPath(validatedPath);
+            const actualPath = entry?.organization?.actual;
+            if (actualPath && typeof actualPath === 'string') {
+              let actualExists = false;
+              try {
+                await fs.access(actualPath);
+                actualExists = true;
+              } catch {
+                actualExists = false;
+              }
+
+              if (actualExists) {
+                const coordinator = getFilePathCoordinator();
+                if (actualPath !== validatedPath && coordinator) {
+                  const updateResult = await coordinator.atomicPathUpdate(
+                    validatedPath,
+                    actualPath,
+                    {
+                      type: 'move',
+                      skipProcessingState: true
+                    }
+                  );
+
+                  // Rebuild search indexes after alignment (best effort)
+                  try {
+                    const { getSearchServiceInstance } = require('../semantic');
+                    const searchService = getSearchServiceInstance?.();
+                    if (searchService) {
+                      searchService
+                        .invalidateAndRebuild({
+                          immediate: true,
+                          reason: 'analysis-alignment',
+                          oldPath: validatedPath,
+                          newPath: actualPath
+                        })
+                        .catch((rebuildErr) => {
+                          log.warn('[FILE-OPS] Background BM25 rebuild failed', {
+                            error: rebuildErr.message
+                          });
+                        });
+                    }
+                  } catch (invalidateErr) {
+                    log.warn('[FILE-OPS] Failed to trigger search index rebuild', {
+                      error: invalidateErr.message
+                    });
+                  }
+
+                  try {
+                    const { getClusteringServiceInstance } = require('../semantic');
+                    const clusteringService = getClusteringServiceInstance?.();
+                    if (clusteringService) {
+                      clusteringService.invalidateClusters();
+                    }
+                  } catch (invalidateErr) {
+                    log.warn('[FILE-OPS] Failed to invalidate clustering cache', {
+                      error: invalidateErr.message
+                    });
+                  }
+
+                  // Notify renderer about move alignment (best effort)
+                  try {
+                    const mainWindow = getMainWindow();
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                      safeSend(mainWindow.webContents, 'file-operation-complete', {
+                        operation: 'move',
+                        oldPath: validatedPath,
+                        newPath: actualPath
+                      });
+                    }
+                  } catch (notifyErr) {
+                    log.warn('[FILE-OPS] Failed to notify renderer of move alignment', {
+                      error: notifyErr.message
+                    });
+                  }
+
+                  return {
+                    success: updateResult.success,
+                    updated: updateResult.updated,
+                    errors: updateResult.errors,
+                    ...(updateResult.errors?.length && {
+                      warning: `Some systems failed to update: ${updateResult.errors
+                        .map((e) => e.system)
+                        .join(', ')}`
+                    })
+                  };
+                }
+
+                // Already aligned to actual path; skip cleanup to avoid orphaning organized files.
+                return {
+                  success: true,
+                  skipped: true,
+                  reason: 'already-organized'
+                };
+              }
+            }
+          } catch (historyErr) {
+            log.debug('[FILE-OPS] Analysis history check failed during cleanup', {
+              error: historyErr.message
+            });
+          }
+        }
+
+        let cleanupResult = null;
+        let cleanupWarning = null;
+
+        const coordinator = getFilePathCoordinator();
+        if (coordinator) {
+          try {
+            cleanupResult = await coordinator.handleFileDeletion(validatedPath);
+            if (!cleanupResult.success && cleanupResult.errors?.length) {
+              cleanupWarning = `Some systems failed to cleanup: ${cleanupResult.errors
+                .map((e) => e.system)
+                .join(', ')}`;
+            }
+          } catch (coordError) {
+            cleanupWarning = `Cleanup failed: ${coordError.message}`;
+            log.warn('[FILE-OPS] FilePathCoordinator cleanup failed', {
+              error: coordError.message
+            });
+          }
+        } else {
+          cleanupWarning = 'Coordinator unavailable for cleanup';
+          log.warn('[FILE-OPS] FilePathCoordinator unavailable for cleanup');
+        }
+
+        // Invalidate and rebuild search index after cleanup
+        try {
+          const { getSearchServiceInstance } = require('../semantic');
+          const searchService = getSearchServiceInstance?.();
+          if (searchService) {
+            searchService
+              .invalidateAndRebuild({
+                immediate: true,
+                reason: 'analysis-remove',
+                oldPath: validatedPath
+              })
+              .catch((rebuildErr) => {
+                log.warn('[FILE-OPS] Background BM25 rebuild failed', {
+                  error: rebuildErr.message
+                });
+              });
+          }
+        } catch (invalidateErr) {
+          log.warn('[FILE-OPS] Failed to trigger search index rebuild', {
+            error: invalidateErr.message
+          });
+        }
+
+        // Invalidate clustering cache after cleanup
+        try {
+          const { getClusteringServiceInstance } = require('../semantic');
+          const clusteringService = getClusteringServiceInstance?.();
+          if (clusteringService) {
+            clusteringService.invalidateClusters();
+          }
+        } catch (invalidateErr) {
+          log.warn('[FILE-OPS] Failed to invalidate clustering cache', {
+            error: invalidateErr.message
+          });
+        }
+
+        return {
+          success: !cleanupWarning,
+          ...(cleanupResult?.cleaned && { cleaned: cleanupResult.cleaned }),
+          ...(cleanupResult?.errors && { errors: cleanupResult.errors }),
+          ...(cleanupWarning && { warning: cleanupWarning })
+        };
+      } catch (error) {
+        log.error('[FILE-OPS] Cleanup analysis error:', error);
+        return { success: false, error: error.message };
       }
     })
   );

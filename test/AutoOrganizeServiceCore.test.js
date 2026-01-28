@@ -111,7 +111,8 @@ describe('AutoOrganizeServiceCore', () => {
     };
 
     mockFolderMatchingService = {
-      matchFileToFolders: jest.fn().mockResolvedValue([])
+      matchFileToFolders: jest.fn().mockResolvedValue([]),
+      matchVectorToFolders: jest.fn().mockResolvedValue([])
     };
 
     mockUndoRedoService = {

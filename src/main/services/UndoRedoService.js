@@ -708,8 +708,7 @@ class UndoRedoService {
 
       // FIX: Trigger search index rebuild to ensure consistency
       try {
-        const { getSearchServiceInstance } = require('../analysis/semantic');
-        const searchService = getSearchServiceInstance?.();
+        const searchService = container.tryResolve(ServiceIds.SEARCH_SERVICE);
         if (searchService?.invalidateAndRebuild) {
           searchService
             .invalidateAndRebuild({
@@ -724,7 +723,7 @@ class UndoRedoService {
               });
             });
         }
-      } catch (err) {
+      } catch {
         // Non-fatal
       }
     } catch (error) {
@@ -786,8 +785,7 @@ class UndoRedoService {
 
       // FIX: Trigger search index rebuild for batch updates
       try {
-        const { getSearchServiceInstance } = require('../analysis/semantic');
-        const searchService = getSearchServiceInstance?.();
+        const searchService = container.tryResolve(ServiceIds.SEARCH_SERVICE);
         if (searchService?.invalidateAndRebuild) {
           searchService
             .invalidateAndRebuild({
@@ -800,7 +798,7 @@ class UndoRedoService {
               });
             });
         }
-      } catch (err) {
+      } catch {
         // Non-fatal
       }
     } catch (error) {

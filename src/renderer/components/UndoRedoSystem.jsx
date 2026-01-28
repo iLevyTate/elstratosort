@@ -132,7 +132,7 @@ export const createOrganizeBatchAction = (description, operations, stateCallback
     }
     return result;
   },
-  undo: async (action) => {
+  undo: async (_action) => {
     // Delegate to main process UndoRedoService to maintain history integrity
     // This ensures that:
     // 1. We don't create a NEW "move" action in the history stack
@@ -149,7 +149,7 @@ export const createOrganizeBatchAction = (description, operations, stateCallback
     }
     return result;
   },
-  redo: async (action) => {
+  redo: async (_action) => {
     // Delegate to main process UndoRedoService
     const result = await window.electronAPI.undoRedo.redo();
 

@@ -110,7 +110,7 @@ const OrganizationSuggestions = memo(function OrganizationSuggestions({
   return (
     <div className="space-y-4">
       {/* Primary Suggestion */}
-      <Card className="p-4 border-stratosort-blue/30">
+      <Card className="p-4 sm:p-6 border-stratosort-blue/30">
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
@@ -197,7 +197,7 @@ const OrganizationSuggestions = memo(function OrganizationSuggestions({
       </Card>
 
       {/* Feedback Note */}
-      <Card className="p-4 bg-system-gray-50 border-system-gray-200">
+      <Card className="p-4 sm:p-6 bg-system-gray-50 border-system-gray-200">
         <div className="text-sm font-medium text-system-gray-700 mb-2">
           Feedback note (optional)
         </div>
@@ -287,7 +287,7 @@ const OrganizationSuggestions = memo(function OrganizationSuggestions({
 
       {/* Organization Strategies */}
       {strategies.length > 0 && (
-        <Card className="p-4 bg-system-gray-50">
+        <Card className="p-4 sm:p-6 bg-system-gray-50">
           <h5 className="text-sm font-medium text-system-gray-700 mb-3">Organization Strategies</h5>
           <div className="space-y-2">
             {strategies.map((strategy) => (

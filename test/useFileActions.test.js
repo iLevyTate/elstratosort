@@ -22,7 +22,8 @@ const mockElectronAPI = {
     open: jest.fn(),
     reveal: jest.fn(),
     delete: jest.fn(),
-    getStats: jest.fn()
+    getStats: jest.fn(),
+    cleanupAnalysis: jest.fn()
   }
 };
 
@@ -64,6 +65,7 @@ describe('useFileActions', () => {
     mockElectronAPI.files.reveal.mockResolvedValue({ success: true });
     mockElectronAPI.files.delete.mockResolvedValue({ success: true });
     mockElectronAPI.files.getStats.mockResolvedValue({ exists: true });
+    mockElectronAPI.files.cleanupAnalysis.mockResolvedValue({ success: true });
 
     useFileActions = require('../src/renderer/phases/discover/useFileActions').useFileActions;
   });
@@ -180,6 +182,7 @@ describe('useFileActions', () => {
         await result.current.handleFileAction('remove', '/path/to/file.txt');
       });
 
+      expect(mockElectronAPI.files.cleanupAnalysis).toHaveBeenCalledWith('/path/to/file.txt');
       expect(mockSetAnalysisResults).toHaveBeenCalled();
       expect(mockSetSelectedFiles).toHaveBeenCalled();
       expect(mockSetFileStates).toHaveBeenCalled();

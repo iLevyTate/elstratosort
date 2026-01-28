@@ -11,7 +11,8 @@ const mockChromaDbService = {
 const mockFolderMatchingService = {
   embedText: jest.fn().mockResolvedValue({ vector: [1, 0], model: 'test' }),
   upsertFileEmbedding: jest.fn().mockResolvedValue(),
-  matchFileToFolders: jest.fn().mockResolvedValue([])
+  matchFileToFolders: jest.fn().mockResolvedValue([]),
+  matchVectorToFolders: jest.fn().mockResolvedValue([])
 };
 
 const mockSettingsService = {

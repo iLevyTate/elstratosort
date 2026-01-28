@@ -63,7 +63,7 @@ const Button = memo(function Button({
     // Accessibility: Add focus-visible ring for keyboard navigation
     const focusClass =
       'focus-visible:ring-2 focus-visible:ring-stratosort-blue focus-visible:ring-offset-2 focus-visible:outline-none';
-    return `${variantClass} ${sizeClass} ${focusClass} ${stateClass} ${className}`.trim();
+    return `${variantClass} ${sizeClass} inline-flex items-center justify-center gap-2 ${focusClass} ${stateClass} ${className}`.trim();
   }, [variant, size, disabled, isLoading, className]);
 
   // Bug #39: Ensure button has accessible label

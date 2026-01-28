@@ -29,7 +29,10 @@ describe('useDragAndDrop', () => {
 
     const mockEvent = {
       preventDefault: jest.fn(),
-      stopPropagation: jest.fn()
+      stopPropagation: jest.fn(),
+      dataTransfer: {
+        types: ['Files']
+      }
     };
 
     act(() => {
@@ -50,6 +53,7 @@ describe('useDragAndDrop', () => {
         preventDefault: jest.fn(),
         stopPropagation: jest.fn(),
         dataTransfer: {
+          types: ['Files'],
           getData: jest.fn().mockReturnValue('')
         }
       });
@@ -82,6 +86,7 @@ describe('useDragAndDrop', () => {
         preventDefault: jest.fn(),
         stopPropagation: jest.fn(),
         dataTransfer: {
+          types: ['Files'],
           getData: jest.fn().mockReturnValue('')
         }
       });

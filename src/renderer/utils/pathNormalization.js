@@ -28,7 +28,7 @@ const decodeFileUrl = (value) => {
 export const normalizePathValue = (value, options = {}) => {
   const raw = coercePathValue(value);
   if (!raw) return '';
-  const { maxLength = 2048, collapseWhitespace = true } = options;
+  const { maxLength = 2048, collapseWhitespace = false } = options;
   const trimmed = normalizeText(raw, { maxLength, collapseWhitespace, trim: true });
   const unquoted = stripWrappingQuotes(trimmed);
   return decodeFileUrl(unquoted);

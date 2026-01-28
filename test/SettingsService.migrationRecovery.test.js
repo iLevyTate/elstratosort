@@ -119,7 +119,10 @@ describe('SettingsService migration + recovery', () => {
 
     const settings = await svc.load();
     expect(settings.language).toBe('en');
-    expect(mockBackupService.restoreFromBackup).toHaveBeenCalled();
+    expect(mockBackupService.restoreFromBackup).toHaveBeenCalledWith(
+      '/tmp/settings-2026-01-01.json',
+      expect.any(Function)
+    );
   });
 
   test('migrateLegacyConfig imports legacy configs, saves settings, and archives legacy files', async () => {

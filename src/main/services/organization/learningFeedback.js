@@ -14,6 +14,7 @@
 
 const path = require('path');
 const { logger: baseLogger, createLogger } = require('../../../shared/logger');
+const { findContainingSmartFolder: findSmartFolderInList } = require('../../../shared/folderUtils');
 
 const logger =
   typeof createLogger === 'function' ? createLogger('Organization:LearningFeedback') : baseLogger;
@@ -129,25 +130,7 @@ class LearningFeedbackService {
    */
   findContainingSmartFolder(filePath) {
     const smartFolders = this.getSmartFolders();
-    if (!smartFolders || smartFolders.length === 0) {
-      return null;
-    }
-
-    // Normalize path for comparison
-    const normalizedFilePath = path.normalize(filePath).toLowerCase();
-
-    for (const folder of smartFolders) {
-      if (!folder || !folder.path) continue;
-
-      const normalizedFolderPath = path.normalize(folder.path).toLowerCase();
-
-      // Check if file is inside this smart folder
-      if (normalizedFilePath.startsWith(normalizedFolderPath + path.sep)) {
-        return folder;
-      }
-    }
-
-    return null;
+    return findSmartFolderInList(filePath, smartFolders);
   }
 
   /**

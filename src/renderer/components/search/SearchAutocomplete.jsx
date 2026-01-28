@@ -1,29 +1,15 @@
-/**
- * SearchAutocomplete - Enhanced search input with suggestions
- *
- * Features:
- * - Recent search history
- * - Live file name suggestions
- * - Keyboard navigation
- * - Category suggestions (tags, types)
- */
-
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import PropTypes from 'prop-types';
 import { Search, Clock, FileText, Tag, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { Text } from '../ui/Typography';
 
-// Storage key for recent searches
 const RECENT_SEARCHES_KEY = 'stratosort-recent-searches';
 const MAX_RECENT_SEARCHES = 10;
 const MAX_SUGGESTIONS = 5;
 
-// Detect macOS (using userAgentData with fallback to userAgent)
 const isMac =
   navigator.userAgentData?.platform === 'macOS' || /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 
-/**
- * Load recent searches from localStorage
- */
 function loadRecentSearches() {
   try {
     const stored = localStorage.getItem(RECENT_SEARCHES_KEY);
@@ -33,9 +19,6 @@ function loadRecentSearches() {
   }
 }
 
-/**
- * Save recent searches to localStorage
- */
 function saveRecentSearches(searches) {
   try {
     localStorage.setItem(
@@ -47,25 +30,18 @@ function saveRecentSearches(searches) {
   }
 }
 
-/**
- * Add a search to recent history
- */
 export function addToRecentSearches(query) {
   if (!query || query.trim().length < 2) return;
 
   const trimmed = query.trim();
   const recent = loadRecentSearches();
 
-  // Remove if already exists, then add to front
   const filtered = recent.filter((s) => s.toLowerCase() !== trimmed.toLowerCase());
   const updated = [trimmed, ...filtered].slice(0, MAX_RECENT_SEARCHES);
 
   saveRecentSearches(updated);
 }
 
-/**
- * Clear all recent searches
- */
 export function clearRecentSearches() {
   try {
     localStorage.removeItem(RECENT_SEARCHES_KEY);
@@ -95,12 +71,10 @@ const SearchAutocomplete = memo(
     const fetchTimeoutRef = useRef(null);
     const latestQueryRef = useRef('');
 
-    // Load recent searches on mount
     useEffect(() => {
       setRecentSearches(loadRecentSearches());
     }, []);
 
-    // Fetch file suggestions when query changes
     useEffect(() => {
       if (fetchTimeoutRef.current) {
         clearTimeout(fetchTimeoutRef.current);
@@ -114,22 +88,17 @@ const SearchAutocomplete = memo(
         return undefined;
       }
 
-      // Cancellation flag to prevent setState after unmount
       let isCancelled = false;
 
-      // Debounce the fetch
       fetchTimeoutRef.current = setTimeout(async () => {
         const queryAtScheduleTime = trimmed;
         try {
-          // Search for matching files (autocomplete uses quick search without re-ranking)
           const result = await window.electronAPI?.embeddings?.search?.(queryAtScheduleTime, {
             topK: MAX_SUGGESTIONS,
             mode: 'hybrid',
-            rerank: false // Disable re-ranking for fast autocomplete
+            rerank: false
           });
 
-          // Check cancellation before updating state (prevents memory leak)
-          // Also ensure we don't apply stale results if the query changed while this request was in-flight.
           if (
             !isCancelled &&
             latestQueryRef.current === queryAtScheduleTime &&
@@ -142,7 +111,7 @@ const SearchAutocomplete = memo(
               value: r.metadata?.name || r.id,
               path: r.metadata?.path,
               score: r.score,
-              rank: index // Add rank for badge display
+              rank: index
             }));
             setSuggestions(fileSuggestions);
           }
@@ -159,7 +128,6 @@ const SearchAutocomplete = memo(
       };
     }, [value]);
 
-    // Close suggestions when clicking outside
     useEffect(() => {
       const handleClickOutside = (e) => {
         if (containerRef.current && !containerRef.current.contains(e.target)) {
@@ -171,12 +139,10 @@ const SearchAutocomplete = memo(
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    // Build combined suggestions list (memoized to prevent unnecessary re-renders)
     const allSuggestions = useMemo(() => {
       const items = [];
       const trimmed = value?.trim() || '';
 
-      // If no query, show recent searches
       if (trimmed.length < 2) {
         recentSearches.slice(0, 5).forEach((search) => {
           items.push({
@@ -186,7 +152,6 @@ const SearchAutocomplete = memo(
           });
         });
       } else {
-        // Add matching recent searches first
         recentSearches
           .filter((s) => s.toLowerCase().includes(trimmed.toLowerCase()))
           .slice(0, 3)
@@ -198,7 +163,6 @@ const SearchAutocomplete = memo(
             });
           });
 
-        // Add file suggestions
         suggestions.forEach((s) => {
           if (!items.find((i) => i.value === s.value)) {
             items.push(s);
@@ -209,14 +173,12 @@ const SearchAutocomplete = memo(
       return items.slice(0, 8);
     }, [value, recentSearches, suggestions]);
 
-    // Clamp selectedIndex when suggestions change to prevent out-of-bounds access
     useEffect(() => {
       if (selectedIndex >= allSuggestions.length) {
         setSelectedIndex(allSuggestions.length > 0 ? allSuggestions.length - 1 : -1);
       }
     }, [allSuggestions.length, selectedIndex]);
 
-    // Scroll selected item into view for keyboard navigation
     useEffect(() => {
       if (selectedIndex >= 0) {
         const element = document.getElementById(`search-suggestion-${selectedIndex}`);
@@ -235,7 +197,6 @@ const SearchAutocomplete = memo(
       setShowSuggestions(false);
       setSelectedIndex(-1);
 
-      // Trigger search immediately
       if (onSearch) {
         addToRecentSearches(suggestion.value);
         onSearch(suggestion.value);
@@ -296,7 +257,6 @@ const SearchAutocomplete = memo(
 
     return (
       <div ref={containerRef} className={`relative ${className}`}>
-        {/* Input with search icon */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-system-gray-400 pointer-events-none" />
           <input
@@ -330,7 +290,6 @@ const SearchAutocomplete = memo(
             spellCheck="false"
           />
 
-          {/* Clear button */}
           {value && (
             <button
               type="button"
@@ -345,29 +304,37 @@ const SearchAutocomplete = memo(
             </button>
           )}
 
-          {/* Keyboard shortcut hint when empty */}
           {!value && !disabled && (
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-system-gray-400 bg-system-gray-100 px-1.5 py-0.5 rounded border border-system-gray-200 font-medium pointer-events-none">
+            <Text
+              as="span"
+              variant="tiny"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-system-gray-400 bg-system-gray-100 px-1.5 py-0.5 rounded border border-system-gray-200 font-medium pointer-events-none"
+            >
               {isMac ? '⌘K' : 'Ctrl+K'}
-            </span>
+            </Text>
           )}
         </div>
 
-        {/* Suggestions dropdown */}
         {showDropdown && (
           <div className="absolute z-50 w-full mt-1 bg-white border border-system-gray-200 rounded-lg shadow-lg overflow-hidden">
-            {/* Keyboard hint */}
-            <div className="px-3 py-1.5 text-[10px] text-system-gray-400 bg-system-gray-50 border-b border-system-gray-100 flex items-center gap-3">
-              <span className="flex items-center gap-1">
+            <div className="px-3 py-1.5 bg-system-gray-50 border-b border-system-gray-100 flex items-center gap-3">
+              <Text
+                as="span"
+                variant="tiny"
+                className="flex items-center gap-1 text-system-gray-400"
+              >
                 <ArrowUp className="w-3 h-3" />
                 <ArrowDown className="w-3 h-3" />
                 navigate
-              </span>
-              <span>Enter to select</span>
-              <span>Esc to close</span>
+              </Text>
+              <Text as="span" variant="tiny" className="text-system-gray-400">
+                Enter to select
+              </Text>
+              <Text as="span" variant="tiny" className="text-system-gray-400">
+                Esc to close
+              </Text>
             </div>
 
-            {/* Suggestions list */}
             <ul
               id="search-suggestions-listbox"
               className="max-h-64 overflow-y-auto"
@@ -386,7 +353,6 @@ const SearchAutocomplete = memo(
                   ${index === selectedIndex ? 'bg-stratosort-blue/10 text-stratosort-blue' : 'hover:bg-system-gray-50'}
                 `}
                 >
-                  {/* Icon based on type */}
                   {item.type === 'recent' && (
                     <Clock className="w-4 h-4 text-system-gray-400 shrink-0" />
                   )}
@@ -395,12 +361,14 @@ const SearchAutocomplete = memo(
                   )}
                   {item.type === 'tag' && <Tag className="w-4 h-4 text-emerald-500 shrink-0" />}
 
-                  {/* Label */}
-                  <span className="flex-1 truncate">{item.label}</span>
+                  <Text variant="small" className="flex-1 truncate">
+                    {item.label}
+                  </Text>
 
-                  {/* Rank indicator for top file results instead of percentage */}
                   {item.type === 'file' && item.rank !== undefined && item.rank < 3 && (
-                    <span
+                    <Text
+                      as="span"
+                      variant="tiny"
                       className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 font-medium ${
                         item.rank === 0
                           ? 'bg-amber-100 text-amber-700'
@@ -410,10 +378,9 @@ const SearchAutocomplete = memo(
                       }`}
                     >
                       {item.rank === 0 ? '1st' : item.rank === 1 ? '2nd' : '3rd'}
-                    </span>
+                    </Text>
                   )}
 
-                  {/* Remove button for recent searches */}
                   {item.type === 'recent' && (
                     <button
                       type="button"

@@ -11,6 +11,7 @@ const { logger } = require('../../../shared/logger');
 const { container } = require('../ServiceContainer');
 const { hasPythonModuleAsync } = require('../../utils/asyncSpawnUtils');
 const { withTimeout, delay } = require('../../../shared/promiseUtils');
+const { TIMEOUTS } = require('../../../shared/performanceConstants');
 
 const { runPreflightChecks, isPortAvailable } = require('./preflightChecks');
 const { startChromaDB, isChromaDBRunning, checkChromaDBHealth } = require('./chromaService');
@@ -327,7 +328,7 @@ class StartupManager {
       {
         required: false,
         // FIX: Reduced from 12s to 10s - quick check already handles "already running" case
-        verifyTimeout: 10000
+        verifyTimeout: TIMEOUTS?.SERVICE_STARTUP ?? TIMEOUTS?.DATABASE_INIT ?? 10000
       }
     );
   }

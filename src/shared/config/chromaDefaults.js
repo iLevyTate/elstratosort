@@ -19,7 +19,14 @@ const CHROMA_DEFAULTS = {
  * - /api/v1/heartbeat: ChromaDB 1.x-2.x
  * - /api/v1: Fallback for older versions
  */
-const CHROMA_HEALTH_ENDPOINTS = ['/api/v2/heartbeat', '/api/v1/heartbeat', '/api/v1'];
+const CHROMA_HEALTH_ENDPOINTS = [
+  '/api/v2/heartbeat', // v2 endpoint (current version)
+  '/api/v1/heartbeat', // v1 endpoint (ChromaDB 1.0.x)
+  '/api/v1', // Some versions just have this
+  '/heartbeat', // Legacy endpoint (pre-1.0)
+  '/v1/heartbeat', // Legacy v1 without /api prefix
+  '/v1' // Legacy v1 without /api prefix
+];
 
 /**
  * User-friendly error messages for common ChromaDB issues

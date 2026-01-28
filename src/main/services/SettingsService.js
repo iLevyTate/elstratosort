@@ -191,22 +191,24 @@ class SettingsService {
       for (const backup of backupsToTry) {
         try {
           logger.info(`[SettingsService] Attempting recovery from backup: ${backup.filename}`);
+          const backupPath =
+            backup.path ||
+            (this._backupService?.backupDir
+              ? path.join(this._backupService.backupDir, backup.filename)
+              : backup.filename);
           // FIX HIGH-70: Correct method name is restoreFromBackup, not restoreBackup
-          const result = await this._backupService.restoreFromBackup(
-            backup.filename,
-            async (merged) => {
-              // Save restored settings using backupAndReplace (same as regular restore)
-              const { backupAndReplace } = require('../../shared/atomicFileOperations');
-              const saveResult = await backupAndReplace(
-                this.settingsPath,
-                JSON.stringify(merged, null, 2)
-              );
-              if (!saveResult.success) {
-                throw new Error(saveResult.error || 'Failed to save restored settings');
-              }
-              return { success: true };
+          const result = await this._backupService.restoreFromBackup(backupPath, async (merged) => {
+            // Save restored settings using backupAndReplace (same as regular restore)
+            const { backupAndReplace } = require('../../shared/atomicFileOperations');
+            const saveResult = await backupAndReplace(
+              this.settingsPath,
+              JSON.stringify(merged, null, 2)
+            );
+            if (!saveResult.success) {
+              throw new Error(saveResult.error || 'Failed to save restored settings');
             }
-          );
+            return { success: true };
+          });
 
           if (result.success) {
             logger.info(

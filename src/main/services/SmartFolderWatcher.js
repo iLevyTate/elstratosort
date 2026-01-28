@@ -1100,7 +1100,9 @@ class SmartFolderWatcher {
       const keywords = normalizeKeywords(rawKeywords);
       // FIX: Use purpose as fallback for summary if missing (common in fallback analysis)
       const summary = analysis.summary || analysis.description || analysis.purpose || '';
-      const category = analysis.category || 'Uncategorized';
+      const learningService = getLearningFeedbackService();
+      const resolvedSmartFolder = learningService?.findContainingSmartFolder?.(filePath) || null;
+      const category = resolvedSmartFolder?.name || analysis.category || 'Uncategorized';
       const subject =
         analysis.subject || analysis.suggestedName || analysis.project || analysis.entity || '';
       // FIX: Extract confidence score - normalize to 0-100 integer
@@ -1179,7 +1181,9 @@ class SmartFolderWatcher {
         extractedText: extractedText.substring(0, 5000),
         extractionMethod: analysis.extractionMethod || 'unknown',
         // Document date for time-based queries
-        date: documentDate
+        date: documentDate,
+        smartFolder: resolvedSmartFolder?.name || null,
+        smartFolderPath: resolvedSmartFolder?.path || null
       };
 
       // Add image-specific metadata for richer image conversations

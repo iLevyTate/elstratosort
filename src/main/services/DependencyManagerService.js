@@ -11,10 +11,11 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs').promises;
 const { spawn } = require('child_process');
+const { shell } = require('electron');
 
 const { logger } = require('../../shared/logger');
 const { createSingletonHelpers } = require('../../shared/singletonFactory');
-const { isWindows } = require('../../shared/platformUtils');
+const { isWindows, isMacOS } = require('../../shared/platformUtils');
 const {
   asyncSpawn,
   hasPythonModuleAsync,
@@ -276,11 +277,16 @@ class DependencyManagerService {
 
   async installOllama() {
     return this._withLock(async () => {
+      // macOS support (Homebrew or Manual)
+      if (isMacOS) {
+        return this._installOllamaMac();
+      }
+
       if (!isWindows) {
         return {
           success: false,
           error:
-            'Ollama auto-install is currently only supported on Windows. Please install it from https://ollama.com/download'
+            'Ollama auto-install is currently only supported on Windows and macOS. Please install it from https://ollama.com/download'
         };
       }
 
@@ -362,6 +368,87 @@ class DependencyManagerService {
       const post = await checkOllamaInstallation();
       return { success: Boolean(post?.installed), version: post?.version || null };
     });
+  }
+
+  async _installOllamaMac() {
+    const pre = await checkOllamaInstallation();
+    if (pre?.installed) {
+      return { success: true, alreadyInstalled: true, version: pre.version || null };
+    }
+
+    // Check if Homebrew is available
+    let hasBrew = false;
+    try {
+      const brewCheck = await asyncSpawn('brew', ['--version'], {
+        timeout: 2000,
+        windowsHide: true
+      });
+      hasBrew = brewCheck.status === 0;
+    } catch {
+      hasBrew = false;
+    }
+
+    if (hasBrew) {
+      this._emitProgress('Installing Ollama via Homebrew…', {
+        kind: 'dependency',
+        dependency: 'ollama',
+        stage: 'install'
+      });
+
+      try {
+        const installResult = await asyncSpawn('brew', ['install', 'ollama'], {
+          timeout: 5 * 60 * 1000
+        });
+
+        if (installResult.status === 0) {
+          // Success! Start service
+          this._emitProgress('Starting Ollama…', {
+            kind: 'dependency',
+            dependency: 'ollama',
+            stage: 'start'
+          });
+
+          // brew services start ollama (optional, but good practice)
+          await asyncSpawn('brew', ['services', 'start', 'ollama'], { timeout: 5000 }).catch(
+            () => {}
+          );
+
+          // Wait briefly for health to flip
+          for (let i = 0; i < 10; i += 1) {
+            if (await isOllamaRunning()) break;
+            await sleep(500);
+          }
+
+          const post = await checkOllamaInstallation();
+          return { success: Boolean(post?.installed), version: post?.version || null };
+        } else {
+          logger.warn('[DependencyManager] Homebrew install failed:', installResult.stderr);
+          // Fall through to manual install
+        }
+      } catch (err) {
+        logger.warn('[DependencyManager] Homebrew install error:', err.message);
+        // Fall through to manual install
+      }
+    }
+
+    // Manual install fallback
+    this._emitProgress('Opening download page…', {
+      kind: 'dependency',
+      dependency: 'ollama',
+      stage: 'manual'
+    });
+
+    try {
+      await shell.openExternal('https://ollama.com/download');
+    } catch (e) {
+      logger.error('Failed to open browser:', e);
+    }
+
+    return {
+      success: false,
+      error:
+        'Could not install automatically. Opened download page. Please install Ollama and restart StratoSort.'
+    };
   }
 
   async updateOllama() {

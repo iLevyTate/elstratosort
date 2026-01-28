@@ -34,6 +34,15 @@
     "buildResources": "assets",
     "output": "release/build"
   },
+  "fileAssociations": [
+    { "ext": "pdf", "name": "PDF Document", "role": "Viewer" },
+    { "ext": "doc", "role": "Viewer" },
+    { "ext": "docx", "role": "Viewer" },
+    { "ext": "xlsx", "role": "Viewer" },
+    { "ext": "pptx", "role": "Viewer" },
+    { "ext": "txt", "role": "Viewer" },
+    { "ext": "md", "role": "Viewer" }
+  ],
   "win": {
     "icon": "assets/icons/win/icon.ico",
     "target": [
@@ -45,15 +54,6 @@
         "target": "portable",
         "arch": ["x64"]
       }
-    ],
-    "fileAssociations": [
-      { "ext": "pdf", "name": "PDF Document" },
-      { "ext": "doc" },
-      { "ext": "docx" },
-      { "ext": "xlsx" },
-      { "ext": "pptx" },
-      { "ext": "txt" },
-      { "ext": "md" }
     ]
   },
   "nsis": {

@@ -110,7 +110,8 @@ class MockOrganizationSuggestionService {
       })),
       generateFolderId: jest.fn((f) => `folder-${f.name || 'unknown'}`),
       upsertFileEmbedding: jest.fn(async () => {}),
-      matchFileToFolders: jest.fn(async () => [])
+      matchFileToFolders: jest.fn(async () => []),
+      matchVectorToFolders: jest.fn(async () => [])
     };
     this.maxUserPatterns = 5000;
     this.userPatterns = new Map();
@@ -391,7 +392,8 @@ describe('Performance Optimizations Verification', () => {
           })),
           generateFolderId: jest.fn((f) => `folder-${f.name}`),
           upsertFileEmbedding: jest.fn(async () => {}),
-          matchFileToFolders: jest.fn(async () => [])
+          matchFileToFolders: jest.fn(async () => []),
+          matchVectorToFolders: jest.fn(async () => [])
         },
         settingsService: {},
         config: {}
@@ -597,7 +599,8 @@ describe('Performance Optimizations Verification', () => {
           embedText: jest.fn(async () => ({ vector: [], model: 'test' })),
           generateFolderId: jest.fn(() => 'test'),
           upsertFileEmbedding: jest.fn(async () => {}),
-          matchFileToFolders: jest.fn(async () => [])
+          matchFileToFolders: jest.fn(async () => []),
+          matchVectorToFolders: jest.fn(async () => [])
         },
         settingsService: {},
         config: {}

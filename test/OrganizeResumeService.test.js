@@ -166,6 +166,28 @@ describe('OrganizeResumeService', () => {
       expect(mockServiceIntegration.processingState.markOrganizeOpError).toHaveBeenCalled();
     });
 
+    test('marks done when source missing but destination exists', async () => {
+      const source = path.join(testDir, 'missing.txt');
+      const dest = path.join(testDir, 'dest.txt');
+      await fs.writeFile(dest, 'content');
+
+      mockServiceIntegration.processingState.getIncompleteOrganizeBatches.mockReturnValue([
+        {
+          id: 'batch1',
+          operations: [{ source, destination: dest, status: 'pending' }]
+        }
+      ]);
+
+      await resumeIncompleteBatches(mockServiceIntegration, mockLogger, mockGetMainWindow);
+
+      expect(mockServiceIntegration.processingState.markOrganizeOpDone).toHaveBeenCalledWith(
+        'batch1',
+        0,
+        expect.objectContaining({ destination: dest })
+      );
+      expect(mockServiceIntegration.processingState.markOrganizeOpError).not.toHaveBeenCalled();
+    });
+
     test('completes batch after processing all operations', async () => {
       const source = path.join(testDir, 'source.txt');
       const dest = path.join(testDir, 'dest.txt');

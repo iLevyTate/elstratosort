@@ -89,6 +89,7 @@ describe('File Operation Handlers', () => {
   let mockLogger;
   let handlers;
   let mockCoordinator;
+  let mockAnalysisHistory;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -100,15 +101,28 @@ describe('File Operation Handlers', () => {
       handleFileDeletion: jest.fn().mockResolvedValue({ success: true, errors: [] }),
       handleFileCopy: jest.fn().mockResolvedValue({ success: true, errors: [] })
     };
+    mockAnalysisHistory = {
+      getAnalysisByPath: jest.fn().mockResolvedValue(null)
+    };
 
     // Re-mock ServiceContainer with the fresh coordinator
     jest.doMock('../src/main/services/ServiceContainer', () => ({
       container: {
-        has: jest.fn().mockReturnValue(true),
-        resolve: jest.fn().mockReturnValue(mockCoordinator)
+        has: jest
+          .fn()
+          .mockImplementation(
+            (serviceId) => serviceId === 'FILE_PATH_COORDINATOR' || serviceId === 'analysisHistory'
+          ),
+        resolve: jest.fn().mockImplementation((serviceId) => {
+          if (serviceId === 'analysisHistory') {
+            return mockAnalysisHistory;
+          }
+          return mockCoordinator;
+        })
       },
       ServiceIds: {
-        FILE_PATH_COORDINATOR: 'FILE_PATH_COORDINATOR'
+        FILE_PATH_COORDINATOR: 'FILE_PATH_COORDINATOR',
+        ANALYSIS_HISTORY: 'analysisHistory'
       }
     }));
 
@@ -142,7 +156,8 @@ describe('File Operation Handlers', () => {
           FILES: {
             PERFORM_OPERATION: 'files:perform-operation',
             DELETE_FILE: 'files:delete-file',
-            COPY_FILE: 'files:copy-file'
+            COPY_FILE: 'files:copy-file',
+            CLEANUP_ANALYSIS: 'files:cleanup-analysis'
           }
         },
         logger: mockLogger,
@@ -150,7 +165,7 @@ describe('File Operation Handlers', () => {
         getMainWindow: () => null
       });
 
-      expect(mockIpcMain.handle).toHaveBeenCalledTimes(3);
+      expect(mockIpcMain.handle).toHaveBeenCalledTimes(4);
     });
   });
 
@@ -162,7 +177,8 @@ describe('File Operation Handlers', () => {
           FILES: {
             PERFORM_OPERATION: 'files:perform-operation',
             DELETE_FILE: 'files:delete-file',
-            COPY_FILE: 'files:copy-file'
+            COPY_FILE: 'files:copy-file',
+            CLEANUP_ANALYSIS: 'files:cleanup-analysis'
           }
         },
         logger: mockLogger,
@@ -294,7 +310,8 @@ describe('File Operation Handlers', () => {
           FILES: {
             PERFORM_OPERATION: 'files:perform-operation',
             DELETE_FILE: 'files:delete-file',
-            COPY_FILE: 'files:copy-file'
+            COPY_FILE: 'files:copy-file',
+            CLEANUP_ANALYSIS: 'files:cleanup-analysis'
           }
         },
         logger: mockLogger,
@@ -340,6 +357,59 @@ describe('File Operation Handlers', () => {
     });
   });
 
+  describe('cleanupAnalysis handler', () => {
+    beforeEach(() => {
+      registerFileOperationHandlers({
+        ipcMain: mockIpcMain,
+        IPC_CHANNELS: {
+          FILES: {
+            PERFORM_OPERATION: 'files:perform-operation',
+            DELETE_FILE: 'files:delete-file',
+            COPY_FILE: 'files:copy-file',
+            CLEANUP_ANALYSIS: 'files:cleanup-analysis'
+          }
+        },
+        logger: mockLogger,
+        getServiceIntegration: () => null,
+        getMainWindow: () => null
+      });
+    });
+
+    test('cleans up analysis data without deleting file', async () => {
+      const handler = handlers['files:cleanup-analysis'];
+      const result = await handler({}, '/path/to/file.txt');
+
+      expect(result.success).toBe(true);
+      expect(mockCoordinator.handleFileDeletion).toHaveBeenCalledWith('/path/to/file.txt');
+      expect(mockFs.unlink).not.toHaveBeenCalled();
+    });
+
+    test('aligns to organized path instead of deleting', async () => {
+      mockAnalysisHistory.getAnalysisByPath.mockResolvedValue({
+        organization: { actual: '/organized/file.txt' }
+      });
+
+      const handler = handlers['files:cleanup-analysis'];
+      const result = await handler({}, '/path/to/file.txt');
+
+      expect(result.success).toBe(true);
+      expect(mockCoordinator.atomicPathUpdate).toHaveBeenCalledWith(
+        '/path/to/file.txt',
+        '/organized/file.txt',
+        expect.objectContaining({ type: 'move', skipProcessingState: true })
+      );
+      expect(mockCoordinator.handleFileDeletion).not.toHaveBeenCalled();
+    });
+
+    test('rejects invalid file path', async () => {
+      const handler = handlers['files:cleanup-analysis'];
+      const result = await handler({}, null);
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('INVALID_PATH');
+    });
+  });
+
   describe('copyFile handler', () => {
     beforeEach(() => {
       registerFileOperationHandlers({
@@ -348,7 +418,8 @@ describe('File Operation Handlers', () => {
           FILES: {
             PERFORM_OPERATION: 'files:perform-operation',
             DELETE_FILE: 'files:delete-file',
-            COPY_FILE: 'files:copy-file'
+            COPY_FILE: 'files:copy-file',
+            CLEANUP_ANALYSIS: 'files:cleanup-analysis'
           }
         },
         logger: mockLogger,

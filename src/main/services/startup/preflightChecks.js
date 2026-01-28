@@ -15,6 +15,7 @@ const { logger } = require('../../../shared/logger');
 const { asyncSpawn } = require('../../utils/asyncSpawnUtils');
 const { isWindows } = require('../../../shared/platformUtils');
 const { withTimeout } = require('../../../shared/promiseUtils');
+const { CHROMA_HEALTH_ENDPOINTS } = require('../../../shared/config/chromaDefaults');
 
 logger.setContext('StartupManager:Preflight');
 
@@ -171,7 +172,7 @@ async function isChromaReachable(hostOrUrl, port) {
 
   // FIX Issue 2.6: Use configurable timeout from environment
   const timeout = parseInt(process.env.SERVICE_CHECK_TIMEOUT || '2000', 10);
-  const endpoints = ['/api/v2/heartbeat', '/api/v1/heartbeat', '/api/v1'];
+  const endpoints = CHROMA_HEALTH_ENDPOINTS;
 
   for (const endpoint of endpoints) {
     try {

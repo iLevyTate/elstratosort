@@ -7,6 +7,9 @@
  * @module shared/folderUtils
  */
 
+const path = require('path');
+const { normalizePathForIndex } = require('./pathSanitization');
+
 /**
  * Ensure value is an array (internal helper)
  * @param {*} val - Value to check
@@ -95,7 +98,49 @@ function getFolderNamesString(folderCategories) {
     .join(', ');
 }
 
+/**
+ * Find the containing smart folder for a file path.
+ * Uses normalized paths for consistent comparisons across platforms.
+ *
+ * @param {string} filePath - File path to check
+ * @param {Array} smartFolders - Array of smart folder objects with paths
+ * @returns {Object|null} Matching smart folder or null
+ */
+function findContainingSmartFolder(filePath, smartFolders = []) {
+  if (!filePath || !Array.isArray(smartFolders) || smartFolders.length === 0) {
+    return null;
+  }
+
+  const normalizedFile = normalizePathForIndex(filePath);
+  if (!normalizedFile) return null;
+
+  let bestMatch = null;
+  let bestLength = 0;
+
+  for (const folder of smartFolders) {
+    if (!folder || !folder.path) continue;
+    let normalizedFolder = normalizePathForIndex(folder.path);
+    if (!normalizedFolder) continue;
+
+    // Trim trailing separators for consistent prefix checks
+    normalizedFolder = normalizedFolder.replace(/\/+$/g, '');
+    if (!normalizedFolder) continue;
+
+    // Match nested paths only (folder path + separator)
+    const prefix = normalizedFolder + path.posix.sep;
+    if (normalizedFile.startsWith(prefix)) {
+      if (normalizedFolder.length > bestLength) {
+        bestMatch = folder;
+        bestLength = normalizedFolder.length;
+      }
+    }
+  }
+
+  return bestMatch;
+}
+
 module.exports = {
   mapFoldersToCategories,
-  getFolderNamesString
+  getFolderNamesString,
+  findContainingSmartFolder
 };
