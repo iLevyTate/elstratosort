@@ -69,16 +69,6 @@ function ReadyFileItem({
       variant={isSelected ? 'interactive' : 'default'}
       className={`h-full p-4 relative ${isSelected ? 'ring-2 ring-stratosort-blue/25' : ''}`}
     >
-      {/* Absolute positioned status badge */}
-      <div className="absolute top-3 right-3 z-10">
-        <StatusBadge variant={tone} size="sm" className="shadow-sm">
-          <span className={stateDisplay.spinning ? 'animate-spin mr-1' : 'mr-1'}>
-            {stateDisplay.icon}
-          </span>
-          <span className="hidden sm:inline">{stateDisplay.label}</span>
-        </StatusBadge>
-      </div>
-
       <div className="flex gap-3 h-full">
         <div className="pt-1">
           <input
@@ -92,10 +82,10 @@ function ReadyFileItem({
         <div className="flex-1 min-w-0 overflow-visible">
           <Stack gap="cozy" className="w-full">
             {/* Header Section */}
-            <div className="flex justify-between items-start gap-2 pr-12">
-              <div className="flex items-start gap-3 min-w-0 flex-1">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 min-w-0">
+              <div className="flex items-start gap-3 min-w-0">
                 <FileText className="w-5 h-5 text-system-gray-400 flex-shrink-0 mt-0.5" />
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0">
                   <Text
                     variant="small"
                     className="font-medium text-system-gray-900 break-words leading-tight"
@@ -115,6 +105,12 @@ function ReadyFileItem({
                   </Text>
                 </div>
               </div>
+              <StatusBadge variant={tone} size="sm" className="shadow-sm whitespace-nowrap">
+                <span className={stateDisplay.spinning ? 'animate-spin mr-1' : 'mr-1'}>
+                  {stateDisplay.icon}
+                </span>
+                <span className="hidden sm:inline">{stateDisplay.label}</span>
+              </StatusBadge>
             </div>
 
             {/* Analysis Section */}

@@ -11,7 +11,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const crypto = require('crypto');
 const { ACTION_TYPES, PROCESSING_LIMITS } = require('../../../shared/constants');
-const { LIMITS, TIMEOUTS } = require('../../../shared/performanceConstants');
+const { LIMITS, TIMEOUTS, BATCH, RETRY } = require('../../../shared/performanceConstants');
 const { logger: baseLogger, createLogger } = require('../../../shared/logger');
 const { crossDeviceMove } = require('../../../shared/atomicFileOperations');
 const { validateFileOperationPath } = require('../../../shared/pathSanitization');
@@ -35,6 +35,9 @@ const isMockFn = (fn) => !!fn && typeof fn === 'function' && fn._isMockFunction;
 // Resource limits from centralized constants (prevents config drift)
 const MAX_TOTAL_BATCH_TIME = PROCESSING_LIMITS.MAX_TOTAL_BATCH_TIME || 300000; // Default 5 mins if not set
 const { MAX_NUMERIC_RETRIES } = LIMITS;
+const FILE_LOCK_ERROR_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
+const MOVE_LOCK_MAX_ATTEMPTS = RETRY?.MAX_ATTEMPTS_VERY_HIGH ?? 10;
+const MOVE_LOCK_BACKOFF_STEP_MS = RETRY?.ATOMIC_BACKOFF_STEP_MS ?? 50;
 
 // FIX: Constants for chunked results and yield points to prevent UI blocking
 const MAX_RESULTS_PER_CHUNK = 100; // Max results per IPC message chunk
@@ -251,7 +254,7 @@ async function handleBatchOrganize(params) {
         });
 
         // Fix 8: Parallel execution with concurrency limit
-        const limit = pLimit(5); // Process 5 files concurrently
+        const limit = pLimit(BATCH?.MAX_CONCURRENT_FILES || 5); // Process files concurrently
 
         const processOperation = async (i) => {
           // FIX P0-4: Check both shouldRollback flag AND abort signal for immediate cancellation
@@ -646,7 +649,7 @@ async function performFileMove(op, log, checksumFn) {
 
   while (!operationComplete && counter < MAX_NUMERIC_RETRIES) {
     try {
-      await fs.rename(op.source, uniqueDestination);
+      await renameWithRetry(op.source, uniqueDestination, log);
       operationComplete = true;
     } catch (renameError) {
       if (renameError.code === 'EEXIST') {
@@ -670,6 +673,35 @@ async function performFileMove(op, log, checksumFn) {
   }
 
   return { destination: uniqueDestination };
+}
+
+async function renameWithRetry(source, destination, log) {
+  let attempt = 0;
+  while (true) {
+    try {
+      await fs.rename(source, destination);
+      return;
+    } catch (error) {
+      if (error.code === 'EEXIST' || error.code === 'EXDEV') {
+        throw error;
+      }
+      const isLockError = FILE_LOCK_ERROR_CODES.has(error.code);
+      if (!isLockError || attempt >= MOVE_LOCK_MAX_ATTEMPTS - 1) {
+        throw error;
+      }
+      attempt += 1;
+      const delayMs = MOVE_LOCK_BACKOFF_STEP_MS * attempt;
+      log.debug('[FILE-OPS] Rename blocked (likely file lock), retrying', {
+        source,
+        destination,
+        attempt,
+        maxAttempts: MOVE_LOCK_MAX_ATTEMPTS,
+        delayMs,
+        code: error.code
+      });
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
 }
 
 /**
