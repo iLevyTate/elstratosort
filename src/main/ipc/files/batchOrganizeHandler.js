@@ -15,7 +15,7 @@ const { LIMITS, TIMEOUTS, BATCH, RETRY } = require('../../../shared/performanceC
 const { logger: baseLogger, createLogger } = require('../../../shared/logger');
 const { crossDeviceMove } = require('../../../shared/atomicFileOperations');
 const { validateFileOperationPath } = require('../../../shared/pathSanitization');
-const { withTimeout } = require('../../../shared/promiseUtils');
+const { withTimeout, batchProcess } = require('../../../shared/promiseUtils');
 const { withCorrelationId } = require('../../../shared/correlationId');
 const { ERROR_CODES } = require('../../../shared/errorHandlingUtils');
 const { acquireBatchLock, releaseBatchLock } = require('./batchLockManager');
@@ -23,6 +23,7 @@ const { validateBatchOperation, MAX_BATCH_SIZE } = require('./batchValidator');
 const { executeRollback } = require('./batchRollback');
 const { sendOperationProgress, sendChunkedResults } = require('./batchProgressReporter');
 const { getInstance: getFileOperationTracker } = require('../../../shared/fileOperationTracker');
+const { syncEmbeddingForMove } = require('./embeddingSync');
 
 const logger =
   typeof createLogger === 'function' ? createLogger('IPC:Files:BatchOrganize') : baseLogger;
@@ -39,6 +40,10 @@ const { MAX_NUMERIC_RETRIES } = LIMITS;
 const FILE_LOCK_ERROR_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
 const MOVE_LOCK_MAX_ATTEMPTS = RETRY?.MAX_ATTEMPTS_VERY_HIGH ?? 10;
 const MOVE_LOCK_BACKOFF_STEP_MS = RETRY?.ATOMIC_BACKOFF_STEP_MS ?? 50;
+const VERIFY_MAX_ATTEMPTS = RETRY?.FILE_OPERATION?.maxAttempts ?? RETRY?.MAX_ATTEMPTS_MEDIUM ?? 3;
+const VERIFY_BACKOFF_STEP_MS =
+  RETRY?.FILE_OPERATION?.initialDelay ?? TIMEOUTS?.DELAY_TINY ?? MOVE_LOCK_BACKOFF_STEP_MS;
+const VERIFY_MAX_DELAY_MS = RETRY?.FILE_OPERATION?.maxDelay ?? 5000;
 
 // FIX: Constants for chunked results and yield points to prevent UI blocking
 const MAX_RESULTS_PER_CHUNK = 100; // Max results per IPC message chunk
@@ -114,6 +119,8 @@ async function computeFileChecksum(filePath) {
   });
 }
 
+const delayMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * Verify move operation completed correctly.
  * Checks that destination exists and source is gone.
@@ -124,31 +131,59 @@ async function computeFileChecksum(filePath) {
  * @throws {Error} If verification fails
  */
 async function verifyMoveCompletion(source, destination, log) {
-  // Verify destination exists
-  try {
-    await fs.access(destination);
-  } catch {
-    throw new Error(
-      `Move verification failed: destination does not exist after move: ${destination}`
-    );
+  // Verify destination exists (retry to handle network/FS propagation delays)
+  for (let attempt = 1; attempt <= VERIFY_MAX_ATTEMPTS; attempt++) {
+    try {
+      await fs.access(destination);
+      break;
+    } catch (error) {
+      const isRetryable =
+        error.code === 'ENOENT' || (error.code && FILE_LOCK_ERROR_CODES.has(error.code));
+      if (!isRetryable || attempt === VERIFY_MAX_ATTEMPTS) {
+        const message =
+          error.code === 'ENOENT'
+            ? `Move verification failed: destination does not exist after move: ${destination}`
+            : `Move verification failed: destination not accessible after move: ${destination}`;
+        const verificationError = new Error(message);
+        verificationError.code = error.code || 'MOVE_VERIFICATION_DESTINATION_FAILED';
+        throw verificationError;
+      }
+      log.debug('[FILE-OPS] Destination not yet visible after move, retrying', {
+        destination,
+        attempt,
+        maxAttempts: VERIFY_MAX_ATTEMPTS,
+        code: error.code
+      });
+      const delay = Math.min(VERIFY_BACKOFF_STEP_MS * attempt, VERIFY_MAX_DELAY_MS);
+      await delayMs(delay);
+    }
   }
 
   // Verify source is gone (unless same path or mocked fs)
   const shouldVerifySource = source !== destination && !isMockFn(fs.access);
   if (shouldVerifySource) {
-    try {
-      await fs.access(source);
-      // If we get here, source still exists - move may have failed silently
-      const verificationError = new Error(
-        `Move verification failed: source file still exists at original location: ${source}`
-      );
-      verificationError.code = 'MOVE_VERIFICATION_SOURCE_EXISTS';
-      throw verificationError;
-    } catch (sourceCheckErr) {
-      // ENOENT is expected (file was moved); any other error should halt processing
-      if (sourceCheckErr.code === 'ENOENT') {
-        // All good: file is gone at the original location
-      } else {
+    for (let attempt = 1; attempt <= VERIFY_MAX_ATTEMPTS; attempt++) {
+      try {
+        await fs.access(source);
+        if (attempt === VERIFY_MAX_ATTEMPTS) {
+          const verificationError = new Error(
+            `Move verification failed: source file still exists at original location: ${source}`
+          );
+          verificationError.code = 'MOVE_VERIFICATION_SOURCE_EXISTS';
+          throw verificationError;
+        }
+        log.debug('[FILE-OPS] Source still exists after move, retrying', {
+          source,
+          attempt,
+          maxAttempts: VERIFY_MAX_ATTEMPTS
+        });
+        const delay = Math.min(VERIFY_BACKOFF_STEP_MS * attempt, VERIFY_MAX_DELAY_MS);
+        await delayMs(delay);
+      } catch (sourceCheckErr) {
+        // ENOENT is expected (file was moved); any other error should halt processing
+        if (sourceCheckErr.code === 'ENOENT') {
+          break;
+        }
         log.warn('[FILE-OPS] Move verification: unexpected source state', {
           error: sourceCheckErr.message,
           code: sourceCheckErr.code
@@ -387,6 +422,37 @@ async function handleBatchOrganize(params) {
 
             if (moveResult && moveResult.skipped) {
               skippedCount++;
+              results.push({
+                success: true,
+                source: op.source,
+                destination: op.destination,
+                operation: op.type || 'move',
+                skipped: true,
+                reason: moveResult.reason
+              });
+
+              log.info('[FILE-OPS] Move skipped (duplicate)', {
+                batchId,
+                source: op.source,
+                destination: op.destination
+              });
+
+              // Verify state is consistent (dest exists, source gone)
+              await verifyMoveCompletion(op.source, op.destination, log);
+
+              await getServiceIntegration()?.processingState?.markOrganizeOpDone(batchId, i, {
+                destination: op.destination,
+                skipped: true
+              });
+
+              sendOperationProgress(getMainWindow, {
+                type: 'batch_organize',
+                current: successCount + failCount + skippedCount,
+                total: batch.operations.length,
+                currentFile: path.basename(op.source)
+              });
+
+              return;
             }
 
             op.destination = moveResult.destination;
@@ -845,6 +911,28 @@ async function recordUndoAndUpdateDatabase(
       // Coordinator unavailable
       log.warn('[FILE-OPS] FilePathCoordinator unavailable for batch path updates', {
         batchId
+      });
+    }
+
+    // Sync embeddings based on final smart folder destinations (background, best effort)
+    if (pathChanges.length > 0) {
+      setImmediate(() => {
+        const syncBatchSize = 2;
+        batchProcess(
+          pathChanges,
+          (change) =>
+            syncEmbeddingForMove({
+              sourcePath: change.oldPath,
+              destPath: change.newPath,
+              log
+            }),
+          syncBatchSize
+        ).catch((syncErr) => {
+          log.debug('[FILE-OPS] Batch embedding sync failed (non-fatal):', {
+            error: syncErr.message,
+            batchId
+          });
+        });
       });
     }
 
