@@ -8,6 +8,8 @@
   <strong>Smart File Organization with Local AI</strong>
 </p>
 
+https://github.com/user-attachments/assets/83b88e95-d91c-48fc-a947-573e10895daf
+
 <p align="center">
   <a href="https://github.com/iLevyTate/elstratosort/releases"><img src="https://img.shields.io/badge/version-1.2.1-blue?style=flat-square" alt="Version" /></a>
   <a href="https://github.com/iLevyTate/elstratosort/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License" /></a>
