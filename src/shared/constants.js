@@ -21,7 +21,8 @@ const IPC_CHANNELS = {
     REVEAL_FILE: 'files:reveal',
     COPY_FILE: 'files:copy',
     OPEN_FOLDER: 'files:open-folder',
-    DELETE_FOLDER: 'files:delete-folder'
+    DELETE_FOLDER: 'files:delete-folder',
+    CLEANUP_ANALYSIS: 'files:cleanup-analysis'
   },
   SMART_FOLDERS: {
     GET: 'smart-folders:get',

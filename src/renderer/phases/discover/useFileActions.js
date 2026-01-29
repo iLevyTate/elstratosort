@@ -98,7 +98,23 @@ export function useFileActions({
               delete next[filePath];
               return next;
             });
-            addNotification(`Removed from queue: ${fileName}`, 'info', 2000, 'file-actions');
+            let cleanupWarning = null;
+            if (window?.electronAPI?.files?.cleanupAnalysis) {
+              try {
+                const cleanupResult = await window.electronAPI.files.cleanupAnalysis(filePath);
+                if (cleanupResult?.success === false) {
+                  cleanupWarning =
+                    cleanupResult.warning || cleanupResult.error || 'Cleanup incomplete';
+                }
+              } catch (cleanupError) {
+                cleanupWarning = cleanupError.message || 'Cleanup failed';
+              }
+            }
+
+            const message = cleanupWarning
+              ? `Removed from queue: ${fileName} (cleanup incomplete)`
+              : `Removed from queue: ${fileName}`;
+            addNotification(message, cleanupWarning ? 'warning' : 'info', 2000, 'file-actions');
             break;
           }
 

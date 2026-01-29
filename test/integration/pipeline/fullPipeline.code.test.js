@@ -156,7 +156,11 @@ const { isOllamaRunningWithRetry } = require('../../../src/main/utils/ollamaDete
 const mockFolderMatcher = FolderMatchingService._mockInstance;
 
 // Import fixtures and loader
-const { TEST_FIXTURE_FILES, getMockSmartFolders } = require('../../utils/fileTypeFixtures');
+const {
+  TEST_FIXTURE_FILES,
+  getMockSmartFolders,
+  FIXTURE_DIR
+} = require('../../utils/fileTypeFixtures');
 const { loadAllFixtures } = require('../../utils/realFileLoader');
 
 // Setup custom matchers
@@ -167,7 +171,17 @@ setupPipelineMatchers();
 const CODE_FIXTURES = ['jsFile', 'pythonFile', 'cssFile', 'sqlFile'];
 
 describe('Code Files Full Pipeline - REAL FILE Integration Tests', () => {
-  const smartFolders = getMockSmartFolders();
+  const smartFolders = [
+    ...getMockSmartFolders(),
+    {
+      id: 'fixture-folder',
+      name: 'Fixtures',
+      path: FIXTURE_DIR, // Add fixture dir as a smart folder so files are considered "organized"
+      description: 'Test fixtures',
+      keywords: [],
+      semanticTags: []
+    }
+  ];
 
   // Store real file contents for assertions
   let fixtureContents;

@@ -9,16 +9,16 @@ const CHAT_PERSONAS = [
   {
     id: 'informal-helper',
     label: 'Informal Helper',
-    description: 'Friendly, plain-language guidance with brief, practical tips.',
+    description: 'Friendly, plain-language guidance with practical tips.',
     guidance:
-      'Use a friendly, informal tone. Keep answers short, practical, and easy to scan. Offer brief tips and avoid heavy jargon unless the user asks for it.'
+      'Use a friendly, conversational tone. Keep answers practical and easy to scan. Offer helpful tips and avoid heavy jargon unless the user asks for it.'
   },
   {
     id: 'discoverer',
     label: 'Discoverer',
     description: 'Exploratory, curious responses that surface alternatives and next steps.',
     guidance:
-      'Use an exploratory, curious tone. Highlight alternatives, note uncertainties, and suggest next questions or angles to investigate.'
+      'Use an exploratory, curious tone. Highlight alternatives, note uncertainties, and suggest engaging next questions or angles to investigate.'
   }
 ];
 

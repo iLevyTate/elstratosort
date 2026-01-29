@@ -481,6 +481,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     performOperation: (operations) =>
       secureIPC.safeInvoke(IPC_CHANNELS.FILES.PERFORM_OPERATION, operations),
     delete: (filePath) => secureIPC.safeInvoke(IPC_CHANNELS.FILES.DELETE_FILE, filePath),
+    cleanupAnalysis: (filePath) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.FILES.CLEANUP_ANALYSIS, filePath),
     // Add missing file operations that the UI is calling
     open: (filePath) => secureIPC.safeInvoke(IPC_CHANNELS.FILES.OPEN_FILE, filePath),
     reveal: (filePath) => secureIPC.safeInvoke(IPC_CHANNELS.FILES.REVEAL_FILE, filePath),

@@ -22,6 +22,8 @@ const {
 const FolderMatchingService = require('../services/FolderMatchingService');
 const embeddingQueue = require('./embeddingQueue');
 const { logger } = require('../../shared/logger');
+const { findContainingSmartFolder } = require('../../shared/folderUtils');
+const { getSemanticFileId } = require('../../shared/fileIdUtils');
 const {
   applySemanticFolderMatching: applyUnifiedFolderMatching,
   getServices,
@@ -57,6 +59,30 @@ const AppConfig = {
     }
   }
 };
+
+const OCR_DEFAULTS = {
+  timeoutMs: TIMEOUTS.AI_ANALYSIS_MEDIUM,
+  maxTokens: 1000,
+  maxRetries: 1
+};
+
+const OCR_FILENAME_HINTS = [
+  'report',
+  'document',
+  'invoice',
+  'receipt',
+  'form',
+  'screenshot',
+  'screen',
+  'budget',
+  'financial',
+  'statement',
+  'tax'
+];
+
+function hasTextNameHint(fileNameLower) {
+  return OCR_FILENAME_HINTS.some((hint) => fileNameLower.includes(hint));
+}
 
 // JSON repair constants and function consolidated to ../utils/ollamaJsonRepair.js
 const IMAGE_ANALYSIS_SCHEMA = {
@@ -653,6 +679,11 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
   const bypassCache = Boolean(options?.bypassCache);
   const fileExtension = path.extname(filePath).toLowerCase();
   const fileName = path.basename(filePath);
+  const fileNameLower = fileName.toLowerCase();
+  const resolvedSmartFolder = findContainingSmartFolder(filePath, smartFolders);
+  const isInSmartFolder = Boolean(resolvedSmartFolder);
+  const hasTextHint = hasTextNameHint(fileNameLower);
+  let ocrAttempted = false;
   const smartFolderSig = Array.isArray(smartFolders)
     ? smartFolders
         .map((f) => f?.name || '')
@@ -849,7 +880,6 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
 
     logger.debug(`Image buffer size`, { bytes: imageBuffer.length });
     const imageBase64 = imageBuffer.toString('base64');
-
     // Release image buffer immediately after base64 conversion
     // This prevents holding potentially large (10MB+) buffers in memory during
     // subsequent async operations (Ollama analysis, semantic matching, etc.)
@@ -873,22 +903,9 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
     let extractedText = null;
     try {
       // Only attempt OCR for images that might contain text (documents, screenshots, etc.)
-      const fileNameLower = fileName.toLowerCase();
-      const mightContainText =
-        fileNameLower.includes('report') ||
-        fileNameLower.includes('document') ||
-        fileNameLower.includes('invoice') ||
-        fileNameLower.includes('receipt') ||
-        fileNameLower.includes('form') ||
-        fileNameLower.includes('screenshot') ||
-        fileNameLower.includes('screen') ||
-        fileNameLower.includes('budget') ||
-        fileNameLower.includes('financial') ||
-        fileNameLower.includes('statement') ||
-        fileNameLower.includes('tax');
-
-      if (mightContainText) {
+      if (hasTextHint) {
         logger.debug('[IMAGE] Filename suggests document content, attempting OCR pre-extraction');
+        ocrAttempted = true;
         extractedText = await extractTextFromImage(filePath);
         if (extractedText && extractedText.length > 20) {
           logger.info('[IMAGE] OCR pre-extraction successful', {
@@ -975,16 +992,22 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
     }
 
     // If OCR not performed earlier, attempt it now when the analysis indicates text content.
-    if ((!extractedText || extractedText.length < 20) && analysis && !analysis.error) {
+    if (
+      (!extractedText || extractedText.length < 20) &&
+      analysis &&
+      !analysis.error &&
+      !ocrAttempted
+    ) {
       const contentType = String(analysis.content_type || '').toLowerCase();
-      const wantsOcr =
-        analysis.has_text === true ||
+      const contentSuggestsText =
         contentType.includes('text') ||
         contentType.includes('document') ||
         contentType.includes('screenshot');
+      const wantsOcr = analysis.has_text === true || (contentSuggestsText && hasTextHint);
       if (wantsOcr) {
         try {
           logger.debug('[IMAGE] Analysis indicates text content, attempting OCR post-extraction');
+          ocrAttempted = true;
           extractedText = await extractTextFromImage(filePath);
           if (extractedText && extractedText.length > 20) {
             logger.info('[IMAGE] OCR post-extraction successful', {
@@ -1018,7 +1041,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       // FIX: Explicitly queue embedding for images to ensure they are searchable
       // even if they don't have OCR text (using keywords/description instead)
       const { matcher } = getServices();
-      if (matcher && analysis) {
+      if (matcher && analysis && isInSmartFolder) {
         const textParts = [
           analysis.suggestedName,
           analysis.summary,
@@ -1040,22 +1063,29 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
 
           const { vector } = await matcher.embedText(textToEmbed);
           if (vector) {
+            embeddingQueue.removeByFilePath?.(filePath);
             embeddingQueue.enqueue({
-              id: `image:${filePath}`,
+              id: getSemanticFileId(filePath),
               path: filePath,
               text: textToEmbed,
               vector,
-              metadata: {
+              meta: {
                 fileName,
                 fileSize: stats?.size,
                 fileExtension,
                 analysis,
-                type: 'image'
+                type: 'image',
+                smartFolder: resolvedSmartFolder?.name || null,
+                smartFolderPath: resolvedSmartFolder?.path || null
               }
             });
             logger.debug('[IMAGE] Queued embedding for persistence', { path: filePath });
           }
         }
+      } else if (matcher && analysis && !isInSmartFolder) {
+        logger.debug('[IMAGE] Skipping embedding persistence (not in smart folder)', {
+          path: filePath
+        });
       }
     } catch (error) {
       logger.warn('[IMAGE] Unexpected error in semantic folder refinement or embedding:', {
@@ -1160,22 +1190,49 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
 }
 
 // OCR capability using Ollama for text extraction from images
-async function extractTextFromImage(filePath) {
+async function extractTextFromImage(filePath, options = {}) {
+  let timeoutMs = OCR_DEFAULTS.timeoutMs;
   try {
-    // Check file size before reading to prevent memory exhaustion
-    const stats = await fs.stat(filePath);
     const MAX_OCR_SIZE = 20 * 1024 * 1024; // 20MB limit for OCR
-    if (stats.size > MAX_OCR_SIZE) {
-      logger.warn('[IMAGE] Skipping OCR for large file:', {
+    const fileExtension = (options.fileExtension || path.extname(filePath)).toLowerCase();
+    let imageBuffer = options.buffer;
+
+    // Check file size before reading to prevent memory exhaustion
+    if (imageBuffer) {
+      if (imageBuffer.length > MAX_OCR_SIZE) {
+        logger.warn('[IMAGE] Skipping OCR for large buffer:', {
+          filePath,
+          size: imageBuffer.length,
+          limit: MAX_OCR_SIZE
+        });
+        return null;
+      }
+    } else {
+      const stats = await fs.stat(filePath);
+      if (stats.size > MAX_OCR_SIZE) {
+        logger.warn('[IMAGE] Skipping OCR for large file:', {
+          filePath,
+          size: stats.size,
+          limit: MAX_OCR_SIZE
+        });
+        return null;
+      }
+      imageBuffer = await fs.readFile(filePath);
+    }
+
+    // Preprocess image for model compatibility (resize/convert)
+    try {
+      imageBuffer = await preprocessImageBuffer(imageBuffer, fileExtension);
+    } catch (preprocessError) {
+      logger.warn('[IMAGE-OCR] Preprocessing failed, skipping OCR', {
         filePath,
-        size: stats.size,
-        limit: MAX_OCR_SIZE
+        error: preprocessError.message
       });
       return null;
     }
 
-    const imageBuffer = await fs.readFile(filePath);
     const imageBase64 = imageBuffer.toString('base64');
+    imageBuffer = null;
 
     const prompt = `Extract all readable text from this image. Return only the text content, maintaining the original structure and formatting as much as possible. If no text is found, return "NO_TEXT_FOUND".`;
 
@@ -1183,7 +1240,11 @@ async function extractTextFromImage(filePath) {
     const modelToUse2 =
       getOllamaVisionModel() || cfg2.selectedVisionModel || AppConfig.ai.imageAnalysis.defaultModel;
     const client2 = await getOllama();
-    const timeoutMs = Number(AppConfig.ai.imageAnalysis.timeout) || 60000;
+    timeoutMs =
+      Number(process.env.AI_OCR_TIMEOUT) ||
+      OCR_DEFAULTS.timeoutMs ||
+      TIMEOUTS.AI_ANALYSIS_MEDIUM ||
+      60000;
     logger.debug('[IMAGE-OCR] Using vision model for OCR', {
       model: modelToUse2,
       fileName: path.basename(filePath),
@@ -1199,15 +1260,15 @@ async function extractTextFromImage(filePath) {
             images: [imageBase64],
             options: {
               temperature: 0.1, // Lower temperature for text extraction
-              num_predict: 2000
+              num_predict: OCR_DEFAULTS.maxTokens
             },
             signal: abortController.signal
           },
           {
             operation: `Text extraction from image ${path.basename(filePath)}`,
-            maxRetries: 3,
+            maxRetries: OCR_DEFAULTS.maxRetries,
             initialDelay: 1000,
-            maxDelay: 4000,
+            maxDelay: 2000,
             maxTotalTime: timeoutMs
           }
         ),
@@ -1221,7 +1282,20 @@ async function extractTextFromImage(filePath) {
 
     return null;
   } catch (error) {
-    logger.error('Error extracting text from image', { error: error.message });
+    const message = error?.message || 'OCR failed';
+    const lowerMessage = message.toLowerCase();
+    const isTimeout =
+      error?.name === 'AbortError' ||
+      lowerMessage.includes('timed out') ||
+      lowerMessage.includes('aborted');
+    if (isTimeout) {
+      logger.warn('[IMAGE-OCR] OCR timed out, skipping', {
+        fileName: path.basename(filePath),
+        timeoutMs
+      });
+      return null;
+    }
+    logger.error('Error extracting text from image', { error: message });
     return null;
   }
 }

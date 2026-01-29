@@ -558,7 +558,7 @@ Return ONLY valid JSON with this shape:
   "modelAnswer": [
     { "text": "answer using model knowledge (no citations)" }
   ],
-  "followUps": ["short question 1", "short question 2"]
+  "followUps": ["Natural follow-up question 1?", "Natural follow-up question 2?"]
 }
 
 Rules:
@@ -566,9 +566,10 @@ Rules:
 - Put document-grounded statements only in documentAnswer, with citations to the source ids above.
 - Put training-knowledge statements only in modelAnswer, with no citations.
 - If no document support exists, documentAnswer should be empty.
-- If the question is conversational (e.g., "hello", "who are you"), respond in modelAnswer.
+- If the question is conversational (e.g., "hello", "who are you"), respond in modelAnswer with a natural, engaging tone.
 - When discussing documents, mention relevant details like entity, project, and purpose when helpful.
-- Keep responses concise and conversational.
+- Keep responses conversational and helpful. Avoid being overly terse.
+- Generate 1-3 natural, relevant follow-up questions that help the user explore the topic further. Do NOT use single words or extremely short phrases.
 `.trim();
   }
 

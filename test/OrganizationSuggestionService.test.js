@@ -95,11 +95,15 @@ describe('OrganizationSuggestionService', () => {
     mockFolderMatchingService = {
       upsertFolderEmbedding: jest.fn().mockResolvedValue({ success: true }),
       upsertFileEmbedding: jest.fn().mockResolvedValue({ success: true }),
+      matchVectorToFolders: jest.fn().mockResolvedValue([]),
       matchFileToFolders: jest.fn().mockResolvedValue([]),
       embedText: jest.fn().mockResolvedValue({
         vector: new Array(1024).fill(0.1)
       })
     };
+    mockFolderMatchingService.matchVectorToFolders.mockImplementation((vector, topK) =>
+      mockFolderMatchingService.matchFileToFolders(vector, topK)
+    );
 
     // Setup mock SettingsService
     mockSettingsService = {

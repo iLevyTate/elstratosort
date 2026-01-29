@@ -89,7 +89,7 @@ function BatchOrganizationSuggestions({
 
   return (
     <div className="flex flex-col gap-6">
-      <Card className="p-4 border-system-gray-200 bg-system-gray-50">
+      <Card className="p-4 sm:p-6 border-system-gray-200 bg-system-gray-50">
         <h3 className="font-medium text-system-gray-900 mb-2">Batch Feedback Note</h3>
         <textarea
           value={memoryNote}
@@ -117,7 +117,7 @@ function BatchOrganizationSuggestions({
       {patterns && (
         <Card className="p-4 bg-stratosort-blue/5 border-stratosort-blue/20">
           <h3 className="font-medium text-system-gray-900 mb-3">Pattern Analysis</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-[var(--spacing-cozy)] text-sm">
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-[var(--spacing-cozy)] text-sm">
             {patterns.hasCommonProject && (
               <div>
                 <span className="text-system-gray-600">Common Project:</span>
@@ -159,7 +159,7 @@ function BatchOrganizationSuggestions({
 
       {/* Recommendations */}
       {recommendations && recommendations.length > 0 && (
-        <Card className="p-4 border-stratosort-success/20 bg-stratosort-success/10">
+        <Card className="p-4 sm:p-6 border-stratosort-success/20 bg-stratosort-success/10">
           <h3 className="font-medium text-system-gray-900 mb-3">Recommendations</h3>
           <div className="flex flex-col gap-6">
             {/* FIX: Use stable identifier instead of array index as key */}
@@ -201,7 +201,7 @@ function BatchOrganizationSuggestions({
 
       {/* Suggested Strategy */}
       {suggestedStrategy && (
-        <Card className="p-4 border-stratosort-blue/50 bg-stratosort-blue/5">
+        <Card className="p-4 sm:p-6 border-stratosort-blue/50 bg-stratosort-blue/5">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-medium text-system-gray-900">Suggested Organization Strategy</h3>
             <span className="text-sm text-stratosort-blue">
@@ -304,7 +304,7 @@ function BatchOrganizationSuggestions({
               </div>
 
               {expandedGroups.has(groupIndex) && (
-                <div className="border-t border-system-gray-200 p-4 bg-system-gray-50">
+                <div className="border-t border-system-gray-200 p-4 sm:p-6 bg-system-gray-50">
                   <div className="space-y-2">
                     {/* FIX: Use stable identifier instead of array index as key */}
                     {Array.isArray(group.files) &&

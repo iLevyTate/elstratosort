@@ -728,8 +728,14 @@ export function useOrganization({
               });
 
               // Use actual results from main process if available
+              // For undo operations, the file is moved FROM organized location (source) TO original location (destination)
+              // We rely on 'destination' (restored path) because UndoRedoService guarantees it matches the original file path.
+              // We also check 'originalPath' as a fallback, which UndoRedoService also populates.
               const successfulUndos = result?.results
-                ? result.results.filter((r) => r.success).map((r) => r.originalPath || r.newPath)
+                ? result.results
+                    .filter((r) => r.success)
+                    .map((r) => r.destination || r.originalPath || r.newPath)
+                    .filter(Boolean)
                 : Array.from(sourcePathsSet);
 
               logger.info('[ORGANIZE] onUndo: unmarking files', {
@@ -752,6 +758,26 @@ export function useOrganization({
 
               const successCount = result?.successCount ?? successfulUndos.length;
               const failCount = result?.failCount ?? 0;
+
+              // FIX: Update Redux state to reflect restored paths so analysis results remain valid
+              // Source = Organized Path (stale), Destination = Original/Restored Path (active)
+              if (dispatch && result?.results) {
+                const successfulOps = result.results.filter((r) => r.success);
+                if (successfulOps.length > 0) {
+                  // For undo: move FROM source (organized) TO destination (original)
+                  const oldPaths = successfulOps.map((r) => r.source);
+                  const newPaths = successfulOps.map((r) => r.destination);
+
+                  logger.debug('[ORGANIZE] onUndo: reverting Redux paths', {
+                    count: oldPaths.length,
+                    sampleOld: oldPaths[0],
+                    sampleNew: newPaths[0]
+                  });
+
+                  dispatch(updateResultPathsAfterMove({ oldPaths, newPaths }));
+                  dispatch(updateFilePathsAfterMove({ oldPaths, newPaths }));
+                }
+              }
 
               if (failCount > 0) {
                 addNotification(

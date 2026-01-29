@@ -16,6 +16,7 @@ const { generateSuggestedNameFromAnalysis } = require('./autoOrganize/namingUtil
 const { recordAnalysisResult } = require('../ipc/analysisUtils');
 const { deriveWatcherConfidencePercent } = require('./confidence/watcherConfidence');
 const { getSemanticFileId, isImagePath } = require('../../shared/fileIdUtils');
+const { findContainingSmartFolder } = require('../../shared/folderUtils');
 const { normalizePathForIndex } = require('../../shared/pathSanitization');
 const { getInstance: getFileOperationTracker } = require('../../shared/fileOperationTracker');
 const { isUNCPath } = require('../../shared/crossPlatformUtils');
@@ -1044,6 +1045,13 @@ class DownloadWatcher {
         return;
       }
 
+      const smartFolders = this.getCustomFolders?.() || [];
+      const resolvedSmartFolder = findContainingSmartFolder(filePath, smartFolders);
+      if (!resolvedSmartFolder) {
+        logger.debug('[DOWNLOAD-WATCHER] Skipping embedding - not in smart folder:', filePath);
+        return;
+      }
+
       // FIX: Include more context for richer embeddings and conversations
       const purpose = analysis.purpose || '';
       const entity = analysis.entity || '';
@@ -1073,7 +1081,7 @@ class DownloadWatcher {
       const baseMeta = {
         path: filePath,
         name: fileName,
-        category,
+        category: resolvedSmartFolder?.name || category,
         subject,
         summary: summary.substring(0, 2000), // Increased limit for richer context
         purpose: purpose.substring(0, 1000),
@@ -1089,7 +1097,9 @@ class DownloadWatcher {
         extractedText: extractedText.substring(0, 5000),
         extractionMethod: analysis.extractionMethod || 'unknown',
         // Document date for time-based queries
-        date: analysis.date || null
+        date: analysis.date || null,
+        smartFolder: resolvedSmartFolder?.name || null,
+        smartFolderPath: resolvedSmartFolder?.path || null
       };
 
       // Add image-specific metadata for richer image conversations

@@ -11,6 +11,7 @@ const axios = require('axios');
 const { ChromaClient } = require('chromadb');
 const { logger } = require('../../../shared/logger');
 const { get: getConfig } = require('../../../shared/config/index');
+const { CHROMA_HEALTH_ENDPOINTS } = require('../../../shared/config/chromaDefaults');
 const {
   createHealthCheckInterval: createSharedHealthCheckInterval
 } = require('../../../shared/healthCheckUtils');
@@ -37,11 +38,7 @@ function parseServerUrl(serverUrl) {
  * @returns {Promise<{healthy: boolean, endpoint?: string}>}
  */
 async function checkHealthViaHttp(serverUrl) {
-  const endpoints = [
-    '/api/v2/heartbeat', // v2 endpoint (current version)
-    '/api/v1/heartbeat', // v1 endpoint (ChromaDB 1.0.x)
-    '/api/v1' // Some versions just have this
-  ];
+  const endpoints = CHROMA_HEALTH_ENDPOINTS;
 
   // Try all endpoints in parallel for faster health check
   const healthCheckPromises = endpoints.map(async (endpoint) => {

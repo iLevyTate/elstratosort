@@ -75,6 +75,27 @@ jest.mock('../src/shared/constants', () => ({
     DEPENDENCIES: {
       SERVICE_STATUS_CHANGED: 'dependencies:service-status-changed'
     }
+  },
+  DEFAULT_AI_MODELS: {
+    TEXT_ANALYSIS: 'gemma3:4b',
+    IMAGE_ANALYSIS: 'llava:7b',
+    EMBEDDING: 'nomic-embed-text'
+  },
+  AI_DEFAULTS: {
+    TEXT: {
+      TEMPERATURE: 0.7
+    },
+    IMAGE: {
+      TEMPERATURE: 0.2
+    }
+  },
+  FILE_SIZE_LIMITS: {
+    MAX_TEXT_FILE_SIZE: 50 * 1024 * 1024,
+    MAX_IMAGE_FILE_SIZE: 100 * 1024 * 1024,
+    MAX_DOCUMENT_FILE_SIZE: 200 * 1024 * 1024
+  },
+  LIMITS: {
+    MAX_PATH_LENGTH: 260
   }
 }));
 
@@ -84,17 +105,42 @@ jest.mock('../src/shared/performanceConstants', () => ({
     MAX_NUMERIC_RETRIES: 5000
   },
   TIMEOUTS: {
-    FILE_COPY: 30000
+    FILE_COPY: 30000,
+    DELAY_TINY: 5
   },
   RETRY: {
     MAX_ATTEMPTS_VERY_HIGH: 3,
-    ATOMIC_BACKOFF_STEP_MS: 1
+    ATOMIC_BACKOFF_STEP_MS: 1,
+    FILE_OPERATION: { initialDelay: 5, maxDelay: 50 }
+  },
+  BATCH: {
+    MAX_CONCURRENT_FILES: 5
+  },
+  CACHE: {
+    MAX_FILE_CACHE: 500
+  },
+  THRESHOLDS: {
+    MIN_SIMILARITY_SCORE: 0.15,
+    CONFIDENCE_HIGH: 0.8,
+    CONFIDENCE_MEDIUM: 0.6
+  },
+  CONCURRENCY: {
+    DEFAULT_WORKERS: 1
   }
 }));
 
 // Mock promiseUtils
 jest.mock('../src/shared/promiseUtils', () => ({
   withTimeout: jest.fn((promise) => promise) // Just pass through the promise
+}));
+
+global.__mockBatchSearchService = {
+  invalidateAndRebuild: jest.fn().mockResolvedValue(undefined)
+};
+
+// Mock semantic search service
+jest.mock('../src/main/ipc/semantic', () => ({
+  getSearchServiceInstance: jest.fn(() => global.__mockBatchSearchService)
 }));
 
 // Mock atomicFileOperations
@@ -129,6 +175,7 @@ describe('Batch Organize Handler', () => {
 
     // Reset hash counter for unique idempotency keys
     global.__hashCounter = 0;
+    global.__mockBatchSearchService.invalidateAndRebuild.mockClear();
 
     mockCoordinator = {
       batchPathUpdate: jest.fn().mockResolvedValue({ success: true, summary: {} })
@@ -279,6 +326,27 @@ describe('Batch Organize Handler', () => {
         oldPath: '/src/file1.txt',
         newPath: '/dest/file1.txt'
       });
+    });
+
+    test('wraps search rebuild in timeout after batch', async () => {
+      const { withTimeout } = require('../src/shared/promiseUtils');
+      const operations = [{ source: '/src/file1.txt', destination: '/dest/file1.txt' }];
+
+      const result = await handleBatchOrganize({
+        operation: { operations },
+        logger: mockLogger,
+        getServiceIntegration: mockGetServiceIntegration,
+        getMainWindow: mockGetMainWindow
+      });
+
+      expect(result.success).toBe(true);
+      expect(global.__mockBatchSearchService.invalidateAndRebuild).toHaveBeenCalledWith(
+        expect.objectContaining({ immediate: true, reason: 'batch-organize' })
+      );
+      const timeoutCalls = withTimeout.mock.calls.filter(
+        (call) => call[2] === 'BM25 rebuild after batch'
+      );
+      expect(timeoutCalls.length).toBe(1);
     });
 
     test('retries rename on transient file lock errors', async () => {

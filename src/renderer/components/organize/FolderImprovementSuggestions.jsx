@@ -59,7 +59,7 @@ function FolderImprovementSuggestions({
         align="left"
         title="Your folder structure is well-organized!"
         description="No significant improvements needed at this time."
-        className="p-4"
+        className="p-4 sm:p-6"
       />
     );
   }
@@ -84,7 +84,7 @@ function FolderImprovementSuggestions({
           }`}
         >
           <div
-            className="p-4 cursor-pointer hover:bg-system-gray-50 transition-colors"
+            className="p-4 sm:p-6 cursor-pointer hover:bg-system-gray-50 transition-colors"
             onClick={() => toggleSection(improvement.type)}
             onKeyDown={(e) =>
               (e.key === 'Enter' || e.key === ' ') && toggleSection(improvement.type)
@@ -253,7 +253,7 @@ function FolderImprovementSuggestions({
       ))}
 
       {/* Overall Health Score */}
-      <Card className="p-4 bg-gradient-to-r from-stratosort-blue/5 to-stratosort-blue/10">
+      <Card className="p-4 sm:p-6 bg-gradient-to-r from-stratosort-blue/5 to-stratosort-blue/10">
         <div className="flex items-center justify-between">
           <div>
             <h4 className="font-medium text-system-gray-900">Organization Health Score</h4>

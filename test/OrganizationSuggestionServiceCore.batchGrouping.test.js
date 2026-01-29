@@ -6,6 +6,21 @@ const {
   OrganizationSuggestionServiceCore
 } = require('../src/main/services/organization/OrganizationSuggestionServiceCore');
 
+jest.mock('../src/shared/promiseUtils', () => ({
+  withTimeout: jest.fn((promise) =>
+    Promise.resolve(typeof promise === 'function' ? promise() : promise)
+  )
+}));
+
+jest.mock('../src/main/utils/llmOptimization', () => ({
+  globalBatchProcessor: {
+    processBatch: jest.fn(async (items, processFn) => {
+      const results = await Promise.all(items.map((item, i) => processFn(item, i)));
+      return { results };
+    })
+  }
+}));
+
 describe('OrganizationSuggestionServiceCore batch grouping', () => {
   test('skips files without primary suggestion', async () => {
     const service = new OrganizationSuggestionServiceCore({

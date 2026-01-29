@@ -308,6 +308,13 @@ describe('ollamaImageAnalysis - Rewritten Tests', () => {
   });
 
   describe('extractTextFromImage', () => {
+    beforeEach(() => {
+      jest.spyOn(fs, 'stat').mockResolvedValue({
+        size: 50000,
+        mtimeMs: 1234567890
+      });
+    });
+
     test('should extract text from image', async () => {
       jest.spyOn(fs, 'readFile').mockResolvedValue(Buffer.from('mock image data'));
 
@@ -333,6 +340,7 @@ describe('ollamaImageAnalysis - Rewritten Tests', () => {
     });
 
     test('should return null on error', async () => {
+      jest.spyOn(fs, 'readFile').mockResolvedValue(Buffer.from('mock image data'));
       mockOllamaClient.generate.mockRejectedValue(new Error('API Error'));
 
       const result = await extractTextFromImage('/test/image.jpg');

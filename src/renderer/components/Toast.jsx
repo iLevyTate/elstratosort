@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { CheckCircle2, XCircle, AlertTriangle, Info, X, Bell } from 'lucide-react';
 import { logger } from '../../shared/logger';
@@ -10,6 +10,14 @@ logger.setContext('Toast');
 // Simple ID counter - crypto API is overkill for toast IDs
 let toastIdCounter = 0;
 const generateSecureId = () => Date.now() + ++toastIdCounter;
+const MAX_VISIBLE_TOASTS = 3;
+const GROUP_WINDOW_MS = 2000; // merge toasts with same groupKey within 2s
+const getHighestSeverity = (a, b) => {
+  const order = { error: 3, warning: 2, success: 1, info: 0 };
+  const aScore = order[a] ?? 0;
+  const bScore = order[b] ?? 0;
+  return aScore >= bScore ? a : b;
+};
 
 function Toast({
   message,
@@ -299,17 +307,7 @@ ToastContainer.propTypes = {
 export const useToast = () => {
   const [toasts, setToasts] = useState([]);
 
-  const MAX_VISIBLE_TOASTS = 3;
-  const GROUP_WINDOW_MS = 2000; // merge toasts with same groupKey within 2s
-
-  const getHighestSeverity = (a, b) => {
-    const order = { error: 3, warning: 2, success: 1, info: 0 };
-    const aScore = order[a] ?? 0;
-    const bScore = order[b] ?? 0;
-    return aScore >= bScore ? a : b;
-  };
-
-  const addToast = (message, severity = 'info', duration = 3000, groupKey = null) => {
+  const addToast = useCallback((message, severity = 'info', duration = 3000, groupKey = null) => {
     const id = generateSecureId();
     const now = Date.now();
     let resolvedId = id;
@@ -362,15 +360,32 @@ export const useToast = () => {
     });
 
     return resolvedId;
-  };
+  }, []);
 
-  const removeToast = (id) => {
+  const removeToast = useCallback((id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
+  }, []);
 
-  const clearAllToasts = () => {
+  const clearAllToasts = useCallback(() => {
     setToasts([]);
-  };
+  }, []);
+
+  const showSuccess = useCallback(
+    (message, duration = 2500) => addToast(message, 'success', duration),
+    [addToast]
+  );
+  const showError = useCallback(
+    (message, duration = 4000) => addToast(message, 'error', duration),
+    [addToast]
+  ); // Errors stay longer
+  const showWarning = useCallback(
+    (message, duration = 3500) => addToast(message, 'warning', duration),
+    [addToast]
+  );
+  const showInfo = useCallback(
+    (message, duration = 2000) => addToast(message, 'info', duration),
+    [addToast]
+  ); // Info disappears quickly
 
   return {
     toasts,
@@ -380,10 +395,10 @@ export const useToast = () => {
     // Legacy alias used throughout app
     addNotification: addToast,
     // Convenience methods with shorter defaults for less invasiveness
-    showSuccess: (message, duration = 2500) => addToast(message, 'success', duration),
-    showError: (message, duration = 4000) => addToast(message, 'error', duration), // Errors stay longer
-    showWarning: (message, duration = 3500) => addToast(message, 'warning', duration),
-    showInfo: (message, duration = 2000) => addToast(message, 'info', duration) // Info disappears quickly
+    showSuccess,
+    showError,
+    showWarning,
+    showInfo
   };
 };
 

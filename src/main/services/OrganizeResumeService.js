@@ -4,6 +4,24 @@ const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 // FIX: Import safeSend for validated IPC event sending
 const { safeSend } = require('../ipc/ipcWrappers');
 
+async function pathExists(filePath, logger, label) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return false;
+    }
+    logger?.warn?.('[RESUME] Unexpected fs.access error:', {
+      error: error.message,
+      code: error.code,
+      path: filePath,
+      label
+    });
+    throw error;
+  }
+}
+
 /**
  * Resume incomplete organize batches from a previous session.
  * Coordinates with ProcessingStateService to safely continue operations.
@@ -36,13 +54,37 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
         try {
           await serviceIntegration.processingState.markOrganizeOpStarted(batch.id, i);
 
+          const sourceExists = await pathExists(op.source, logger, 'source');
+          const destinationExists = await pathExists(op.destination, logger, 'destination');
+
+          if (!sourceExists) {
+            if (destinationExists) {
+              await serviceIntegration.processingState.markOrganizeOpDone(batch.id, i, {
+                destination: op.destination
+              });
+
+              const win = getMainWindow?.();
+              if (win && !win.isDestroyed()) {
+                // FIX: Use safeSend for validated IPC event sending
+                safeSend(win.webContents, 'operation-progress', {
+                  type: 'batch_organize',
+                  current: i + 1,
+                  total,
+                  currentFile: path.basename(op.source)
+                });
+              }
+              continue;
+            }
+
+            throw new Error('Source file missing; destination not found');
+          }
+
           // Ensure destination directory exists
           const destDir = path.dirname(op.destination);
           await fs.mkdir(destDir, { recursive: true });
 
           // Check destination collision and adjust
-          try {
-            await fs.access(op.destination);
+          if (destinationExists) {
             let counter = 1;
             let uniqueDestination = op.destination;
             const ext = path.extname(op.destination);
@@ -67,13 +109,6 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
             if (counter > 1000) throw new Error('Too many name collisions');
             if (uniqueDestination !== op.destination) {
               op.destination = uniqueDestination;
-            }
-          } catch (accessErr) {
-            if (accessErr?.code && accessErr.code !== 'ENOENT') {
-              logger.warn('[RESUME] Unexpected fs.access error:', {
-                error: accessErr.message,
-                code: accessErr.code
-              });
             }
           }
 

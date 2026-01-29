@@ -62,10 +62,10 @@ function ReadyFileItem({
   return (
     <Card
       variant={isSelected ? 'interactive' : 'default'}
-      className={`h-full p-4 relative ${isSelected ? 'ring-2 ring-stratosort-blue/25' : ''}`}
+      className={`h-full p-4 sm:p-5 relative ${isSelected ? 'ring-2 ring-stratosort-blue/25' : ''}`}
     >
-      <div className="flex gap-3 h-full">
-        <div className="pt-1">
+      <div className="flex flex-col sm:flex-row gap-3 h-full">
+        <div className="pt-1 flex-shrink-0">
           <input
             type="checkbox"
             checked={isSelected}
@@ -103,7 +103,7 @@ function ReadyFileItem({
             {/* Analysis Section */}
             {analysis ? (
               <>
-                <div className="grid grid-cols-1 gap-3 w-full">
+                <div className="grid grid-cols-2 gap-3 w-full">
                   <div className="w-full min-w-0">
                     <Input
                       label="Suggested Name"

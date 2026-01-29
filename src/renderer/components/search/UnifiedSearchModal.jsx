@@ -790,9 +790,20 @@ export default function UnifiedSearchModal({
       return;
     }
 
+    // Limit batch size to prevent IPC timeouts
+    const MAX_BATCH_SIZE = 50;
+    const filesToProcess = files.slice(0, MAX_BATCH_SIZE);
+
+    if (files.length > MAX_BATCH_SIZE) {
+      logger.warn('[UnifiedSearchModal] Truncating recommendation request to avoid timeout', {
+        total: files.length,
+        processing: MAX_BATCH_SIZE
+      });
+    }
+
     setIsLoadingRecommendations(true);
     try {
-      const response = await window.electronAPI.suggestions.getBatchSuggestions(files);
+      const response = await window.electronAPI.suggestions.getBatchSuggestions(filesToProcess);
       if (!response?.success || !Array.isArray(response.groups)) {
         setRecommendationMap({});
         return;
@@ -4062,8 +4073,7 @@ export default function UnifiedSearchModal({
   const rfFitViewOptions = useMemo(() => ({ padding: 0.2 }), []);
   const rfDefaultViewport = useMemo(() => ({ x: 0, y: 0, zoom: 1 }), []);
   const rfProOptions = useMemo(() => ({ hideAttribution: true }), []);
-  const rfNodeTypes = useMemo(() => NODE_TYPES, []);
-  const rfEdgeTypes = useMemo(() => EDGE_TYPES, []);
+
   const miniMapNodeColor = useCallback((n) => {
     if (n.data?.kind === 'query') return '#6366f1'; // Indigo for queries
     if (n.data?.kind === 'cluster' || n.data?.kind === 'duplicate') return '#f59e0b'; // Amber for clusters
@@ -5050,8 +5060,8 @@ export default function UnifiedSearchModal({
                   <ReactFlow
                     nodes={rfNodes}
                     edges={rfEdges}
-                    nodeTypes={rfNodeTypes}
-                    edgeTypes={rfEdgeTypes}
+                    nodeTypes={NODE_TYPES}
+                    edgeTypes={EDGE_TYPES}
                     onNodesChange={onNodesChange}
                     onEdgesChange={graphActions.onEdgesChange}
                     className={`bg-[var(--surface-muted)] ${zoomLevel < 0.6 ? 'graph-zoomed-out' : ''}`}
@@ -5294,22 +5304,40 @@ export default function UnifiedSearchModal({
                             </div>
                             <div className="flex flex-col gap-1.5 mt-1">
                               {(() => {
-                                const neighbors = edges
+                                const neighborsMap = new Map();
+                                edges
                                   .filter(
                                     (e) =>
                                       e.source === selectedNode.id || e.target === selectedNode.id
                                   )
-                                  .map((e) => {
+                                  .forEach((e) => {
                                     const otherId =
                                       e.source === selectedNode.id ? e.target : e.source;
+                                    if (!otherId) return;
+                                    const similarity = e.data?.similarity;
+                                    const existing = neighborsMap.get(otherId);
+                                    if (existing) {
+                                      if (
+                                        typeof similarity === 'number' &&
+                                        (typeof existing.similarity !== 'number' ||
+                                          similarity > existing.similarity)
+                                      ) {
+                                        neighborsMap.set(otherId, {
+                                          ...existing,
+                                          similarity
+                                        });
+                                      }
+                                      return;
+                                    }
                                     const otherNode = nodes.find((n) => n.id === otherId);
-                                    return {
+                                    neighborsMap.set(otherId, {
                                       id: otherId,
                                       label: otherNode?.data?.label || otherNode?.id || 'Unknown',
                                       kind: otherNode?.data?.kind || 'file',
-                                      similarity: e.data?.similarity
-                                    };
+                                      similarity
+                                    });
                                   });
+                                const neighbors = Array.from(neighborsMap.values());
 
                                 if (neighbors.length === 0)
                                   return (

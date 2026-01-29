@@ -22,6 +22,7 @@
 const { logger } = require('../../shared/logger');
 const { THRESHOLDS } = require('../../shared/performanceConstants');
 const { normalizePathForIndex, getCanonicalFileId } = require('../../shared/pathSanitization');
+const { findContainingSmartFolder } = require('../../shared/folderUtils');
 const { buildEmbeddingSummary } = require('./embeddingSummary');
 const { container, ServiceIds } = require('../services/ServiceContainer');
 const embeddingQueue = require('./embeddingQueue');
@@ -154,6 +155,9 @@ async function applySemanticFolderMatching(params) {
     }
   }
 
+  const resolvedSmartFolder = findContainingSmartFolder(filePath, smartFolders);
+  const embeddingCategory = resolvedSmartFolder?.name || analysis.category || 'Uncategorized';
+
   // Build summary for embedding
   const embeddingSummary = buildEmbeddingSummary(analysis, extractedText, fileExtension, type);
   const summaryForEmbedding = embeddingSummary.text;
@@ -224,7 +228,7 @@ async function applySemanticFolderMatching(params) {
       name: fileName,
       fileExtension: (fileExtension || '').toLowerCase(),
       fileSize,
-      category: analysis.category || 'Uncategorized',
+      category: embeddingCategory,
       confidence: confidencePercent,
       type,
       extractionMethod: analysis.extractionMethod || (extractedText ? 'content' : 'analysis'),
@@ -242,7 +246,9 @@ async function applySemanticFolderMatching(params) {
       purpose: (analysis.purpose || '').substring(0, 1000),
       reasoning: (analysis.reasoning || '').substring(0, 500),
       documentType,
-      extractedText: (extractedText || '').substring(0, 5000)
+      extractedText: (extractedText || '').substring(0, 5000),
+      smartFolder: resolvedSmartFolder?.name || null,
+      smartFolderPath: resolvedSmartFolder?.path || null
     };
 
     // Add image-specific metadata
@@ -252,14 +258,20 @@ async function applySemanticFolderMatching(params) {
       baseMeta.has_text = analysis.has_text === true;
     }
 
-    // Queue embedding for batch persistence
-    await embeddingQueue.enqueue({
-      id: fileId,
-      vector,
-      model,
-      meta: baseMeta,
-      updatedAt: new Date().toISOString()
-    });
+    if (resolvedSmartFolder) {
+      // Queue embedding for batch persistence only once file is in a smart folder
+      await embeddingQueue.enqueue({
+        id: fileId,
+        vector,
+        model,
+        meta: baseMeta,
+        updatedAt: new Date().toISOString()
+      });
+    } else {
+      logger.debug('[FolderMatcher] Skipping embedding persistence (not in smart folder)', {
+        filePath
+      });
+    }
 
     // Process candidates and potentially override category
     if (Array.isArray(candidates) && candidates.length > 0) {
