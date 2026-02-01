@@ -12,6 +12,7 @@ This guide will walk you through setting up **El StratoSort** on your local mach
 - [System Requirements](#system-requirements)
 - [Installation](#installation)
 - [Detailed Setup Instructions](#detailed-setup-instructions)
+- [Release Process (Developers)](#release-process-developers)
 - [Troubleshooting](#troubleshooting)
 
 ## System Requirements
@@ -47,6 +48,9 @@ cd elstratosort
 npm ci
 ```
 
+> Note: `npm install`/`npm ci` runs `postinstall`, which rebuilds native modules and runs setup
+> scripts (best-effort). To skip, set `SKIP_APP_DEPS=1` before installing.
+
 ### 3. Start the Application
 
 ```bash
@@ -62,9 +66,9 @@ dependencies.
 
 ### Platform Notes
 
-- **Windows:** Fully bundled AI runtime. Portable Ollama + embeddable Python are included in the
-  installer; click “Install All (Background)” on first launch. No CLI or admin prompts; models
-  download on first use.
+- **Windows:** Fully bundled AI runtime. Portable Ollama + embeddable Python + Tesseract are staged
+  during packaging via `npm run setup:runtime`, then included in the installer. Click “Install All
+  (Background)” on first launch; models download on first use.
 - **macOS:** Uses system Python 3.9+ and Homebrew/manual Ollama. “Install All” will guide you; brew
   may prompt. Tesseract auto-installs via brew and falls back to the built-in OCR fallback if
   missing. Models download on first use.
@@ -115,10 +119,16 @@ graph TD
     class FailPython,ManualTess warning;
 ```
 
+### Startup Preflight Checks
+
+On each launch, StratoSort runs preflight checks to verify Python, Ollama, and ChromaDB health. If a
+service is slow to respond, you can raise the timeout using `SERVICE_CHECK_TIMEOUT` (ms). Check logs
+if the app reports missing or unreachable dependencies.
+
 ### ChromaDB Setup (bundled-friendly)
 
 El StratoSort uses **ChromaDB** for vector storage (semantic search). The setup script prefers a
-bundled embeddable Python runtime (if placed in `assets/runtime/python/`) and installs the Python
+bundled embeddable Python runtime (staged via `npm run setup:runtime`) and installs the Python
 package automatically using that interpreter. If no bundled runtime is present, it falls back to
 system Python 3.9+ on PATH.
 
@@ -129,9 +139,10 @@ If automatic installation fails:
 
 ### Tesseract OCR Setup
 
-El StratoSort uses **Tesseract OCR** to read text from images. The setup script attempts to install
-it automatically and falls back to the bundled `tesseract.js` implementation if native install is
-unavailable:
+El StratoSort uses **Tesseract OCR** to read text from images. On Windows, the embedded runtime is
+staged via `npm run setup:runtime`. If no embedded runtime is present, the setup script attempts to
+install it automatically and falls back to the bundled `tesseract.js` implementation if native
+install is unavailable:
 
 - **Windows**: Uses `winget` or `chocolatey`
 - **macOS**: Uses `brew`
@@ -152,11 +163,16 @@ On first launch, open the AI Setup modal and click **Install All (Background)**.
 
 - Install Ollama (bundled portable binary if present, otherwise downloaded)
 - Install ChromaDB using bundled Python if available (otherwise system Python 3.9+)
+- Ensure OCR is available (bundled Tesseract or JS fallback)
 - Pull the recommended text/vision/embedding models
 
 The UI stays usable while installs/downloads run in the background.
 
 ---
+
+## Release Process (Developers)
+
+For release steps (runtime staging, checksums, and notes), see the [Release Guide](RELEASING.md).
 
 ## Troubleshooting
 
@@ -172,9 +188,12 @@ If you encounter issues during setup:
     - Check http://localhost:11434 to see if it's running.
 
 3.  **Run Setup Script Manually**:
-    - You can trigger the dependency setup manually via:
+    - You can trigger dependency setup manually via:
     ```bash
     npm run setup:deps
+    npm run setup:ollama
+    npm run setup:chromadb
+    npm run setup:tesseract
     ```
 
 ---

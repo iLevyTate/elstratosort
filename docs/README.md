@@ -23,6 +23,7 @@ find the right documentation for your needs.
   - Required AI models and how to pull them
   - Environment variable reference
   - Troubleshooting tips
+- **[Runtime Assets](../assets/runtime/README.md)** - Bundled runtime manifest and staging notes
 
 ## Architecture & Design
 
