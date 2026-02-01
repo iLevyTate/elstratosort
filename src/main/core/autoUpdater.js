@@ -9,12 +9,11 @@
 
 const { BrowserWindow } = require('electron');
 const { autoUpdater } = require('electron-updater');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 // FIX: Import safeSend for validated IPC event sending
 const { safeSend } = require('../ipc/ipcWrappers');
 
-logger.setContext('AutoUpdater');
-
+const logger = createLogger('AutoUpdater');
 // Track active cleanup function and init guard
 let activeCleanup = null;
 let initPromise = null;

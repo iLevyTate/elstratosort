@@ -8,10 +8,9 @@
  */
 
 const { app } = require('electron');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('GPU');
-
+const logger = createLogger('GPU');
 /**
  * Check if software rendering is forced
  */

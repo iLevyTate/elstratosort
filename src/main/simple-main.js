@@ -1,5 +1,10 @@
 // FIX: Load environment variables from .env file before anything else
-require('dotenv').config();
+// dotenv is a devDependency and will not be available in packaged production builds
+try {
+  require('dotenv').config();
+} catch {
+  /* dotenv not available in production */
+}
 
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 
@@ -9,11 +14,10 @@ const isDev = process.env.NODE_ENV === 'development';
 const tesseract = require('node-tesseract-ocr');
 const fs = require('fs').promises;
 const path = require('path');
-const { logger } = require('../shared/logger');
+const { createLogger } = require('../shared/logger');
 const { withTimeout } = require('../shared/promiseUtils');
 
-logger.setContext('Main');
-
+const logger = createLogger('Main');
 // Import error handling system
 const errorHandler = require('./errors/ErrorHandler');
 
@@ -858,11 +862,11 @@ app.whenReady().then(async () => {
         logger.error('[RENDERER ERROR] Failed to process error report:', err);
       }
     };
-    ipcMain.on('renderer-error-report', rendererErrorReportHandler);
+    ipcMain.on(IPC_CHANNELS.SYSTEM.RENDERER_ERROR_REPORT, rendererErrorReportHandler);
 
     // FIX: Track renderer-error-report listener for explicit cleanup
     eventListeners.push(() => {
-      ipcMain.removeListener('renderer-error-report', rendererErrorReportHandler);
+      ipcMain.removeListener(IPC_CHANNELS.SYSTEM.RENDERER_ERROR_REPORT, rendererErrorReportHandler);
     });
 
     // HIGH PRIORITY FIX (HIGH-1): Removed unreliable setImmediate delay

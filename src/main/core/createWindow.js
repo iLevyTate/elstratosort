@@ -1,10 +1,10 @@
 const { BrowserWindow, shell, app } = require('electron');
 const path = require('path');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { bringWindowToForeground } = require('./platformBehavior');
 
-logger.setContext('CreateWindow');
+const logger = createLogger('CreateWindow');
 const windowStateKeeper = require('electron-window-state');
 const { isDevelopment, getEnvBool, SERVICE_URLS } = require('../../shared/configDefaults');
 
@@ -123,7 +123,10 @@ function createMainWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      // FIX CRIT-26: Enable sandbox for better security
+      // Sandbox disabled: preload script uses require() for shared modules
+      // (logger, pathSanitization, performanceConstants, securityConfig, etc.)
+      // which requires Node.js integration. To enable sandbox, the preload must
+      // be refactored to bundle all dependencies or use only contextBridge APIs.
       sandbox: false,
       enableRemoteModule: false,
       preload: getPreloadPath(),

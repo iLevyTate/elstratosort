@@ -9,11 +9,10 @@
 
 const { ipcMain } = require('electron');
 const { isWindows } = require('../../shared/platformUtils');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { IPC_CHANNELS } = require('../../shared/constants');
 
-logger.setContext('IPC-Verify');
-
+const logger = createLogger('IPC-Verify');
 /**
  * Required IPC handlers that must be registered before window creation
  */

@@ -1,11 +1,10 @@
 const { app } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { getLegacyUserDataPaths } = require('./userDataMigration');
 
-logger.setContext('CustomFolders');
-
+const logger = createLogger('CustomFolders');
 const CUSTOM_FOLDERS_FILENAME = 'custom-folders.json';
 
 const normalizeName = (value) =>

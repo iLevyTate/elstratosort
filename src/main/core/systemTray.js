@@ -10,12 +10,11 @@
 const { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut } = require('electron');
 const path = require('path');
 const { isWindows, isMacOS } = require('../../shared/platformUtils');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 // FIX: Import safeSend for validated IPC event sending
 const { safeSend } = require('../ipc/ipcWrappers');
 
-logger.setContext('Tray');
-
+const logger = createLogger('Tray');
 const getAssetPath = (...paths) => {
   const RESOURCES_PATH = app.isPackaged
     ? path.join(process.resourcesPath, 'assets')
@@ -49,11 +48,7 @@ function initializeTrayConfig(config) {
 function createSystemTray() {
   try {
     const iconPath = getAssetPath(
-      isWindows
-        ? 'icons/icons/win/icon.ico'
-        : isMacOS
-          ? 'icons/icons/png/24x24.png'
-          : 'icons/icons/png/16x16.png'
+      isWindows ? 'icons/win/icon.ico' : isMacOS ? 'icons/png/24x24.png' : 'icons/png/16x16.png'
     );
 
     const trayIcon = nativeImage.createFromPath(iconPath);
@@ -87,13 +82,16 @@ function createSystemTray() {
 /**
  * Open or show the main window and trigger semantic search
  */
-function openSemanticSearch() {
+async function openSemanticSearch() {
   let win = BrowserWindow.getAllWindows()[0];
 
   if (!win) {
     // Create window if it doesn't exist
+    // FIX: createWindow() returns a Promise, so we must await it
+    // before trying to use the window reference
     if (trayConfig.createWindow) {
-      win = trayConfig.createWindow();
+      await trayConfig.createWindow();
+      win = BrowserWindow.getAllWindows()[0];
     }
   }
 

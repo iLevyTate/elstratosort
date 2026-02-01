@@ -7,7 +7,7 @@ const { app, dialog, BrowserWindow } = require('electron');
 const fs = require('fs').promises;
 const path = require('path');
 const { ERROR_TYPES } = require('../../shared/constants');
-const { logger, sanitizeLogData } = require('../../shared/logger');
+const { createLogger, sanitizeLogData } = require('../../shared/logger');
 const { parseJsonLines } = require('../../shared/safeJsonOps');
 const { safeSend } = require('../ipc/ipcWrappers');
 const {
@@ -16,8 +16,7 @@ const {
   isNetworkError
 } = require('../../shared/errorClassifier');
 
-logger.setContext('ErrorHandler');
-
+const logger = createLogger('ErrorHandler');
 /**
  * Extract a compact, user-friendly summary of Electron "process gone" details.
  * @param {any} details
@@ -240,7 +239,10 @@ class ErrorHandler {
     switch (errorType) {
       case ERROR_TYPES.PERMISSION_DENIED:
       case ERROR_TYPES.UNKNOWN:
-        return 'critical';
+        // FIX: Downgraded from 'critical' to 'high' (mapped to 'error').
+        // 'critical' triggers handleCriticalError which shows a restart/quit dialog.
+        // Permission denied and unknown errors are recoverable and should not force an app quit.
+        return 'error';
       case ERROR_TYPES.FILE_NOT_FOUND:
       case ERROR_TYPES.AI_UNAVAILABLE:
         return 'error';
@@ -341,26 +343,35 @@ class ErrorHandler {
 
   /**
    * Clean up old log files
+   * PERF: Uses async file operations to avoid blocking the event loop
    */
   async cleanupLogs(daysToKeep = 7) {
     try {
-      // FIX: Use sync operations to avoid async issues during startup
-      const fsSync = require('fs');
-      const files = fsSync.readdirSync(this.logPath);
+      const files = await fs.readdir(this.logPath);
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 
-      for (const file of files) {
-        if (file.startsWith('stratosort-') && file.endsWith('.log')) {
+      // Process files in parallel for better performance
+      const cleanupPromises = files
+        .filter((file) => file.startsWith('stratosort-') && file.endsWith('.log'))
+        .map(async (file) => {
           const filePath = path.join(this.logPath, file);
-          const stats = fsSync.statSync(filePath);
-
-          if (stats.mtime < cutoffDate) {
-            fsSync.unlinkSync(filePath);
-            await this.log('info', `Cleaned up old log file: ${file}`);
+          try {
+            const stats = await fs.stat(filePath);
+            if (stats.mtime < cutoffDate) {
+              await fs.unlink(filePath);
+              await this.log('info', `Cleaned up old log file: ${file}`);
+            }
+          } catch (fileError) {
+            // Log individual file errors but don't fail the entire cleanup
+            logger.debug('Failed to cleanup individual log file:', {
+              file,
+              error: fileError.message
+            });
           }
-        }
-      }
+        });
+
+      await Promise.all(cleanupPromises);
     } catch (error) {
       logger.error('Failed to cleanup logs:', { error: error.message });
     }

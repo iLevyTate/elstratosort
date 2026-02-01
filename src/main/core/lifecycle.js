@@ -8,15 +8,14 @@
  */
 
 const { app, BrowserWindow, ipcMain } = require('electron');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { destroyTray, getTray, unregisterGlobalShortcuts } = require('./systemTray');
 const { getStartupManager } = require('../services/startup');
 const systemAnalytics = require('./systemAnalytics');
 const { withTimeout } = require('../../shared/promiseUtils');
 
-logger.setContext('Lifecycle');
-
+const logger = createLogger('Lifecycle');
 // Module-level state (injected via initializeLifecycle)
 let lifecycleConfig = {
   getMetricsInterval: null,

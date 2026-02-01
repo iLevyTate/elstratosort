@@ -9,12 +9,11 @@
 
 const { app, BrowserWindow, shell } = require('electron');
 const { isWindows } = require('../../shared/platformUtils');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 // FIX: Import safeSend for validated IPC event sending
 const { safeSend } = require('../ipc/ipcWrappers');
 
-logger.setContext('JumpList');
-
+const logger = createLogger('JumpList');
 /**
  * Handle command-line tasks from Jump List
  * @param {string[]} args - Command line arguments

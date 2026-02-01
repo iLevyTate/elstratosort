@@ -18,7 +18,7 @@ const path = require('path');
 const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 // FIX: Import safeSend for validated IPC event sending
 const { safeSend } = require('../ipc/ipcWrappers');
 const { getInstance: getDependencyManager } = require('../services/DependencyManagerService');
@@ -26,8 +26,7 @@ const { getStartupManager } = require('../services/startup');
 const { getOllama } = require('../ollamaUtils');
 const { getService: getSettingsService } = require('../services/SettingsService');
 
-logger.setContext('BackgroundSetup');
-
+const logger = createLogger('BackgroundSetup');
 const execFileAsync = promisify(execFile);
 const COMMAND_TIMEOUT_MS = 5000;
 
