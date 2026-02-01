@@ -566,8 +566,7 @@ function createLogger(context) {
  * @returns {Logger} The singleton logger with context set
  */
 function getLogger(context) {
-  logger.setContext(context);
-  return logger;
+  return createLogger(context);
 }
 
 // Export both the class and singleton

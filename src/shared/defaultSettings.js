@@ -69,9 +69,62 @@ const DEFAULT_SETTINGS = {
   // When enabled, learning patterns and feedback are dual-written to ChromaDB in addition to JSON
   // This enables semantic retrieval of learned patterns in the future
   enableChromaLearningSync: false, // Default off - JSON primary for backward compatibility
-  enableChromaLearningDryRun: false // When true, logs ChromaDB operations without executing
+  enableChromaLearningDryRun: false, // When true, logs ChromaDB operations without executing
+  // Graph-aware retrieval (GraphRAG-lite)
+  graphExpansionEnabled: true,
+  graphExpansionWeight: 0.2,
+  graphExpansionMaxNeighbors: 120,
+  chunkContextEnabled: true,
+  chunkContextMaxNeighbors: 1
 };
 
+/**
+ * FIX Bug 23: Merge user settings with defaults, applying type validation.
+ *
+ * When a user override has the wrong type (e.g., a string where a number is expected),
+ * that key is dropped and the default value is used instead. This prevents invalid
+ * configurations from propagating through the application.
+ *
+ * @param {Object} overrides - User-provided settings overrides
+ * @returns {Object} Merged settings with type-safe values
+ */
+function mergeWithDefaults(overrides) {
+  if (!overrides || typeof overrides !== 'object') {
+    return { ...DEFAULT_SETTINGS };
+  }
+
+  const merged = { ...DEFAULT_SETTINGS };
+
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined || value === null) {
+      // Preserve explicit null (e.g., lastBrowsedPath: null)
+      if (value === null && key in DEFAULT_SETTINGS) {
+        merged[key] = value;
+      }
+      continue;
+    }
+
+    const defaultValue = DEFAULT_SETTINGS[key];
+
+    // If no default exists, this is an unknown key -- pass it through
+    if (defaultValue === undefined || defaultValue === null) {
+      merged[key] = value;
+      continue;
+    }
+
+    // Type-check: ensure the override matches the default's type
+    if (typeof value !== typeof defaultValue) {
+      // Type mismatch -- silently discard the override, keeping the default
+      continue;
+    }
+
+    merged[key] = value;
+  }
+
+  return merged;
+}
+
 module.exports = {
-  DEFAULT_SETTINGS
+  DEFAULT_SETTINGS,
+  mergeWithDefaults
 };

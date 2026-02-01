@@ -26,7 +26,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
-const { logger } = require('./logger');
+const { createLogger } = require('./logger');
 const { RETRY, TIMEOUTS } = require('./performanceConstants');
 
 // Normalize paths using the host platform conventions to avoid breaking
@@ -83,8 +83,7 @@ try {
   };
 }
 
-logger.setContext('AtomicFileOperations');
-
+const logger = createLogger('AtomicFileOperations');
 /**
  * Transaction-based file operation manager
  */
@@ -114,7 +113,11 @@ class AtomicFileOperations {
     if (this.backupDirectory) return this.backupDirectory;
 
     const tempDir = require('os').tmpdir();
-    this.backupDirectory = path.join(tempDir, 'stratosort-backups', Date.now().toString());
+    this.backupDirectory = path.join(
+      tempDir,
+      'stratosort-backups',
+      `${Date.now()}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`
+    );
 
     try {
       await fs.mkdir(this.backupDirectory, { recursive: true });

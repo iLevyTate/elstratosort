@@ -45,6 +45,7 @@ const embeddingMetaSchema = z
         purpose: z.string().optional(),
         tags: z.union([z.array(z.string()), z.string()]).optional(),
         keywords: z.union([z.array(z.string()), z.string()]).optional(),
+        keyEntities: z.union([z.array(z.string()), z.string()]).optional(),
         type: z.string().optional(),
         confidence: z.number().optional(),
         fileExtension: z.string().optional(),

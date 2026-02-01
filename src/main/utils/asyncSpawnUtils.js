@@ -1,9 +1,8 @@
 const { spawn } = require('child_process');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { isWindows } = require('../../shared/platformUtils');
 
-logger.setContext('AsyncSpawnUtils');
-
+const logger = createLogger('AsyncSpawnUtils');
 /**
  * Async utilities to replace blocking spawnSync calls
  * Prevents UI freezing during startup checks

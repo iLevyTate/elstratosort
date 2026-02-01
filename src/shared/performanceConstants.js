@@ -218,6 +218,19 @@ const SEARCH = {
   // Default topK values by context
   DEFAULT_TOP_K: 30,
   DEFAULT_TOP_K_SIMILAR: 10,
+  // Graph expansion defaults (local relationship index)
+  GRAPH_EXPANSION_ENABLED: true,
+  GRAPH_EXPANSION_WEIGHT: 0.2,
+  GRAPH_EXPANSION_MAX_SEEDS: 15,
+  GRAPH_EXPANSION_MAX_EDGES: 200,
+  GRAPH_EXPANSION_MAX_NEIGHBORS: 120,
+  GRAPH_EXPANSION_MIN_WEIGHT: 2,
+  GRAPH_EXPANSION_DECAY: 0.6,
+  // Contextual chunk expansion
+  CHUNK_CONTEXT_ENABLED: true,
+  CHUNK_CONTEXT_MAX_NEIGHBORS: 1,
+  CHUNK_CONTEXT_MAX_FILES: 8,
+  CHUNK_CONTEXT_MAX_CHARS: 2000,
   // Minimum epsilon for division safety
   MIN_EPSILON: 0.001
 };

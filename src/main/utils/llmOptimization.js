@@ -1,8 +1,7 @@
 const crypto = require('crypto');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('LLMOptimization');
-
+const logger = createLogger('LLMOptimization');
 /**
  * LLM Optimization Utilities
  * - Request deduplication: Prevent duplicate LLM calls for identical inputs

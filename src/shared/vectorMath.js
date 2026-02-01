@@ -7,6 +7,10 @@
  * @module shared/vectorMath
  */
 
+const { createLogger } = require('./logger');
+
+const logger = createLogger('vectorMath');
+
 /**
  * Calculate cosine similarity between two vectors
  * Uses loop unrolling (4x) for better CPU cache performance
@@ -130,6 +134,17 @@ function validateEmbeddingVector(vector) {
   return { valid: true };
 }
 
+// Track dimension mismatch warnings to avoid log spam (warn once per dimension pair)
+const _warnedDimPairs = new Set();
+function _warnDimMismatch(actual, expected) {
+  const key = `${actual}->${expected}`;
+  if (_warnedDimPairs.has(key)) return;
+  _warnedDimPairs.add(key);
+  logger.warn(
+    `[vectorMath] Vector dimension mismatch: ${actual} vs ${expected}. Search quality may be degraded. Consider rebuilding embeddings.`
+  );
+}
+
 /**
  * Pad or truncate a vector to match the expected dimension.
  * - If vector is shorter than expectedDim, pads with zeros
@@ -156,9 +171,11 @@ function padOrTruncateVector(vector, expectedDim) {
   }
   // Pad with zeros if too short
   if (vector.length < expectedDim) {
+    _warnDimMismatch(vector.length, expectedDim);
     return vector.concat(new Array(expectedDim - vector.length).fill(0));
   }
   // Truncate if too long
+  _warnDimMismatch(vector.length, expectedDim);
   return vector.slice(0, expectedDim);
 }
 

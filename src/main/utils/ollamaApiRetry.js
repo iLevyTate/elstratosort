@@ -17,10 +17,10 @@
  */
 
 const axios = require('axios');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { calculateRetryDelay } = require('../../shared/promiseUtils');
 
-logger.setContext('OllamaApiRetry');
+const logger = createLogger('OllamaApiRetry');
 const { withRetry } = require('../../shared/errorHandlingUtils');
 const { SERVICE_URLS } = require('../../shared/configDefaults');
 const { isRetryable, isNetworkError } = require('../../shared/errorClassifier');

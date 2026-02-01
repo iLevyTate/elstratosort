@@ -150,6 +150,34 @@ const VALIDATION_RULES = {
     type: 'boolean',
     required: false
   },
+  graphExpansionEnabled: {
+    type: 'boolean',
+    required: false
+  },
+  graphExpansionWeight: {
+    type: 'number',
+    min: 0,
+    max: 1,
+    required: false
+  },
+  graphExpansionMaxNeighbors: {
+    type: 'number',
+    min: 10,
+    max: 500,
+    integer: true,
+    required: false
+  },
+  chunkContextEnabled: {
+    type: 'boolean',
+    required: false
+  },
+  chunkContextMaxNeighbors: {
+    type: 'number',
+    min: 0,
+    max: 3,
+    integer: true,
+    required: false
+  },
   backgroundMode: {
     type: 'boolean',
     required: false

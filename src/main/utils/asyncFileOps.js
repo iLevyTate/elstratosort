@@ -6,7 +6,7 @@
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { RETRY } = require('../../shared/performanceConstants');
 const { withRetry } = require('../../shared/promiseUtils');
 const {
@@ -16,8 +16,7 @@ const {
 } = require('../errors/FileSystemError');
 const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 
-logger.setContext('AsyncFileOps');
-
+const logger = createLogger('AsyncFileOps');
 /**
  * Check if a file or directory exists asynchronously
  *

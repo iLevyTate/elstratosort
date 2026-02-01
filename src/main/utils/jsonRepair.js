@@ -11,10 +11,9 @@
  * @module utils/jsonRepair
  */
 
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('JSONRepair');
-
+const logger = createLogger('JSONRepair');
 const DEFAULT_PREVIEW_HEAD = 500;
 const DEFAULT_PREVIEW_TAIL = 200;
 

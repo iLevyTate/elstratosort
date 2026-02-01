@@ -1,6 +1,9 @@
 const { execFile } = require('child_process');
 const { promisify } = require('util');
+const fs = require('fs');
+const path = require('path');
 const { logger: baseLogger, createLogger } = require('../../shared/logger');
+const { resolveRuntimePath } = require('./runtimePaths');
 
 const execFileAsync = promisify(execFile);
 
@@ -19,13 +22,34 @@ let jsWorkerPromise = null;
 let jsWorkerLang = null;
 let jsWorkerQueue = Promise.resolve();
 
+function getEmbeddedTesseractPath() {
+  const exe = process.platform === 'win32' ? 'tesseract.exe' : 'tesseract';
+  return resolveRuntimePath('tesseract', exe);
+}
+
+function ensureTessdataPrefix(binaryPath) {
+  if (process.env.TESSDATA_PREFIX) return;
+  if (!binaryPath) return;
+  const tessdata = path.join(path.dirname(binaryPath), 'tessdata');
+  if (fs.existsSync(tessdata)) {
+    process.env.TESSDATA_PREFIX = tessdata;
+  }
+}
+
 function getTesseractBinaryPath() {
-  return process.env.TESSERACT_PATH || 'tesseract';
+  const override = process.env.TESSERACT_PATH;
+  if (override && override.trim()) return override.trim();
+  const embedded = getEmbeddedTesseractPath();
+  if (embedded && fs.existsSync(embedded)) {
+    ensureTessdataPrefix(embedded);
+    return embedded;
+  }
+  return 'tesseract';
 }
 
 function getTesseractOptions(baseOptions = {}) {
-  const tesseractPath = process.env.TESSERACT_PATH;
-  if (!tesseractPath) return baseOptions;
+  const tesseractPath = getTesseractBinaryPath();
+  if (!tesseractPath || tesseractPath === 'tesseract') return baseOptions;
   const binary = /\s/.test(tesseractPath) ? `"${tesseractPath}"` : tesseractPath;
   return { ...baseOptions, binary };
 }
@@ -84,6 +108,37 @@ async function isTesseractAvailable() {
   })();
 
   return availabilityCheck;
+}
+
+async function getTesseractBinaryInfo() {
+  const override = process.env.TESSERACT_PATH;
+  if (override && override.trim()) {
+    const info = await verifyTesseractBinary(override.trim(), 'env');
+    if (info.installed) return info;
+  }
+
+  const embedded = getEmbeddedTesseractPath();
+  if (embedded && fs.existsSync(embedded)) {
+    ensureTessdataPrefix(embedded);
+    const info = await verifyTesseractBinary(embedded, 'embedded');
+    if (info.installed) return info;
+  }
+
+  return verifyTesseractBinary('tesseract', 'system');
+}
+
+async function verifyTesseractBinary(binaryPath, source) {
+  try {
+    const res = await execFileAsync(binaryPath, ['--version'], {
+      windowsHide: true,
+      timeout: CHECK_TIMEOUT_MS
+    });
+    const raw = (res.stdout || res.stderr || '').toString().trim();
+    const version = raw.split(/\r?\n/)[0] || null;
+    return { installed: true, version, source, path: binaryPath };
+  } catch {
+    return { installed: false, version: null, source, path: binaryPath };
+  }
 }
 
 async function getJsWorker() {
@@ -187,6 +242,7 @@ module.exports = {
   getTesseractBinaryPath,
   getTesseractOptions,
   isTesseractAvailable,
+  getTesseractBinaryInfo,
   recognizeIfAvailable,
   resetTesseractAvailability
 };

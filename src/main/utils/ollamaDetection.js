@@ -4,18 +4,10 @@ const path = require('path');
 const fs = require('fs').promises;
 const os = require('os');
 const { asyncSpawn } = require('./asyncSpawnUtils');
+const { resolveRuntimePath } = require('./runtimePaths');
 
 function getEmbeddedOllamaPath() {
-  const resourcesPath = process.resourcesPath;
-  if (!resourcesPath) return null;
-  const candidate = path.join(
-    resourcesPath,
-    'assets',
-    'runtime',
-    'ollama',
-    process.platform === 'win32' ? 'ollama.exe' : 'ollama'
-  );
-  return candidate;
+  return resolveRuntimePath('ollama', process.platform === 'win32' ? 'ollama.exe' : 'ollama');
 }
 
 /**
@@ -116,7 +108,10 @@ async function isOllamaInstalled() {
  * @returns {Promise<string|null>} Version string or null
  */
 async function getOllamaVersion() {
-  const result = await asyncSpawn('ollama', ['--version'], { timeout: 5000, windowsHide: true });
+  const detection = await findOllamaBinary();
+  if (!detection?.found) return null;
+  const command = detection.path;
+  const result = await asyncSpawn(command, ['--version'], { timeout: 5000, windowsHide: true });
   if (result.status === 0) {
     return (result.stdout || result.stderr).trim();
   }
@@ -176,7 +171,10 @@ async function isOllamaRunningWithRetry(
  */
 async function getInstalledModels() {
   try {
-    const result = await asyncSpawn('ollama', ['list'], { timeout: 5000, windowsHide: true });
+    const detection = await findOllamaBinary();
+    if (!detection?.found) return [];
+    const command = detection.path;
+    const result = await asyncSpawn(command, ['list'], { timeout: 5000, windowsHide: true });
     if (result.status !== 0) return [];
 
     const lines = result.stdout.split('\n').slice(1);

@@ -144,12 +144,29 @@ class LRUCache {
   }
 
   /**
+   * Peek at a cache entry without side effects.
+   * Does not update LRU ordering or metrics.
+   * @param {string} key - Cache key
+   * @returns {*} Cached value or null if not found/expired
+   * @private
+   */
+  _peek(key) {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    if (this._isExpired(entry)) {
+      this.cache.delete(key);
+      return null;
+    }
+    return entry.data;
+  }
+
+  /**
    * Check if key exists and is not expired
    * @param {string} key - Cache key
    * @returns {boolean}
    */
   has(key) {
-    return this.get(key) !== null;
+    return this._peek(key) !== null;
   }
 
   /**

@@ -18,6 +18,7 @@
  * @property {string} [purpose] - The primary intent or purpose of the document
  * @property {string} [summary] - A brief summary of the content (1-2 sentences)
  * @property {string[]} [keywords] - Key terms for search and filtering
+ * @property {string[]} [keyEntities] - Key named entities mentioned (people, orgs, places)
  * @property {number} confidence - Confidence score (0-100)
  * @property {string} [suggestedName] - A suggested filename based on the content
  */
@@ -37,6 +38,7 @@ const ANALYSIS_SCHEMA_PROMPT = {
   purpose: 'The primary purpose or intent of the document (1 sentence).',
   summary: "A concise 1-2 sentence summary of the document's content.",
   keywords: ['keyword1', 'keyword2', 'keyword3', 'keyword4', 'keyword5'],
+  keyEntities: ['person_or_org_1', 'person_or_org_2', 'location_or_product', 'project_or_event'],
   confidence: 'Number 0-100 indicating confidence in the extraction.',
   suggestedName:
     "A short, concise topic-based filename (max 3 words) using underscores (e.g., 'budget_report', 'sunset_beach', 'meeting_notes'). Do NOT include the extension.",
@@ -56,6 +58,7 @@ const DEFAULT_ANALYSIS_RESULT = {
   purpose: null,
   summary: '',
   keywords: [],
+  keyEntities: [],
   confidence: 0,
   suggestedName: null,
   reasoning: null

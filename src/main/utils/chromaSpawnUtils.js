@@ -1,9 +1,10 @@
 const path = require('path');
 const fs = require('fs').promises;
 const { app } = require('electron');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
+const { resolveRuntimePath } = require('./runtimePaths');
 
-logger.setContext('ChromaSpawnUtils');
+const logger = createLogger('ChromaSpawnUtils');
 const {
   findPythonLauncherAsync,
   checkPythonVersionAsync,
@@ -165,6 +166,30 @@ async function resolveChromaFromPythonUserScripts() {
   return null;
 }
 
+async function resolveEmbeddedPythonExecutable() {
+  const exe = process.platform === 'win32' ? 'python.exe' : 'python3';
+  const candidate = resolveRuntimePath('python', exe);
+  try {
+    await fs.access(candidate);
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
+async function hasPythonModule(command, moduleName, env) {
+  const moduleValid =
+    typeof moduleName === 'string' &&
+    /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(moduleName);
+  if (!moduleValid) return false;
+  const res = await asyncSpawn(
+    command,
+    ['-c', `import importlib; importlib.import_module(${JSON.stringify(moduleName)})`],
+    { timeout: 5000, windowsHide: true, env }
+  );
+  return res.status === 0;
+}
+
 function splitCommandLine(value) {
   if (!value || typeof value !== 'string') return [];
   const matches = value.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
@@ -197,6 +222,38 @@ async function buildChromaSpawnPlan(config) {
     }
   }
   logger.debug('[ChromaDB] No custom CHROMA_SERVER_COMMAND set, checking other methods...');
+
+  // 1a. Prefer embedded Python runtime if available and chromadb is installed
+  const embeddedPython = await resolveEmbeddedPythonExecutable();
+  if (embeddedPython) {
+    const pythonHome = path.dirname(embeddedPython);
+    const env = {
+      ...process.env,
+      PYTHONHOME: pythonHome,
+      PATH: `${pythonHome};${path.join(pythonHome, 'Scripts')};${process.env.PATH || ''}`
+    };
+    const hasModule = await hasPythonModule(embeddedPython, 'chromadb', env);
+    if (hasModule) {
+      logger.info('[ChromaDB] Using embedded Python runtime', { path: embeddedPython });
+      return {
+        command: embeddedPython,
+        args: [
+          '-m',
+          'chromadb.cli.cli',
+          'run',
+          '--path',
+          config.dbPath,
+          '--host',
+          config.host,
+          '--port',
+          String(config.port)
+        ],
+        source: 'embedded-python',
+        options: { windowsHide: true, shell: false, env }
+      };
+    }
+    logger.warn('[ChromaDB] Embedded Python found but chromadb not installed');
+  }
 
   // 2. Check for local CLI in node_modules
   const localCli = await resolveChromaCliExecutable();

@@ -6,10 +6,9 @@
  * @module utils/initializationUtils
  */
 
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('InitializationUtils');
-
+const logger = createLogger('InitializationUtils');
 /**
  * Creates a memoized initialization function with retry logic.
  *

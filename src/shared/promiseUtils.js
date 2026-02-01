@@ -8,10 +8,9 @@
  * @module shared/promiseUtils
  */
 
-const { logger } = require('./logger');
+const { createLogger } = require('./logger');
 
-logger.setContext('PromiseUtils');
-
+const logger = createLogger('PromiseUtils');
 // ============================================================================
 // DELAY / SLEEP UTILITIES
 // ============================================================================
@@ -379,47 +378,63 @@ async function safeAwait(promise, defaultValue = null) {
  * debouncedSave.cancel(); // Cancel pending execution
  */
 function debounce(fn, waitMs, options = {}) {
-  const { leading = false, trailing = true } = options;
+  const { leading = false, trailing = true, maxWait } = options;
   let timeoutId = null;
   let lastArgs = null;
   let lastThis = null;
   let result;
   let lastCallTime;
+  let lastInvokeTime = 0;
+  const hasMaxWait = typeof maxWait === 'number';
 
-  function invokeFunc() {
+  function invokeFunc(time) {
     const args = lastArgs;
     const thisArg = lastThis;
     lastArgs = lastThis = null;
+    lastInvokeTime = time !== undefined ? time : Date.now();
     result = fn.apply(thisArg, args);
     return result;
   }
 
   function shouldInvoke(time) {
     const timeSinceLastCall = time - lastCallTime;
-    return lastCallTime === undefined || timeSinceLastCall >= waitMs || timeSinceLastCall < 0;
+    const timeSinceLastInvoke = time - lastInvokeTime;
+    return (
+      lastCallTime === undefined ||
+      timeSinceLastCall >= waitMs ||
+      timeSinceLastCall < 0 ||
+      (hasMaxWait && timeSinceLastInvoke >= maxWait)
+    );
+  }
+
+  function remainingWait(time) {
+    const timeSinceLastCall = time - lastCallTime;
+    const timeSinceLastInvoke = time - lastInvokeTime;
+    const timeWaiting = waitMs - timeSinceLastCall;
+    return hasMaxWait ? Math.min(timeWaiting, maxWait - timeSinceLastInvoke) : timeWaiting;
   }
 
   function timerExpired() {
     const time = Date.now();
     if (shouldInvoke(time)) {
-      return trailingEdge();
+      return trailingEdge(time);
     }
-    timeoutId = setTimeout(timerExpired, waitMs - (time - lastCallTime));
+    timeoutId = setTimeout(timerExpired, remainingWait(time));
     return undefined;
   }
 
-  function trailingEdge() {
+  function trailingEdge(time) {
     timeoutId = null;
     if (trailing && lastArgs) {
-      return invokeFunc();
+      return invokeFunc(time);
     }
     lastArgs = lastThis = null;
     return result;
   }
 
-  function leadingEdge() {
+  function leadingEdge(time) {
     timeoutId = setTimeout(timerExpired, waitMs);
-    return leading ? invokeFunc() : result;
+    return leading ? invokeFunc(time) : result;
   }
 
   function debounced(...args) {
@@ -432,7 +447,12 @@ function debounce(fn, waitMs, options = {}) {
 
     if (isInvoking) {
       if (timeoutId === null) {
-        return leadingEdge(lastCallTime);
+        return leadingEdge(time);
+      }
+      if (hasMaxWait) {
+        // Handle invocations in a tight maxWait loop
+        timeoutId = setTimeout(timerExpired, waitMs);
+        return invokeFunc(time);
       }
     }
 
@@ -447,11 +467,12 @@ function debounce(fn, waitMs, options = {}) {
     if (timeoutId !== null) {
       clearTimeout(timeoutId);
     }
+    lastInvokeTime = 0;
     lastArgs = lastCallTime = lastThis = timeoutId = null;
   };
 
   debounced.flush = function () {
-    return timeoutId === null ? result : trailingEdge();
+    return timeoutId === null ? result : trailingEdge(Date.now());
   };
 
   return debounced;
@@ -537,16 +558,13 @@ function createInitGuard(name = 'Service') {
         try {
           const result = await initFn();
           initialized = true;
+          initPromise = null;
           logger.debug(`[${name}] Initialization complete`);
           return result;
         } catch (error) {
+          initPromise = null;
           logger.error(`[${name}] Initialization failed:`, error.message);
           throw error;
-        } finally {
-          // Clear promise after a tick to allow concurrent waiters to finish
-          process.nextTick(() => {
-            initPromise = null;
-          });
         }
       })();
 
