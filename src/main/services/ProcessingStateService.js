@@ -2,12 +2,11 @@ const fs = require('fs').promises;
 const path = require('path');
 const { app } = require('electron');
 // FIX: Add logger for error reporting
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { isNotFoundError } = require('../../shared/errorClassifier');
 const { RETRY } = require('../../shared/performanceConstants');
 
-logger.setContext('ProcessingStateService');
-
+const logger = createLogger('ProcessingStateService');
 /**
  * ProcessingStateService
  * - Persists analysis jobs and organize batches to disk so work can resume after crashes/restarts
@@ -196,7 +195,14 @@ class ProcessingStateService {
 
     // Capture state snapshot NOW, before waiting for lock
     // This ensures we save the state as it was when saveState was called
-    const stateSnapshot = JSON.parse(JSON.stringify(this.state));
+    // FIX Bug 24: Use try/catch to handle potential circular references in state
+    let stateSnapshot;
+    try {
+      stateSnapshot = JSON.parse(JSON.stringify(this.state));
+    } catch {
+      // Fallback: shallow clone the state and stringify individual values
+      stateSnapshot = { ...this.state, updatedAt: now };
+    }
 
     // Chain this save after any pending saves complete
     const saveOperation = async () => this._performAtomicWrite(stateSnapshot);

@@ -13,34 +13,35 @@ const fs = require('fs').promises;
 const { spawn } = require('child_process');
 const { shell } = require('electron');
 
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { isWindows, isMacOS } = require('../../shared/platformUtils');
+const { resolveRuntimeRoot } = require('../utils/runtimePaths');
 const {
   asyncSpawn,
   hasPythonModuleAsync,
   findPythonLauncherAsync
 } = require('../utils/asyncSpawnUtils');
-const {
-  isOllamaInstalled,
-  getOllamaVersion,
-  isOllamaRunning
-} = require('../utils/ollamaDetection');
+const { findOllamaBinary, getOllamaVersion, isOllamaRunning } = require('../utils/ollamaDetection');
+const { getTesseractBinaryInfo } = require('../utils/tesseractUtils');
 const { checkPythonInstallation } = require('./startup/preflightChecks');
 const { isChromaDBRunning } = require('./startup/chromaService');
 const { getChromaUrl } = require('../../shared/config/chromaDefaults');
 
-logger.setContext('DependencyManager');
-
+const logger = createLogger('DependencyManager');
 const OLLAMA_WINDOWS_INSTALLER_URL = 'https://ollama.com/download/OllamaSetup.exe';
-const RUNTIME_ROOT =
-  process.env.STRATOSORT_RUNTIME_DIR ||
-  (process.resourcesPath ? path.join(process.resourcesPath, 'assets', 'runtime') : null);
-
 async function checkOllamaInstallation() {
-  const installed = await isOllamaInstalled();
-  const version = installed ? await getOllamaVersion() : null;
-  return { installed, version };
+  const detection = await findOllamaBinary();
+  if (!detection?.found) {
+    return { installed: false, version: null, source: null, path: null };
+  }
+  const version = await getOllamaVersion();
+  return {
+    installed: true,
+    version: version || null,
+    source: detection.source || 'unknown',
+    path: detection.path || null
+  };
 }
 
 function sleep(ms) {
@@ -155,16 +156,18 @@ async function downloadToFile(url, destPath, { onProgress } = {}) {
 }
 
 function getEmbeddedPythonLauncher() {
-  if (!RUNTIME_ROOT) return null;
+  const runtimeRoot = resolveRuntimeRoot();
+  if (!runtimeRoot) return null;
   const exe = isWindows ? 'python.exe' : 'python3';
-  const candidate = path.join(RUNTIME_ROOT, 'python', exe);
+  const candidate = path.join(runtimeRoot, 'python', exe);
   return { command: candidate, args: [], fromEmbedded: true };
 }
 
 function getEmbeddedOllamaBinary() {
-  if (!RUNTIME_ROOT) return null;
+  const runtimeRoot = resolveRuntimeRoot();
+  if (!runtimeRoot) return null;
   const exe = isWindows ? 'ollama.exe' : 'ollama';
-  return path.join(RUNTIME_ROOT, 'ollama', exe);
+  return path.join(runtimeRoot, 'ollama', exe);
 }
 
 async function getPythonVersionWithLauncher(launcher) {
@@ -384,35 +387,54 @@ class DependencyManagerService {
     ]);
 
     const pythonLauncher = await resolvePythonLauncher();
+    const pythonSource = pythonLauncher?.fromEmbedded
+      ? 'embedded'
+      : pythonLauncher
+        ? 'system'
+        : pythonDetected?.installed
+          ? 'system'
+          : null;
     const pythonVersion =
       pythonLauncher?.fromEmbedded || pythonLauncher
         ? await getPythonVersionWithLauncher(pythonLauncher)
         : pythonDetected?.version || null;
 
-    const [chromaModuleInstalled, ollamaRunning, chromaRunning] = await Promise.all([
+    const [chromaModuleInstalled, ollamaRunning, chromaRunning, tesseractInfo] = await Promise.all([
       pythonLauncher
         ? hasPythonModuleWithLauncher(pythonLauncher, 'chromadb')
         : hasPythonModuleAsync('chromadb'),
       isOllamaRunning(),
-      isChromaDBRunning()
+      isChromaDBRunning(),
+      getTesseractBinaryInfo()
     ]);
+
+    const chromaSource = process.env.CHROMA_SERVER_URL ? 'external' : pythonSource || null;
 
     return {
       platform: process.platform,
       python: {
         installed: Boolean(pythonLauncher) || Boolean(pythonDetected?.installed),
-        version: pythonVersion
+        version: pythonVersion,
+        source: pythonSource
       },
       chromadb: {
         pythonModuleInstalled: Boolean(chromaModuleInstalled),
         running: Boolean(chromaRunning),
         external: Boolean(process.env.CHROMA_SERVER_URL),
-        serverUrl: getChromaUrl()
+        serverUrl: getChromaUrl(),
+        source: chromaSource
       },
       ollama: {
         installed: Boolean(ollama?.installed),
         version: ollama?.version || null,
-        running: Boolean(ollamaRunning)
+        running: Boolean(ollamaRunning),
+        source: ollama?.source || null
+      },
+      tesseract: {
+        installed: Boolean(tesseractInfo?.installed),
+        version: tesseractInfo?.version || null,
+        source: tesseractInfo?.source || null,
+        path: tesseractInfo?.path || null
       }
     };
   }
@@ -432,11 +454,6 @@ class DependencyManagerService {
         };
       }
 
-      const pre = await checkOllamaInstallation();
-      if (pre?.installed) {
-        return { success: true, alreadyInstalled: true, version: pre.version || null };
-      }
-
       // Prefer bundled portable Ollama if present
       const embeddedOllama = getEmbeddedOllamaBinary();
       if (embeddedOllama && (await fileExists(embeddedOllama))) {
@@ -452,8 +469,13 @@ class DependencyManagerService {
           logger.warn('[DependencyManager] Bundled Ollama failed to start', { error: e?.message });
         }
 
-        const version = (await getOllamaVersionFromBinary(embeddedOllama)) || pre?.version || null;
+        const version = (await getOllamaVersionFromBinary(embeddedOllama)) || null;
         return { success: true, bundled: true, version };
+      }
+
+      const pre = await checkOllamaInstallation();
+      if (pre?.installed) {
+        return { success: true, alreadyInstalled: true, version: pre.version || null };
       }
 
       const tempDir = path.join(os.tmpdir(), 'stratosort');
@@ -526,6 +548,9 @@ class DependencyManagerService {
         stdio: 'ignore',
         windowsHide: true,
         cwd: path.dirname(binaryPath)
+      });
+      child.on('error', (err) => {
+        logger.warn('[DependencyManager] Ollama process error', { error: err?.message });
       });
       child.unref?.();
     } catch (e) {

@@ -9,12 +9,11 @@
  * @module analysisHistory/maintenance
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { updateIncrementalStatsOnRemove, invalidateCachesOnRemove } = require('./cacheManager');
 const { removeFromIndexes } = require('./indexManager');
 
-logger.setContext('AnalysisHistory-Maintenance');
-
+const logger = createLogger('AnalysisHistory-Maintenance');
 /**
  * Perform maintenance if needed
  * @param {Object} analysisHistory - Analysis history data

@@ -3,7 +3,7 @@
  * Ensures the application works with ANY available Ollama model
  */
 
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { SERVICE_URLS } = require('../../shared/configDefaults');
 const { getOllama, getOllamaHost } = require('../ollamaUtils');
@@ -22,8 +22,7 @@ function getSettings() {
   return settingsService;
 }
 
-logger.setContext('ModelManager');
-
+const logger = createLogger('ModelManager');
 class ModelManager {
   constructor(host = SERVICE_URLS.OLLAMA_HOST) {
     // Use shared Ollama instance via getter to ensure we always get the current one

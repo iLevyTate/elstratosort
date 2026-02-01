@@ -7,7 +7,7 @@
  * @module services/organization/llmSuggester
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { TIMEOUTS } = require('../../../shared/performanceConstants');
 const { withAbortableTimeout } = require('../../../shared/promiseUtils');
 const { AI_DEFAULTS } = require('../../../shared/constants');
@@ -16,8 +16,7 @@ const { buildOllamaOptions } = require('../PerformanceService');
 const { globalDeduplicator } = require('../../utils/llmOptimization');
 const { extractAndParseJSON } = require('../../utils/jsonRepair');
 
-logger.setContext('Organization:LLMSuggester');
-
+const logger = createLogger('Organization:LLMSuggester');
 // Security limits
 const MAX_RESPONSE_SIZE = 1024 * 1024; // 1MB
 

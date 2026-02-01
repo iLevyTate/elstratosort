@@ -457,9 +457,13 @@ class PatternPersistence {
 
       // Dual-write to ChromaDB (non-blocking, failures logged but don't break JSON save)
       if (this.enableChromaSync && this.chromaDb) {
-        this._saveToChroma(saveData).catch((err) =>
-          logger.warn('[Persistence] ChromaDB dual-write failed:', err.message)
-        );
+        this._saveToChroma(saveData).catch((err) => {
+          logger.warn('[Persistence] ChromaDB dual-write failed:', err.message);
+          this._chromaSyncFailures = (this._chromaSyncFailures || 0) + 1;
+          if (this._chromaSyncFailures > 10) {
+            logger.error('[Persistence] ChromaDB sync has failed 10+ times, data may be divergent');
+          }
+        });
       }
 
       return { success: true };

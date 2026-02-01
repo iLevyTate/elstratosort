@@ -7,7 +7,7 @@
  * @module autoOrganize/AutoOrganizeServiceCore
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { BATCH } = require('../../../shared/performanceConstants');
 const { DEFAULT_SETTINGS } = require('../../../shared/defaultSettings');
 
@@ -30,8 +30,7 @@ const coerceConfidence = (val, fallback = DEFAULT_SETTINGS.confidenceThreshold) 
   return fallback;
 };
 
-logger.setContext('AutoOrganizeService');
-
+const logger = createLogger('AutoOrganizeService');
 // Batch size from centralized configuration
 const DEFAULT_BATCH_SIZE = BATCH.AUTO_ORGANIZE_BATCH_SIZE;
 

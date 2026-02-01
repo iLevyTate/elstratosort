@@ -10,7 +10,7 @@
 const path = require('path');
 const crypto = require('crypto');
 const { app } = require('electron');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { analysisResultSchema, validateSchema } = require('../../../shared/normalization/schemas');
 const { LIMITS, TIMEOUTS } = require('../../../shared/performanceConstants');
 const { CircuitBreaker } = require('../../utils/CircuitBreaker');
@@ -67,8 +67,7 @@ const {
 
 const { performMaintenanceIfNeeded, migrateHistory } = require('./maintenance');
 
-logger.setContext('AnalysisHistoryService');
-
+const logger = createLogger('AnalysisHistoryService');
 class AnalysisHistoryServiceCore {
   constructor() {
     this.userDataPath = app.getPath('userData');
@@ -101,6 +100,7 @@ class AnalysisHistoryServiceCore {
 
     // Write lock to prevent concurrent modifications
     this._writeLock = null;
+    this._writeLockMeta = null;
 
     // FIX: Callback for cascade orphan marking when entries are removed
     // Set via setOnEntriesRemovedCallback from ServiceIntegration
@@ -353,13 +353,26 @@ class AnalysisHistoryServiceCore {
           `Analysis history write lock acquisition timed out${context ? ` (${context})` : ''}`
         );
         error.code = 'WRITE_LOCK_TIMEOUT';
-        logger.warn('[AnalysisHistoryService] Write lock wait timed out, recovering', {
+        logger.warn('[AnalysisHistoryService] Write lock wait timed out, rejecting acquisition', {
           context,
           elapsed,
           error: error.message
         });
-        this._writeLock = null;
-        break;
+        const lockMeta = this._writeLockMeta;
+        // If there's no meta, the lock is untracked/corrupted; treat it as stale and recover.
+        // If there is meta, only force-release when the lock has exceeded the same timeout.
+        if (!lockMeta || Date.now() - lockMeta.startedAt >= maxWaitMs) {
+          logger.error('[AnalysisHistoryService] Forcing release of stale write lock', {
+            context,
+            lockContext: lockMeta?.context,
+            lockAgeMs: lockMeta ? Date.now() - lockMeta.startedAt : null,
+            untrackedLock: !lockMeta
+          });
+          this._writeLock = null;
+          this._writeLockMeta = null;
+          break;
+        }
+        throw error;
       }
 
       await Promise.race([
@@ -375,6 +388,8 @@ class AnalysisHistoryServiceCore {
     }
 
     let releaseLock;
+    const lockToken = Symbol('analysis-history-write-lock');
+    this._writeLockMeta = { token: lockToken, startedAt: Date.now(), context: context || null };
     this._writeLock = new Promise((resolve) => {
       releaseLock = resolve;
     });
@@ -382,6 +397,9 @@ class AnalysisHistoryServiceCore {
     return () => {
       if (typeof releaseLock === 'function') {
         releaseLock();
+      }
+      if (this._writeLockMeta?.token === lockToken) {
+        this._writeLockMeta = null;
       }
       this._writeLock = null;
     };
@@ -549,11 +567,29 @@ class AnalysisHistoryServiceCore {
             );
           });
 
-          // FIX: Persistence failed, force re-initialization to ensure memory matches disk consistency
-          // Rolling back complex in-memory state is error-prone; reloading from disk is safer.
+          // FIX: Persistence failed - roll back in-memory mutations then force re-initialization
           logger.error(
-            '[AnalysisHistoryService] Persistence failed, forcing re-initialization to ensure consistency'
+            '[AnalysisHistoryService] Persistence failed, rolling back in-memory changes and forcing re-initialization'
           );
+
+          // Roll back in-memory changes before forcing re-init
+          for (const entry of addedEntries) {
+            delete this.analysisHistory.entries[entry.id];
+            try {
+              removeFromIndexes(this.analysisIndex, entry);
+            } catch (indexError) {
+              logger.warn('[AnalysisHistoryService] Failed to rollback index entry', {
+                entryId: entry.id,
+                error: indexError?.message
+              });
+            }
+          }
+          this.analysisHistory.totalAnalyzed = _originalHistorySnapshot.totalAnalyzed;
+          this.analysisHistory.totalSize = _originalHistorySnapshot.totalSize;
+          this.analysisHistory.metadata.totalEntries = _originalHistorySnapshot.totalEntries;
+          this.analysisHistory.updatedAt = _originalHistorySnapshot.updatedAt;
+          this.analysisIndex.updatedAt = _originalIndexUpdatedAt;
+
           this.initialized = false;
 
           const error = new Error('Failed to persist analysis history');
@@ -707,6 +743,10 @@ class AnalysisHistoryServiceCore {
       this._busUnsubscribe();
       this._busUnsubscribe = null;
       logger.debug('[AnalysisHistoryService] Unsubscribed from cache invalidation bus');
+    }
+    if (this._writeBufferTimer) {
+      clearTimeout(this._writeBufferTimer);
+      this._writeBufferTimer = null;
     }
     this.clearCaches();
   }

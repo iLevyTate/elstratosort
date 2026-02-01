@@ -9,7 +9,7 @@
 
 const axios = require('axios');
 const { ChromaClient } = require('chromadb');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { get: getConfig } = require('../../../shared/config/index');
 const { CHROMA_HEALTH_ENDPOINTS } = require('../../../shared/config/chromaDefaults');
 const {
@@ -18,8 +18,7 @@ const {
 const { isNetworkError, isRetryable } = require('../../../shared/errorClassifier');
 const { withTimeout } = require('../../../shared/promiseUtils');
 
-logger.setContext('ChromaDB:HealthChecker');
-
+const logger = createLogger('ChromaDB:HealthChecker');
 function parseServerUrl(serverUrl) {
   const parsed = new URL(serverUrl);
   return {

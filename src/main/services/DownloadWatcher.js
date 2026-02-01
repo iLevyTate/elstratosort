@@ -335,21 +335,21 @@ class DownloadWatcher {
       );
 
       // Stop the current watcher
-      this.stop();
+      void this.stop();
 
       // Schedule restart (track timer for cleanup)
       this.restartTimer = setTimeout(() => {
         this.restartTimer = null;
-        this.start();
+        void this.start();
       }, this.restartDelay * this.restartAttempts); // Exponential backoff
       this.restartTimer.unref();
     } else if (this.restartAttempts >= this.maxRestartAttempts) {
       logger.error('[DOWNLOAD-WATCHER] Max restart attempts reached. Watcher disabled.');
-      this.stop();
+      void this.stop();
     }
   }
 
-  stop() {
+  async stop() {
     // FIX H-3: Set stopped flag to prevent timer callbacks
     this._stopped = true;
 
@@ -370,7 +370,10 @@ class DownloadWatcher {
       try {
         // Remove all listeners before closing
         this.watcher.removeAllListeners();
-        this.watcher.close();
+        const closeResult = this.watcher.close();
+        if (closeResult && typeof closeResult.then === 'function') {
+          await closeResult;
+        }
         logger.info('[DOWNLOAD-WATCHER] Stopped watching downloads');
       } catch (error) {
         logger.error('[DOWNLOAD-WATCHER] Error stopping watcher:', error);
@@ -458,12 +461,12 @@ class DownloadWatcher {
   /**
    * Reset the watcher state and restart
    */
-  restart() {
+  async restart() {
     logger.info('[DOWNLOAD-WATCHER] Manual restart requested');
     this.restartAttempts = 0;
     this.lastError = null;
-    this.stop();
-    this.start();
+    await this.stop();
+    await this.start();
   }
 
   /**
@@ -993,8 +996,8 @@ class DownloadWatcher {
    * Alias for stop() to support container.shutdown() pattern
    * @returns {void}
    */
-  shutdown() {
-    this.stop();
+  async shutdown() {
+    await this.stop();
   }
 
   /**
@@ -1058,6 +1061,7 @@ class DownloadWatcher {
       const project = analysis.project || '';
       const documentType = analysis.type || '';
       const extractedText = analysis.extractedText || '';
+      const keyEntities = Array.isArray(analysis.keyEntities) ? analysis.keyEntities : [];
 
       // Generate embedding vector using folderMatcher
       // Include more context for better semantic matching
@@ -1067,8 +1071,7 @@ class DownloadWatcher {
       const embedding = await this.folderMatcher.embedText(textToEmbed);
 
       if (!embedding || !embedding.vector || !Array.isArray(embedding.vector)) {
-        logger.warn('[DOWNLOAD-WATCHER] Failed to generate embedding for:', filePath);
-        return;
+        throw new Error('Failed to generate embedding vector');
       }
 
       // Prepare metadata for ChromaDB
@@ -1092,6 +1095,7 @@ class DownloadWatcher {
         entity: entity.substring(0, 255),
         project: project.substring(0, 255),
         documentType: documentType.substring(0, 100),
+        keyEntities: keyEntities.slice(0, 20),
         reasoning: (analysis.reasoning || '').substring(0, 500),
         // Store truncated extracted text for conversation context
         extractedText: extractedText.substring(0, 5000),

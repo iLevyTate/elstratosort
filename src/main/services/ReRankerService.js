@@ -8,13 +8,12 @@
  * @module services/ReRankerService
  */
 
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { LRUCache } = require('../../shared/LRUCache');
 const { getInstance: getCacheInvalidationBus } = require('../../shared/cacheInvalidation');
 
-logger.setContext('ReRankerService');
-
+const logger = createLogger('ReRankerService');
 /**
  * Default configuration
  */

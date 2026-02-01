@@ -9,11 +9,10 @@
 
 const { get: getConfig } = require('../../../shared/config/index');
 const { CACHE } = require('../../../shared/performanceConstants');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { getInstance: getCacheInvalidationBus } = require('../../../shared/cacheInvalidation');
 
-logger.setContext('AnalysisHistory-Cache');
-
+const logger = createLogger('AnalysisHistory-Cache');
 /**
  * Create a new cache store with default structure
  * @returns {Object} Cache store object

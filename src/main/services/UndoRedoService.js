@@ -2,13 +2,12 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { app } = require('electron');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { normalizePathForIndex } = require('../../shared/pathSanitization');
 const { RETRY } = require('../../shared/performanceConstants');
 const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 
-logger.setContext('UndoRedoService');
-
+const logger = createLogger('UndoRedoService');
 const normalizePath = (filePath) => {
   if (typeof filePath !== 'string') return filePath;
   return path.resolve(filePath);
@@ -128,7 +127,15 @@ class UndoRedoService {
    */
   _estimateActionSize(action) {
     // Rough estimate: JSON.stringify length * 2 (for UTF-16 encoding)
-    return JSON.stringify(action).length * 2;
+    // FIX Bug 24: Use try/catch to handle potential circular references in action objects.
+    // Actions may contain service references or error objects with cause chains.
+    try {
+      return JSON.stringify(action).length * 2;
+    } catch {
+      // Fallback: estimate based on the action's top-level keys
+      // This is a rough heuristic but prevents crashes on circular data
+      return 1024;
+    }
   }
 
   /**
@@ -974,6 +981,31 @@ class UndoRedoService {
       timestamp: action.timestamp,
       type: action.type
     }));
+  }
+
+  /**
+   * Get the full undo/redo state for UI synchronization
+   * @returns {Object} Full state including stack and pointer
+   */
+  getFullState() {
+    return {
+      stack: this.actions.map((action) => ({
+        id: action.id,
+        description: action.description,
+        timestamp: action.timestamp,
+        type: action.type,
+        metadata: action.data
+          ? {
+              source: action.data.originalPath,
+              destination: action.data.newPath,
+              operationCount: action.data.operations?.length
+            }
+          : {}
+      })),
+      pointer: this.currentIndex,
+      canUndo: this.canUndo(),
+      canRedo: this.canRedo()
+    };
   }
 
   async clearHistory() {

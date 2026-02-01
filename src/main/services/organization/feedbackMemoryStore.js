@@ -335,6 +335,12 @@ class FeedbackMemoryStore {
   }
 
   async _save() {
+    // Prevent concurrent writes - if a save is in progress, mark for re-save
+    if (this._saving) {
+      this._needsSave = true;
+      return;
+    }
+
     const now = Date.now();
     if (now - this.lastSaveTime < this.saveThrottleMs) {
       // FIX H-6: Mark that a save is needed, so throttled callback uses current entries
@@ -359,6 +365,7 @@ class FeedbackMemoryStore {
     this.lastSaveTime = now;
     // FIX H-6: Clear the needsSave flag since we're saving now
     this._needsSave = false;
+    this._saving = true;
     try {
       await fs.mkdir(path.dirname(this.filePath), { recursive: true });
       const payload = {
@@ -374,6 +381,12 @@ class FeedbackMemoryStore {
       logger.warn('[FeedbackMemoryStore] Failed to save memory file:', error.message);
       // FIX H-6: Clear pendingSave on error to allow future saves
       this.pendingSave = null;
+    } finally {
+      this._saving = false;
+      if (this._needsSave) {
+        this._needsSave = false;
+        this._save();
+      }
     }
   }
 

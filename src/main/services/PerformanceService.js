@@ -2,10 +2,9 @@ const os = require('os');
 const { spawn } = require('child_process');
 const { getNvidiaSmiCommand, isMacOS } = require('../../shared/platformUtils');
 const { GPU_TUNING, OLLAMA } = require('../../shared/performanceConstants');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('PerformanceService');
-
+const logger = createLogger('PerformanceService');
 /**
  * PerformanceService
  * - Detects system capabilities (CPU threads, GPU availability)

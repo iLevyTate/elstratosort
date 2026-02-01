@@ -10,15 +10,14 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const axios = require('axios');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { axiosWithRetry, checkOllamaHealth } = require('../../utils/ollamaApiRetry');
 const { TIMEOUTS } = require('../../../shared/performanceConstants');
 const { getValidatedOllamaHost } = require('../../../shared/configDefaults');
 const { getRecommendedEnvSettings } = require('../PerformanceService');
 const { findOllamaBinary } = require('../../utils/ollamaDetection');
 
-logger.setContext('StartupManager:Ollama');
-
+const logger = createLogger('StartupManager:Ollama');
 // Note: checkOllamaHealth is imported from shared ollamaApiRetry module
 
 /**

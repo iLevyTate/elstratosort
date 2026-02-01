@@ -1,8 +1,8 @@
 const crypto = require('crypto');
 const { getOllama, getOllamaEmbeddingModel } = require('../ollamaUtils');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('FolderMatchingService');
+const logger = createLogger('FolderMatchingService');
 const EmbeddingCache = require('./EmbeddingCache');
 const { getInstance: getParallelEmbeddingService } = require('./ParallelEmbeddingService');
 const { get: getConfig } = require('../../shared/config/index');
@@ -110,6 +110,8 @@ class FolderMatchingService {
     this.ollama = null;
     this.modelName = '';
     this._upsertedFolderIds = new Set();
+    // FIX: Maximum size for upsertedFolderIds to prevent unbounded memory growth
+    this._maxUpsertedFolderIds = 10000;
 
     // Initialize embedding cache - use injected or create new
     this.embeddingCache = options.embeddingCache || new EmbeddingCache(cacheOptions);
@@ -295,6 +297,23 @@ class FolderMatchingService {
       });
 
     return this._initPromise;
+  }
+
+  /**
+   * Track a folder ID as upserted, with bounded size to prevent memory leaks.
+   * When the Set exceeds the maximum size, clears it entirely since the purpose
+   * is deduplication within a session, and a reset just means a few redundant upserts.
+   * @param {string} folderId - The folder ID to track
+   * @private
+   */
+  _trackUpsertedFolder(folderId) {
+    if (this._upsertedFolderIds.size >= this._maxUpsertedFolderIds) {
+      logger.info('[FolderMatchingService] Clearing upserted folder ID cache (reached max size)', {
+        maxSize: this._maxUpsertedFolderIds
+      });
+      this._upsertedFolderIds.clear();
+    }
+    this._upsertedFolderIds.add(folderId);
   }
 
   async embedText(text) {
@@ -494,7 +513,7 @@ class FolderMatchingService {
         id: folderId,
         name: folder.name
       });
-      this._upsertedFolderIds.add(folderId);
+      this._trackUpsertedFolder(folderId);
 
       return payload;
     } catch (error) {
@@ -595,7 +614,7 @@ class FolderMatchingService {
             model: cachedResult.model,
             updatedAt: new Date().toISOString()
           });
-          this._upsertedFolderIds.add(folderId);
+          this._trackUpsertedFolder(folderId);
         } else {
           uncachedFolders.push(folder);
         }
@@ -648,8 +667,10 @@ class FolderMatchingService {
               continue;
             }
 
-            // Cache the embedding for future use
-            const folderText = [folder.name, folder.description].filter(Boolean).join(' - ');
+            // FIX Bug 20: Use enrichFolderTextForEmbedding for cache key consistency.
+            // Previously this used a plain join which produced a different key than the
+            // enriched text used in cache get(), causing permanent cache misses.
+            const folderText = enrichFolderTextForEmbedding(folder.name, folder.description);
             this.embeddingCache.set(folderText, result.model, result.vector);
 
             payloads.push({
@@ -661,7 +682,7 @@ class FolderMatchingService {
               model: result.model,
               updatedAt: new Date().toISOString()
             });
-            this._upsertedFolderIds.add(result.id);
+            this._trackUpsertedFolder(result.id);
           }
         }
 
@@ -800,15 +821,16 @@ class FolderMatchingService {
       // Validate dimensions if we have a known model
       const expectedDim = getEmbeddingDimension(model);
       if (!validateEmbeddingDimensions(vector, expectedDim)) {
-        logger.warn('[FolderMatchingService] Vector dimension mismatch in upsert', {
+        logger.error('[FolderMatchingService] Vector dimension mismatch in upsert, rejecting', {
           id: fileId,
           model,
           expected: expectedDim,
           actual: vector?.length
         });
-        // Proceed anyway as it might be a custom model not in our list,
-        // but log warning. Or fail? ClusteringService fails on validation.
-        // SearchService fails. We should probably fail or at least be very loud.
+        throw new Error(
+          `Embedding dimension mismatch: expected ${expectedDim}, got ${vector?.length}. ` +
+            `Model "${model}" may have changed. Please rebuild your embedding index.`
+        );
       }
 
       await this.chromaDbService.upsertFile({

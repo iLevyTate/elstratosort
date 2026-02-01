@@ -1,11 +1,10 @@
 const os = require('os');
 const { getOllama, getOllamaEmbeddingModel } = require('../ollamaUtils');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { isRetryableError } = require('../utils/ollamaApiRetry');
 const { getInstance: getOllamaService } = require('./OllamaService');
 
-logger.setContext('ParallelEmbeddingService');
-
+const logger = createLogger('ParallelEmbeddingService');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 
 /**

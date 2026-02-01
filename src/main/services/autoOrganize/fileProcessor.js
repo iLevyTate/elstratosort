@@ -8,7 +8,7 @@
 
 const path = require('path');
 const fs = require('fs').promises;
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { sanitizeFile } = require('./fileTypeUtils');
 const { generateSuggestedNameFromAnalysis } = require('./namingUtils');
 const {
@@ -20,8 +20,7 @@ const { safeSuggestion } = require('./pathUtils');
 // FIX C-5: Import from shared idUtils to break circular dependency with batchProcessor
 const { generateSecureId } = require('./idUtils');
 
-logger.setContext('AutoOrganize-FileProcessor');
-
+const logger = createLogger('AutoOrganize-FileProcessor');
 // FIX CRIT-24: Module-level lock to prevent concurrent processing of the same file
 const processingLocks = new Set();
 

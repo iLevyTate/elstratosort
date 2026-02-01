@@ -1,11 +1,10 @@
 const crypto = require('crypto');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { getInstance: getCacheInvalidationBus } = require('../../shared/cacheInvalidation');
 const { LRUCache } = require('../../shared/LRUCache');
 
-logger.setContext('AnalysisCacheService');
-
+const logger = createLogger('AnalysisCacheService');
 /**
  * Default configurations for different cache types
  * @type {Object}

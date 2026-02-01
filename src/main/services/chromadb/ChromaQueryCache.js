@@ -8,14 +8,13 @@
  */
 
 const { LRUCache } = require('../../../shared/LRUCache');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const {
   getInstance: getCacheInvalidationBus,
   InvalidationType
 } = require('../../../shared/cacheInvalidation');
 
-logger.setContext('ChromaDB:QueryCache');
-
+const logger = createLogger('ChromaDB:QueryCache');
 /**
  * ChromaDB Query Cache
  *

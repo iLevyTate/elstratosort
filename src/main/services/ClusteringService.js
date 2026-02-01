@@ -7,7 +7,7 @@
  * @module services/ClusteringService
  */
 
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const {
   cosineSimilarity,
   squaredEuclideanDistance,
@@ -16,8 +16,7 @@ const {
 const { getOllamaModel } = require('../ollamaUtils');
 const { AI_DEFAULTS } = require('../../shared/constants');
 
-logger.setContext('ClusteringService');
-
+const logger = createLogger('ClusteringService');
 /**
  * Default clustering options
  */
@@ -102,9 +101,17 @@ class ClusteringService {
         return [];
       }
 
+      const MAX_CLUSTERING_EMBEDDINGS = 10000;
       const result = await fileCollection.get({
-        include: ['embeddings', 'metadatas']
+        include: ['embeddings', 'metadatas'],
+        limit: MAX_CLUSTERING_EMBEDDINGS
       });
+
+      if (result.ids && result.ids.length >= MAX_CLUSTERING_EMBEDDINGS) {
+        logger.warn(
+          `[ClusteringService] Clustering limited to ${MAX_CLUSTERING_EMBEDDINGS} embeddings. Some files may be excluded from cluster analysis.`
+        );
+      }
 
       const files = [];
       const ids = result.ids || [];

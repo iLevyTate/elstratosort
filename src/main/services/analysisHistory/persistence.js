@@ -9,11 +9,10 @@
 
 const fs = require('fs').promises;
 const path = require('path');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { replaceFileWithRetry } = require('../../../shared/atomicFile');
 
-logger.setContext('AnalysisHistory-Persistence');
-
+const logger = createLogger('AnalysisHistory-Persistence');
 const TRANSIENT_ERROR_CODES = new Set([
   'EACCES',
   'EPERM',

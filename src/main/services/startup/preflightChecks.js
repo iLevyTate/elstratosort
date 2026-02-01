@@ -11,14 +11,15 @@ const fs = require('fs').promises;
 const path = require('path');
 const { app } = require('electron');
 const axios = require('axios');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { asyncSpawn } = require('../../utils/asyncSpawnUtils');
+const { findOllamaBinary, getOllamaVersion } = require('../../utils/ollamaDetection');
+const { resolveRuntimePath } = require('../../utils/runtimePaths');
 const { isWindows } = require('../../../shared/platformUtils');
 const { withTimeout } = require('../../../shared/promiseUtils');
 const { CHROMA_HEALTH_ENDPOINTS } = require('../../../shared/config/chromaDefaults');
 
-logger.setContext('StartupManager:Preflight');
-
+const logger = createLogger('StartupManager:Preflight');
 // FIX 3.3: Use consistent timeout from environment or default
 const getDefaultTimeout = () => {
   const envTimeout = parseInt(process.env.SERVICE_CHECK_TIMEOUT, 10);
@@ -36,6 +37,23 @@ const DEFAULT_AXIOS_TIMEOUT = getDefaultTimeout();
  */
 async function checkPythonInstallation() {
   logger.debug('[PREFLIGHT] Checking Python installation...');
+
+  const embeddedExe = resolveRuntimePath('python', isWindows ? 'python.exe' : 'python3');
+  try {
+    await fs.access(embeddedExe);
+    const embeddedRes = await asyncSpawn(embeddedExe, ['--version'], {
+      timeout: 3000,
+      windowsHide: true,
+      shell: false
+    });
+    if (embeddedRes.status === 0) {
+      const version = (embeddedRes.stdout + embeddedRes.stderr).toString().trim();
+      logger.debug(`[PREFLIGHT] Embedded Python found: ${version}`);
+      return { installed: true, version, source: 'embedded' };
+    }
+  } catch {
+    // fall through to system checks
+  }
 
   const pythonCommands = isWindows
     ? [
@@ -59,7 +77,7 @@ async function checkPythonInstallation() {
       if (result.status === 0) {
         const version = (result.stdout + result.stderr).toString().trim();
         logger.debug(`[PREFLIGHT] Python found: ${cmd} - ${version}`);
-        return { installed: true, version };
+        return { installed: true, version, source: 'system' };
       }
       logger.debug(`[PREFLIGHT] ${cmd} returned status ${result.status}`);
     } catch (error) {
@@ -68,7 +86,7 @@ async function checkPythonInstallation() {
   }
 
   logger.debug('[PREFLIGHT] No Python installation found');
-  return { installed: false, version: null };
+  return { installed: false, version: null, source: null };
 }
 
 /**
@@ -79,21 +97,16 @@ async function checkOllamaInstallation() {
   logger.debug('[PREFLIGHT] Checking Ollama installation...');
 
   try {
-    const result = await asyncSpawn('ollama', ['--version'], {
-      timeout: 3000,
-      windowsHide: true
-    });
-
-    if (result.status === 0) {
-      const version = (result.stdout + result.stderr).toString().trim();
-      logger.debug(`[PREFLIGHT] Ollama found: ${version}`);
-      return { installed: true, version };
+    const detection = await findOllamaBinary();
+    if (!detection?.found) {
+      return { installed: false, version: null, source: null };
     }
-    logger.debug(`[PREFLIGHT] Ollama returned status ${result.status}`);
-    return { installed: false, version: null };
+    const version = await getOllamaVersion();
+    logger.debug(`[PREFLIGHT] Ollama found: ${version || 'unknown'}`);
+    return { installed: true, version: version || null, source: detection.source || null };
   } catch (error) {
     logger.debug(`[PREFLIGHT] Ollama check failed: ${error.message}`);
-    return { installed: false, version: null };
+    return { installed: false, version: null, source: null };
   }
 }
 

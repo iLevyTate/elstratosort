@@ -9,10 +9,9 @@
 
 const os = require('os');
 const { spawnSync } = require('child_process');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 
-logger.setContext('StartupManager:Shutdown');
-
+const logger = createLogger('StartupManager:Shutdown');
 /**
  * Shutdown a single process gracefully
  * @param {string} serviceName - Service name

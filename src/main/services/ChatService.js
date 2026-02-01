@@ -1,10 +1,9 @@
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { cosineSimilarity, padOrTruncateVector } = require('../../shared/vectorMath');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
 const { getChatPersonaOrDefault } = require('../../shared/chatPersonas');
 
-logger.setContext('ChatService');
-
+const logger = createLogger('ChatService');
 const DEFAULTS = {
   topK: 6,
   mode: 'hybrid',
@@ -13,6 +12,8 @@ const DEFAULTS = {
   contextFileLimit: 200,
   memoryWindow: 6
 };
+
+const MAX_SESSIONS = 50;
 
 const RESPONSE_MODES = {
   fast: {
@@ -214,6 +215,12 @@ Return ONLY valid JSON:
       return this.sessions.get(key);
     }
 
+    // Evict oldest session if at capacity (Map maintains insertion order)
+    if (this.sessions.size >= MAX_SESSIONS) {
+      const oldestKey = this.sessions.keys().next().value;
+      this.sessions.delete(oldestKey);
+    }
+
     const memory = await this._createMemory();
     this.sessions.set(key, memory);
     return memory;
@@ -314,14 +321,13 @@ Return ONLY valid JSON:
       'good afternoon',
       'good evening',
       'who are you',
-      'what can you do',
-      'help'
+      'what can you do'
     ]);
     const clean = query
       .toLowerCase()
       .replace(/[^\w\s]/g, '')
       .trim();
-    return conversational.has(clean) || (clean.length < 5 && conversational.has(clean));
+    return conversational.has(clean);
   }
 
   async _retrieveSources(
@@ -343,8 +349,37 @@ Return ONLY valid JSON:
       };
     }
 
+    let settingsSnapshot = null;
+
     let searchResults;
     try {
+      let retrievalSettings = {};
+      try {
+        if (this.settingsService?.load) {
+          const settings = await this.settingsService.load();
+          settingsSnapshot = settings;
+          retrievalSettings = {
+            ...(typeof settings?.graphExpansionEnabled === 'boolean' && {
+              graphExpansion: settings.graphExpansionEnabled
+            }),
+            ...(Number.isFinite(settings?.graphExpansionWeight) && {
+              graphExpansionWeight: settings.graphExpansionWeight
+            }),
+            ...(Number.isInteger(settings?.graphExpansionMaxNeighbors) && {
+              graphExpansionMaxNeighbors: settings.graphExpansionMaxNeighbors
+            }),
+            ...(typeof settings?.chunkContextEnabled === 'boolean' && {
+              chunkContext: settings.chunkContextEnabled
+            }),
+            ...(Number.isInteger(settings?.chunkContextMaxNeighbors) && {
+              chunkContextMaxNeighbors: settings.chunkContextMaxNeighbors
+            })
+          };
+        }
+      } catch (settingsError) {
+        logger.debug('[ChatService] Failed to load retrieval settings:', settingsError?.message);
+      }
+
       searchResults = await this.searchService.hybridSearch(query, {
         topK,
         mode,
@@ -352,7 +387,8 @@ Return ONLY valid JSON:
         chunkTopK,
         expandSynonyms,
         correctSpelling,
-        rerank
+        rerank,
+        ...retrievalSettings
       });
     } catch (error) {
       logger.warn('[ChatService] Search failed:', error?.message || error);
@@ -384,12 +420,22 @@ Return ONLY valid JSON:
     const chunkResults = await this.searchService.chunkSearch(
       query,
       topK,
-      Number.isInteger(chunkTopK) ? chunkTopK : DEFAULTS.chunkTopK
+      Number.isInteger(chunkTopK) ? chunkTopK : DEFAULTS.chunkTopK,
+      {
+        chunkContext:
+          typeof settingsSnapshot?.chunkContextEnabled === 'boolean'
+            ? settingsSnapshot.chunkContextEnabled
+            : undefined,
+        chunkContextMaxNeighbors: Number.isInteger(settingsSnapshot?.chunkContextMaxNeighbors)
+          ? settingsSnapshot.chunkContextMaxNeighbors
+          : undefined
+      }
     );
     const chunkMap = new Map();
     chunkResults.forEach((r) => {
-      if (r?.id && r?.matchDetails?.bestSnippet) {
-        chunkMap.set(r.id, r.matchDetails.bestSnippet);
+      const snippet = r?.matchDetails?.contextSnippet || r?.matchDetails?.bestSnippet;
+      if (r?.id && snippet) {
+        chunkMap.set(r.id, snippet);
       }
     });
 

@@ -9,10 +9,9 @@ const SmartFolderWatcher = require('./SmartFolderWatcher');
 const NotificationService = require('./NotificationService');
 const { container, ServiceIds, SHUTDOWN_ORDER } = require('./ServiceContainer');
 const { getCanonicalFileId } = require('../../shared/pathSanitization');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('ServiceIntegration');
-
+const logger = createLogger('ServiceIntegration');
 /**
  * FIX: Explicit service initialization order with dependencies
  * This makes the initialization sequence clear and documentable.
@@ -62,6 +61,7 @@ class ServiceIntegration {
     this.suggestionService = null;
     this.autoOrganizeService = null;
     this.smartFolderWatcher = null;
+    this.relationshipIndex = null;
     this.initialized = false;
 
     // FIX: Add initialization mutex to prevent race conditions
@@ -137,6 +137,7 @@ class ServiceIntegration {
       this.analysisHistory = container.resolve(ServiceIds.ANALYSIS_HISTORY);
       this.undoRedo = container.resolve(ServiceIds.UNDO_REDO);
       this.processingState = container.resolve(ServiceIds.PROCESSING_STATE);
+      this.relationshipIndex = container.resolve(ServiceIds.RELATIONSHIP_INDEX);
 
       // Initialize ChromaDB and folder matching
       this.chromaDbService = container.resolve(ServiceIds.CHROMA_DB);
@@ -402,6 +403,15 @@ class ServiceIntegration {
       });
     }
 
+    if (!container.has(ServiceIds.RELATIONSHIP_INDEX)) {
+      container.registerSingleton(ServiceIds.RELATIONSHIP_INDEX, (c) => {
+        const RelationshipIndexService = require('./RelationshipIndexService');
+        return new RelationshipIndexService({
+          analysisHistoryService: c.resolve(ServiceIds.ANALYSIS_HISTORY)
+        });
+      });
+    }
+
     // FIX: Register ClusteringService as separate DI entry to avoid circular dependency
     // This allows other services to depend on ClusteringService independently
     if (!container.has(ServiceIds.CLUSTERING)) {
@@ -432,13 +442,19 @@ class ServiceIntegration {
     // Register organization suggestion service (depends on ChromaDB, FolderMatching, Settings, Clustering)
     if (!container.has(ServiceIds.ORGANIZATION_SUGGESTION)) {
       container.registerSingleton(ServiceIds.ORGANIZATION_SUGGESTION, (c) => {
+        const settingsService = c.resolve(ServiceIds.SETTINGS);
+        const settings = settingsService?.getSettings?.() || {};
         return new OrganizationSuggestionService({
           chromaDbService: c.resolve(ServiceIds.CHROMA_DB),
           folderMatchingService: c.resolve(ServiceIds.FOLDER_MATCHING),
-          settingsService: c.resolve(ServiceIds.SETTINGS),
+          settingsService: settingsService,
           // FIX: Use lazy resolution with getter to break potential circular dependency
           // This allows ClusteringService to be resolved when first needed, not during registration
-          getClusteringService: () => c.resolve(ServiceIds.CLUSTERING)
+          getClusteringService: () => c.resolve(ServiceIds.CLUSTERING),
+          config: {
+            enableChromaLearningSync: settings.enableChromaLearningSync === true,
+            enableChromaLearningDryRun: settings.enableChromaLearningDryRun === true
+          }
         });
       });
     }
@@ -605,7 +621,8 @@ class ServiceIntegration {
           analysisHistoryService: c.resolve(ServiceIds.ANALYSIS_HISTORY),
           parallelEmbeddingService: c.resolve(ServiceIds.PARALLEL_EMBEDDING),
           // Optional services - use tryResolve to avoid errors if not available
-          ollamaService: c.tryResolve(ServiceIds.OLLAMA_SERVICE)
+          ollamaService: c.tryResolve(ServiceIds.OLLAMA_SERVICE),
+          relationshipIndexService: c.tryResolve(ServiceIds.RELATIONSHIP_INDEX)
         });
       });
     }
@@ -680,6 +697,7 @@ class ServiceIntegration {
       this.autoOrganizeService = null;
       // FIX: Also clear SmartFolderWatcher reference to prevent memory leaks
       this.smartFolderWatcher = null;
+      this.relationshipIndex = null;
       this.initialized = false;
 
       logger.info('[ServiceIntegration] All services shut down successfully');

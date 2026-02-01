@@ -17,15 +17,14 @@
 
 const path = require('path');
 const { app } = require('electron');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { TIMEOUTS, RETRY } = require('../../shared/performanceConstants');
 const { isRetryableError, withOllamaRetry } = require('../utils/ollamaApiRetry');
 const { atomicWriteFile, loadJsonFile, safeUnlink } = require('../../shared/atomicFile');
 const { Semaphore } = require('../../shared/RateLimiter');
 const { CircuitBreaker } = require('../utils/CircuitBreaker');
 
-logger.setContext('OllamaClient');
-
+const logger = createLogger('OllamaClient');
 /**
  * Ollama request types for queue classification
  */

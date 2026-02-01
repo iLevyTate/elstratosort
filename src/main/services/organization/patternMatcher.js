@@ -7,10 +7,9 @@
  * @module services/organization/patternMatcher
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 
-logger.setContext('Organization:PatternMatcher');
-
+const logger = createLogger('Organization:PatternMatcher');
 /**
  * Pattern Matcher class for learning from user decisions
  */

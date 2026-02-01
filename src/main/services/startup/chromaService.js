@@ -12,7 +12,7 @@ const axios = require('axios');
 const { app } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { axiosWithRetry } = require('../../utils/ollamaApiRetry');
 const { hasPythonModuleAsync } = require('../../utils/asyncSpawnUtils');
 const { container, ServiceIds } = require('../ServiceContainer');
@@ -23,8 +23,7 @@ const {
   CHROMA_ERROR_MESSAGES
 } = require('../../../shared/config/chromaDefaults');
 
-logger.setContext('StartupManager:ChromaDB');
-
+const logger = createLogger('StartupManager:ChromaDB');
 // Construct a minimal, side-effect-free ChromaDB server config when the service
 // container is not yet populated during startup.
 function buildDefaultChromaConfig() {

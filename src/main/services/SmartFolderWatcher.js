@@ -307,16 +307,30 @@ class SmartFolderWatcher {
         this._handleError(error);
       });
 
-      // Handle ready
-      this.watcher.on('ready', () => {
-        logger.info(
-          '[SMART-FOLDER-WATCHER] Watcher ready, monitoring',
-          validPaths.length,
-          'folders'
-        );
-        this.watchedPaths = new Set(validPaths);
-        this.isRunning = true;
-        // Note: isStarting is cleared in start() finally block
+      // Wait for chokidar to finish its initial scan before returning.
+      // This ensures isRunning is true and the watcher is fully operational
+      // before callers act on the start() result.
+      // FIX: Remove cross-listeners after resolution to prevent error handler
+      // from calling reject() on an already-resolved promise (listener leak)
+      await new Promise((resolve, reject) => {
+        const readyHandler = () => {
+          this.watcher.removeListener('error', errorHandler);
+          logger.info(
+            '[SMART-FOLDER-WATCHER] Watcher ready, monitoring',
+            validPaths.length,
+            'folders'
+          );
+          this.watchedPaths = new Set(validPaths);
+          this.isRunning = true;
+          // Note: isStarting is cleared in start() finally block
+          resolve();
+        };
+        const errorHandler = (err) => {
+          this.watcher.removeListener('ready', readyHandler);
+          reject(err);
+        };
+        this.watcher.once('ready', readyHandler);
+        this.watcher.once('error', errorHandler);
       });
 
       // Start queue processor
@@ -849,17 +863,34 @@ class SmartFolderWatcher {
 
           const nextRetry = (item.retryCount || 0) + 1;
           if (nextRetry <= MAX_ANALYSIS_RETRIES) {
-            // Requeue for a later attempt to avoid permanent drop
-            this.analysisQueue.push({ ...item, retryCount: nextRetry });
+            // Requeue for a later attempt to avoid permanent drop.
+            // Use _enqueueAnalysisItem to respect MAX_ANALYSIS_QUEUE_SIZE and deduplication.
+            // Preserve cachedAnalysis so expensive LLM results survive embedding retries.
+            this._enqueueAnalysisItem({
+              ...item,
+              retryCount: nextRetry,
+              cachedAnalysis: item._lastAnalysis || item.cachedAnalysis || null
+            });
             logger.debug('[SMART-FOLDER-WATCHER] Re-queued file after failure', {
               filePath: item.filePath,
-              retryCount: nextRetry
+              retryCount: nextRetry,
+              hasCachedAnalysis: !!(item._lastAnalysis || item.cachedAnalysis)
             });
           } else {
             logger.error('[SMART-FOLDER-WATCHER] Max retries reached, giving up', {
               filePath: item.filePath,
               retries: nextRetry
             });
+
+            // Notify about permanently failed file so the user is aware
+            if (this.notificationService) {
+              this.notificationService
+                .notifyWatcherError(
+                  'Analysis Failed',
+                  `File "${path.basename(item.filePath)}" failed after ${nextRetry} attempts: ${error?.message || 'Max retries exceeded'}`
+                )
+                .catch(() => {});
+            }
           }
         }
       }
@@ -903,9 +934,13 @@ class SmartFolderWatcher {
         path: f.path
       }));
 
-      // Choose analysis function based on file type
+      // Reuse cached LLM analysis when retrying after an embedding failure.
+      // This avoids repeating the expensive LLM call for a transient embedding issue.
       let result;
-      if (isImageFile(filePath)) {
+      if (item.cachedAnalysis) {
+        result = item.cachedAnalysis;
+        logger.debug('[SMART-FOLDER-WATCHER] Reusing cached LLM analysis for retry:', filePath);
+      } else if (isImageFile(filePath)) {
         result = await this.analyzeImageFile(filePath, folderCategories, {
           bypassCache: isReanalyze
         });
@@ -977,6 +1012,10 @@ class SmartFolderWatcher {
             });
           }
         }
+
+        // Cache the LLM analysis result on the item so that if embedding fails
+        // and the item is re-enqueued for retry, the expensive LLM call is not repeated.
+        item._lastAnalysis = result;
 
         // FIX: Immediately embed the analyzed file into ChromaDB for semantic search
         // This ensures files watched by SmartFolderWatcher are searchable without manual rebuild

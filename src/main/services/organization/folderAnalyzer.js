@@ -7,10 +7,9 @@
  * @module services/organization/folderAnalyzer
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 
-logger.setContext('Organization:FolderAnalyzer');
-
+const logger = createLogger('Organization:FolderAnalyzer');
 /**
  * Common categories for folder suggestions
  */

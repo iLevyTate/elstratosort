@@ -4,7 +4,7 @@ const fsSync = require('fs');
 const path = require('path');
 const { backupAndReplace } = require('../../shared/atomicFileOperations');
 const { validateSettings, sanitizeSettings } = require('../../shared/settingsValidation');
-const { DEFAULT_SETTINGS } = require('../../shared/defaultSettings');
+const { DEFAULT_SETTINGS, mergeWithDefaults } = require('../../shared/defaultSettings');
 const { logger: baseLogger, createLogger } = require('../../shared/logger');
 const { isNotFoundError } = require('../../shared/errorClassifier');
 const { createSingletonHelpers } = require('../../shared/singletonFactory');
@@ -135,7 +135,10 @@ class SettingsService {
         throw jsonError;
       }
 
-      const merged = { ...this.defaults, ...parsed };
+      // FIX Bug 23: Use mergeWithDefaults to validate types during merge.
+      // If a user override has the wrong type (e.g., string where number expected),
+      // the default value is preserved instead of the invalid override.
+      const merged = mergeWithDefaults(parsed);
       const sanitized = sanitizeSettings(merged);
       this._cache = sanitized;
       this._cacheTimestamp = now;

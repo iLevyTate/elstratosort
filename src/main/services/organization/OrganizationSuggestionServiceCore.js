@@ -174,23 +174,44 @@ class OrganizationSuggestionServiceCore {
     this._getClusteringService = getClusteringService || null;
 
     // Configuration
+    const safeConfig = config || {};
     this.config = {
-      semanticMatchThreshold: config.semanticMatchThreshold || 0.4,
-      strategyMatchThreshold: config.strategyMatchThreshold || 0.3,
-      patternSimilarityThreshold: config.patternSimilarityThreshold || 0.5,
-      topKSemanticMatches: config.topKSemanticMatches || 8,
-      hybridLLMThreshold: config.hybridLLMThreshold || 0.55,
-      embeddingFirstMinFileEmbeddings: config.embeddingFirstMinFileEmbeddings || 50,
-      maxFeedbackHistory: config.maxFeedbackHistory || 1000,
-      llmTemperature: config.llmTemperature || 0.7,
-      llmMaxTokens: config.llmMaxTokens || 500,
+      ...safeConfig,
+      semanticMatchThreshold: Number.isFinite(safeConfig.semanticMatchThreshold)
+        ? safeConfig.semanticMatchThreshold
+        : 0.4,
+      strategyMatchThreshold: Number.isFinite(safeConfig.strategyMatchThreshold)
+        ? safeConfig.strategyMatchThreshold
+        : 0.3,
+      patternSimilarityThreshold: Number.isFinite(safeConfig.patternSimilarityThreshold)
+        ? safeConfig.patternSimilarityThreshold
+        : 0.5,
+      topKSemanticMatches: Number.isFinite(safeConfig.topKSemanticMatches)
+        ? safeConfig.topKSemanticMatches
+        : 8,
+      hybridLLMThreshold: Number.isFinite(safeConfig.hybridLLMThreshold)
+        ? safeConfig.hybridLLMThreshold
+        : 0.55,
+      embeddingFirstMinFileEmbeddings: Number.isFinite(safeConfig.embeddingFirstMinFileEmbeddings)
+        ? safeConfig.embeddingFirstMinFileEmbeddings
+        : 50,
+      maxFeedbackHistory: Number.isFinite(safeConfig.maxFeedbackHistory)
+        ? safeConfig.maxFeedbackHistory
+        : 1000,
+      llmTemperature: Number.isFinite(safeConfig.llmTemperature) ? safeConfig.llmTemperature : 0.7,
+      llmMaxTokens: Number.isFinite(safeConfig.llmMaxTokens) ? safeConfig.llmMaxTokens : 500,
       // Cluster-based organization settings
-      useClusterSuggestions: config.useClusterSuggestions !== false, // Enabled by default
-      clusterBoostFactor: config.clusterBoostFactor || 1.3, // Boost for cluster-consistent suggestions
-      minClusterConfidence: config.minClusterConfidence || 0.5,
-      outlierThreshold: config.outlierThreshold || 0.3, // Below this = outlier
-      enableChromaLearningSync: config.enableChromaLearningSync === true,
-      ...config
+      useClusterSuggestions: safeConfig.useClusterSuggestions !== false, // Enabled by default
+      clusterBoostFactor: Number.isFinite(safeConfig.clusterBoostFactor)
+        ? safeConfig.clusterBoostFactor
+        : 1.3, // Boost for cluster-consistent suggestions
+      minClusterConfidence: Number.isFinite(safeConfig.minClusterConfidence)
+        ? safeConfig.minClusterConfidence
+        : 0.5,
+      outlierThreshold: Number.isFinite(safeConfig.outlierThreshold)
+        ? safeConfig.outlierThreshold
+        : 0.3, // Below this = outlier
+      enableChromaLearningSync: safeConfig.enableChromaLearningSync === true
     };
 
     // Strategy definitions (from extracted module)
@@ -726,7 +747,8 @@ class OrganizationSuggestionServiceCore {
       // Apply additional cluster boost to top suggestions
       rankedSuggestions = await this.boostClusterConsistentSuggestions(
         normalizedFile,
-        rankedSuggestions
+        rankedSuggestions,
+        smartFolders
       );
 
       // Apply memory-based adjustments (natural-language feedback)
@@ -831,14 +853,14 @@ class OrganizationSuggestionServiceCore {
         async (file) => {
           try {
             return await withTimeout(
-              async () => {
+              (async () => {
                 const suggestion = await this.getSuggestionsForFile(file, smartFolders, {
                   ...options,
                   routingModeOverride: routing.mode,
                   routingReason: routing.reason
                 });
                 return { file, suggestion };
-              },
+              })(),
               30000, // 30s timeout per file to prevent batch stall
               `Suggestion analysis for ${file.name}`
             );
@@ -1095,7 +1117,7 @@ class OrganizationSuggestionServiceCore {
    * Record user feedback
    * @returns {Promise<void>}
    */
-  async recordFeedback(file, suggestion, accepted) {
+  async recordFeedback(file, suggestion, accepted, note) {
     // FIX: Ensure patterns are loaded before modifying them
     // This prevents overwriting patterns that haven't been loaded yet
     await this._ensurePatternsLoaded();
@@ -1108,12 +1130,72 @@ class OrganizationSuggestionServiceCore {
     }
 
     this.patternMatcher.recordFeedback(file, suggestion, accepted);
+    if (accepted) {
+      await this._maybeStoreAutoFeedbackReason(file, suggestion, note);
+    }
     if (suggestion?.note || suggestion?.feedbackNote) {
       logger.debug(
         '[OrganizationSuggestionService] Suggestion contains note field; use recordFeedbackNote.'
       );
     }
     return this._savePatterns();
+  }
+
+  async _maybeStoreAutoFeedbackReason(file, suggestion, note) {
+    if (!file || !suggestion || note) return;
+    const folderLabel = suggestion.folder || suggestion.path;
+    if (!folderLabel) return;
+    if (suggestion.method === 'implicit_feedback') return;
+    if (suggestion.source === 'default' || suggestion.source === 'default_fallback') return;
+
+    await this._ensureFeedbackMemoryLoaded();
+    if (!this.feedbackMemoryStore) return;
+
+    const extension = String(file.extension || '')
+      .replace('.', '')
+      .toLowerCase();
+    const category = String(file.analysis?.category || file.category || 'unknown').toLowerCase();
+    const autoKey = `${extension || 'unknown'}:${category}:${folderLabel.toLowerCase()}`;
+
+    const existing = await this.feedbackMemoryStore.list();
+    if (existing.some((entry) => entry?.autoKey === autoKey)) {
+      return;
+    }
+
+    const summary = generateFileSummary(file);
+    const explanation = suggestion.reasoning || generateExplanation(suggestion, file);
+    const baseSummary = summary || file.name || file.path || 'this file';
+    const text = normalizeText(
+      `Files like "${baseSummary}" belong in "${folderLabel}" because ${explanation || 'this matches your organization preferences'}.`
+    );
+    if (!text) return;
+
+    const entry = await this.addFeedbackMemory(text, {
+      source: 'auto_feedback',
+      targetFolder: folderLabel,
+      scope: { type: 'folder', value: folderLabel }
+    });
+    if (!entry) return;
+
+    const rules = [];
+    if (extension) {
+      rules.push({
+        type: 'extension_to_folder',
+        extension,
+        folder: folderLabel,
+        confidence: 0.7
+      });
+    }
+
+    await this.feedbackMemoryStore.update(
+      entry.id,
+      {
+        autoKey,
+        rules,
+        updatedAt: new Date().toISOString()
+      },
+      { skipChromaSync: true }
+    );
   }
 
   async recordFeedbackNote(file, suggestion, accepted, note) {
@@ -1861,13 +1943,13 @@ class OrganizationSuggestionServiceCore {
    * @param {Array} suggestions - Current suggestions
    * @returns {Promise<Array>} Boosted suggestions
    */
-  async boostClusterConsistentSuggestions(file, suggestions) {
+  async boostClusterConsistentSuggestions(file, suggestions, smartFolders = []) {
     if (!this.clustering || !this.config.useClusterSuggestions || suggestions.length === 0) {
       return suggestions;
     }
 
     try {
-      const clusterSuggestions = await this.getClusterBasedSuggestions(file, []);
+      const clusterSuggestions = await this.getClusterBasedSuggestions(file, smartFolders);
 
       if (clusterSuggestions.length === 0) {
         return suggestions;

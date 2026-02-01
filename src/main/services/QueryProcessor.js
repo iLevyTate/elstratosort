@@ -21,12 +21,11 @@ try {
   wordnetDbPath = null;
 }
 const { distance } = require('fastest-levenshtein');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { LRUCache } = require('../../shared/LRUCache');
 const { getInstance: getCacheInvalidationBus } = require('../../shared/cacheInvalidation');
 
-logger.setContext('QueryProcessor');
-
+const logger = createLogger('QueryProcessor');
 /**
  * QueryProcessor handles spell correction, synonym expansion, and query normalization
  */
@@ -489,21 +488,21 @@ class QueryProcessor {
       return word;
     }
 
-    // Rule 3: Short words (< 4 chars) are too risky to correct
+    // Rule 3: Short words (< 5 chars) are too risky to correct
     // They're usually valid abbreviations, acronyms, or common words
     // This prevents "are" -> "api", "that" -> "tax", "like" -> "file"
-    if (word.length < 4) {
+    if (word.length < 5) {
       return word;
     }
 
     // Find closest match using edit distance (Levenshtein)
     // ONLY consider corrections with 1 character difference (single typo)
-    // ONLY match against longer domain words (>= 4 chars) to avoid contamination
+    // ONLY match against longer domain words (>= 5 chars) to avoid contamination
     let bestMatch = word;
 
     for (const known of this.domainWords) {
       // Skip short domain words - they cause false matches
-      if (known.length < 4) continue;
+      if (known.length < 5) continue;
 
       // Quick length check to avoid unnecessary distance calculations
       // Only consider words within 1 character of length difference

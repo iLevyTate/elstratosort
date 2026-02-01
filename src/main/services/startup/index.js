@@ -7,10 +7,9 @@
  */
 
 const { StartupManager } = require('./StartupManagerCore');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 
-logger.setContext('StartupManager');
-
+const logger = createLogger('StartupManager');
 // Singleton instance
 let instance = null;
 

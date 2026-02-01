@@ -12,7 +12,7 @@ const { ChromaClient } = require('chromadb');
 const path = require('path');
 const fs = require('fs').promises;
 const { EventEmitter } = require('events');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { get: getConfig } = require('../../../shared/config/index');
 const { parseChromaConfig } = require('../../../shared/config/chromaDefaults');
 const { CircuitBreaker, CircuitState } = require('../../utils/CircuitBreaker');
@@ -66,8 +66,7 @@ const {
   resetFolders: resetFoldersOp
 } = require('./folderEmbeddings');
 
-logger.setContext('ChromaDBService');
-
+const logger = createLogger('ChromaDBService');
 /**
  * Embedding function placeholder.
  *
@@ -385,6 +384,7 @@ class ChromaDBServiceCore extends EventEmitter {
     this.fileChunkCollection = null;
     this.folderCollection = null;
     this.feedbackCollection = null;
+    this.learningPatternCollection = null;
     // Clear cached dimensions since collections/embedding state may change after re-init.
     this._clearDimensionCache();
     this._initPromise = null;
@@ -535,19 +535,21 @@ class ChromaDBServiceCore extends EventEmitter {
    * @private
    */
   _warnIfInsecureRemoteConnection() {
+    // Check if 172.16.0.0 - 172.31.255.255 (RFC 1918)
+    const parts172 = this.serverHost.split('.');
+    const isPrivate172 =
+      parts172.length >= 2 &&
+      parts172[0] === '172' &&
+      parseInt(parts172[1], 10) >= 16 &&
+      parseInt(parts172[1], 10) <= 31;
+
     const isLocalhost =
       this.serverHost === 'localhost' ||
       this.serverHost === '127.0.0.1' ||
       this.serverHost === '::1' ||
       this.serverHost.startsWith('192.168.') ||
       this.serverHost.startsWith('10.') ||
-      this.serverHost.startsWith('172.16.') ||
-      this.serverHost.startsWith('172.17.') ||
-      this.serverHost.startsWith('172.18.') ||
-      this.serverHost.startsWith('172.19.') ||
-      this.serverHost.startsWith('172.2') || // 172.20-172.29
-      this.serverHost.startsWith('172.30.') ||
-      this.serverHost.startsWith('172.31.');
+      isPrivate172;
 
     if (this.serverProtocol === 'http' && !isLocalhost) {
       logger.warn(
@@ -1151,8 +1153,6 @@ class ChromaDBServiceCore extends EventEmitter {
         resolveInit();
         this._isInitializing = false;
       } catch (error) {
-        this._initPromise = null;
-        this._isInitializing = false;
         this.initialized = false;
         // FIX: Reset initialization complete flag on failure
         this._initializationComplete = false;
@@ -1235,6 +1235,7 @@ class ChromaDBServiceCore extends EventEmitter {
           if (this.folderCollection) this.folderCollection = null;
           if (this.fileChunkCollection) this.fileChunkCollection = null;
           if (this.feedbackCollection) this.feedbackCollection = null;
+          if (this.learningPatternCollection) this.learningPatternCollection = null;
           if (this.client) this.client = null;
         } catch (cleanupError) {
           logger.error('[ChromaDB] Error during cleanup:', cleanupError);
@@ -1242,6 +1243,8 @@ class ChromaDBServiceCore extends EventEmitter {
 
         // FIX: Reject the promise instead of throwing to properly propagate errors
         rejectInit(new Error(`Failed to initialize ChromaDB: ${errorMsg}`));
+        this._initPromise = null;
+        this._isInitializing = false;
       } finally {
         // Restore console.warn
         // eslint-disable-next-line no-console

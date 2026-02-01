@@ -7,13 +7,12 @@
  * @module services/chromadb/folderEmbeddings
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { RETRY } = require('../../../shared/performanceConstants');
 const { withRetry } = require('../../../shared/errorHandlingUtils');
 const { prepareFolderMetadata } = require('../../../shared/pathSanitization');
 
-logger.setContext('ChromaDB:FolderOps');
-
+const logger = createLogger('ChromaDB:FolderOps');
 /**
  * Validate embedding vector for NaN, Infinity, and dimension issues
  * FIX: Prevents corrupted embeddings from being stored in ChromaDB
