@@ -21,7 +21,7 @@ const {
 } = require('./fallbackUtils');
 const FolderMatchingService = require('../services/FolderMatchingService');
 const embeddingQueue = require('./embeddingQueue');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { findContainingSmartFolder } = require('../../shared/folderUtils');
 const { getSemanticFileId } = require('../../shared/fileIdUtils');
 const {
@@ -31,8 +31,7 @@ const {
 } = require('./semanticFolderMatcher');
 const { getImageAnalysisCache } = require('../services/AnalysisCacheService');
 
-logger.setContext('OllamaImageAnalysis');
-
+const logger = createLogger('OllamaImageAnalysis');
 const IMAGE_SIGNATURE_VERSION = 'v2';
 
 /**
@@ -107,6 +106,7 @@ const IMAGE_ANALYSIS_TOOL = {
         purpose: { type: ['string', 'null'] },
         summary: { type: ['string', 'null'] },
         keywords: { type: 'array', items: { type: 'string' } },
+        keyEntities: { type: 'array', items: { type: 'string' } },
         confidence: { type: 'number' },
         suggestedName: { type: ['string', 'null'] },
         reasoning: { type: ['string', 'null'] },
@@ -179,6 +179,7 @@ ${ocrGroundingStr}
 ${namingContextStr}
 
 Your response MUST be a valid JSON object matching this schema exactly.
+Always include "keyEntities" as an array (use [] if none are found).
 Output ONLY raw JSON. Do NOT include markdown, code fences, or any extra text:
 ${JSON.stringify(IMAGE_ANALYSIS_SCHEMA, null, 2)}
 

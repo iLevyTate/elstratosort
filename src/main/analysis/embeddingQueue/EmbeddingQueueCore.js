@@ -8,7 +8,7 @@
 
 const path = require('path');
 const { app } = require('electron');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { container, ServiceIds } = require('../../services/ServiceContainer');
 const { get: getConfig } = require('../../../shared/config/index');
 const { normalizePathForIndex } = require('../../../shared/pathSanitization');
@@ -27,8 +27,7 @@ const { createFailedItemHandler } = require('./failedItemHandler');
 const { processItemsInParallel } = require('./parallelProcessor');
 const { createProgressTracker } = require('./progress');
 
-logger.setContext('EmbeddingQueue');
-
+const logger = createLogger('EmbeddingQueue');
 class EmbeddingQueue {
   constructor() {
     this.queue = [];

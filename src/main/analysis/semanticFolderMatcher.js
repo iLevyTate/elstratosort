@@ -19,7 +19,7 @@
  * @module analysis/semanticFolderMatcher
  */
 
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { THRESHOLDS, TIMEOUTS } = require('../../shared/performanceConstants');
 const { normalizePathForIndex, getCanonicalFileId } = require('../../shared/pathSanitization');
 const { findContainingSmartFolder } = require('../../shared/folderUtils');
@@ -28,8 +28,7 @@ const { container, ServiceIds } = require('../services/ServiceContainer');
 const embeddingQueue = require('./embeddingQueue');
 const { withTimeout } = require('../../shared/promiseUtils');
 
-logger.setContext('SemanticFolderMatcher');
-
+const logger = createLogger('SemanticFolderMatcher');
 /**
  * Get or initialize ChromaDB and FolderMatchingService
  * Uses lazy initialization to prevent startup failures
@@ -249,6 +248,7 @@ async function applySemanticFolderMatching(params) {
       keywords: Array.isArray(analysis.keywords) ? analysis.keywords : [],
       date: analysis.documentDate || analysis.date || null,
       suggestedName: analysis.suggestedName,
+      keyEntities: Array.isArray(analysis.keyEntities) ? analysis.keyEntities.slice(0, 20) : [],
       // Common fields for all file types
       entity: analysis.entity || '',
       project: analysis.project || '',

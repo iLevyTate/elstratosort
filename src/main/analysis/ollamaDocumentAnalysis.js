@@ -10,7 +10,7 @@ const {
 } = require('../../shared/constants');
 const { TRUNCATION, TIMEOUTS } = require('../../shared/performanceConstants');
 const { withTimeout } = require('../../shared/promiseUtils');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { getOllamaModel, loadOllamaConfig } = require('../ollamaUtils');
 const { AppConfig } = require('./documentLlm');
 
@@ -136,8 +136,7 @@ async function isFileUnchangedForCache(filePath, fileStats) {
 const { FileProcessingError } = require('../errors/AnalysisError');
 
 // Set logger context for this module
-logger.setContext('DocumentAnalysis');
-
+const logger = createLogger('DocumentAnalysis');
 /**
  * Analyzes a document file using AI or fallback methods
  * @param {string} filePath - Path to the document file

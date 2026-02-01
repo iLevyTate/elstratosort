@@ -8,6 +8,9 @@ function normalizeAnalysisResult(raw, fallback = {}) {
         ? result.category
         : fallback.category || 'document',
     keywords: Array.isArray(result.keywords) ? result.keywords : fallback.keywords || [],
+    keyEntities: Array.isArray(result.keyEntities)
+      ? result.keyEntities.filter(Boolean)
+      : fallback.keyEntities || [],
     confidence:
       typeof result.confidence === 'number' ? result.confidence : fallback.confidence || 0,
     suggestedName:

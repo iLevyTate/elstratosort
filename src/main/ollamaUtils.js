@@ -1,5 +1,5 @@
 const { Ollama } = require('ollama');
-const { logger } = require('../shared/logger');
+const { createLogger } = require('../shared/logger');
 const { SERVICE_URLS } = require('../shared/configDefaults');
 const { normalizeServiceUrl } = require('../shared/urlUtils');
 // Import deduplicator to clear zombie promises when HTTP agent is destroyed
@@ -14,8 +14,7 @@ function getSettings() {
 }
 
 // Optional: set context for clearer log origins
-logger.setContext('ollama-utils');
-
+const logger = createLogger('ollama-utils');
 let ollamaInstance = null;
 let ollamaHost = SERVICE_URLS.OLLAMA_HOST;
 let ollamaInstanceHost = null; // MEDIUM PRIORITY FIX (MED-13): Track host used to create instance

@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const { createReadStream } = require('fs');
 
 const { FileProcessingError } = require('../errors/AnalysisError');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { LIMITS } = require('../../shared/constants');
 // FIX P3-2: Import withTimeout for extraction timeout handling
 const { withTimeout } = require('../../shared/promiseUtils');
@@ -29,8 +29,7 @@ try {
 const { parse: parseCsv } = require('csv-parse/sync');
 const { isTesseractAvailable, recognizeIfAvailable } = require('../utils/tesseractUtils');
 
-logger.setContext('DocumentExtractors');
-
+const logger = createLogger('DocumentExtractors');
 // Streaming thresholds for large file handling
 const STREAM_THRESHOLD = 50 * 1024 * 1024; // 50MB - use streaming for files larger than this
 const MAX_CONTENT_LENGTH = 2 * 1024 * 1024; // 2MB of text max for LLM
