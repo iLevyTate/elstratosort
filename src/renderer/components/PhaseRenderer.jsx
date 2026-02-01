@@ -28,7 +28,7 @@ const preloadPhases = () => {
 };
 
 // Optimized page transitions with GPU acceleration
-// Using simpler opacity-only transitions for smoother performance
+// Using smooth opacity transitions for refined feel
 const pageVariants = {
   initial: {
     opacity: 0
@@ -36,23 +36,23 @@ const pageVariants = {
   in: {
     opacity: 1,
     transition: {
-      duration: 0.15, // Snappy entry
-      ease: 'easeOut'
+      duration: 0.2, // Smooth entry
+      ease: [0.16, 1, 0.3, 1] // Snappy easing (same as modal-enter)
     }
   },
   out: {
     opacity: 0,
     transition: {
-      duration: 0.05, // Almost instant exit to reduce "dead time" between tabs
-      ease: 'easeIn'
+      duration: 0.15, // Smooth exit (not too fast, not too slow)
+      ease: [0.4, 0, 0.2, 1] // Smooth easing
     }
   }
 };
 
 const pageTransition = {
   type: 'tween',
-  ease: 'easeOut',
-  duration: 0.15
+  ease: [0.16, 1, 0.3, 1],
+  duration: 0.2
 };
 
 function PhaseRenderer() {
@@ -141,13 +141,23 @@ function PhaseRenderer() {
           </AnimatePresence>
         </Suspense>
       </div>
-      {showSettings && (
-        <Suspense fallback={<ModalLoadingOverlay message="Loading Settings..." />}>
-          <PhaseErrorBoundary phaseName="Settings">
-            <SettingsPanel />
-          </PhaseErrorBoundary>
-        </Suspense>
-      )}
+      <AnimatePresence>
+        {showSettings && (
+          <Suspense fallback={<ModalLoadingOverlay message="Loading Settings..." />}>
+            <PhaseErrorBoundary phaseName="Settings">
+              <motion.div
+                key="settings-panel"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15, ease: [0.4, 0, 0.2, 1] }}
+              >
+                <SettingsPanel />
+              </motion.div>
+            </PhaseErrorBoundary>
+          </Suspense>
+        )}
+      </AnimatePresence>
     </>
   );
 }

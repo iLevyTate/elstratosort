@@ -97,6 +97,12 @@ const BRAND_COLORS = {
 module.exports = {
   content: ['./src/renderer/**/*.{html,js,ts,jsx,tsx}', './src/**/*.{html,js,ts,jsx,tsx}'],
   safelist: [
+    // Spacing token gap utilities (used by Inline component)
+    'gap-compact',
+    'gap-cozy',
+    'gap-default',
+    'gap-relaxed',
+    'gap-spacious',
     // Status utilities (use .status-chip.success etc)
     'status-chip',
     // Button variants

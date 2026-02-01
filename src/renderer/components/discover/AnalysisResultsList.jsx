@@ -8,6 +8,7 @@ import { logger } from '../../../shared/logger';
 import { UI_VIRTUALIZATION } from '../../../shared/constants';
 import { formatDisplayPath } from '../../utils/pathDisplay';
 import { Text } from '../ui/Typography';
+import { selectRedactPaths } from '../../store/selectors';
 
 class AnalysisResultsErrorBoundary extends Component {
   constructor(props) {
@@ -60,6 +61,7 @@ AnalysisResultsErrorBoundary.propTypes = {
 };
 
 const ITEM_HEIGHT = UI_VIRTUALIZATION.ANALYSIS_RESULTS_ITEM_HEIGHT;
+const ITEM_GAP = UI_VIRTUALIZATION.ANALYSIS_RESULTS_ITEM_GAP ?? 16;
 const VIRTUALIZATION_THRESHOLD = UI_VIRTUALIZATION.THRESHOLD;
 
 const formatConfidence = (value) => {
@@ -71,7 +73,7 @@ const formatConfidence = (value) => {
 
 const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }) {
   if (!data || !data.items) return null;
-  const { items, handleAction, getFileStateDisplay, redactPaths } = data;
+  const { items, handleAction, getFileStateDisplay, redactPaths, isVirtualized } = data;
 
   if (!Array.isArray(items) || index < 0 || index >= items.length) return null;
 
@@ -108,11 +110,20 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
     (keywords.length > 10 ? ` (+${keywords.length - 10} more)` : '');
   const fullKeywords = keywords.slice(0, 50).join(', ') + (keywords.length > 50 ? '...' : '');
 
+  const rowStyle =
+    isVirtualized && style
+      ? {
+          ...style,
+          paddingBottom: ITEM_GAP,
+          boxSizing: 'border-box'
+        }
+      : style;
+
   return (
-    <div style={style} className="px-cozy py-default">
+    <div style={rowStyle} className="px-cozy">
       <Card
         variant="interactive"
-        className="flex items-start p-3 gap-3 h-full group transition-all duration-200 hover:border-stratosort-blue/30"
+        className="flex items-start p-3 gap-3 h-full group transition-all duration-200 hover:border-stratosort-blue/30 overflow-hidden"
         onClick={() => handleAction && handleAction('open', file.path)}
       >
         {/* Icon */}
@@ -225,12 +236,14 @@ AnalysisResultRow.propTypes = {
     items: PropTypes.array.isRequired,
     handleAction: PropTypes.func.isRequired,
     getFileStateDisplay: PropTypes.func.isRequired,
-    redactPaths: PropTypes.bool
+    redactPaths: PropTypes.bool,
+    isVirtualized: PropTypes.bool
   }).isRequired
 };
 
 function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }) {
-  const redactPaths = useSelector((state) => Boolean(state?.system?.redactPaths));
+  // PERF: Use memoized selector instead of inline Boolean coercion
+  const redactPaths = useSelector(selectRedactPaths);
   const safeResults = useMemo(() => {
     if (!Array.isArray(results)) return [];
     return results.filter((r) => r && typeof r === 'object' && (r.path || r.name));
@@ -290,16 +303,19 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
     return () => observer.disconnect();
   }, [containerNode]);
 
+  const shouldVirtualize = items.length > VIRTUALIZATION_THRESHOLD;
+
   const rowProps = useMemo(
     () => ({
       data: {
         items,
         handleAction,
         getFileStateDisplay,
-        redactPaths
+        redactPaths,
+        isVirtualized: shouldVirtualize
       }
     }),
-    [items, handleAction, getFileStateDisplay, redactPaths]
+    [items, handleAction, getFileStateDisplay, redactPaths, shouldVirtualize]
   );
   const safeRowProps = rowProps ?? {};
   const listItemData = safeRowProps.data || {
@@ -309,8 +325,7 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
     redactPaths
   };
 
-  const shouldVirtualize = items.length > VIRTUALIZATION_THRESHOLD;
-  const listContainerClass = `w-full h-full modern-scrollbar overflow-y-auto flex flex-col`;
+  const listContainerClass = `w-full h-full modern-scrollbar overflow-y-auto overflow-x-hidden flex flex-col gap-default`;
 
   if (isEmpty) {
     return (
@@ -327,7 +342,7 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
 
   if (shouldVirtualize) {
     return (
-      <div ref={containerRef} className="relative w-full h-full">
+      <div ref={containerRef} className="relative w-full h-full overflow-x-hidden">
         <Text
           as="div"
           variant="tiny"
@@ -338,7 +353,7 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
         <List
           key={`list-${items.length}`}
           rowCount={items.length}
-          rowHeight={ITEM_HEIGHT}
+          rowHeight={ITEM_HEIGHT + ITEM_GAP}
           rowComponent={AnalysisResultRow}
           rowProps={rowProps}
           overscanCount={5}

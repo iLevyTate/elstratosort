@@ -8,11 +8,10 @@ import StatusBadge from './ui/StatusBadge';
 import StateMessage from './ui/StateMessage';
 import { Heading, Text } from './ui/Typography';
 import { ErrorBoundaryCore as ErrorBoundary } from './ErrorBoundary';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { Inline } from './layout';
 
-logger.setContext('AiDependenciesModal');
-
+const logger = createLogger('AiDependenciesModal');
 function normalizeOllamaModelName(name) {
   if (!name || typeof name !== 'string') return null;
   const trimmed = name.trim();
@@ -212,20 +211,23 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
   const installOllama = async () => {
     if (!window.electronAPI?.dependencies?.installOllama) {
       addLogEntry('[error] Install API not available. Please restart the application.');
-      return;
+      return { success: false, error: 'Install API not available' };
     }
     setInstalling((p) => ({ ...p, ollama: true }));
     try {
       const result = await window.electronAPI.dependencies.installOllama();
       if (result && !result.success) {
         addLogEntry(`[error] Ollama install failed: ${result.error || 'Unknown error'}`);
+        return { success: false, error: result.error || 'Ollama install failed' };
       } else if (result?.startupError) {
         addLogEntry(`[warning] Ollama installed but failed to start: ${result.startupError}`);
       }
       await refresh();
+      return { success: true };
     } catch (e) {
       logger.error('Failed to install Ollama', { error: e?.message });
       addLogEntry(`[error] Installation failed: ${e?.message || 'Unknown error'}`);
+      return { success: false, error: e?.message || 'Unknown error' };
     } finally {
       setInstalling((p) => ({ ...p, ollama: false }));
     }
@@ -234,20 +236,23 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
   const installChromaDb = async () => {
     if (!window.electronAPI?.dependencies?.installChromaDb) {
       addLogEntry('[error] Install API not available. Please restart the application.');
-      return;
+      return { success: false, error: 'Install API not available' };
     }
     setInstalling((p) => ({ ...p, chromadb: true }));
     try {
       const result = await window.electronAPI.dependencies.installChromaDb();
       if (result && !result.success) {
         addLogEntry(`[error] ChromaDB install failed: ${result.error || 'Unknown error'}`);
+        return { success: false, error: result.error || 'ChromaDB install failed' };
       } else if (result?.startupError) {
         addLogEntry(`[warning] ChromaDB installed but failed to start: ${result.startupError}`);
       }
       await refresh();
+      return { success: true };
     } catch (e) {
       logger.error('Failed to install ChromaDB', { error: e?.message });
       addLogEntry(`[error] Installation failed: ${e?.message || 'Unknown error'}`);
+      return { success: false, error: e?.message || 'Unknown error' };
     } finally {
       setInstalling((p) => ({ ...p, chromadb: false }));
     }
@@ -288,6 +293,7 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
     if (installingAll) return;
     setInstallingAll(true);
     setLastInstallError(null);
+    let encounteredError = false;
     addLogEntry('[info] Starting full AI setup (background)…');
     try {
       if (!status?.ollama?.installed) {
@@ -295,6 +301,7 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
         const res = await installOllama();
         if (res && res.success === false) {
           setLastInstallError(res.error || 'Ollama install failed');
+          encounteredError = true;
           return;
         }
       }
@@ -303,6 +310,7 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
         const res = await installChromaDb();
         if (res && res.success === false) {
           setLastInstallError(res.error || 'ChromaDB install failed');
+          encounteredError = true;
           return;
         }
       }
@@ -311,13 +319,14 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
         const res = await window.electronAPI?.ollama?.pullModels?.(recommendedModels);
         if (res && res.success === false) {
           setLastInstallError(res.error || 'Model download failed');
+          encounteredError = true;
           return;
         }
       } else {
         addLogEntry('[info] No recommended models configured; skipping model download.');
       }
       await refresh();
-      if (!lastInstallError) {
+      if (!encounteredError) {
         addLogEntry('[success] AI setup completed (background).');
       }
     } catch (e) {
@@ -331,23 +340,42 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
   const ollamaOk = Boolean(status?.ollama?.installed);
   const ollamaRunning = Boolean(status?.ollama?.running);
   const ollamaVersion = status?.ollama?.version || null;
+  const ollamaSource = status?.ollama?.source || null;
   const chromaExternal = Boolean(status?.chromadb?.external);
   const chromaOk = Boolean(
     chromaExternal ? status?.chromadb?.running : status?.chromadb?.pythonModuleInstalled
   );
   const chromaRunning = Boolean(status?.chromadb?.running);
+  const chromaSource = status?.chromadb?.source || null;
   const pythonOk = Boolean(status?.python?.installed);
   const pythonVersion = status?.python?.version || null;
+  const pythonSource = status?.python?.source || null;
+  const tesseractOk = Boolean(status?.tesseract?.installed);
+  const tesseractSource = status?.tesseract?.source || null;
 
-  const getStatusBadgeProps = (running, installed) => {
+  const getSourceLabel = (source) => {
+    if (!source) return 'Unknown';
+    if (source === 'embedded') return 'Bundled';
+    if (source === 'external') return 'External';
+    if (source === 'env') return 'Custom Path';
+    return 'System';
+  };
+
+  const getStatusBadgeProps = (running, installed, source) => {
     if (status === null) return { variant: 'info', children: 'Checking...', animated: true };
     if (running) return { variant: 'success', children: 'Running', animated: true };
-    if (installed) return { variant: 'info', children: 'Installed', animated: false };
+    if (installed) {
+      return {
+        variant: 'info',
+        children: source === 'embedded' ? 'Bundled' : 'Installed',
+        animated: false
+      };
+    }
     return { variant: 'warning', children: 'Not Installed', animated: false };
   };
 
-  const getOllamaStatusProps = () => getStatusBadgeProps(ollamaRunning, ollamaOk);
-  const getChromaStatusProps = () => getStatusBadgeProps(chromaRunning, chromaOk);
+  const getOllamaStatusProps = () => getStatusBadgeProps(ollamaRunning, ollamaOk, ollamaSource);
+  const getChromaStatusProps = () => getStatusBadgeProps(chromaRunning, chromaOk, chromaSource);
 
   return (
     <Modal
@@ -439,6 +467,53 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
             </div>
           </Card>
 
+          <Card variant="default" className="p-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex flex-col gap-1">
+                <Heading as="h4" variant="h6" className="text-sm">
+                  Base model downloads
+                </Heading>
+                <Text variant="tiny" className="text-system-gray-600">
+                  Download the required base models for text, vision, and embeddings.
+                </Text>
+                {recommendedModels.length > 0 ? (
+                  <Text variant="tiny" className="text-system-gray-500">
+                    Models: {recommendedModels.map((m) => m.replace(':latest', '')).join(', ')}
+                  </Text>
+                ) : (
+                  <Text variant="tiny" className="text-system-gray-500">
+                    No models configured yet.
+                  </Text>
+                )}
+                {ollamaOk && !ollamaRunning && (
+                  <Text variant="tiny" className="text-system-gray-500">
+                    Start Ollama to enable downloads.
+                  </Text>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={downloadModels}
+                  leftIcon={!downloadingModels ? <Download className="w-4 h-4" /> : null}
+                  disabled={!ollamaRunning || recommendedModels.length === 0 || downloadingModels}
+                  title={
+                    downloadingModels
+                      ? 'Downloading models...'
+                      : !ollamaRunning
+                        ? 'Ollama must be running to download models'
+                        : recommendedModels.length === 0
+                          ? 'Configure models in Settings first'
+                          : 'Download base models'
+                  }
+                >
+                  {downloadingModels ? 'Downloading…' : 'Download Base Models'}
+                </Button>
+              </div>
+            </div>
+          </Card>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card variant="default" className="p-0 overflow-hidden">
               <div className="p-4 border-b border-system-gray-100 bg-system-gray-50/50">
@@ -476,6 +551,11 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
                 {ollamaVersion && (
                   <Text variant="tiny" className="text-system-gray-500">
                     Version: {ollamaVersion}
+                  </Text>
+                )}
+                {status !== null && (
+                  <Text variant="tiny" className="text-system-gray-500">
+                    Source: {getSourceLabel(ollamaSource)}
                   </Text>
                 )}
 
@@ -645,6 +725,10 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
                         <div className="flex items-center gap-2">
                           <span className="font-medium">Mode:</span> External Server
                         </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">Source:</span>{' '}
+                          {getSourceLabel(chromaSource)}
+                        </div>
                         {status?.chromadb?.serverUrl && (
                           <div className="flex items-center gap-2">
                             <span className="font-medium">URL:</span>
@@ -660,7 +744,14 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
                           <span
                             className={`w-2 h-2 rounded-full ${pythonOk ? 'bg-stratosort-success' : 'bg-stratosort-warning'}`}
                           />
-                          Python: {pythonOk ? pythonVersion || 'Detected' : 'Required'}
+                          Python:{' '}
+                          {pythonOk
+                            ? `${pythonVersion || 'Detected'} (${getSourceLabel(pythonSource)})`
+                            : 'Required'}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">Source:</span>{' '}
+                          {getSourceLabel(chromaSource)}
                         </div>
                       </>
                     )}
@@ -712,6 +803,54 @@ export default function AiDependenciesModal({ isOpen, onClose }) {
                     </Text>
                   </div>
                 )}
+              </div>
+            </Card>
+
+            <Card variant="default" className="p-0 overflow-hidden">
+              <div className="p-4 border-b border-system-gray-100 bg-system-gray-50/50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-gradient-to-br from-stratosort-blue to-stratosort-indigo rounded-lg flex items-center justify-center shadow-sm">
+                      <svg
+                        className="w-5 h-5 text-white"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M5 7h14M5 12h14M5 17h10"
+                        />
+                      </svg>
+                    </div>
+                    <div>
+                      <Heading as="h4" variant="h6" className="text-system-gray-900">
+                        Tesseract OCR
+                      </Heading>
+                      <Text variant="tiny" className="text-system-gray-500">
+                        Native OCR runtime for scanned documents
+                      </Text>
+                    </div>
+                  </div>
+                  <StatusBadge
+                    {...getStatusBadgeProps(false, tesseractOk, tesseractSource)}
+                    size="sm"
+                  />
+                </div>
+              </div>
+              <div className="p-4 space-y-3">
+                {status !== null && (
+                  <Text variant="tiny" className="text-system-gray-500">
+                    Source: {getSourceLabel(tesseractSource)}
+                  </Text>
+                )}
+                <Text variant="tiny" className="text-system-gray-600">
+                  {tesseractOk
+                    ? 'Native OCR is available and ready.'
+                    : 'Native OCR is not installed; StratoSort will use the bundled tesseract.js fallback.'}
+                </Text>
               </div>
             </Card>
           </div>

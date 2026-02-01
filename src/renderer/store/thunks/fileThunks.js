@@ -5,8 +5,9 @@
  * (filesSlice, analysisSlice, etc.) stays in sync.
  */
 
-import { removeSelectedFile, removeSelectedFiles } from '../slices/filesSlice';
-import { removeAnalysisResult, removeAnalysisResultsByPaths } from '../slices/analysisSlice';
+import { removeSelectedFile } from '../slices/filesSlice';
+import { removeAnalysisResult } from '../slices/analysisSlice';
+import { atomicRemoveFilesWithCleanup } from '../slices/atomicActions';
 
 /**
  * Atomically remove a single file from both filesSlice and analysisSlice.
@@ -31,15 +32,7 @@ export const removeFileWithCleanup = (filePath) => (dispatch) => {
  *
  * @param {string[]} filePaths - Array of file paths to remove
  */
-export const removeFilesWithCleanup = (filePaths) => (dispatch) => {
-  if (!Array.isArray(filePaths) || filePaths.length === 0) return;
-
-  // Remove from filesSlice first (includes fileStates cleanup)
-  dispatch(removeSelectedFiles(filePaths));
-
-  // Also remove any analysis results for these files
-  dispatch(removeAnalysisResultsByPaths(filePaths));
-};
+export const removeFilesWithCleanup = (filePaths) => atomicRemoveFilesWithCleanup(filePaths);
 
 /**
  * Clear all files and their associated analysis results.

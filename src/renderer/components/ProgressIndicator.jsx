@@ -1,13 +1,12 @@
 import React, { useState, useRef } from 'react';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { PHASES, PHASE_METADATA } from '../../shared/constants';
 import { useAppSelector } from '../store/hooks';
 import { Heading, Text } from './ui/Typography';
 import { Button, IconButton } from './ui';
 import { ChevronDown } from 'lucide-react';
 
-logger.setContext('ProgressIndicator');
-
+const logger = createLogger('ProgressIndicator');
 function ProgressIndicator() {
   const currentPhase = useAppSelector((state) => state.ui.currentPhase);
   const [showPhaseMenu, setShowPhaseMenu] = useState(false);

@@ -29,17 +29,19 @@ import {
 
 import Modal, { ConfirmModal } from '../Modal';
 import { ModalLoadingOverlay } from '../LoadingSkeleton';
-import { Button, IconButton, Input, StateMessage, Textarea } from '../ui';
+import { Button, IconButton, Input, Select, StateMessage, Textarea } from '../ui';
 import HighlightedText from '../ui/HighlightedText';
 import { getFileCategory } from '../ui/FileIcon';
 import { Heading, Text } from '../ui/Typography';
 import { TIMEOUTS } from '../../../shared/performanceConstants';
-import { logger } from '../../../shared/logger';
+import { createLogger } from '../../../shared/logger';
 import { GRAPH_FEATURE_FLAGS } from '../../../shared/featureFlags';
 import { safeBasename } from '../../utils/pathUtils';
 import { formatDisplayPath } from '../../utils/pathDisplay';
 import { scoreToOpacity, clamp01 } from '../../utils/scoreUtils';
 import { makeQueryNodeId, defaultNodePosition } from '../../utils/graphUtils';
+import { extractFileName } from '../../utils/pathNormalization';
+import { extractDroppedFiles, isFileDragEvent } from '../../utils/dragAndDrop';
 import {
   elkLayout,
   debouncedElkLayout,
@@ -49,16 +51,10 @@ import {
   clusterExpansionLayout,
   LARGE_GRAPH_THRESHOLD
 } from '../../utils/elkLayout';
-import ClusterNode from './ClusterNode';
-import FileNode from './nodes/FileNode';
-import FolderNode from './nodes/FolderNode';
-import QueryNode from './nodes/QueryNode';
 import { useGraphState, useGraphKeyboardNav, useFileActions } from '../../hooks';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { toggleSettings } from '../../store/slices/uiSlice';
-import SimilarityEdge from './SimilarityEdge';
-import QueryMatchEdge from './QueryMatchEdge';
-import SmartStepEdge from './SmartStepEdge';
+import { NODE_TYPES, EDGE_TYPES } from './graphTypes';
 import SearchAutocomplete from './SearchAutocomplete';
 import ClusterLegend from './ClusterLegend';
 import EmptySearchState from './EmptySearchState';
@@ -66,27 +62,18 @@ import GraphTour from './GraphTour';
 import GraphErrorBoundary from './GraphErrorBoundary';
 import ChatPanel from './ChatPanel';
 
-logger.setContext('UnifiedSearchModal');
-
+const logger = createLogger('UnifiedSearchModal');
 // Maximum nodes allowed in graph to prevent memory exhaustion
 const MAX_GRAPH_NODES = 300;
 const GRAPH_LAYOUT_SPACING = 300; // Increased from 180 to reduce clutter
 const GRAPH_LAYER_SPACING = 400; // Increased from 280 to reduce clutter
-
-// React Flow node/edge types defined outside component for stable references
-// See: https://reactflow.dev/error#002
-const NODE_TYPES = {
-  fileNode: FileNode,
-  folderNode: FolderNode,
-  queryNode: QueryNode,
-  clusterNode: ClusterNode
-};
-
-const EDGE_TYPES = {
-  similarity: SimilarityEdge,
-  queryMatch: QueryMatchEdge,
-  smartStep: SmartStepEdge
-};
+const ZOOM_LABEL_HIDE_THRESHOLD = 0.6;
+// Keep React Flow type maps stable across renders/mounts.
+const STABLE_NODE_TYPES = NODE_TYPES;
+const STABLE_EDGE_TYPES = EDGE_TYPES;
+const GRAPH_SIDEBAR_CARD = 'rounded-lg border border-system-gray-200 bg-white/90 p-3 shadow-sm';
+const GRAPH_SIDEBAR_SECTION_TITLE =
+  'text-[11px] font-semibold text-system-gray-500 uppercase tracking-wider flex items-center gap-2';
 
 /**
  * Format error messages to be more user-friendly and actionable
@@ -272,6 +259,8 @@ function ResultRow({
           .map((k) => k.trim())
           .filter(Boolean)
       : [];
+  const keywordDisplay = keywords.slice(0, 8);
+  const keywordOverflow = Math.max(0, keywords.length - keywordDisplay.length);
 
   const entities = normalizeList(result?.metadata?.keyEntities).slice(0, 3);
   const dates = normalizeList(result?.metadata?.dates).slice(0, 2);
@@ -351,9 +340,9 @@ function ResultRow({
         </div>
 
         {/* Keywords / Tags */}
-        {keywords.length > 0 && (
+        {keywordDisplay.length > 0 && (
           <div className="flex flex-wrap gap-2">
-            {keywords.map((keyword, idx) => (
+            {keywordDisplay.map((keyword, idx) => (
               <Text
                 as="span"
                 variant="tiny"
@@ -363,6 +352,11 @@ function ResultRow({
                 {keyword}
               </Text>
             ))}
+            {keywordOverflow > 0 && (
+              <Text as="span" variant="tiny" className="text-system-gray-400">
+                +{keywordOverflow} more
+              </Text>
+            )}
           </div>
         )}
         {(entities.length > 0 || dates.length > 0) && (
@@ -613,18 +607,25 @@ export default function UnifiedSearchModal({
   // Tab state
   // Graph is currently feature-flagged off. If callers pass initialTab="graph",
   // ensure we still render the Search tab content instead of a blank body.
-  const effectiveInitialTab = GRAPH_FEATURE_FLAGS.SHOW_GRAPH
-    ? initialTab
-    : initialTab === 'graph'
-      ? 'search'
-      : initialTab;
+  const effectiveInitialTab = useMemo(
+    () =>
+      GRAPH_FEATURE_FLAGS.SHOW_GRAPH ? initialTab : initialTab === 'graph' ? 'search' : initialTab,
+    [initialTab]
+  );
   const [activeTab, setActiveTab] = useState(effectiveInitialTab);
 
-  // Reset tabs when modal opens to avoid stale/hidden tabs on reopen
+  // Track previous isOpen to detect modal open transitions
+  const prevIsOpenRef = useRef(false);
+
+  // Reset tabs only when modal opens (isOpen transitions from false to true)
+  // Do NOT reset when effectiveInitialTab changes, as that would override
+  // programmatic tab switches like "View in Graph"
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !prevIsOpenRef.current) {
+      // Modal just opened - reset to initial tab
       setActiveTab(effectiveInitialTab);
     }
+    prevIsOpenRef.current = isOpen;
   }, [isOpen, effectiveInitialTab]);
 
   // Shared state
@@ -649,9 +650,6 @@ export default function UnifiedSearchModal({
   const [searchRefreshTrigger, setSearchRefreshTrigger] = useState(0);
   const [focusedResultIndex, setFocusedResultIndex] = useState(-1);
   const [viewMode, setViewMode] = useState('all'); // 'all' or 'grouped'
-
-  // nodeTypes and edgeTypes are defined as module-level constants (NODE_TYPES, EDGE_TYPES)
-  // to prevent React Flow warning about recreating objects on render
 
   // Chat tab state
   const [chatMessages, setChatMessages] = useState([]);
@@ -718,10 +716,15 @@ export default function UnifiedSearchModal({
   const [enableAutoClustering, setEnableAutoClustering] = useState(true);
   const [showEdgeLabels, setShowEdgeLabels] = useState(true); // Default to showing labels for clarity
   const showEdgeLabelsRef = useRef(true); // Ref for access in callbacks without dependency
+  const edgeTooltipsRef = useRef(true);
+  const hasAutoDisabledEdgeLabels = useRef(false);
+  const hasAutoDisabledTooltips = useRef(false);
+  const edgeTooltipsEnabled = nodes.length <= LARGE_GRAPH_THRESHOLD;
 
   // Cluster configuration state
   const [clusterMode, setClusterMode] = useState(DEFAULT_CLUSTER_MODE); // topic | time | type | tag
   const [clusterFilters, setClusterFilters] = useState(getDefaultClusterFilters);
+  const clusterFiltersRef = useRef(clusterFilters);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
   // Guide assistant state
@@ -744,20 +747,103 @@ export default function UnifiedSearchModal({
   }, []);
 
   useEffect(() => {
-    try {
-      window.localStorage?.setItem(
-        'graph.clusterPrefs',
-        JSON.stringify({ mode: clusterMode, filters: clusterFilters, showGuidePanel })
-      );
-    } catch (err) {
-      logger.debug('[Graph] Failed to save cluster prefs', err);
-    }
+    const timer = setTimeout(() => {
+      try {
+        const { search: _search, ...persistFilters } = clusterFilters; // exclude transient search
+        window.localStorage?.setItem(
+          'graph.clusterPrefs',
+          JSON.stringify({ mode: clusterMode, filters: persistFilters, showGuidePanel })
+        );
+      } catch (err) {
+        logger.debug('[Graph] Failed to save cluster prefs', err);
+      }
+    }, 500);
+    return () => clearTimeout(timer);
   }, [clusterMode, clusterFilters, showGuidePanel]);
+
+  // Sync clusterFilters ref so loadClusters can read current filters without re-creating
+  useEffect(() => {
+    clusterFiltersRef.current = clusterFilters;
+  }, [clusterFilters]);
 
   // Sync ref with state
   useEffect(() => {
     showEdgeLabelsRef.current = showEdgeLabels;
-  }, [showEdgeLabels, showEdgeLabelsRef]); // Default to false to reduce clutter
+  }, [showEdgeLabels]);
+  useEffect(() => {
+    edgeTooltipsRef.current = edgeTooltipsEnabled;
+  }, [edgeTooltipsEnabled]);
+
+  const [performanceNotice, setPerformanceNotice] = useState('');
+  const noticeTimerRef = useRef(null);
+  const showPerformanceNotice = useCallback((message) => {
+    setPerformanceNotice(message);
+    if (noticeTimerRef.current) {
+      clearTimeout(noticeTimerRef.current);
+    }
+    noticeTimerRef.current = setTimeout(() => {
+      setPerformanceNotice('');
+    }, 4000);
+  }, []);
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current) {
+        clearTimeout(noticeTimerRef.current);
+      }
+    },
+    []
+  );
+
+  const applyEdgeUiPrefs = useCallback((edgesToUpdate) => {
+    if (!Array.isArray(edgesToUpdate) || edgesToUpdate.length === 0) {
+      return edgesToUpdate || [];
+    }
+
+    const showLabels = showEdgeLabelsRef.current;
+    const showTooltips = edgeTooltipsRef.current;
+    let changed = false;
+    const updated = edgesToUpdate.map((edge) => {
+      const currentLabels = edge.data?.showEdgeLabels ?? true;
+      const currentTooltips = edge.data?.showEdgeTooltips ?? true;
+      if (currentLabels === showLabels && currentTooltips === showTooltips) return edge;
+      changed = true;
+      return {
+        ...edge,
+        data: {
+          ...edge.data,
+          showEdgeLabels: showLabels,
+          showEdgeTooltips: showTooltips
+        }
+      };
+    });
+
+    return changed ? updated : edgesToUpdate;
+  }, []);
+
+  useEffect(() => {
+    if (
+      nodes.length > LARGE_GRAPH_THRESHOLD &&
+      showEdgeLabels &&
+      !hasAutoDisabledEdgeLabels.current
+    ) {
+      hasAutoDisabledEdgeLabels.current = true;
+      setShowEdgeLabels(false);
+      showPerformanceNotice('Large graph: connection labels disabled for performance.');
+    }
+    if (nodes.length <= LARGE_GRAPH_THRESHOLD) {
+      hasAutoDisabledEdgeLabels.current = false;
+    }
+  }, [nodes.length, showEdgeLabels, showPerformanceNotice]);
+
+  useEffect(() => {
+    if (nodes.length > LARGE_GRAPH_THRESHOLD && !hasAutoDisabledTooltips.current) {
+      hasAutoDisabledTooltips.current = true;
+      showPerformanceNotice('Large graph: connection tooltips disabled for performance.');
+    }
+    if (nodes.length <= LARGE_GRAPH_THRESHOLD) {
+      hasAutoDisabledTooltips.current = false;
+    }
+  }, [nodes.length, showPerformanceNotice]);
 
   const dispatch = useAppDispatch();
   const handleOpenSettings = useCallback(() => {
@@ -773,6 +859,12 @@ export default function UnifiedSearchModal({
 
   // Zoom state
   const [zoomLevel, setZoomLevel] = useState(1);
+  const zoomBucketRef = useRef(zoomLevel < ZOOM_LABEL_HIDE_THRESHOLD);
+  useEffect(() => {
+    zoomBucketRef.current = zoomLevel < ZOOM_LABEL_HIDE_THRESHOLD;
+  }, [zoomLevel]);
+  const [hoveredClusterId, setHoveredClusterId] = useState(null);
+  const [hasHoveredCluster, setHasHoveredCluster] = useState(false);
 
   // Focus mode state - for local graph view
   const [focusNodeId, setFocusNodeId] = useState(null);
@@ -820,6 +912,7 @@ export default function UnifiedSearchModal({
   const withinReqRef = useRef(0);
   const reactFlowInstance = useRef(null);
   const resultListRef = useRef(null);
+  const graphContainerRef = useRef(null);
   const wasOpenRef = useRef(false);
 
   // Refs for tracking auto-load state
@@ -1124,11 +1217,12 @@ export default function UnifiedSearchModal({
               similarity: edge.similarity,
               sourceData: nodeDataMap.get(edge.source) || {},
               targetData: nodeDataMap.get(edge.target) || {},
-              showEdgeLabels: showEdgeLabelsRef.current
+              showEdgeLabels: showEdgeLabelsRef.current,
+              showEdgeTooltips: edgeTooltipsRef.current
             }
           }));
           if (similarityEdges.length > 0) {
-            graphActions.setEdges(similarityEdges);
+            graphActions.setEdges([...organizeEdges, ...similarityEdges]);
             logger.info('[KnowledgeOS] Added similarity edges', {
               edgeCount: similarityEdges.length
             });
@@ -1149,14 +1243,14 @@ export default function UnifiedSearchModal({
           );
           graphActions.setNodes(layoutedNodes);
           if (layoutedEdges && layoutedEdges.length > 0) {
-            graphActions.setEdges(layoutedEdges);
+            graphActions.setEdges(applyEdgeUiPrefs(layoutedEdges));
           }
         } catch (layoutError) {
           logger.warn('[Graph] Layout from chat sources failed:', layoutError);
         }
       }
     },
-    [autoLayout, graphActions, recommendationMap]
+    [autoLayout, graphActions, recommendationMap, applyEdgeUiPrefs]
   );
 
   // ============================================================================
@@ -1205,12 +1299,18 @@ export default function UnifiedSearchModal({
       graphActions.setEdges([]);
       graphActions.selectNode(null);
       setAddMode(true);
+      setIsGraphMaximized(false);
       setWithinQuery('');
       setDebouncedWithinQuery('');
       setGraphStatus('');
       // Layout state
       setAutoLayout(true);
       setIsLayouting(false);
+      setHoveredClusterId(null);
+      setHasHoveredCluster(false);
+      setPerformanceNotice('');
+      hasAutoDisabledEdgeLabels.current = false;
+      hasAutoDisabledTooltips.current = false;
       // Multi-hop state
       setHopCount(1);
       setDecayFactor(0.7);
@@ -1248,13 +1348,23 @@ export default function UnifiedSearchModal({
 
   // Update edge visibility when toggle changes
   useEffect(() => {
-    graphActions.setEdges((prevEdges) =>
-      prevEdges.map((e) => ({
-        ...e,
-        data: { ...e.data, showEdgeLabels }
-      }))
-    );
-  }, [showEdgeLabels, graphActions]);
+    graphActions.setEdges((prevEdges) => {
+      let changed = false;
+      const nextEdges = prevEdges.map((e) => {
+        const currentLabels = e.data?.showEdgeLabels ?? true;
+        const currentTooltips = e.data?.showEdgeTooltips ?? true;
+        if (currentLabels === showEdgeLabels && currentTooltips === edgeTooltipsEnabled) {
+          return e;
+        }
+        changed = true;
+        return {
+          ...e,
+          data: { ...e.data, showEdgeLabels, showEdgeTooltips: edgeTooltipsEnabled }
+        };
+      });
+      return changed ? nextEdges : prevEdges;
+    });
+  }, [showEdgeLabels, edgeTooltipsEnabled, graphActions]);
 
   // ============================================================================
   // Persistence & Notes
@@ -1310,7 +1420,11 @@ export default function UnifiedSearchModal({
         // Restore edges with updated visibility if needed
         const restoredEdges = state.edges.map((e) => ({
           ...e,
-          data: { ...e.data, showEdgeLabels: loadedShowLabels }
+          data: {
+            ...e.data,
+            showEdgeLabels: loadedShowLabels,
+            showEdgeTooltips: edgeTooltipsEnabled
+          }
         }));
         graphActions.setEdges(restoredEdges);
 
@@ -1339,7 +1453,7 @@ export default function UnifiedSearchModal({
       logger.error('Failed to load graph', e);
       setError('Failed to load saved graph');
     }
-  }, [graphActions]);
+  }, [graphActions, edgeTooltipsEnabled]);
 
   // ============================================================================
   // Shared: File Actions (defined early for keyboard shortcut dependency)
@@ -1405,7 +1519,8 @@ export default function UnifiedSearchModal({
           kind: 'query_match',
           score: result?.score || 0,
           matchDetails: result?.matchDetails || {},
-          showEdgeLabels: showEdgeLabelsRef.current
+          showEdgeLabels: showEdgeLabelsRef.current,
+          showEdgeTooltips: edgeTooltipsRef.current
         }
       };
     });
@@ -1413,21 +1528,35 @@ export default function UnifiedSearchModal({
     const { folderNodes, edges: organizeEdges } = buildRecommendationGraph(fileNodes);
 
     // Update graph state
+    // When adding to graph, filter out cluster nodes to avoid clutter
     graphActions.setNodes((prev) => {
       const incoming = [queryNode, ...fileNodes, ...folderNodes];
       if (!addMode) return incoming;
-      const existing = new Set(prev.map((n) => n.id));
+      // Filter out cluster nodes from previous state - they don't mix well with search results
+      const prevWithoutClusters = prev.filter(
+        (n) => n.type !== 'clusterNode' && n.data?.kind !== 'cluster'
+      );
+      const existing = new Set(prevWithoutClusters.map((n) => n.id));
       const newNodes = incoming.filter((n) => !existing.has(n.id));
-      return [...prev, ...newNodes];
+      return [...prevWithoutClusters, ...newNodes];
     });
 
     graphActions.setEdges((prev) => {
       const incomingEdges = [...queryEdges, ...organizeEdges];
       if (!addMode) return incomingEdges;
-      const existing = new Set(prev.map((e) => e.id));
+      // Filter out cluster-related edges when adding search results
+      const prevWithoutClusterEdges = prev.filter(
+        (e) => e.data?.kind !== 'cluster_member' && e.data?.kind !== 'cross_cluster'
+      );
+      const existing = new Set(prevWithoutClusterEdges.map((e) => e.id));
       const newEdges = incomingEdges.filter((e) => !existing.has(e.id));
-      return [...prev, ...newEdges];
+      return [...prevWithoutClusterEdges, ...newEdges];
     });
+
+    // Turn off cluster view when adding search results
+    if (addMode) {
+      setShowClusters(false);
+    }
 
     // Switch to graph tab
     setActiveTab('graph');
@@ -1441,9 +1570,16 @@ export default function UnifiedSearchModal({
         // the CURRENT state, not the state at the time this function was created
         const currentNodes = nodesRef.current || [];
         const currentEdges = edgesRef.current || [];
+        // Filter out cluster nodes when in add mode - they don't mix well with search results
+        const nodesWithoutClusters = currentNodes.filter(
+          (n) => n.type !== 'clusterNode' && n.data?.kind !== 'cluster'
+        );
+        const edgesWithoutClusters = currentEdges.filter(
+          (e) => e.data?.kind !== 'cluster_member' && e.data?.kind !== 'cross_cluster'
+        );
         const allNodes = addMode
           ? [
-              ...currentNodes.filter((n) => n.id !== queryNodeId),
+              ...nodesWithoutClusters.filter((n) => n.id !== queryNodeId),
               queryNode,
               ...fileNodes,
               ...folderNodes
@@ -1451,7 +1587,7 @@ export default function UnifiedSearchModal({
           : [queryNode, ...fileNodes, ...folderNodes];
         const allEdges = addMode
           ? [
-              ...currentEdges.filter((e) => !e.id.startsWith(`e:${queryNodeId}`)),
+              ...edgesWithoutClusters.filter((e) => !e.id.startsWith(`e:${queryNodeId}`)),
               ...queryEdges,
               ...organizeEdges
             ]
@@ -1468,13 +1604,21 @@ export default function UnifiedSearchModal({
         );
         graphActions.setNodes(layoutedNodes);
         if (layoutedEdges && layoutedEdges.length > 0) {
-          graphActions.setEdges(layoutedEdges);
+          graphActions.setEdges(applyEdgeUiPrefs(layoutedEdges));
         }
       } catch (layoutError) {
         logger.warn('[Graph] Layout after conversion failed:', layoutError);
       }
     }
-  }, [searchResults, debouncedQuery, addMode, autoLayout, graphActions, recommendationMap]);
+  }, [
+    searchResults,
+    debouncedQuery,
+    addMode,
+    autoLayout,
+    graphActions,
+    recommendationMap,
+    applyEdgeUiPrefs
+  ]);
 
   // ============================================================================
   // Keyboard Shortcuts
@@ -1611,7 +1755,8 @@ export default function UnifiedSearchModal({
     onSelectNode: graphActions.selectNode,
     onOpenFile: openFile,
     reactFlowInstance,
-    enabled: isOpen && activeTab === 'graph' && nodes.length > 0
+    enabled: isOpen && activeTab === 'graph' && nodes.length > 0,
+    containerRef: graphContainerRef
   });
 
   // Listen for findSimilar events from FileNode context menu
@@ -2178,6 +2323,18 @@ export default function UnifiedSearchModal({
     setGraphStatus('Focus cleared - showing all nodes');
   }, []);
 
+  const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const adjacencyByNode = useMemo(() => {
+    const map = new Map();
+    edges.forEach((edge) => {
+      if (!map.has(edge.source)) map.set(edge.source, new Set());
+      if (!map.has(edge.target)) map.set(edge.target, new Set());
+      map.get(edge.source).add(edge.target);
+      map.get(edge.target).add(edge.source);
+    });
+    return map;
+  }, [edges]);
+
   /**
    * Get nodes visible in focus mode based on depth from focused node
    */
@@ -2191,19 +2348,19 @@ export default function UnifiedSearchModal({
       for (let d = 0; d < depth; d++) {
         const next = [];
         for (const id of frontier) {
-          // Find all connected nodes via edges
-          edges.forEach((e) => {
-            if (e.source === id && !visible.has(e.target)) {
-              visible.add(e.target);
-              next.push(e.target);
-            } else if (e.target === id && !visible.has(e.source)) {
-              visible.add(e.source);
-              next.push(e.source);
-            }
-          });
+          // Find all connected nodes via adjacency map
+          const neighbors = adjacencyByNode.get(id);
+          if (neighbors) {
+            neighbors.forEach((neighborId) => {
+              if (!visible.has(neighborId)) {
+                visible.add(neighborId);
+                next.push(neighborId);
+              }
+            });
+          }
 
           // Also include cluster members if this is a cluster node
-          const node = nodes.find((n) => n.id === id);
+          const node = nodeById.get(id);
           if (node?.data?.memberIds) {
             node.data.memberIds.forEach((memberId) => {
               if (!visible.has(memberId)) {
@@ -2218,7 +2375,7 @@ export default function UnifiedSearchModal({
 
       return visible;
     },
-    [edges, nodes]
+    [adjacencyByNode, nodeById]
   );
 
   /**
@@ -2421,7 +2578,9 @@ export default function UnifiedSearchModal({
       };
 
       // Guide overlays (e.g., bridges-only)
-      setBridgeOverlayEnabled(intent === 'bridgesOnly');
+      if (intent === 'bridgesOnly') {
+        setBridgeOverlayEnabled(true);
+      }
 
       if (intent === 'related') {
         applyAndLoad('topic', { minSize: 1, confidence: ['high', 'medium', 'low'] });
@@ -2459,7 +2618,7 @@ export default function UnifiedSearchModal({
 
       if (intent === 'expand') {
         if (selectedNode?.id && selectedNode?.data?.kind === 'cluster') {
-          handleClusterExpand(selectedNode.id, selectedNode.data.memberIds || []);
+          handleClusterExpand(selectedNode.id);
           setGraphStatus('Expanding from selection');
         } else if (selectedNode?.id && selectedNode?.data?.kind === 'file') {
           expandFromSelectedRef.current?.();
@@ -2800,7 +2959,7 @@ export default function UnifiedSearchModal({
 
       graphActions.setNodes(layoutedNodes);
       if (layoutedEdges && layoutedEdges.length > 0) {
-        graphActions.setEdges(layoutedEdges);
+        graphActions.setEdges(applyEdgeUiPrefs(layoutedEdges));
       }
       setGraphStatus('Layout applied');
     } catch (error) {
@@ -2809,7 +2968,7 @@ export default function UnifiedSearchModal({
     } finally {
       setIsLayouting(false);
     }
-  }, [nodes, edges, graphActions]);
+  }, [nodes, edges, graphActions, applyEdgeUiPrefs]);
 
   /**
    * Handle drag over for file drops to graph
@@ -2818,13 +2977,11 @@ export default function UnifiedSearchModal({
     e.preventDefault();
     e.stopPropagation();
     // Check if this is a file drop
-    if (
-      e.dataTransfer?.types?.includes('Files') ||
-      e.dataTransfer?.types?.includes('text/uri-list')
-    ) {
+    if (!isFileDragEvent(e)) return;
+    if (e.dataTransfer) {
       e.dataTransfer.dropEffect = 'copy';
-      setIsDragOver(true);
     }
+    setIsDragOver(true);
   }, []);
 
   /**
@@ -2839,6 +2996,20 @@ export default function UnifiedSearchModal({
     }
   }, []);
 
+  const handleGraphWheel = useCallback((event) => {
+    if (!reactFlowInstance.current) return;
+    if (!event.ctrlKey && !event.metaKey) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (event.deltaY < 0 && typeof reactFlowInstance.current.zoomIn === 'function') {
+      reactFlowInstance.current.zoomIn();
+    } else if (event.deltaY > 0 && typeof reactFlowInstance.current.zoomOut === 'function') {
+      reactFlowInstance.current.zoomOut();
+    }
+  }, []);
+
   /**
    * Handle file drop to add files to graph
    */
@@ -2850,23 +3021,22 @@ export default function UnifiedSearchModal({
 
       if (!e.dataTransfer) return;
 
-      // Get dropped files
-      const fileList = Array.from(e.dataTransfer.files || []);
-      if (fileList.length === 0) return;
+      const { paths: droppedPaths } = extractDroppedFiles(e.dataTransfer);
+      if (droppedPaths.length === 0) return;
 
-      setGraphStatus(`Looking up ${fileList.length} file${fileList.length > 1 ? 's' : ''}...`);
+      setGraphStatus(
+        `Looking up ${droppedPaths.length} file${droppedPaths.length > 1 ? 's' : ''}...`
+      );
 
       try {
         const addedNodes = [];
         const addedEdges = [];
 
-        for (const file of fileList) {
-          // Get file path - on Electron, dropped files have a path property
-          const filePath = file.path;
+        for (const filePath of droppedPaths) {
           if (!filePath) continue;
 
           // Search for this file by name to find it in ChromaDB
-          const fileName = filePath.split(/[\\/]/).pop();
+          const fileName = extractFileName(filePath) || filePath;
           const searchResp = await window.electronAPI?.embeddings?.search?.(fileName, {
             topK: 20,
             mode: 'hybrid'
@@ -2932,7 +3102,8 @@ export default function UnifiedSearchModal({
                       data: {
                         kind: 'similarity',
                         score: sim.score,
-                        showEdgeLabels: showEdgeLabelsRef.current
+                        showEdgeLabels: showEdgeLabelsRef.current,
+                        showEdgeTooltips: edgeTooltipsRef.current
                       }
                     });
                   }
@@ -2969,7 +3140,7 @@ export default function UnifiedSearchModal({
             );
             graphActions.setNodes(layoutedNodes);
             if (layoutedEdges && layoutedEdges.length > 0) {
-              graphActions.setEdges(layoutedEdges);
+              graphActions.setEdges(applyEdgeUiPrefs(layoutedEdges));
             }
           } catch (layoutErr) {
             logger.debug('[Graph] Layout after drop failed:', layoutErr);
@@ -2985,7 +3156,7 @@ export default function UnifiedSearchModal({
         setGraphStatus('');
       }
     },
-    [nodes, edges, graphActions, upsertFileNode, autoLayout]
+    [nodes, edges, graphActions, upsertFileNode, autoLayout, applyEdgeUiPrefs]
   );
 
   /**
@@ -3018,15 +3189,16 @@ export default function UnifiedSearchModal({
         return;
       }
 
-      // Apply filters (confidence, size, type, search)
-      const normalizedSearch = (clusterFilters.search || '').trim().toLowerCase();
+      // Apply filters (confidence, size, type, search) using ref to avoid re-creating callback on filter change
+      const currentFilters = clusterFiltersRef.current;
+      const normalizedSearch = (currentFilters.search || '').trim().toLowerCase();
       const filteredClusters = clusters.filter((cluster) => {
-        const confOk = clusterFilters.confidence.includes(cluster.confidence || 'low');
-        const sizeOk = (cluster.memberCount || 0) >= (clusterFilters.minSize || 1);
+        const confOk = currentFilters.confidence.includes(cluster.confidence || 'low');
+        const sizeOk = (cluster.memberCount || 0) >= (currentFilters.minSize || 1);
         const typeOk =
-          clusterFilters.fileType === 'all' ||
+          currentFilters.fileType === 'all' ||
           (cluster.dominantCategory || '').toLowerCase() ===
-            (clusterFilters.fileType || '').toLowerCase();
+            (currentFilters.fileType || '').toLowerCase();
         const searchOk =
           !normalizedSearch ||
           (cluster.label || '').toLowerCase().includes(normalizedSearch) ||
@@ -3176,7 +3348,8 @@ export default function UnifiedSearchModal({
           bridgeCount: edge.count || 0,
           sharedTerms: Array.from(new Set(edge.sharedTerms || [])).slice(0, 3),
           bridgeFiles: edge.bridgeFiles || [],
-          showEdgeLabels: false
+          showEdgeLabels: false,
+          showEdgeTooltips: edgeTooltipsRef.current
         }
       }));
 
@@ -3213,11 +3386,11 @@ export default function UnifiedSearchModal({
           if (!hasShownClusterCelebration.current) {
             hasShownClusterCelebration.current = true;
             setGraphStatus(
-              `Discovered ${clusters.length} groups! Try double-clicking "${firstClusterLabel}" to explore.`
+              `Discovered ${filteredClusters.length} groups! Try double-clicking "${firstClusterLabel}" to explore.`
             );
           } else if (highCount > 0) {
             setGraphStatus(
-              `Found ${clusters.length} groups (${highCount} strong match${highCount > 1 ? 'es' : ''})`
+              `Found ${filteredClusters.length} groups (${highCount} strong match${highCount > 1 ? 'es' : ''})`
             );
           }
         } catch (layoutError) {
@@ -3238,8 +3411,7 @@ export default function UnifiedSearchModal({
     handleSearchWithinCluster,
     handleRenameCluster,
     handleClusterExpand,
-    graphActions,
-    clusterFilters
+    graphActions
   ]);
 
   // Assign to ref so keyboard shortcuts can access it
@@ -3547,7 +3719,19 @@ export default function UnifiedSearchModal({
           const currentNodes = nodesRef.current || [];
           const currentEdges = edgesRef.current || [];
 
-          const nodeMap = new Map(currentNodes.map((n) => [n.id, n]));
+          // Filter out cluster nodes from current graph - they don't mix well with search results
+          // Cluster nodes are designed for cluster exploration view, not search accumulation
+          const nodesWithoutClusters = currentNodes.filter(
+            (n) => n.type !== 'clusterNode' && n.data?.kind !== 'cluster'
+          );
+          const edgesWithoutClusters = currentEdges.filter(
+            (e) => e.data?.kind !== 'cluster_member' && e.data?.kind !== 'cross_cluster'
+          );
+
+          // Turn off cluster view since we're transitioning to search results
+          setShowClusters(false);
+
+          const nodeMap = new Map(nodesWithoutClusters.map((n) => [n.id, n]));
           nextNodes.forEach((n) => {
             if (!nodeMap.has(n.id)) nodeMap.set(n.id, n);
           });
@@ -3555,14 +3739,14 @@ export default function UnifiedSearchModal({
 
           if (merged.length > MAX_GRAPH_NODES) {
             // Don't add more nodes if limit reached
-            finalNodes = currentNodes;
+            finalNodes = nodesWithoutClusters;
             nodeLimitReached = true;
             setError(`Graph limit (${MAX_GRAPH_NODES} nodes) reached. Clear graph to start fresh.`);
           } else {
             finalNodes = merged;
           }
 
-          const edgeMap = new Map(currentEdges.map((e) => [e.id, e]));
+          const edgeMap = new Map(edgesWithoutClusters.map((e) => [e.id, e]));
           nextEdges.forEach((e) => edgeMap.set(e.id, e));
 
           finalEdges = Array.from(edgeMap.values());
@@ -3620,7 +3804,7 @@ export default function UnifiedSearchModal({
               });
               layoutedNodes = result.nodes;
               if (result.edges && result.edges.length > 0) {
-                graphActions.setEdges(result.edges);
+                graphActions.setEdges(applyEdgeUiPrefs(result.edges));
               }
               if (result.isPartial) {
                 setGraphStatus(
@@ -3636,7 +3820,7 @@ export default function UnifiedSearchModal({
               });
               layoutedNodes = layoutResult.nodes;
               if (layoutResult.edges && layoutResult.edges.length > 0) {
-                graphActions.setEdges(layoutResult.edges);
+                graphActions.setEdges(applyEdgeUiPrefs(layoutResult.edges));
               }
             }
             graphActions.setNodes(layoutedNodes);
@@ -3652,6 +3836,17 @@ export default function UnifiedSearchModal({
 
         // Fetch and add similarity edges between file nodes
         const expandedFileIds = nextNodes.filter((n) => n.type === 'fileNode').map((n) => n.id);
+        const nodeDataMap = new Map();
+        nextNodes.forEach((n) => {
+          if (n.type === 'fileNode') {
+            nodeDataMap.set(n.id, {
+              label: n.data?.label || '',
+              tags: n.data?.tags || [],
+              category: n.data?.category || '',
+              subject: n.data?.subject || ''
+            });
+          }
+        });
 
         if (expandedFileIds.length >= 2) {
           try {
@@ -3661,19 +3856,6 @@ export default function UnifiedSearchModal({
             );
 
             if (simEdgesResp?.success && Array.isArray(simEdgesResp.edges)) {
-              // Build a map of node data for tooltip info
-              const nodeDataMap = new Map();
-              nextNodes.forEach((n) => {
-                if (n.type === 'fileNode') {
-                  nodeDataMap.set(n.id, {
-                    label: n.data?.label || '',
-                    tags: n.data?.tags || [],
-                    category: n.data?.category || '',
-                    subject: n.data?.subject || ''
-                  });
-                }
-              });
-
               const similarityEdges = simEdgesResp.edges
                 .filter((e) => finalNodeIds.has(e.source) && finalNodeIds.has(e.target))
                 .map((e) => ({
@@ -3687,7 +3869,8 @@ export default function UnifiedSearchModal({
                     similarity: e.similarity,
                     sourceData: nodeDataMap.get(e.source) || {},
                     targetData: nodeDataMap.get(e.target) || {},
-                    showEdgeLabels: showEdgeLabelsRef.current
+                    showEdgeLabels: showEdgeLabelsRef.current,
+                    showEdgeTooltips: edgeTooltipsRef.current
                   }
                 }));
 
@@ -3718,16 +3901,14 @@ export default function UnifiedSearchModal({
                 id: edge.id,
                 source: edge.source,
                 target: edge.target,
-                type: 'smartStep',
-                label: 'Knowledge',
-                style: {
-                  stroke: '#22c55e',
-                  strokeDasharray: '4,4',
-                  strokeWidth: 1.5
-                },
+                type: 'knowledge',
                 data: {
                   kind: 'knowledge',
-                  weight: edge.weight
+                  weight: edge.weight,
+                  concepts: Array.isArray(edge.concepts) ? edge.concepts : [],
+                  sourceData: nodeDataMap.get(edge.source) || {},
+                  targetData: nodeDataMap.get(edge.target) || {},
+                  showEdgeTooltips: edgeTooltipsRef.current
                 }
               }));
 
@@ -3750,7 +3931,7 @@ export default function UnifiedSearchModal({
         setError(getErrorMessage(e, 'Graph search'));
       }
     },
-    [query, defaultTopK, addMode, autoLayout, graphActions, upsertFileNode]
+    [query, defaultTopK, addMode, autoLayout, graphActions, upsertFileNode, applyEdgeUiPrefs]
   );
 
   const expandFromSelected = useCallback(
@@ -3818,7 +3999,8 @@ export default function UnifiedSearchModal({
               similarity: r.score || 0,
               sourceData: seedNodeData,
               targetData: targetNodeData,
-              showEdgeLabels: showEdgeLabelsRef.current
+              showEdgeLabels: showEdgeLabelsRef.current,
+              showEdgeTooltips: edgeTooltipsRef.current
             }
           });
         });
@@ -3894,7 +4076,7 @@ export default function UnifiedSearchModal({
             );
             graphActions.setNodes(layoutedNodes);
             if (layoutedEdges && layoutedEdges.length > 0) {
-              graphActions.setEdges(layoutedEdges);
+              graphActions.setEdges(applyEdgeUiPrefs(layoutedEdges));
             }
             setGraphStatus(`Expanded: +${results.length} (laid out)`);
           } catch (layoutError) {
@@ -3936,7 +4118,8 @@ export default function UnifiedSearchModal({
                     similarity: e.similarity,
                     sourceData: nodeDataMap.get(e.source) || {},
                     targetData: nodeDataMap.get(e.target) || {},
-                    showEdgeLabels: showEdgeLabelsRef.current
+                    showEdgeLabels: showEdgeLabelsRef.current,
+                    showEdgeTooltips: edgeTooltipsRef.current
                   }
                 }));
 
@@ -3959,7 +4142,17 @@ export default function UnifiedSearchModal({
         setError(getErrorMessage(e, 'Node expansion'));
       }
     },
-    [selectedNode, autoLayout, nodes, edges, hopCount, decayFactor, graphActions, upsertFileNode]
+    [
+      selectedNode,
+      autoLayout,
+      nodes,
+      edges,
+      hopCount,
+      decayFactor,
+      graphActions,
+      upsertFileNode,
+      applyEdgeUiPrefs
+    ]
   );
 
   // Assign to ref so event handlers can access it
@@ -4211,55 +4404,28 @@ export default function UnifiedSearchModal({
 
   // Double-click on a node to expand it (file or cluster)
   // Mouse enter/leave handlers for interactive edge visibility
-  const onNodeMouseEnter = useCallback(
-    (_, node) => {
-      // Only apply for cluster nodes
-      if (node.type !== 'clusterNode') return;
+  const onNodeMouseEnter = useCallback((_, node) => {
+    // Only apply for cluster nodes
+    if (node.type !== 'clusterNode') return;
 
-      // Find all edges connected to this node
-      graphActions.setEdges((prevEdges) =>
-        prevEdges.map((edge) => {
-          // If edge is connected to this node, make it visible
-          if (edge.source === node.id || edge.target === node.id) {
-            return {
-              ...edge,
-              style: {
-                ...edge.style,
-                opacity: 0.8 // Visible on hover
-              },
-              className: edge.className?.replace('opacity-0', 'opacity-100') || ''
-            };
-          }
-          return edge;
-        })
-      );
-    },
-    [graphActions]
-  );
+    setHoveredClusterId((prev) => (prev === node.id ? prev : node.id));
+    setHasHoveredCluster(true);
+  }, []);
 
-  const onNodeMouseLeave = useCallback(
-    (_, node) => {
-      if (node.type !== 'clusterNode') return;
+  const onNodeMouseLeave = useCallback((_, node) => {
+    if (node.type !== 'clusterNode') return;
 
-      // Hide all cross-cluster edges again
-      graphActions.setEdges((prevEdges) =>
-        prevEdges.map((edge) => {
-          if (edge.data?.kind === 'cross_cluster') {
-            return {
-              ...edge,
-              style: {
-                ...edge.style,
-                opacity: 0 // Hidden again
-              },
-              className: edge.className?.replace('opacity-100', 'opacity-0') || ''
-            };
-          }
-          return edge;
-        })
-      );
-    },
-    [graphActions]
-  );
+    setHoveredClusterId((prev) => (prev === node.id ? null : prev));
+    setHasHoveredCluster(false);
+  }, []);
+
+  const handleGraphMove = useCallback((_, viewport) => {
+    if (!viewport || typeof viewport.zoom !== 'number') return;
+    const nextBucket = viewport.zoom < ZOOM_LABEL_HIDE_THRESHOLD;
+    if (nextBucket === zoomBucketRef.current) return;
+    zoomBucketRef.current = nextBucket;
+    setZoomLevel(viewport.zoom);
+  }, []);
 
   const onNodeDoubleClick = useCallback(
     (_, node) => {
@@ -4315,9 +4481,13 @@ export default function UnifiedSearchModal({
     });
   }, [nodes, selectedNodeId, showClusters]);
 
+  const rfNodeTypes = useMemo(() => STABLE_NODE_TYPES, []);
+  const rfEdgeTypes = useMemo(() => STABLE_EDGE_TYPES, []);
+
   // FIX: Filter edges based on visible nodes to prevent "dangling" edges
-  const rfEdges = useMemo(() => {
-    const baseEdges = showClusters
+  // Split into baseEdges (expensive, no hover deps) and rfEdges (lightweight hover overlay)
+  const baseEdges = useMemo(() => {
+    const filtered = showClusters
       ? edges
       : (() => {
           const visibleNodeIds = new Set(rfNodes.map((n) => n.id));
@@ -4325,25 +4495,67 @@ export default function UnifiedSearchModal({
         })();
 
     // Bridge overlay: dim non-bridge edges when showing cluster bridges only
-    if (!bridgeOverlayEnabled || !showClusters) {
-      return baseEdges;
+    if (bridgeOverlayEnabled && showClusters) {
+      return filtered.map((edge) => {
+        const isBridge = edge.data?.kind === 'cross_cluster';
+        return {
+          ...edge,
+          style: {
+            ...edge.style,
+            opacity: isBridge ? 0.9 : 0.05
+          },
+          data: {
+            ...edge.data,
+            showEdgeLabels: Boolean(isBridge)
+          }
+        };
+      });
     }
 
+    return filtered;
+  }, [edges, rfNodes, showClusters, bridgeOverlayEnabled]);
+
+  const rfEdges = useMemo(() => {
+    if (!hoveredClusterId && !hasHoveredCluster) return baseEdges;
+    if (!showClusters || bridgeOverlayEnabled) return baseEdges;
+
+    // Hovered cluster highlighting: only when overlay is off
+    if (hoveredClusterId) {
+      const hoveredId = hoveredClusterId;
+      return baseEdges.map((edge) => {
+        if (edge.data?.kind !== 'cross_cluster') return edge;
+        const isConnected = edge.source === hoveredId || edge.target === hoveredId;
+        const targetOpacity = isConnected ? 0.8 : 0;
+        const currentOpacity = edge.style?.opacity ?? 1;
+        if (currentOpacity === targetOpacity) return edge;
+        return {
+          ...edge,
+          style: {
+            ...edge.style,
+            opacity: targetOpacity
+          },
+          className: isConnected
+            ? edge.className?.replace('opacity-0', 'opacity-100') || edge.className
+            : edge.className?.replace('opacity-100', 'opacity-0') || edge.className
+        };
+      });
+    }
+
+    // hasHoveredCluster is true but hoveredClusterId is null (mouse left cluster)
     return baseEdges.map((edge) => {
-      const isBridge = edge.data?.kind === 'cross_cluster';
+      if (edge.data?.kind !== 'cross_cluster') return edge;
+      const currentOpacity = edge.style?.opacity ?? 1;
+      if (currentOpacity === 0) return edge;
       return {
         ...edge,
         style: {
           ...edge.style,
-          opacity: isBridge ? 0.9 : 0.05
+          opacity: 0
         },
-        data: {
-          ...edge.data,
-          showEdgeLabels: Boolean(isBridge)
-        }
+        className: edge.className?.replace('opacity-100', 'opacity-0') || edge.className
       };
     });
-  }, [edges, rfNodes, showClusters, bridgeOverlayEnabled]);
+  }, [baseEdges, hoveredClusterId, hasHoveredCluster, showClusters, bridgeOverlayEnabled]);
 
   const rfFitViewOptions = useMemo(() => ({ padding: 0.2 }), []);
   const rfDefaultViewport = useMemo(() => ({ x: 0, y: 0, zoom: 1 }), []);
@@ -4442,9 +4654,9 @@ export default function UnifiedSearchModal({
         isGraphMaximized ? 'bg-system-gray-100' : ''
       }`}
     >
-      <div className="flex flex-col gap-4 min-h-[60vh]">
+      <div className="relative flex flex-col gap-4 min-h-[60vh]">
         {isOpen && isLoadingStats && !hasLoadedStats && (
-          <ModalLoadingOverlay message="Loading Knowledge OS..." />
+          <ModalLoadingOverlay message="Loading Knowledge OS..." inline />
         )}
         {/* Header - simplified when graph is hidden */}
         {GRAPH_FEATURE_FLAGS.SHOW_GRAPH && !isGraphMaximized ? (
@@ -4921,194 +5133,217 @@ export default function UnifiedSearchModal({
             {/* Left: Controls */}
             {!isGraphMaximized && (
               <div
-                className="surface-panel p-4 flex flex-col gap-4 overflow-y-auto"
+                className="surface-panel w-80 p-4 flex flex-col gap-5 overflow-y-auto border-r border-system-gray-200 bg-system-gray-50/50"
                 role="complementary"
                 aria-label="Graph Controls"
               >
-                {/* 1. Primary Action: Add to Graph */}
-                <div>
-                  <Text
-                    as="div"
-                    variant="tiny"
-                    className="font-semibold text-system-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5"
-                  >
+                {/* Add to Graph */}
+                <section className="space-y-2">
+                  <Text as="div" variant="tiny" className={GRAPH_SIDEBAR_SECTION_TITLE}>
                     <SearchIcon className="w-3.5 h-3.5" />
                     Add to Graph
                   </Text>
-                  <SearchAutocomplete
-                    value={query}
-                    onChange={setQuery}
-                    onSearch={runGraphSearch}
-                    placeholder="Search files..."
-                    ariaLabel="Search to add nodes"
-                  />
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <Text
-                      as="label"
-                      variant="tiny"
-                      className="text-system-gray-600 flex items-center gap-2 select-none cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={addMode}
-                        onChange={(e) => setAddMode(e.target.checked)}
-                        className="rounded"
-                      />
-                      Add to existing
-                    </Text>
-                    <Button variant="primary" size="sm" onClick={runGraphSearch}>
-                      Add
-                    </Button>
+                  <div className={`${GRAPH_SIDEBAR_CARD} space-y-3`}>
+                    <SearchAutocomplete
+                      value={query}
+                      onChange={setQuery}
+                      onSearch={runGraphSearch}
+                      placeholder="Search files..."
+                      ariaLabel="Search to add nodes"
+                      className="bg-white shadow-sm"
+                    />
+                    <div className="flex items-center justify-between gap-3">
+                      <Text
+                        as="label"
+                        variant="tiny"
+                        className="text-system-gray-600 flex items-center gap-2 select-none cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={addMode}
+                          onChange={(e) => setAddMode(e.target.checked)}
+                          className="h-4 w-4 rounded border-system-gray-300 text-stratosort-blue focus:ring-stratosort-blue/20"
+                        />
+                        Add to existing
+                      </Text>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={runGraphSearch}
+                        className="px-4 py-1.5 h-auto text-xs font-semibold shadow-sm"
+                      >
+                        Add
+                      </Button>
+                    </div>
                   </div>
-                </div>
+                </section>
 
-                {/* 2. Exploration Tools */}
-                <div className="pt-3 border-t border-system-gray-200">
-                  <Text
-                    as="div"
-                    variant="tiny"
-                    className="font-semibold text-system-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5"
-                  >
+                {/* Explore */}
+                <section className="space-y-3">
+                  <Text as="div" variant="tiny" className={GRAPH_SIDEBAR_SECTION_TITLE}>
                     <Network className="w-3.5 h-3.5" />
                     <span>Explore</span>
                   </Text>
 
-                  {/* Cluster mode (minimal) */}
-                  <div className="space-y-2 mb-3">
-                    <label className="text-[11px] text-system-gray-500">Cluster by</label>
-                    <select
-                      value={clusterMode}
-                      onChange={(e) => setClusterMode(e.target.value)}
-                      className="w-full text-xs border border-system-gray-200 rounded px-2 py-1 bg-white text-system-gray-800"
-                      style={{ colorScheme: 'light' }}
-                    >
-                      <option value="topic">Topic (semantic)</option>
-                      <option value="time">Time (recency)</option>
-                      <option value="type">Type (file category)</option>
-                      <option value="tag">Tag/Folder</option>
-                    </select>
-                  </div>
+                  <div className={`${GRAPH_SIDEBAR_CARD} space-y-3`}>
+                    <div>
+                      <Text
+                        as="label"
+                        variant="tiny"
+                        className="font-medium text-system-gray-700 mb-1.5 block"
+                      >
+                        Cluster by
+                      </Text>
+                      <Select
+                        value={clusterMode}
+                        onChange={(e) => setClusterMode(e.target.value)}
+                        className="text-sm shadow-sm bg-white"
+                      >
+                        <option value="topic">Topic (semantic)</option>
+                        <option value="time">Time (recency)</option>
+                        <option value="type">Type (file category)</option>
+                        <option value="tag">Tag/Folder</option>
+                      </Select>
+                    </div>
 
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full justify-between text-xs"
-                    onClick={() => setShowAdvancedFilters((prev) => !prev)}
-                    aria-expanded={showAdvancedFilters}
-                    aria-controls="advanced-cluster-filters"
-                  >
-                    <span>
-                      {showAdvancedFilters ? 'Hide advanced filters' : 'Show advanced filters'}
-                    </span>
-                    <ChevronDown
-                      className={`h-3 w-3 transition-transform ${showAdvancedFilters ? 'rotate-180' : ''}`}
-                    />
-                  </Button>
-
-                  {showAdvancedFilters && (
-                    <div
-                      id="advanced-cluster-filters"
-                      className="space-y-3 mt-2 border border-system-gray-200 rounded-lg p-3 bg-system-gray-50"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-between text-xs font-medium text-system-gray-700 bg-white border border-system-gray-200 rounded-lg px-3 py-2 hover:bg-system-gray-50"
+                      onClick={() => setShowAdvancedFilters((prev) => !prev)}
+                      aria-expanded={showAdvancedFilters}
+                      aria-controls="advanced-cluster-filters"
                     >
-                      <div className="grid grid-cols-2 gap-2 text-[11px]">
-                        {['high', 'medium', 'low'].map((conf) => (
-                          <label
-                            key={conf}
-                            className="flex items-center gap-1 text-system-gray-600"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={clusterFilters.confidence.includes(conf)}
+                      <span>
+                        {showAdvancedFilters ? 'Hide advanced filters' : 'Show advanced filters'}
+                      </span>
+                      <ChevronDown
+                        className={`h-3.5 w-3.5 text-system-gray-400 transition-transform ${showAdvancedFilters ? 'rotate-180' : ''}`}
+                      />
+                    </Button>
+
+                    {showAdvancedFilters && (
+                      <div
+                        id="advanced-cluster-filters"
+                        className="mt-2 space-y-3 border border-system-gray-200 rounded-lg p-3 bg-system-gray-50/80"
+                      >
+                        <Text
+                          as="div"
+                          variant="tiny"
+                          className="font-medium text-system-gray-600 mb-1.5"
+                        >
+                          Confidence Level
+                        </Text>
+                        <div className="flex flex-wrap gap-x-3 gap-y-1">
+                          {['high', 'medium', 'low'].map((conf) => (
+                            <Text
+                              key={conf}
+                              as="label"
+                              variant="tiny"
+                              className="flex items-center gap-1.5 text-system-gray-600 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={clusterFilters.confidence.includes(conf)}
+                                onChange={(e) =>
+                                  setClusterFilters((prev) => {
+                                    const current = prev.confidence;
+                                    const next = e.target.checked
+                                      ? Array.from(new Set([...current, conf]))
+                                      : current.filter((c) => c !== conf);
+                                    return { ...prev, confidence: next };
+                                  })
+                                }
+                                className="h-4 w-4 rounded border-system-gray-300 text-stratosort-blue focus:ring-stratosort-blue/20"
+                              />
+                              <span className="capitalize">{conf}</span>
+                            </Text>
+                          ))}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <Text
+                              as="label"
+                              variant="tiny"
+                              className="font-medium text-system-gray-600 mb-1.5 block"
+                            >
+                              Min size
+                            </Text>
+                            <Input
+                              type="number"
+                              min={1}
+                              value={clusterFilters.minSize}
                               onChange={(e) =>
-                                setClusterFilters((prev) => {
-                                  const current = prev.confidence;
-                                  const next = e.target.checked
-                                    ? Array.from(new Set([...current, conf]))
-                                    : current.filter((c) => c !== conf);
-                                  return { ...prev, confidence: next };
-                                })
+                                setClusterFilters((prev) => ({
+                                  ...prev,
+                                  minSize: Math.max(1, Number(e.target.value) || 1)
+                                }))
                               }
-                              className="rounded"
+                              className="h-8 text-sm bg-white"
                             />
-                            <span className="capitalize">{conf} conf.</span>
-                          </label>
-                        ))}
-                      </div>
+                          </div>
 
-                      <div className="flex items-center gap-2">
-                        <label className="text-[11px] text-system-gray-500 whitespace-nowrap">
-                          Min size
-                        </label>
-                        <input
-                          type="number"
-                          min={1}
-                          value={clusterFilters.minSize}
+                          <div>
+                            <Text
+                              as="label"
+                              variant="tiny"
+                              className="font-medium text-system-gray-600 mb-1.5 block"
+                            >
+                              File type
+                            </Text>
+                            <Select
+                              value={clusterFilters.fileType}
+                              onChange={(e) =>
+                                setClusterFilters((prev) => ({ ...prev, fileType: e.target.value }))
+                              }
+                              className="text-sm bg-white"
+                            >
+                              <option value="all">All</option>
+                              <option value="document">Document</option>
+                              <option value="spreadsheet">Spreadsheet</option>
+                              <option value="code">Code</option>
+                              <option value="image">Image</option>
+                              <option value="audio">Audio</option>
+                              <option value="video">Video</option>
+                            </Select>
+                          </div>
+                        </div>
+
+                        <Input
+                          value={clusterFilters.search}
                           onChange={(e) =>
-                            setClusterFilters((prev) => ({
-                              ...prev,
-                              minSize: Math.max(1, Number(e.target.value) || 1)
-                            }))
+                            setClusterFilters((prev) => ({ ...prev, search: e.target.value }))
                           }
-                          className="flex-1 text-xs border border-system-gray-200 rounded px-2 py-1 bg-white"
+                          placeholder="Search clusters..."
+                          className="h-8 text-sm bg-white"
                         />
                       </div>
-
-                      <div className="flex items-center gap-2">
-                        <label className="text-[11px] text-system-gray-500 whitespace-nowrap">
-                          Type
-                        </label>
-                        <select
-                          value={clusterFilters.fileType}
-                          onChange={(e) =>
-                            setClusterFilters((prev) => ({ ...prev, fileType: e.target.value }))
-                          }
-                          className="flex-1 text-xs border border-system-gray-200 rounded px-2 py-1 bg-white text-system-gray-800"
-                          style={{ colorScheme: 'light' }}
-                        >
-                          <option value="all">All</option>
-                          <option value="document">Document</option>
-                          <option value="spreadsheet">Spreadsheet</option>
-                          <option value="code">Code</option>
-                          <option value="image">Image</option>
-                          <option value="audio">Audio</option>
-                          <option value="video">Video</option>
-                        </select>
-                      </div>
-
-                      <Input
-                        value={clusterFilters.search}
-                        onChange={(e) =>
-                          setClusterFilters((prev) => ({ ...prev, search: e.target.value }))
-                        }
-                        placeholder="Search clusters..."
-                        className="h-8 text-xs"
-                      />
-                    </div>
-                  )}
+                    )}
+                  </div>
 
                   {/* Guide assistant */}
-                  <div className="space-y-2 bg-system-gray-50 border border-system-gray-200 rounded-lg p-2">
-                    <Text
-                      as="div"
-                      variant="tiny"
-                      className="flex items-center justify-between text-system-gray-600"
-                    >
-                      <span>Guide me</span>
+                  <div className={GRAPH_SIDEBAR_CARD}>
+                    <div className="flex items-center justify-between mb-2">
+                      <Text as="span" variant="tiny" className="font-semibold text-system-gray-700">
+                        Guide me
+                      </Text>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => setShowGuidePanel((v) => !v)}
-                        className="h-auto px-2 py-0 text-system-gray-500 hover:text-stratosort-blue"
+                        className="h-7 px-2 py-0 text-xs text-system-gray-500 hover:text-stratosort-blue"
                       >
                         {showGuidePanel ? 'Hide' : 'Show'}
                       </Button>
-                    </Text>
+                    </div>
                     {showGuidePanel && (
-                      <div className="space-y-2">
-                        <div className="grid grid-cols-2 gap-1">
+                      <div className="space-y-2 pt-2 border-t border-system-gray-100">
+                        <div className="grid grid-cols-2 gap-1.5">
                           <Button
                             variant="ghost"
                             size="sm"
+                            className="text-xs justify-start h-8"
                             onClick={() => handleGuideIntent('related')}
                           >
                             Related topics
@@ -5116,6 +5351,7 @@ export default function UnifiedSearchModal({
                           <Button
                             variant="ghost"
                             size="sm"
+                            className="text-xs justify-start h-8"
                             onClick={() => handleGuideIntent('recent')}
                           >
                             Recent changes
@@ -5123,6 +5359,7 @@ export default function UnifiedSearchModal({
                           <Button
                             variant="ghost"
                             size="sm"
+                            className="text-xs justify-start h-8"
                             onClick={() => handleGuideIntent('type')}
                           >
                             By type
@@ -5130,6 +5367,7 @@ export default function UnifiedSearchModal({
                           <Button
                             variant="ghost"
                             size="sm"
+                            className="text-xs justify-start h-8"
                             onClick={() => handleGuideIntent('bridges')}
                           >
                             Bridges/gaps
@@ -5137,6 +5375,7 @@ export default function UnifiedSearchModal({
                           <Button
                             variant="ghost"
                             size="sm"
+                            className="text-xs justify-start h-8"
                             onClick={() => handleGuideIntent('expand')}
                           >
                             Expand selection
@@ -5144,17 +5383,18 @@ export default function UnifiedSearchModal({
                           <Button
                             variant="ghost"
                             size="sm"
+                            className="text-xs justify-start h-8"
                             onClick={() => handleGuideIntent('bridgesOnly')}
                           >
                             Bridges only
                           </Button>
                         </div>
-                        <div className="flex gap-1">
+                        <div className="flex gap-1.5 pt-1">
                           <Input
                             value={guideInput}
                             onChange={(e) => setGuideInput(e.target.value)}
                             placeholder="Describe what you need..."
-                            className="h-8 text-xs"
+                            className="h-8 text-sm bg-white"
                           />
                           <Button
                             variant="primary"
@@ -5162,6 +5402,7 @@ export default function UnifiedSearchModal({
                             onClick={() =>
                               guideInput.trim() && handleGuideIntent('custom', { text: guideInput })
                             }
+                            className="h-8 px-3 text-xs font-semibold"
                           >
                             Go
                           </Button>
@@ -5170,7 +5411,7 @@ export default function UnifiedSearchModal({
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="text-xs"
+                            className="text-xs text-system-gray-500 hover:text-system-gray-700"
                             onClick={resetGraphFilters}
                           >
                             Reset filters
@@ -5179,41 +5420,49 @@ export default function UnifiedSearchModal({
                       </div>
                     )}
                   </div>
+                </section>
 
-                  <div className="space-y-3">
-                    <Button
-                      variant={showClusters ? 'primary' : 'secondary'}
-                      size="sm"
-                      onClick={loadClusters}
-                      disabled={isComputingClusters}
-                      className="w-full justify-center"
-                      title="Group similar files into clusters"
-                    >
-                      <Layers className="h-4 w-4" />
-                      <span>
-                        {isComputingClusters
-                          ? 'Computing...'
-                          : showClusters
-                            ? 'Refresh Clusters'
-                            : 'Auto-discover Clusters'}
-                      </span>
-                    </Button>
+                {/* Actions */}
+                <section className="space-y-3">
+                  <Text as="div" variant="tiny" className={GRAPH_SIDEBAR_SECTION_TITLE}>
+                    <List className="w-3.5 h-3.5" />
+                    <span>Actions</span>
+                  </Text>
+                  <div className={`${GRAPH_SIDEBAR_CARD} space-y-3`}>
+                    <div className="space-y-2.5">
+                      <Button
+                        variant={showClusters ? 'primary' : 'secondary'}
+                        size="sm"
+                        onClick={loadClusters}
+                        disabled={isComputingClusters}
+                        className="w-full justify-center h-9 text-xs font-semibold shadow-sm"
+                        title="Group similar files into clusters"
+                      >
+                        <Layers className="h-4 w-4" />
+                        <span>
+                          {isComputingClusters
+                            ? 'Computing...'
+                            : showClusters
+                              ? 'Refresh Clusters'
+                              : 'Auto-discover Clusters'}
+                        </span>
+                      </Button>
 
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={applyLayout}
-                      disabled={nodes.length === 0 || isLayouting}
-                      className="w-full justify-center"
-                      title="Organize nodes automatically"
-                    >
-                      <LayoutGrid className="h-4 w-4" />
-                      <span>{isLayouting ? 'Organizing...' : 'Re-organize Layout'}</span>
-                    </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={applyLayout}
+                        disabled={nodes.length === 0 || isLayouting}
+                        className="w-full justify-center h-9 text-xs font-semibold shadow-sm"
+                        title="Organize nodes automatically"
+                      >
+                        <LayoutGrid className="h-4 w-4" />
+                        <span>{isLayouting ? 'Organizing...' : 'Re-organize Layout'}</span>
+                      </Button>
+                    </div>
 
-                    {/* Expand/Collapse All Clusters */}
                     {showClusters && (
-                      <div className="flex gap-3">
+                      <div className="pt-3 border-t border-system-gray-100 flex gap-2">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -5226,7 +5475,7 @@ export default function UnifiedSearchModal({
                                 !n.data?.expanded
                             ).length === 0
                           }
-                          className="flex-1 justify-center text-xs"
+                          className="flex-1 justify-center text-xs h-8"
                           title="Expand all clusters"
                         >
                           <Maximize2 className="h-3.5 w-3.5" />
@@ -5244,7 +5493,7 @@ export default function UnifiedSearchModal({
                                 n.data?.expanded
                             ).length === 0
                           }
-                          className="flex-1 justify-center text-xs"
+                          className="flex-1 justify-center text-xs h-8"
                           title="Collapse all clusters"
                         >
                           <Minimize2 className="h-3.5 w-3.5" />
@@ -5253,204 +5502,203 @@ export default function UnifiedSearchModal({
                       </div>
                     )}
 
-                    {/* Focus Mode Controls */}
                     {focusNodeId && (
-                      <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-2 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium text-indigo-700">
-                            Focus Mode Active
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={handleClearFocus}
-                            className="text-xs text-indigo-600 hover:bg-indigo-100 p-1 h-auto"
-                          >
-                            Clear Focus
-                          </Button>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-indigo-600">Depth:</span>
-                          <select
-                            value={focusDepth}
-                            onChange={(e) => setFocusDepth(Number(e.target.value))}
-                            className="flex-1 text-xs border border-indigo-200 rounded px-2 py-1 bg-white text-indigo-700"
-                            style={{ colorScheme: 'light' }}
-                          >
-                            <option value={1} className="bg-white text-indigo-700">
-                              1 level
-                            </option>
-                            <option value={2} className="bg-white text-indigo-700">
-                              2 levels
-                            </option>
-                            <option value={3} className="bg-white text-indigo-700">
-                              3 levels
-                            </option>
-                          </select>
+                      <div className="pt-3 border-t border-system-gray-100">
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Text as="span" variant="tiny" className="font-medium text-indigo-700">
+                              Focus Mode Active
+                            </Text>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={handleClearFocus}
+                              className="text-xs text-indigo-600 hover:bg-indigo-100 px-2 py-0.5 h-auto"
+                            >
+                              Clear Focus
+                            </Button>
+                          </div>
+                          <div>
+                            <Text
+                              as="label"
+                              variant="tiny"
+                              className="font-medium text-indigo-600 mb-1.5 block"
+                            >
+                              Focus Depth
+                            </Text>
+                            <Select
+                              value={focusDepth}
+                              onChange={(e) => setFocusDepth(Number(e.target.value))}
+                              className="text-sm text-indigo-700"
+                            >
+                              <option value={1}>1 level (Direct)</option>
+                              <option value={2}>2 levels</option>
+                              <option value={3}>3 levels (Deep)</option>
+                            </Select>
+                          </div>
                         </div>
                       </div>
                     )}
 
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        if (nodes.length > 0) {
-                          setShowClearConfirm(true);
-                        }
-                      }}
-                      disabled={nodes.length === 0}
-                      className="w-full justify-center text-red-600 hover:bg-red-50 hover:text-red-700"
-                    >
-                      Clear Graph
-                    </Button>
-                  </div>
-                </div>
-
-                {/* 3. Advanced / Secondary Controls (Collapsible) */}
-                <div className="pt-2 border-t border-system-gray-200">
-                  <Button
-                    onClick={() => setShowAdvancedControls(!showAdvancedControls)}
-                    variant="ghost"
-                    size="sm"
-                    rightIcon={
-                      showAdvancedControls ? (
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      ) : (
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      )
-                    }
-                    className="w-full justify-start text-xs font-semibold text-system-gray-500 uppercase tracking-wider mb-2 hover:text-system-gray-800"
-                  >
-                    Advanced Options
-                  </Button>
-
-                  {showAdvancedControls && (
-                    <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200 pl-1">
-                      {/* Filter */}
-                      <div>
-                        <Text
-                          as="div"
-                          variant="tiny"
-                          className="font-medium text-system-gray-700 mb-1.5"
-                        >
-                          Filter Visibility
-                        </Text>
-                        <Input
-                          value={withinQuery}
-                          onChange={(e) => setWithinQuery(e.target.value)}
-                          placeholder="Filter nodes..."
-                          className="h-8"
-                        />
-                      </div>
-
-                      {/* Expansion Settings */}
-                      <div>
-                        <Text
-                          as="div"
-                          variant="tiny"
-                          className="font-medium text-system-gray-700 mb-1.5"
-                        >
-                          Connection Depth
-                        </Text>
-                        <div className="flex items-center gap-2 mb-2">
-                          <select
-                            value={hopCount}
-                            onChange={(e) => setHopCount(Number(e.target.value))}
-                            className="flex-1 border border-system-gray-200 rounded px-2 py-1.5 bg-white text-system-gray-900"
-                            style={{ colorScheme: 'light' }}
-                          >
-                            <option value={1} className="bg-white text-system-gray-900">
-                              1 level (Direct)
-                            </option>
-                            <option value={2} className="bg-white text-system-gray-900">
-                              2 levels
-                            </option>
-                            <option value={3} className="bg-white text-system-gray-900">
-                              3 levels (Deep)
-                            </option>
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Auto-layout Toggle */}
-                      <Text
-                        as="label"
-                        variant="tiny"
-                        className="text-system-gray-600 flex items-center gap-2 select-none cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={autoLayout}
-                          onChange={(e) => setAutoLayout(e.target.checked)}
-                          className="rounded"
-                        />
-                        Auto-layout on changes
-                      </Text>
-
-                      {/* Auto-clustering Toggle */}
-                      <Text
-                        as="label"
-                        variant="tiny"
-                        className="text-system-gray-600 flex items-center gap-2 select-none cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={enableAutoClustering}
-                          onChange={(e) => setEnableAutoClustering(e.target.checked)}
-                          className="rounded"
-                        />
-                        Auto-load clusters
-                      </Text>
-
-                      {/* Edge Labels Toggle */}
-                      <Text
-                        as="label"
-                        variant="tiny"
-                        className="text-system-gray-600 flex items-center gap-2 select-none cursor-pointer mt-1"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={showEdgeLabels}
-                          onChange={(e) => setShowEdgeLabels(e.target.checked)}
-                          className="rounded"
-                        />
-                        Show connection labels
-                      </Text>
-
-                      {/* Save/Load Controls */}
-                      <div className="pt-2 mt-2 border-t border-system-gray-100 flex gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={handleSaveGraph}
-                          className="flex-1 justify-center"
-                        >
-                          Save State
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={handleLoadGraph}
-                          className="flex-1 justify-center"
-                        >
-                          Load State
-                        </Button>
-                      </div>
-
+                    <div className="pt-3 border-t border-system-gray-100">
                       <Button
-                        variant="secondary"
+                        variant="ghost"
                         size="sm"
-                        onClick={handleFindDuplicates}
-                        disabled={isFindingDuplicates}
-                        className="w-full justify-center text-xs"
+                        onClick={() => {
+                          if (nodes.length > 0) {
+                            setShowClearConfirm(true);
+                          }
+                        }}
+                        disabled={nodes.length === 0}
+                        className="w-full justify-center text-red-600 border border-red-100 bg-red-50/40 hover:bg-red-50 hover:text-red-700"
                       >
-                        <Copy className="h-3.5 w-3.5" />
-                        <span>Find Duplicates</span>
+                        Clear Graph
                       </Button>
                     </div>
-                  )}
-                </div>
+                  </div>
+                </section>
+
+                {/* Advanced Options */}
+                <section className="space-y-2">
+                  <Text as="div" variant="tiny" className={GRAPH_SIDEBAR_SECTION_TITLE}>
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    <span>Advanced</span>
+                  </Text>
+                  <div className={`${GRAPH_SIDEBAR_CARD} !p-2`}>
+                    <Button
+                      onClick={() => setShowAdvancedControls(!showAdvancedControls)}
+                      variant="ghost"
+                      size="sm"
+                      rightIcon={
+                        showAdvancedControls ? (
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        )
+                      }
+                      className="w-full justify-between text-xs font-semibold text-system-gray-600 hover:text-system-gray-800 px-2 py-2"
+                    >
+                      Advanced Options
+                    </Button>
+
+                    {showAdvancedControls && (
+                      <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200 pt-3 border-t border-system-gray-100">
+                        {/* Filter */}
+                        <div>
+                          <Text
+                            as="label"
+                            variant="tiny"
+                            className="font-medium text-system-gray-600 mb-1.5 block"
+                          >
+                            Filter Visibility
+                          </Text>
+                          <Input
+                            value={withinQuery}
+                            onChange={(e) => setWithinQuery(e.target.value)}
+                            placeholder="Filter nodes..."
+                            className="h-8 text-sm bg-white"
+                          />
+                        </div>
+
+                        {/* Expansion Settings */}
+                        <div>
+                          <Text
+                            as="label"
+                            variant="tiny"
+                            className="font-medium text-system-gray-600 mb-1.5 block"
+                          >
+                            Connection Depth
+                          </Text>
+                          <Select
+                            value={hopCount}
+                            onChange={(e) => setHopCount(Number(e.target.value))}
+                            className="text-sm bg-white"
+                          >
+                            <option value={1}>1 level (Direct)</option>
+                            <option value={2}>2 levels</option>
+                            <option value={3}>3 levels (Deep)</option>
+                          </Select>
+                        </div>
+
+                        {/* Behavior Options */}
+                        <div className="space-y-2 pt-1">
+                          <Text
+                            as="label"
+                            variant="tiny"
+                            className="text-system-gray-600 flex items-center gap-2 select-none cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={autoLayout}
+                              onChange={(e) => setAutoLayout(e.target.checked)}
+                              className="h-4 w-4 rounded border-system-gray-300 text-stratosort-blue focus:ring-stratosort-blue/20"
+                            />
+                            Auto-layout on changes
+                          </Text>
+
+                          <Text
+                            as="label"
+                            variant="tiny"
+                            className="text-system-gray-600 flex items-center gap-2 select-none cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={enableAutoClustering}
+                              onChange={(e) => setEnableAutoClustering(e.target.checked)}
+                              className="h-4 w-4 rounded border-system-gray-300 text-stratosort-blue focus:ring-stratosort-blue/20"
+                            />
+                            Auto-load clusters
+                          </Text>
+
+                          <Text
+                            as="label"
+                            variant="tiny"
+                            className="text-system-gray-600 flex items-center gap-2 select-none cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={showEdgeLabels}
+                              onChange={(e) => setShowEdgeLabels(e.target.checked)}
+                              className="h-4 w-4 rounded border-system-gray-300 text-stratosort-blue focus:ring-stratosort-blue/20"
+                            />
+                            Show connection labels
+                          </Text>
+                        </div>
+
+                        {/* Save/Load Controls */}
+                        <div className="pt-2 mt-2 border-t border-system-gray-100 flex gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={handleSaveGraph}
+                            className="flex-1 justify-center h-8 text-xs"
+                          >
+                            Save State
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={handleLoadGraph}
+                            className="flex-1 justify-center h-8 text-xs"
+                          >
+                            Load State
+                          </Button>
+                        </div>
+
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleFindDuplicates}
+                          disabled={isFindingDuplicates}
+                          className="w-full justify-center h-8 text-xs"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                          <span>Find Duplicates</span>
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </section>
 
                 {/* Status Footer */}
                 <Text
@@ -5481,9 +5729,11 @@ export default function UnifiedSearchModal({
               }`}
               role="main"
               aria-label="Graph Visualization"
+              ref={graphContainerRef}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleFileDrop}
+              onWheel={handleGraphWheel}
             >
               {/* Graph Controls: Help & Maximize */}
               <div className="absolute top-3 right-3 z-20 flex gap-2">
@@ -5695,16 +5945,22 @@ export default function UnifiedSearchModal({
                         opacity: 0;
                         transition: opacity 0.2s;
                       }
+
+                      /* Hide connection handles (dots) for now */
+                      .graph-flow .react-flow__handle {
+                        opacity: 0;
+                        pointer-events: none;
+                      }
                     `}
                   </style>
                   <ReactFlow
                     nodes={rfNodes}
                     edges={rfEdges}
-                    nodeTypes={NODE_TYPES}
-                    edgeTypes={EDGE_TYPES}
+                    nodeTypes={rfNodeTypes}
+                    edgeTypes={rfEdgeTypes}
                     onNodesChange={onNodesChange}
                     onEdgesChange={graphActions.onEdgesChange}
-                    className={`bg-[var(--surface-muted)] ${zoomLevel < 0.6 ? 'graph-zoomed-out' : ''}`}
+                    className={`graph-flow bg-[var(--surface-muted)] ${zoomLevel < ZOOM_LABEL_HIDE_THRESHOLD ? 'graph-zoomed-out' : ''}`}
                     onNodeClick={onNodeClick}
                     onNodeDoubleClick={onNodeDoubleClick}
                     onNodeMouseEnter={onNodeMouseEnter}
@@ -5712,11 +5968,13 @@ export default function UnifiedSearchModal({
                     onInit={(instance) => {
                       reactFlowInstance.current = instance;
                     }}
-                    onMove={(_, viewport) => setZoomLevel(viewport.zoom)}
+                    onMove={handleGraphMove}
                     fitView
                     fitViewOptions={rfFitViewOptions}
                     minZoom={0.2}
                     maxZoom={2}
+                    zoomOnScroll={false}
+                    panOnScroll
                     defaultViewport={rfDefaultViewport}
                     proOptions={rfProOptions}
                   >
@@ -5762,18 +6020,18 @@ export default function UnifiedSearchModal({
                     )}
 
                     {/* Zoom Level Indicator */}
-                    {zoomLevel < 0.6 && (
+                    {zoomLevel < ZOOM_LABEL_HIDE_THRESHOLD && (
                       <Text
                         as="div"
                         variant="tiny"
                         className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-system-gray-900/75 backdrop-blur-md text-white px-4 py-2 rounded-full shadow-lg pointer-events-none animate-in fade-in slide-in-from-bottom-2 duration-300 z-50 border border-white/10"
                       >
-                        Labels hidden at this zoom • Scroll to zoom in
+                        Labels hidden at this zoom • Use Ctrl/Cmd + scroll or +/- to zoom in
                       </Text>
                     )}
 
                     {/* Keyboard shortcuts hint (subtle, bottom-left) */}
-                    {nodes.length > 0 && zoomLevel >= 0.6 && (
+                    {nodes.length > 0 && zoomLevel >= ZOOM_LABEL_HIDE_THRESHOLD && (
                       <Text
                         as="div"
                         variant="tiny"
@@ -5783,6 +6041,17 @@ export default function UnifiedSearchModal({
                           ?
                         </kbd>
                         <span>for help</span>
+                      </Text>
+                    )}
+
+                    {/* Performance notice (auto-hide) */}
+                    {performanceNotice && (
+                      <Text
+                        as="div"
+                        variant="tiny"
+                        className="absolute top-4 left-1/2 -translate-x-1/2 bg-system-gray-900/80 backdrop-blur-md text-white px-3 py-1.5 rounded-full shadow-md pointer-events-none animate-in fade-in slide-in-from-top-1 duration-200 z-40 border border-white/10"
+                      >
+                        {performanceNotice}
                       </Text>
                     )}
 
@@ -5815,10 +6084,10 @@ export default function UnifiedSearchModal({
                 role="complementary"
                 aria-label="Node Details"
               >
-                <div className="p-4 border-b border-system-gray-100 bg-system-gray-50/50 flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
-                  <Text as="div" variant="small" className="font-semibold text-system-gray-900">
-                    {selectedNode ? 'Node Details' : 'Legend'}
+                <div className="p-4 border-b border-system-gray-100 bg-system-gray-50/50">
+                  <Text as="div" variant="tiny" className={GRAPH_SIDEBAR_SECTION_TITLE}>
+                    <Sparkles className="h-3.5 w-3.5 text-stratosort-blue" aria-hidden="true" />
+                    <span>{selectedNode ? 'Node Details' : 'Legend'}</span>
                   </Text>
                 </div>
 
@@ -6395,29 +6664,28 @@ export default function UnifiedSearchModal({
                   ) : (
                     <div className="h-full flex flex-col">
                       {/* Integrated Legend when no node selected */}
-                      {showClusters ? (
+                      {showClusters || nodes.length > 0 ? (
                         <div className="space-y-4">
-                          <div className="text-xs font-semibold text-system-gray-500 uppercase tracking-wider mb-2">
-                            Cluster Legend
+                          <div className={`${GRAPH_SIDEBAR_CARD} space-y-3`}>
+                            <div className="flex items-center justify-between">
+                              <Text
+                                as="div"
+                                variant="tiny"
+                                className="font-semibold text-system-gray-600 uppercase tracking-wider"
+                              >
+                                {showClusters ? 'Cluster Legend' : 'Graph Legend'}
+                              </Text>
+                              <Text as="div" variant="tiny" className="text-system-gray-400">
+                                Click to filter
+                              </Text>
+                            </div>
+                            <ClusterLegend
+                              showHeader={false}
+                              className="shadow-none border-none p-0 bg-transparent w-full"
+                              activeFilters={activeFilters}
+                              onToggleFilter={handleToggleFilter}
+                            />
                           </div>
-                          <ClusterLegend
-                            className="shadow-none border-none p-0 bg-transparent w-full"
-                            activeFilters={activeFilters}
-                            onToggleFilter={handleToggleFilter}
-                            compact
-                          />
-                        </div>
-                      ) : nodes.length > 0 ? (
-                        <div className="space-y-4">
-                          <div className="text-xs font-semibold text-system-gray-500 uppercase tracking-wider mb-2">
-                            Graph Legend
-                          </div>
-                          <ClusterLegend
-                            compact
-                            className="shadow-none border-none p-0 bg-transparent w-full"
-                            activeFilters={activeFilters}
-                            onToggleFilter={handleToggleFilter}
-                          />
                         </div>
                       ) : (
                         <div className="flex flex-col items-center justify-center h-full text-center py-12 text-system-gray-400">

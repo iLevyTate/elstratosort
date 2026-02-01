@@ -15,7 +15,7 @@ import {
   ArrowRight,
   X
 } from 'lucide-react';
-import { logger } from '../../../shared/logger';
+import { createLogger } from '../../../shared/logger';
 import { useNotification } from '../../contexts/NotificationContext';
 import { Card, Button, IconButton, Input } from '../ui';
 import { Heading, Text } from '../ui/Typography';
@@ -27,8 +27,7 @@ import OrganizationPreview from './OrganizationPreview';
 import { GlobalErrorBoundary } from '../ErrorBoundary';
 
 // Set logger context for this component
-logger.setContext('SmartOrganizer');
-
+const logger = createLogger('SmartOrganizer');
 // FIX: Move steps array outside component to prevent recreation on every render
 const ORGANIZATION_STEPS = [
   { id: 'analyze', label: 'Analyze', Icon: Search },
@@ -57,6 +56,7 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
 
   // FIX: Track mounted state to prevent state updates after unmount
   const isMountedRef = useRef(true);
+  const analyzeRunIdRef = useRef(0);
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -68,6 +68,9 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
   const analyzeFiles = useCallback(async () => {
     if (files.length === 0) return;
 
+    const runId = ++analyzeRunIdRef.current;
+    const isLatestRun = () => isMountedRef.current && runId === analyzeRunIdRef.current;
+
     setIsAnalyzing(true);
     try {
       // Get suggestions for all files
@@ -76,24 +79,26 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
         const result = await window.electronAPI.suggestions.getFileSuggestions(files[0], {
           includeAlternatives: true
         });
-        // FIX: Check mounted state before updating
+        if (!isLatestRun()) return;
         if (isMountedRef.current) {
           setSuggestions({ [files[0].path]: result });
+          setBatchSuggestions(null);
         }
       } else {
         // Batch mode
         const batchResult = await window.electronAPI.suggestions.getBatchSuggestions(files, {
           analyzePatterns: true
         });
-        // FIX: Check mounted state before updating
+        if (!isLatestRun()) return;
         if (isMountedRef.current) {
           setBatchSuggestions(batchResult);
+          setSuggestions({});
         }
       }
 
       // Get folder improvement suggestions
       const improvements = await window.electronAPI.suggestions.analyzeFolderStructure(files);
-      // FIX: Check mounted state before updating
+      if (!isLatestRun()) return;
       if (isMountedRef.current) {
         setFolderImprovements(improvements?.improvements || []);
       }
@@ -103,15 +108,14 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
         stack: error.stack
       });
       // FIX: Notify user about the failure so they're aware analysis didn't work
-      if (isMountedRef.current) {
+      if (isLatestRun()) {
         addNotification(
           'Failed to analyze files. Please try again or check your connection.',
           'error'
         );
       }
     } finally {
-      // FIX: Check mounted state before updating
-      if (isMountedRef.current) {
+      if (isLatestRun()) {
         setIsAnalyzing(false);
       }
     }
@@ -133,7 +137,7 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
       if (suggestion?.confidence >= 0.8) {
         highConfidenceSuggestions[files[0].path] = suggestion.primary;
       }
-    } else if (batchSuggestions) {
+    } else if (Array.isArray(batchSuggestions?.groups)) {
       batchSuggestions.groups.forEach((group) => {
         if (group.confidence >= 0.8) {
           group.files.forEach((file) => {
@@ -141,6 +145,11 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
           });
         }
       });
+    }
+
+    if (Object.keys(highConfidenceSuggestions).length === 0) {
+      addNotification('No high-confidence suggestions available yet.', 'info');
+      return;
     }
 
     setAcceptedSuggestions(highConfidenceSuggestions);
@@ -301,7 +310,7 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
       const suggestion = suggestions[files[0]?.path];
       return suggestion ? normalizeConfidencePercent(suggestion.confidence) : 0;
     }
-    if (batchSuggestions?.groups?.length > 0) {
+    if (Array.isArray(batchSuggestions?.groups) && batchSuggestions.groups.length > 0) {
       const avg =
         batchSuggestions.groups.reduce((sum, group) => sum + (group.confidence || 0), 0) /
         batchSuggestions.groups.length;
@@ -309,6 +318,10 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
     }
     return 0;
   }, [files, suggestions, batchSuggestions]);
+
+  const hasSuggestions =
+    Object.keys(suggestions || {}).length > 0 ||
+    (Array.isArray(batchSuggestions?.groups) && batchSuggestions.groups.length > 0);
 
   return (
     <div className="space-y-6">
@@ -554,11 +567,12 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
           <FeedbackMemoryPanel className="mt-4" refreshToken={memoryRefreshToken} />
 
           <div className="flex justify-between pt-4">
-            <Button variant="ghost" onClick={() => setCurrentStep('analyze')}>
+            <Button variant="ghost" size="sm" onClick={() => setCurrentStep('analyze')}>
               ← Back
             </Button>
             <Button
               variant="primary"
+              size="sm"
               onClick={() => setCurrentStep('preview')}
               className="bg-stratosort-blue hover:bg-stratosort-blue/90"
             >
@@ -600,7 +614,7 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
       )}
 
       {/* Stats Bar */}
-      {(suggestions || batchSuggestions) && (
+      {hasSuggestions && (
         <Text
           as="div"
           variant="small"

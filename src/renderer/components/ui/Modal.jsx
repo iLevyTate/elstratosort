@@ -6,6 +6,13 @@ import IconButton from './IconButton';
 import Button from './Button';
 import { Heading, Text } from './Typography';
 import { logger } from '../../../shared/logger';
+import { lockAppScroll, unlockAppScroll } from '../../utils/scrollLock';
+
+// Animation durations in ms
+const ANIMATION = {
+  ENTER: 200,
+  EXIT: 150
+};
 
 const SIZES = {
   sm: 'max-w-md',
@@ -43,10 +50,27 @@ const Modal = memo(function Modal({
 }) {
   const modalRef = useRef(null);
   const previousFocusRef = useRef(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
+
+  // Handle open/close with animation
+  useEffect(() => {
+    if (isOpen && !isVisible && !isClosing) {
+      setIsVisible(true);
+    } else if (!isOpen && isVisible && !isClosing) {
+      // Start closing animation
+      setIsClosing(true);
+      const timer = setTimeout(() => {
+        setIsVisible(false);
+        setIsClosing(false);
+      }, ANIMATION.EXIT);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, isVisible, isClosing]);
 
   // Handle ESC key
   useEffect(() => {
-    if (!isOpen || !closeOnEsc) return;
+    if (!isVisible || !closeOnEsc) return;
 
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
@@ -56,11 +80,11 @@ const Modal = memo(function Modal({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, closeOnEsc, onClose]);
+  }, [isVisible, closeOnEsc, onClose]);
 
   // Focus management
   useEffect(() => {
-    if (isOpen) {
+    if (isVisible && !isClosing) {
       previousFocusRef.current = document.activeElement;
       // Small timeout to ensure render is complete
       setTimeout(() => {
@@ -78,27 +102,26 @@ const Modal = memo(function Modal({
           }
         }
       }, 50);
-    } else {
+    } else if (!isVisible) {
       // Restore focus
       if (previousFocusRef.current) {
         previousFocusRef.current.focus();
       }
     }
-  }, [isOpen, initialFocusRef]);
+  }, [isVisible, isClosing, initialFocusRef]);
 
-  // Lock body scroll
+  // Lock scroll on the actual app scroller (main-content) and body as fallback
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => {
-      document.body.style.overflow = '';
-    };
-  }, [isOpen]);
+    if (!isVisible) return undefined;
 
-  if (!isOpen) return null;
+    lockAppScroll();
+
+    return () => {
+      unlockAppScroll();
+    };
+  }, [isVisible]);
+
+  if (!isVisible) return null;
 
   const variantStyles = VARIANTS[variant] || VARIANTS.default;
   const sizeClass = SIZES[size] || SIZES.md;
@@ -108,6 +131,9 @@ const Modal = memo(function Modal({
       : 'max-h-[calc(100vh-var(--app-nav-height)-2rem)]';
   const overlayPaddingTop = 'calc(var(--app-nav-height) + 1rem)';
   const overlayPaddingBottom = '1.5rem';
+
+  const backdropAnimation = isClosing ? 'animate-modal-backdrop-exit' : 'animate-modal-backdrop';
+  const panelAnimation = isClosing ? 'animate-modal-exit' : 'animate-modal-enter';
 
   const content = (
     <div
@@ -120,8 +146,8 @@ const Modal = memo(function Modal({
     >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-modal-backdrop transition-opacity"
-        onClick={closeOnOverlayClick ? onClose : undefined}
+        className={`absolute inset-0 bg-black/40 backdrop-blur-sm ${backdropAnimation}`}
+        onClick={closeOnOverlayClick && !isClosing ? onClose : undefined}
         aria-hidden="true"
       />
 
@@ -132,7 +158,7 @@ const Modal = memo(function Modal({
           relative w-full ${sizeClass} ${panelMaxHeight} ${
             size === 'full' ? 'h-[calc(100vh-var(--app-nav-height)-1rem)]' : ''
           } bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden
-          animate-modal-enter transform transition-all
+          ${panelAnimation}
         `}
         tabIndex={-1}
       >

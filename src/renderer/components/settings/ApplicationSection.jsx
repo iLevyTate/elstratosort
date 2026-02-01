@@ -3,8 +3,10 @@ import PropTypes from 'prop-types';
 import Switch from '../ui/Switch';
 import SettingRow from './SettingRow';
 import Button from '../ui/Button';
+import Card from '../ui/Card';
 import { logger } from '../../../shared/logger';
 import { Stack } from '../layout';
+import { Text } from '../ui/Typography';
 
 /**
  * Application settings section (launch on startup, etc.)
@@ -27,39 +29,50 @@ function ApplicationSection({ settings, setSettings }) {
   }, [isOpeningLogs]);
 
   return (
-    <Stack gap="relaxed">
-      {/* Launch on Startup */}
-      <SettingRow
-        label="Launch on Startup"
-        description="Automatically start StratoSort when you log in to your computer."
-      >
-        <Switch
-          checked={!!settings.launchOnStartup}
-          onChange={(checked) =>
-            setSettings((prev) => ({
-              ...prev,
-              launchOnStartup: checked
-            }))
-          }
-        />
-      </SettingRow>
+    <Card variant="default" className="space-y-5">
+      <div>
+        <Text variant="tiny" className="font-semibold uppercase tracking-wide text-system-gray-500">
+          Application preferences
+        </Text>
+        <Text variant="small" className="text-system-gray-600">
+          Startup behavior and diagnostic access.
+        </Text>
+      </div>
 
-      {/* Logs */}
-      <SettingRow
-        label="Troubleshooting Logs"
-        description="Open the folder that contains StratoSort logs (useful for sharing with support)."
-      >
-        <Button
-          variant="subtle"
-          size="sm"
-          onClick={handleOpenLogsFolder}
-          disabled={!window?.electronAPI?.settings?.openLogsFolder}
-          isLoading={isOpeningLogs}
+      <Stack gap="relaxed">
+        {/* Launch on Startup */}
+        <SettingRow
+          label="Launch on Startup"
+          description="Automatically start StratoSort when you log in to your computer."
         >
-          Open Logs Folder
-        </Button>
-      </SettingRow>
-    </Stack>
+          <Switch
+            checked={!!settings.launchOnStartup}
+            onChange={(checked) =>
+              setSettings((prev) => ({
+                ...prev,
+                launchOnStartup: checked
+              }))
+            }
+          />
+        </SettingRow>
+
+        {/* Logs */}
+        <SettingRow
+          label="Troubleshooting Logs"
+          description="Open the folder that contains StratoSort logs (useful for sharing with support)."
+        >
+          <Button
+            variant="subtle"
+            size="sm"
+            onClick={handleOpenLogsFolder}
+            disabled={!window?.electronAPI?.settings?.openLogsFolder}
+            isLoading={isOpeningLogs}
+          >
+            Open Logs Folder
+          </Button>
+        </SettingRow>
+      </Stack>
+    </Card>
   );
 }
 

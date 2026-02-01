@@ -99,7 +99,7 @@ function ModelSelectionSection({
   const hasEmbeddingModels = embeddingModelOptions.length > 0;
 
   return (
-    <Card variant="default" className="p-5 space-y-5">
+    <Card variant="default" className="space-y-5">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div>
           <Text

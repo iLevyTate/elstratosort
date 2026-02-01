@@ -238,6 +238,10 @@ export function markStoreReady() {
       }
     });
   }
+
+  if (safeDispatch.hasWarnedOverflow) {
+    safeDispatch.hasWarnedOverflow = false;
+  }
 }
 
 const ipcMiddleware = (store) => {

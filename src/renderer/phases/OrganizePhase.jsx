@@ -1,12 +1,20 @@
 import React, { useMemo, useCallback, useEffect, useRef } from 'react';
 import { PHASES } from '../../shared/constants';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useNotification } from '../contexts/NotificationContext';
 import { useAppSelector } from '../store/hooks';
-import { Button, Card, StateMessage } from '../components/ui';
+import { Button, Card, SidePanel, StateMessage, StatusBadge } from '../components/ui';
 import { Heading, Text } from '../components/ui/Typography';
 import { ErrorBoundaryCore } from '../components/ErrorBoundary';
-import { FolderOpen, BarChart3, CheckCircle2, Inbox, Sparkles, AlertTriangle } from 'lucide-react';
+import {
+  FolderOpen,
+  BarChart3,
+  CheckCircle2,
+  Inbox,
+  Sparkles,
+  AlertTriangle,
+  FileText
+} from 'lucide-react';
 import { ActionBar, Inline, Stack } from '../components/layout';
 import {
   StatusOverview,
@@ -31,14 +39,21 @@ import {
 import { useOrganization } from './organize/useOrganization';
 import { setFileStates as setFileStatesAction } from '../store/slices/filesSlice';
 import { updateAnalysisResult } from '../store/slices/analysisSlice';
+import { formatDisplayPath } from '../utils/pathDisplay';
 
-logger.setContext('OrganizePhase');
-
+const logger = createLogger('OrganizePhase');
 function OrganizePhase() {
   const { addNotification } = useNotification();
   const { executeAction } = useUndoRedo();
   const [viewingFileDetails, setViewingFileDetails] = React.useState(null);
   const redactPaths = useAppSelector((state) => Boolean(state?.system?.redactPaths));
+  const detailHeaderPath = useMemo(() => {
+    const rawPath = viewingFileDetails?.path || viewingFileDetails?.analysis?.path || '';
+    const displayPath = rawPath
+      ? formatDisplayPath(rawPath, { redact: Boolean(redactPaths), segments: 2 })
+      : '';
+    return { rawPath, displayPath };
+  }, [viewingFileDetails, redactPaths]);
 
   const [showFoldersModal, setShowFoldersModal] = React.useState(false);
   const [showStatusModal, setShowStatusModal] = React.useState(false);
@@ -300,7 +315,7 @@ function OrganizePhase() {
       </Stack>
 
       {/* Toolbar */}
-      <Inline className="justify-between" gap="cozy">
+      <Inline className="justify-between pt-2" gap="cozy">
         <Inline
           className="flex-shrink-0"
           role="toolbar"
@@ -560,27 +575,45 @@ function OrganizePhase() {
         </Button>
       </ActionBar>
 
-      {/* Analysis Details Modal */}
-      <Modal
+      {/* Analysis Details Panel */}
+      <SidePanel
         isOpen={!!viewingFileDetails}
         onClose={() => setViewingFileDetails(null)}
         title="File Analysis Details"
-        size="md"
-        footer={
-          <Inline className="justify-end" gap="default" wrap={false}>
-            <Button onClick={() => setViewingFileDetails(null)} variant="secondary" size="sm">
-              Close
-            </Button>
-          </Inline>
-        }
+        description="Review metadata, rationale, and extracted text."
+        width={520}
       >
         {viewingFileDetails && viewingFileDetails.analysis && (
           <Stack gap="default">
-            <div className="bg-system-gray-50 p-3 rounded-lg border border-border-soft">
-              <Text variant="small" className="font-medium text-system-gray-900 break-all">
-                {viewingFileDetails.name}
-              </Text>
-            </div>
+            <Card
+              variant="static"
+              className="bg-gradient-to-br from-white to-system-gray-50/80 border-border-soft/70"
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-stratosort-blue/10 text-stratosort-blue flex items-center justify-center shrink-0">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <Text variant="small" className="font-semibold text-system-gray-900 break-words">
+                    {viewingFileDetails.name}
+                  </Text>
+                  {detailHeaderPath.displayPath && (
+                    <Text
+                      variant="tiny"
+                      className="text-system-gray-500 break-all mt-1"
+                      title={redactPaths ? undefined : detailHeaderPath.rawPath}
+                    >
+                      {detailHeaderPath.displayPath}
+                    </Text>
+                  )}
+                </div>
+                {viewingFileDetails.analysis?.category && (
+                  <StatusBadge variant="info" size="sm" className="shrink-0">
+                    {viewingFileDetails.analysis.category}
+                  </StatusBadge>
+                )}
+              </div>
+            </Card>
             <AnalysisDetails
               analysis={viewingFileDetails.analysis}
               filePath={viewingFileDetails.path}
@@ -588,7 +621,7 @@ function OrganizePhase() {
             />
           </Stack>
         )}
-      </Modal>
+      </SidePanel>
 
       {/* Smart Folders Modal */}
       <Modal

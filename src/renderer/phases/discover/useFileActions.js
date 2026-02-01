@@ -8,10 +8,6 @@
  */
 
 import { useCallback } from 'react';
-import { logger } from '../../../shared/logger';
-
-logger.setContext('DiscoverPhase:FileActions');
-
 /**
  * Custom hook for file action operations
  * @param {Object} options - Hook options

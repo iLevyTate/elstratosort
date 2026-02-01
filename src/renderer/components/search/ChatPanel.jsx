@@ -5,6 +5,7 @@ import { Send, RefreshCw, FileText, AlertTriangle, RotateCcw } from 'lucide-reac
 import { Button, Textarea, Switch, StateMessage } from '../ui';
 import { Text } from '../ui/Typography';
 import { formatDisplayPath } from '../../utils/pathDisplay';
+import { selectRedactPaths } from '../../store/selectors';
 
 function normalizeImageSource(value) {
   if (typeof value !== 'string') return '';
@@ -238,7 +239,8 @@ SourceList.propTypes = {
 };
 
 function AnswerBlock({ title, items, showTitle, sources, onOpenSource }) {
-  const redactPaths = useSelector((state) => Boolean(state?.system?.redactPaths));
+  // PERF: Use memoized selector instead of inline Boolean coercion
+  const redactPaths = useSelector(selectRedactPaths);
 
   if (!items || items.length === 0) {
     return null;
@@ -361,8 +363,12 @@ export default function ChatPanel({
   const handleSend = async () => {
     const trimmed = input.trim();
     if (!trimmed || isSending) return;
-    setInput('');
-    await onSend(trimmed);
+    try {
+      await onSend(trimmed);
+      setInput('');
+    } catch {
+      // Keep the input so the user can retry on failure
+    }
   };
 
   return (
@@ -587,7 +593,12 @@ export default function ChatPanel({
               </Button>
             ) : null}
           </div>
-          <Button onClick={handleSend} disabled={isSending || !input.trim()}>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleSend}
+            disabled={isSending || !input.trim()}
+          >
             <Send className="w-4 h-4" />
             <span>Send</span>
           </Button>

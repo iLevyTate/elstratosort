@@ -11,11 +11,50 @@
  * @see https://github.com/kieler/elkjs#web-workers
  */
 
-import ELK from 'elkjs/lib/elk.bundled.js';
+import ELK from 'elkjs/lib/elk-api.js';
+import ELKNoWorker from 'elkjs/lib/elk.bundled.js';
 import { logger } from '../../shared/logger';
 
-// Single ELK instance - layout is CPU-intensive but elkjs handles it efficiently
-const elk = new ELK();
+const resolveElkWorkerUrl = () => {
+  try {
+    return new URL('elkjs/lib/elk-worker.min.js', import.meta.url).toString();
+  } catch (error) {
+    logger.warn('[elkLayout] Unable to resolve worker URL; using main thread', {
+      error: error?.message || String(error)
+    });
+    return null;
+  }
+};
+
+const shouldFallbackToMainThread = (error) => {
+  const message = error?.message || '';
+  return (
+    message.includes('Worker') ||
+    message.includes('worker') ||
+    message.includes('Failed to construct') ||
+    message.includes('NetworkError')
+  );
+};
+
+const createElkInstance = ({ useWorker } = {}) => {
+  try {
+    const workerUrl = useWorker ? resolveElkWorkerUrl() : null;
+    if (useWorker && workerUrl) {
+      return { instance: new ELK({ workerUrl }), usesWorker: true };
+    }
+    return { instance: new ELKNoWorker(), usesWorker: false };
+  } catch (error) {
+    logger.warn('[elkLayout] Failed to initialize worker; using main thread', {
+      error: error?.message || String(error)
+    });
+    return { instance: new ELKNoWorker(), usesWorker: false };
+  }
+};
+
+// Single ELK instance - layout is CPU-intensive, offloaded to a worker when available
+const initialElk = createElkInstance({ useWorker: true });
+let elk = initialElk.instance;
+let elkUsesWorker = initialElk.usesWorker;
 
 // Threshold for when to log performance warnings
 const LARGE_GRAPH_THRESHOLD = 100;
@@ -172,7 +211,22 @@ export async function elkLayout(nodes, edges, options = {}) {
       logger.warn(`[elkLayout] Large graph detected (${nodes.length} nodes), layout may take time`);
     }
 
-    const layout = await elk.layout(elkGraph);
+    const elkInstance = elk;
+    const usesWorker = elkUsesWorker;
+    let layout;
+    try {
+      layout = await elkInstance.layout(elkGraph);
+    } catch (error) {
+      if (usesWorker && shouldFallbackToMainThread(error)) {
+        logger.warn('[elkLayout] Worker failed; retrying on main thread', {
+          error: error?.message || String(error)
+        });
+        const fallbackElk = createElkInstance({ useWorker: false });
+        layout = await fallbackElk.instance.layout(elkGraph);
+      } else {
+        throw error;
+      }
+    }
     const duration = performance.now() - startTime;
 
     // Log performance for monitoring

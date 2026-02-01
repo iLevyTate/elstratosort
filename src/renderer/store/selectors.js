@@ -24,6 +24,7 @@ const createStableSelector = (dependencies, combiner) => {
 
   // Store last result for reference stability
   let lastResult = null;
+  let lastResetCounter = null;
 
   /**
    * Shallow equality check for arrays and objects
@@ -54,6 +55,12 @@ const createStableSelector = (dependencies, combiner) => {
   };
 
   return (state) => {
+    const resetCounter = state?.ui?.resetCounter;
+    if (typeof resetCounter === 'number' && resetCounter !== lastResetCounter) {
+      lastResetCounter = resetCounter;
+      lastResult = null;
+    }
+
     const result = baseSelector(state);
 
     // Return cached result if shallowly equal
@@ -212,34 +219,53 @@ export const selectPendingFiles = createStableSelector(
 /**
  * Returns count statistics for file states
  * PERF: Uses stable selector to prevent re-renders when stats are unchanged.
+ * PERF: Single-pass counting instead of multiple filter() calls
  */
 export const selectFileStats = createStableSelector(
   [selectFilesWithAnalysis],
   (filesWithAnalysis) => {
+    let ready = 0;
+    let failed = 0;
+    for (const f of filesWithAnalysis) {
+      if (f.error) {
+        failed++;
+      } else if (f.analysis) {
+        ready++;
+      }
+    }
     const total = filesWithAnalysis.length;
-    const ready = filesWithAnalysis.filter((f) => f.analysis && !f.error).length;
-    const failed = filesWithAnalysis.filter((f) => f.error).length;
-    const pending = total - ready - failed;
-
-    return { total, ready, failed, pending };
+    return { total, ready, failed, pending: total - ready - failed };
   }
 );
 
 /**
  * Get ChromaDB service status from Redux store
  * Returns: 'online', 'offline', 'connecting', or 'unknown'
+ * PERF: Memoized to prevent unnecessary recalculations
  */
-export const selectChromaDBStatus = (state) => {
-  return state.system?.health?.chromadb || 'unknown';
-};
+export const selectChromaDBStatus = createSelector(
+  [(state) => state.system?.health?.chromadb],
+  (chromadb) => chromadb || 'unknown'
+);
 
 /**
  * Check if ChromaDB/embeddings features should be available
+ * PERF: Memoized and depends on memoized selectChromaDBStatus
  */
-export const selectChromaDBAvailable = (state) => {
-  const status = selectChromaDBStatus(state);
-  return status === 'online' || status === 'connecting';
-};
+export const selectChromaDBAvailable = createSelector(
+  [selectChromaDBStatus],
+  (status) => status === 'online' || status === 'connecting'
+);
+
+/**
+ * Get redactPaths setting from system state
+ * PERF: Memoized selector to prevent re-renders across 8+ components
+ * that were previously using inline useSelector with Boolean coercion
+ */
+export const selectRedactPaths = createSelector(
+  [(state) => state?.system?.redactPaths],
+  (redactPaths) => Boolean(redactPaths)
+);
 
 // Re-export base selectors for convenience
 export {

@@ -60,7 +60,8 @@ export function useGraphKeyboardNav({
   onSelectNode,
   onOpenFile,
   reactFlowInstance,
-  enabled = true
+  enabled = true,
+  containerRef = null
 }) {
   const lastNavigationTime = useRef(0);
   const DEBOUNCE_MS = 100;
@@ -153,6 +154,15 @@ export function useGraphKeyboardNav({
         return;
       }
 
+      if (containerRef?.current) {
+        const activeElement = document.activeElement;
+        const isBodyFocused =
+          activeElement === document.body || activeElement === document.documentElement;
+        if (!isBodyFocused && activeElement && !containerRef.current.contains(activeElement)) {
+          return;
+        }
+      }
+
       // Tab navigation for panels
       if (event.key === 'Tab') {
         // Allow default tab behavior to work, but we can enhance it later if needed
@@ -223,7 +233,16 @@ export function useGraphKeyboardNav({
         navigateToNode(nodes[nodes.length - 1].id);
       }
     },
-    [enabled, nodes, selectedNodeId, getNextNode, navigateToNode, onSelectNode, onOpenFile]
+    [
+      enabled,
+      nodes,
+      selectedNodeId,
+      getNextNode,
+      navigateToNode,
+      onSelectNode,
+      onOpenFile,
+      containerRef
+    ]
   );
 
   // Attach keyboard listener

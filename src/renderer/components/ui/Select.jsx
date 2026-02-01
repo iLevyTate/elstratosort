@@ -190,7 +190,7 @@ const Select = memo(
             else if (ref) ref.current = node;
           }}
           id={id}
-          className={`${classes} flex items-center justify-between text-left`}
+          className={`${classes} flex items-center justify-between text-left select-trigger`}
           aria-invalid={invalid || !!error}
           aria-describedby={error ? errorId : undefined}
           aria-required={required}
@@ -203,9 +203,12 @@ const Select = memo(
           onKeyDown={handleKeyDown}
           disabled={rest.disabled}
         >
-          <span className="truncate">{selectedOption?.label ?? ''}</span>
-          <span className="ml-3 text-system-gray-500" aria-hidden="true">
-            <ChevronDown className="h-4 w-4" />
+          <span className="truncate text-system-gray-800">{selectedOption?.label ?? ''}</span>
+          <span
+            className={`ml-3 transition-transform duration-150 ${isOpen ? 'rotate-180' : ''}`}
+            aria-hidden="true"
+          >
+            <ChevronDown className="h-4 w-4 text-system-gray-500" />
           </span>
         </button>
 
@@ -214,7 +217,7 @@ const Select = memo(
           createPortal(
             <div
               ref={menuRef}
-              className="fixed z-[9999] rounded-xl border border-border-soft bg-white shadow-lg"
+              className="fixed z-[9999] rounded-xl border border-border-soft bg-white shadow-lg animate-dropdown-enter"
               role="listbox"
               aria-labelledby={labelId}
               style={{
@@ -232,12 +235,12 @@ const Select = memo(
                       key={`${option.value}-${index}`}
                       role="option"
                       aria-selected={isSelected}
-                      className={`px-3 py-2 text-sm cursor-pointer ${
+                      className={`px-3 py-2.5 text-sm cursor-pointer transition-colors duration-100 ${
                         option.disabled
-                          ? 'text-system-gray-400 cursor-not-allowed'
+                          ? 'text-system-gray-400 cursor-not-allowed bg-white'
                           : isHighlighted
                             ? 'bg-stratosort-blue/10 text-system-gray-900'
-                            : 'text-system-gray-800 hover:bg-system-gray-100'
+                            : 'text-system-gray-800 bg-white hover:bg-system-gray-50'
                       }`}
                       onMouseEnter={() => setHighlightedIndex(index)}
                       onMouseDown={(e) => e.preventDefault()}

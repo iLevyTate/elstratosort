@@ -28,11 +28,12 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
     files.forEach((file, index) => {
       if (!file) return;
 
-      // FIX: Add bounds check for array access
-      const suggestion =
-        Array.isArray(suggestions) && index < suggestions.length
+      // Look up suggestion by file path (suggestions is a path-keyed object)
+      const suggestion = Array.isArray(suggestions)
+        ? index < suggestions.length
           ? suggestions[index]
-          : suggestions.primary;
+          : undefined
+        : suggestions[file.path] || suggestions[file.name];
       if (!suggestion) return;
 
       const folderPath = suggestion.path || suggestion.folder;
@@ -52,7 +53,8 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
           name: suggestion.folder,
           path: folderPath,
           files: [],
-          confidence: 0
+          confidence: 0,
+          fileCount: 0
         };
         folderCount.add(folderPath);
       }
@@ -64,8 +66,10 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
         moved: true // Assuming all files in preview are being moved
       });
 
+      tree[folderPath].fileCount += 1;
+      const count = tree[folderPath].fileCount;
       tree[folderPath].confidence =
-        (tree[folderPath].confidence + (suggestion.confidence || 0.5)) / 2;
+        (tree[folderPath].confidence * (count - 1) + (suggestion.confidence || 0.5)) / count;
 
       movedCount++;
       if (newName !== file.name) renamedCount++;
@@ -360,11 +364,12 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
           Review the preview above before confirming the organization
         </Text>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={onCancel}>
+          <Button variant="secondary" size="sm" onClick={onCancel}>
             Cancel
           </Button>
           <Button
             variant="primary"
+            size="sm"
             onClick={onConfirm}
             className="bg-stratosort-blue hover:bg-stratosort-blue/90"
           >
@@ -398,10 +403,7 @@ OrganizationPreview.propTypes = {
   strategy: strategyShape,
   suggestions: PropTypes.oneOfType([
     PropTypes.arrayOf(suggestionShape),
-    PropTypes.shape({
-      primary: suggestionShape,
-      alternatives: PropTypes.arrayOf(suggestionShape)
-    })
+    PropTypes.objectOf(suggestionShape)
   ]),
   onConfirm: PropTypes.func,
   onCancel: PropTypes.func

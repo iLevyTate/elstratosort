@@ -1,13 +1,12 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 import { AlertTriangle } from 'lucide-react';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import Button from './ui/Button';
 import Card from './ui/Card';
 import { Heading, Text } from './ui/Typography';
 
-logger.setContext('ErrorBoundary');
-
+const logger = createLogger('ErrorBoundary');
 class ErrorBoundaryCore extends React.Component {
   constructor(props) {
     super(props);
@@ -251,19 +250,24 @@ class ErrorBoundaryCore extends React.Component {
           <div className="flex gap-3">
             {isChunk ? (
               <>
-                <Button onClick={this.handleReload} variant="primary" className="flex-1">
+                <Button onClick={this.handleReload} variant="primary" size="sm" className="flex-1">
                   Reload App
                 </Button>
-                <Button onClick={this.handleReset} variant="secondary" className="flex-1">
+                <Button onClick={this.handleReset} variant="secondary" size="sm" className="flex-1">
                   Try Again
                 </Button>
               </>
             ) : (
               <>
-                <Button onClick={this.handleReset} variant="primary" className="flex-1">
+                <Button onClick={this.handleReset} variant="primary" size="sm" className="flex-1">
                   Try Again
                 </Button>
-                <Button onClick={this.handleReload} variant="secondary" className="flex-1">
+                <Button
+                  onClick={this.handleReload}
+                  variant="secondary"
+                  size="sm"
+                  className="flex-1"
+                >
                   Reload App
                 </Button>
               </>
@@ -314,19 +318,25 @@ class ErrorBoundaryCore extends React.Component {
 
             <div className="flex gap-3">
               {isChunk && (
-                <Button onClick={this.handleReload} variant="primary" className="flex-1">
+                <Button onClick={this.handleReload} variant="primary" size="sm" className="flex-1">
                   Reload App
                 </Button>
               )}
               <Button
                 onClick={this.handleReset}
                 variant={isChunk ? 'secondary' : 'primary'}
+                size="sm"
                 className="flex-1"
               >
                 Try Again
               </Button>
               {showNavigateHome && (
-                <Button onClick={this.handleNavigateHome} variant="secondary" className="flex-1">
+                <Button
+                  onClick={this.handleNavigateHome}
+                  variant="secondary"
+                  size="sm"
+                  className="flex-1"
+                >
                   Go to Home
                 </Button>
               )}
@@ -354,10 +364,10 @@ class ErrorBoundaryCore extends React.Component {
         {this.renderErrorDetails()}
 
         <div className="flex gap-3">
-          <Button onClick={this.handleReset} variant="primary">
+          <Button onClick={this.handleReset} variant="primary" size="sm">
             Try Again
           </Button>
-          <Button onClick={this.handleReload} variant="secondary">
+          <Button onClick={this.handleReload} variant="secondary" size="sm">
             Reload
           </Button>
         </div>

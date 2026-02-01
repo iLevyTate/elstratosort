@@ -1,7 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const { Logger, LOG_LEVELS } = require('../shared/logger');
-// Import IPC_CHANNELS from shared constants to avoid duplication
-const { IPC_CHANNELS } = require('../shared/constants');
 const { IpcRateLimiter } = require('./ipcRateLimiter');
 const { createIpcSanitizer } = require('./ipcSanitizer');
 const { createIpcValidator } = require('./ipcValidator');
@@ -13,6 +11,207 @@ const {
   ALLOWED_RECEIVE_CHANNELS: SECURITY_RECEIVE_CHANNELS,
   ALLOWED_SEND_CHANNELS: SECURITY_SEND_CHANNELS
 } = require('../shared/securityConfig');
+
+// === START GENERATED IPC_CHANNELS ===
+// Auto-generated from src/shared/constants.js
+// Run 'npm run generate:channels' to update
+const IPC_CHANNELS = {
+  // FILES
+  FILES: {
+    SELECT: 'files:select',
+    SELECT_DIRECTORY: 'files:select-directory',
+    GET_DOCUMENTS_PATH: 'files:get-documents-path',
+    CREATE_FOLDER_DIRECT: 'files:create-folder-direct',
+    GET_FILE_STATS: 'files:get-stats',
+    GET_FILES_IN_DIRECTORY: 'files:get-in-directory',
+    PERFORM_OPERATION: 'files:perform-operation',
+    DELETE_FILE: 'files:delete',
+    OPEN_FILE: 'files:open',
+    REVEAL_FILE: 'files:reveal',
+    COPY_FILE: 'files:copy',
+    OPEN_FOLDER: 'files:open-folder',
+    DELETE_FOLDER: 'files:delete-folder',
+    CLEANUP_ANALYSIS: 'files:cleanup-analysis'
+  },
+
+  // SMART_FOLDERS
+  SMART_FOLDERS: {
+    GET: 'smart-folders:get',
+    SAVE: 'smart-folders:save',
+    UPDATE_CUSTOM: 'smart-folders:update-custom',
+    GET_CUSTOM: 'smart-folders:get-custom',
+    SCAN_STRUCTURE: 'smart-folders:scan-structure',
+    ADD: 'smart-folders:add',
+    EDIT: 'smart-folders:edit',
+    DELETE: 'smart-folders:delete',
+    MATCH: 'smart-folders:match',
+    RESET_TO_DEFAULTS: 'smart-folders:reset-defaults',
+    GENERATE_DESCRIPTION: 'smart-folders:generate-description',
+    WATCHER_START: 'smart-folders:watcher-start',
+    WATCHER_STOP: 'smart-folders:watcher-stop',
+    WATCHER_STATUS: 'smart-folders:watcher-status',
+    WATCHER_SCAN: 'smart-folders:watcher-scan'
+  },
+
+  // ANALYSIS
+  ANALYSIS: {
+    ANALYZE_DOCUMENT: 'analysis:analyze-document',
+    ANALYZE_IMAGE: 'analysis:analyze-image',
+    EXTRACT_IMAGE_TEXT: 'analysis:extract-image-text'
+  },
+
+  // SETTINGS
+  SETTINGS: {
+    GET: 'settings:get',
+    SAVE: 'settings:save',
+    GET_CONFIGURABLE_LIMITS: 'settings:get-limits',
+    GET_LOGS_INFO: 'settings:get-logs-info',
+    OPEN_LOGS_FOLDER: 'settings:open-logs-folder',
+    EXPORT: 'settings:export',
+    IMPORT: 'settings:import',
+    CREATE_BACKUP: 'settings:create-backup',
+    LIST_BACKUPS: 'settings:list-backups',
+    RESTORE_BACKUP: 'settings:restore-backup',
+    DELETE_BACKUP: 'settings:delete-backup'
+  },
+
+  // OLLAMA
+  OLLAMA: {
+    GET_MODELS: 'ollama:get-models',
+    TEST_CONNECTION: 'ollama:test-connection',
+    PULL_MODELS: 'ollama:pull-models',
+    DELETE_MODEL: 'ollama:delete-model'
+  },
+
+  // UNDO_REDO
+  UNDO_REDO: {
+    UNDO: 'undo-redo:undo',
+    REDO: 'undo-redo:redo',
+    GET_HISTORY: 'undo-redo:get-history',
+    GET_STATE: 'undo-redo:get-state',
+    CLEAR_HISTORY: 'undo-redo:clear',
+    CAN_UNDO: 'undo-redo:can-undo',
+    CAN_REDO: 'undo-redo:can-redo',
+    STATE_CHANGED: 'undo-redo:state-changed'
+  },
+
+  // ANALYSIS_HISTORY
+  ANALYSIS_HISTORY: {
+    GET: 'analysis-history:get',
+    SEARCH: 'analysis-history:search',
+    GET_STATISTICS: 'analysis-history:get-statistics',
+    GET_FILE_HISTORY: 'analysis-history:get-file-history',
+    CLEAR: 'analysis-history:clear',
+    EXPORT: 'analysis-history:export'
+  },
+
+  // EMBEDDINGS
+  EMBEDDINGS: {
+    REBUILD_FOLDERS: 'embeddings:rebuild-folders',
+    REBUILD_FILES: 'embeddings:rebuild-files',
+    FULL_REBUILD: 'embeddings:full-rebuild',
+    REANALYZE_ALL: 'embeddings:reanalyze-all',
+    CLEAR_STORE: 'embeddings:clear-store',
+    GET_STATS: 'embeddings:get-stats',
+    SEARCH: 'embeddings:search',
+    SCORE_FILES: 'embeddings:score-files',
+    FIND_SIMILAR: 'embeddings:find-similar',
+    REBUILD_BM25_INDEX: 'embeddings:rebuild-bm25',
+    GET_SEARCH_STATUS: 'embeddings:get-search-status',
+    DIAGNOSE_SEARCH: 'embeddings:diagnose-search',
+    FIND_MULTI_HOP: 'embeddings:find-multi-hop',
+    COMPUTE_CLUSTERS: 'embeddings:compute-clusters',
+    GET_CLUSTERS: 'embeddings:get-clusters',
+    GET_CLUSTER_MEMBERS: 'embeddings:get-cluster-members',
+    GET_SIMILARITY_EDGES: 'embeddings:get-similarity-edges',
+    GET_FILE_METADATA: 'embeddings:get-file-metadata',
+    FIND_DUPLICATES: 'embeddings:find-duplicates',
+    CLEAR_CLUSTERS: 'embeddings:clear-clusters'
+  },
+
+  // SYSTEM
+  SYSTEM: {
+    GET_METRICS: 'system:get-metrics',
+    GET_APPLICATION_STATISTICS: 'system:get-app-stats',
+    APPLY_UPDATE: 'system:apply-update',
+    GET_CONFIG: 'system:get-config',
+    GET_CONFIG_VALUE: 'system:get-config-value',
+    RENDERER_ERROR_REPORT: 'renderer-error-report',
+    GET_RECOMMENDED_CONCURRENCY: 'system:get-recommended-concurrency'
+  },
+
+  // WINDOW
+  WINDOW: {
+    MINIMIZE: 'window:minimize',
+    MAXIMIZE: 'window:maximize',
+    UNMAXIMIZE: 'window:unmaximize',
+    TOGGLE_MAXIMIZE: 'window:toggle-maximize',
+    IS_MAXIMIZED: 'window:is-maximized',
+    CLOSE: 'window:close'
+  },
+
+  // SUGGESTIONS
+  SUGGESTIONS: {
+    GET_FILE_SUGGESTIONS: 'suggestions:get-file',
+    GET_BATCH_SUGGESTIONS: 'suggestions:get-batch',
+    RECORD_FEEDBACK: 'suggestions:record-feedback',
+    GET_STRATEGIES: 'suggestions:get-strategies',
+    APPLY_STRATEGY: 'suggestions:apply-strategy',
+    GET_USER_PATTERNS: 'suggestions:get-user-patterns',
+    CLEAR_PATTERNS: 'suggestions:clear-patterns',
+    ANALYZE_FOLDER_STRUCTURE: 'suggestions:analyze-folder-structure',
+    SUGGEST_NEW_FOLDER: 'suggestions:suggest-new-folder',
+    ADD_FEEDBACK_MEMORY: 'suggestions:add-feedback-memory',
+    GET_FEEDBACK_MEMORY: 'suggestions:get-feedback-memory',
+    UPDATE_FEEDBACK_MEMORY: 'suggestions:update-feedback-memory',
+    DELETE_FEEDBACK_MEMORY: 'suggestions:delete-feedback-memory'
+  },
+
+  // ORGANIZE
+  ORGANIZE: {
+    AUTO: 'organize:auto',
+    BATCH: 'organize:batch',
+    PROCESS_NEW: 'organize:process-new',
+    GET_STATS: 'organize:get-stats',
+    UPDATE_THRESHOLDS: 'organize:update-thresholds',
+    CLUSTER_BATCH: 'organize:cluster-batch',
+    IDENTIFY_OUTLIERS: 'organize:identify-outliers',
+    GET_CLUSTER_SUGGESTIONS: 'organize:get-cluster-suggestions'
+  },
+
+  // CHROMADB
+  CHROMADB: {
+    GET_STATUS: 'chromadb:get-status',
+    GET_CIRCUIT_STATS: 'chromadb:get-circuit-stats',
+    GET_QUEUE_STATS: 'chromadb:get-queue-stats',
+    FORCE_RECOVERY: 'chromadb:force-recovery',
+    HEALTH_CHECK: 'chromadb:health-check',
+    STATUS_CHANGED: 'chromadb:status-changed'
+  },
+
+  // DEPENDENCIES
+  DEPENDENCIES: {
+    GET_STATUS: 'dependencies:get-status',
+    INSTALL_OLLAMA: 'dependencies:install-ollama',
+    INSTALL_CHROMADB: 'dependencies:install-chromadb',
+    UPDATE_OLLAMA: 'dependencies:update-ollama',
+    UPDATE_CHROMADB: 'dependencies:update-chromadb',
+    SERVICE_STATUS_CHANGED: 'dependencies:service-status-changed'
+  },
+
+  // CHAT
+  CHAT: {
+    QUERY: 'chat:query',
+    RESET_SESSION: 'chat:reset-session'
+  },
+
+  // KNOWLEDGE
+  KNOWLEDGE: {
+    GET_RELATIONSHIP_EDGES: 'knowledge:get-relationship-edges',
+    GET_RELATIONSHIP_STATS: 'knowledge:get-relationship-stats'
+  }
+};
+// === END GENERATED IPC_CHANNELS ===
 
 const preloadLogger = new Logger();
 preloadLogger.setContext('Preload');
@@ -692,7 +891,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         fileIds,
         minWeight: options.minWeight,
         maxEdges: options.maxEdges
-      })
+      }),
+    getRelationshipStats: () => secureIPC.safeInvoke(IPC_CHANNELS.KNOWLEDGE.GET_RELATIONSHIP_STATS)
   },
 
   // Organization Suggestions
@@ -772,6 +972,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     undo: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.UNDO),
     redo: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.REDO),
     getHistory: (limit) => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.GET_HISTORY, limit),
+    getState: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.GET_STATE),
     clear: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.CLEAR_HISTORY),
     canUndo: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.CAN_UNDO),
     canRedo: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.CAN_REDO),

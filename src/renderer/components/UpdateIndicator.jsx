@@ -1,10 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { Button } from './ui';
 
-logger.setContext('UpdateIndicator');
-
+const logger = createLogger('UpdateIndicator');
 const UpdateIndicator = React.memo(function UpdateIndicator() {
   const [status, setStatus] = useState('idle');
   const [visible, setVisible] = useState(false);

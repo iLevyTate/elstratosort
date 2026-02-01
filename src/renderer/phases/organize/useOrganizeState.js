@@ -19,9 +19,9 @@ import {
 import { selectFilesWithAnalysis, selectFileStats } from '../../store/selectors';
 import { setPhase, setOrganizing } from '../../store/slices/uiSlice';
 import { fetchDocumentsPath } from '../../store/slices/systemSlice';
-import { logger } from '../../../shared/logger';
+import { createLogger } from '../../../shared/logger';
 
-logger.setContext('OrganizePhase-State');
+const logger = createLogger('OrganizePhase-State');
 /**
  * Hook for managing OrganizePhase Redux state
  * @returns {Object} State and actions for organize phase

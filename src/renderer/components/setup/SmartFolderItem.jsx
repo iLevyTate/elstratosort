@@ -15,8 +15,10 @@ import IconButton from '../ui/IconButton';
 import Input from '../ui/Input';
 import Textarea from '../ui/Textarea';
 import Card from '../ui/Card';
+import StatusBadge from '../ui/StatusBadge';
 import { Heading, Text, Caption } from '../ui/Typography';
 import { formatDisplayPath } from '../../utils/pathDisplay';
+import { selectRedactPaths } from '../../store/selectors';
 
 const SmartFolderItem = memo(function SmartFolderItem({
   folder,
@@ -38,7 +40,8 @@ const SmartFolderItem = memo(function SmartFolderItem({
 }) {
   const isEditing = editingFolder?.id === folder.id;
   const [hasMounted, setHasMounted] = useState(false);
-  const redactPaths = useSelector((state) => Boolean(state?.system?.redactPaths));
+  // PERF: Use memoized selector instead of inline Boolean coercion
+  const redactPaths = useSelector(selectRedactPaths);
   const displayPath = formatDisplayPath(folder.path || '', { redact: redactPaths, segments: 2 });
 
   useEffect(() => {
@@ -104,7 +107,12 @@ const SmartFolderItem = memo(function SmartFolderItem({
         <div className="flex flex-col md:flex-row gap-4">
           <Input
             value={editingFolder.name || ''}
-            onChange={(e) => setEditingFolder({ ...editingFolder, name: e.target.value })}
+            onChange={(e) =>
+              setEditingFolder((prev) => ({
+                ...(prev || folder),
+                name: e.target.value
+              }))
+            }
             className="flex-1"
             placeholder="Folder name"
             autoFocus
@@ -116,7 +124,12 @@ const SmartFolderItem = memo(function SmartFolderItem({
           <Input
             type={redactPaths ? 'password' : 'text'}
             value={editingFolder.path || ''}
-            onChange={(e) => setEditingFolder({ ...editingFolder, path: e.target.value })}
+            onChange={(e) =>
+              setEditingFolder((prev) => ({
+                ...(prev || folder),
+                path: e.target.value
+              }))
+            }
             className="flex-1"
             placeholder="Folder path"
             onKeyDown={(e) => {
@@ -129,7 +142,12 @@ const SmartFolderItem = memo(function SmartFolderItem({
         <div className="relative">
           <Textarea
             value={editingFolder.description || ''}
-            onChange={(e) => setEditingFolder({ ...editingFolder, description: e.target.value })}
+            onChange={(e) =>
+              setEditingFolder((prev) => ({
+                ...(prev || folder),
+                description: e.target.value
+              }))
+            }
             className="w-full pr-10"
             placeholder="Describe what types of files should go in this folder..."
             rows={2}
@@ -142,7 +160,10 @@ const SmartFolderItem = memo(function SmartFolderItem({
                   editingFolder.name
                 );
                 if (result?.success && result.description) {
-                  setEditingFolder({ ...editingFolder, description: result.description });
+                  setEditingFolder((prev) => ({
+                    ...(prev || folder),
+                    description: result.description
+                  }));
                   addNotification?.('Description generated', 'success');
                 } else {
                   addNotification?.(result?.error || 'Failed to generate description', 'error');
@@ -207,19 +228,15 @@ const SmartFolderItem = memo(function SmartFolderItem({
         </div>
 
         {folder.physicallyExists ? (
-          <div className="flex items-center rounded-full border px-2.5 py-1 bg-stratosort-success/10 border-stratosort-success/20 shrink-0 gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-stratosort-success" />
-            <Text as="span" variant="tiny" className="font-medium text-stratosort-success">
-              Ready
-            </Text>
-          </div>
+          <StatusBadge variant="success" size="sm" className="self-center shrink-0 gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-current" />
+            <span>Ready</span>
+          </StatusBadge>
         ) : (
-          <div className="flex items-center rounded-full border px-2.5 py-1 bg-stratosort-warning/10 border-stratosort-warning/20 shrink-0 gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-stratosort-warning" />
-            <Text as="span" variant="tiny" className="font-medium text-stratosort-warning">
-              Missing
-            </Text>
-          </div>
+          <StatusBadge variant="warning" size="sm" className="self-center shrink-0 gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-current" />
+            <span>Missing</span>
+          </StatusBadge>
         )}
       </div>
 

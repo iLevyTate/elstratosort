@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { useSelector } from 'react-redux';
 import { Sparkles, FolderOpen } from 'lucide-react';
@@ -6,11 +6,11 @@ import { Button, Input, Textarea } from '../ui';
 import { Text } from '../ui/Typography';
 import Modal from '../ui/Modal';
 import { Inline, Stack } from '../layout';
-import { logger } from '../../../shared/logger';
+import { createLogger } from '../../../shared/logger';
 import { filesIpc, smartFoldersIpc } from '../../services/ipc';
+import { selectRedactPaths } from '../../store/selectors';
 
-logger.setContext('AddSmartFolderModal');
-
+const logger = createLogger('AddSmartFolderModal');
 const getPathSeparator = (path) => (path && path.includes('\\') ? '\\' : '/');
 
 function AddSmartFolderModal({
@@ -21,12 +21,21 @@ function AddSmartFolderModal({
   existingFolders = [],
   showNotification
 }) {
-  const redactPaths = useSelector((state) => Boolean(state?.system?.redactPaths));
+  // PERF: Use memoized selector instead of inline Boolean coercion
+  const redactPaths = useSelector(selectRedactPaths);
   const [folderName, setFolderName] = useState('');
   const [folderPath, setFolderPath] = useState('');
   const [description, setDescription] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [isGeneratingDescription, setIsGeneratingDescription] = useState(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const resetForm = useCallback(() => {
     setFolderName('');
@@ -43,6 +52,7 @@ function AddSmartFolderModal({
     setIsGeneratingDescription(true);
     try {
       const result = await smartFoldersIpc.generateDescription(folderName.trim());
+      if (!isMountedRef.current) return;
       if (result?.success && result.description) {
         setDescription(result.description);
         showNotification?.('Description generated', 'success');
@@ -51,9 +61,13 @@ function AddSmartFolderModal({
       }
     } catch (err) {
       logger.error('Failed to generate description', { error: err.message });
-      showNotification?.('Failed to generate description', 'error');
+      if (isMountedRef.current) {
+        showNotification?.('Failed to generate description', 'error');
+      }
     } finally {
-      setIsGeneratingDescription(false);
+      if (isMountedRef.current) {
+        setIsGeneratingDescription(false);
+      }
     }
   };
 
@@ -66,11 +80,15 @@ function AddSmartFolderModal({
     try {
       const res = await filesIpc.selectDirectory();
       if (res?.success && res.path) {
-        setFolderPath(res.path);
+        if (isMountedRef.current) {
+          setFolderPath(res.path);
+        }
       }
     } catch (error) {
       logger.error('Failed to browse folder', { error: error.message });
-      showNotification?.('Failed to browse folder', 'error');
+      if (isMountedRef.current) {
+        showNotification?.('Failed to browse folder', 'error');
+      }
     }
   };
 
@@ -156,7 +174,9 @@ function AddSmartFolderModal({
         handleClose();
       }
     } finally {
-      setIsAdding(false);
+      if (isMountedRef.current) {
+        setIsAdding(false);
+      }
     }
   };
 

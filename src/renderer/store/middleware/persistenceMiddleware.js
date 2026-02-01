@@ -246,25 +246,30 @@ const persistenceMiddleware = (store) => (next) => (action) => {
       isSaving = true;
 
       try {
+        // FIX: Get fresh state at save time instead of using stale closure reference.
+        // The debounce delay (up to 5s) means the state captured at dispatch time
+        // may be significantly outdated by the time this callback fires.
+        const freshState = store.getState();
+
         const stateToSave = {
           ui: {
-            currentPhase: state.ui.currentPhase,
-            sidebarOpen: state.ui.sidebarOpen,
-            showSettings: state.ui.showSettings
+            currentPhase: freshState.ui.currentPhase,
+            sidebarOpen: freshState.ui.sidebarOpen,
+            showSettings: freshState.ui.showSettings
           },
           files: {
-            selectedFiles: state.files.selectedFiles.slice(0, 200), // Limit size
-            smartFolders: state.files.smartFolders,
-            organizedFiles: state.files.organizedFiles,
-            namingConvention: state.files.namingConvention,
+            selectedFiles: freshState.files.selectedFiles.slice(0, 200), // Limit size
+            smartFolders: freshState.files.smartFolders,
+            organizedFiles: freshState.files.organizedFiles,
+            namingConvention: freshState.files.namingConvention,
             fileStates: {}
           },
           analysis: {
             // Analysis results
-            results: state.analysis.results.slice(0, 200),
-            isAnalyzing: state.analysis.isAnalyzing,
-            analysisProgress: state.analysis.analysisProgress,
-            currentAnalysisFile: state.analysis.currentAnalysisFile
+            results: freshState.analysis.results.slice(0, 200),
+            isAnalyzing: freshState.analysis.isAnalyzing,
+            analysisProgress: freshState.analysis.analysisProgress,
+            currentAnalysisFile: freshState.analysis.currentAnalysisFile
           },
           timestamp: Date.now()
         };
@@ -283,7 +288,7 @@ const persistenceMiddleware = (store) => (next) => (action) => {
         // Persist fileStates separately or limited
         // FIX: Prioritize in-progress and error states over completed ones
         // This prevents losing important state information on restart
-        const fileStatesEntries = Object.entries(state.files.fileStates);
+        const fileStatesEntries = Object.entries(freshState.files.fileStates);
         if (fileStatesEntries.length > 0) {
           const MAX_STATES = 100;
           if (fileStatesEntries.length <= MAX_STATES) {
@@ -336,16 +341,17 @@ const persistenceMiddleware = (store) => (next) => (action) => {
 
         // FIX CRIT-18: Only update tracking variables if save succeeded
         // This prevents state staleness where we think we saved but actually failed
+        // FIX: Recompute tracking values from freshState to match what was actually saved
         if (saveResult.success) {
-          lastSavedPhase = currentPhase;
-          lastSavedFilesCount = currentFilesCount;
-          lastSavedResultsCount = currentResultsCount;
-          lastSavedOrganizedFilesCount = currentOrganizedFilesCount;
-          lastSavedSmartFoldersCount = currentSmartFoldersCount;
-          lastSavedFileStatesCount = currentFileStatesCount;
-          lastSavedFileStatesHash = currentFileStatesHash;
-          lastSavedSidebarOpen = sidebarOpen;
-          lastSavedShowSettings = showSettings;
+          lastSavedPhase = freshState.ui.currentPhase;
+          lastSavedFilesCount = freshState.files.selectedFiles.length;
+          lastSavedResultsCount = freshState.analysis.results.length;
+          lastSavedOrganizedFilesCount = freshState.files.organizedFiles.length;
+          lastSavedSmartFoldersCount = freshState.files.smartFolders.length;
+          lastSavedFileStatesCount = Object.keys(freshState.files.fileStates || {}).length;
+          lastSavedFileStatesHash = computeFileStatesHash(freshState.files.fileStates);
+          lastSavedSidebarOpen = freshState.ui.sidebarOpen;
+          lastSavedShowSettings = freshState.ui.showSettings;
           lastSaveAttempt = Date.now();
         }
       } finally {

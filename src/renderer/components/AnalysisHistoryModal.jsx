@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { TrendingUp, ClipboardList, Download, Folder, RefreshCw, FileText } from 'lucide-react';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useNotification } from '../contexts/NotificationContext';
 import Modal, { ConfirmModal } from './ui/Modal';
 import Button from './ui/Button';
@@ -10,8 +10,7 @@ import { Heading, Text } from './ui/Typography';
 import { StatusBadge, StateMessage } from './ui';
 import { Inline, Stack } from './layout';
 
-logger.setContext('AnalysisHistoryModal');
-
+const logger = createLogger('AnalysisHistoryModal');
 function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
   const { addNotification } = useNotification();
   const [historyData, setHistoryData] = useState([]);

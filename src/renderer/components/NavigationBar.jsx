@@ -12,7 +12,7 @@ import {
   X
 } from 'lucide-react';
 import { PHASES, PHASE_TRANSITIONS, PHASE_METADATA, PHASE_ORDER } from '../../shared/constants';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { setPhase, toggleSettings } from '../store/slices/uiSlice';
 import { updateHealth } from '../store/slices/systemSlice';
@@ -22,8 +22,7 @@ import { Button, IconButton } from './ui';
 import { Text } from './ui/Typography';
 import { isMac } from '../utils/platform';
 
-logger.setContext('NavigationBar');
-
+const logger = createLogger('NavigationBar');
 // =============================================================================
 // Icon Components - Using Lucide React for premium icons
 // =============================================================================
@@ -212,6 +211,7 @@ const NavTab = memo(function NavTab({
       aria-label={metadata?.title}
       aria-current={isActive ? 'page' : undefined}
       aria-busy={showSpinner}
+      aria-disabled={!canNavigate}
       title={
         !canNavigate && !isActive
           ? 'Navigation disabled during operation'
@@ -499,6 +499,14 @@ function NavigationBar() {
   useEffect(() => {
     let scrollRafId = null;
     let isMounted = true;
+    const scrollTarget = document.getElementById('main-content') || window;
+
+    const getScrollTop = () => {
+      if (scrollTarget === window) {
+        return window.scrollY || 0;
+      }
+      return scrollTarget?.scrollTop || 0;
+    };
 
     const handleScroll = () => {
       if (scrollRafId) {
@@ -507,19 +515,19 @@ function NavigationBar() {
       scrollRafId = requestAnimationFrame(() => {
         scrollRafId = null;
         if (isMounted) {
-          setIsScrolled(window.scrollY > 10);
+          setIsScrolled(getScrollTop() > 10);
         }
       });
     };
 
     handleScroll();
-    window.addEventListener('scroll', handleScroll, { passive: true });
+    scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
     return () => {
       isMounted = false;
       if (scrollRafId) {
         cancelAnimationFrame(scrollRafId);
       }
-      window.removeEventListener('scroll', handleScroll);
+      scrollTarget.removeEventListener('scroll', handleScroll);
     };
   }, []);
 
@@ -582,7 +590,8 @@ function NavigationBar() {
         </div>
 
         {/* Center: Phase Navigation - Absolute center relative to viewport width */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        {/* NOTE: Do not disable pointer events on the wrapper; it blocks nav buttons. */}
+        <div className="absolute inset-0 flex items-center justify-center">
           <nav
             className="phase-nav max-w-[60vw]"
             style={{ WebkitAppRegion: 'no-drag' }}

@@ -10,7 +10,7 @@
 import { useCallback, useRef, useEffect, useState } from 'react';
 import { PHASES, FILE_STATES } from '../../../shared/constants';
 import { TIMEOUTS, CONCURRENCY, RETRY } from '../../../shared/performanceConstants';
-import { logger } from '../../../shared/logger';
+import { createLogger } from '../../../shared/logger';
 import {
   validateProgressState,
   generatePreviewName as generatePreviewNameUtil,
@@ -19,8 +19,7 @@ import {
   extractFileName
 } from './namingUtils';
 
-logger.setContext('DiscoverPhase:Analysis');
-
+const logger = createLogger('DiscoverPhase:Analysis');
 // FIX Issue 4: Removed module-level pendingAutoAdvanceTimeoutId
 // Auto-advance timeout is now stored in a ref within the hook to prevent
 // cross-component interference when hook unmounts and remounts
@@ -324,6 +323,8 @@ export function useAnalysis(options = {}) {
   const analysisResultsRef = useRef(analysisResults);
   const fileStatesRef = useRef(fileStates);
   const analysisProgressRef = useRef(analysisProgress);
+  const analysisRunIdRef = useRef(0);
+  const lastProgressAtRef = useRef(0);
 
   // Sync refs during render (avoids useEffect overhead)
   isAnalyzingRef.current = isAnalyzing;
@@ -377,9 +378,45 @@ export function useAnalysis(options = {}) {
   const resetAnalysisState = useCallback(
     (reason) => {
       logger.info('Resetting analysis state', { reason });
+      analysisRunIdRef.current += 1;
+      // Ensure any in-flight analysis is stopped and locks are released.
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      analysisLockRef.current = false;
+      isAnalyzingRef.current = false;
+      setGlobalAnalysisActive(false);
+      globalAnalysisActiveRef.current = false;
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
+      if (analysisTimeoutRef.current) {
+        clearTimeout(analysisTimeoutRef.current);
+        analysisTimeoutRef.current = null;
+      }
+      if (lockTimeoutRef.current) {
+        clearTimeout(lockTimeoutRef.current);
+        lockTimeoutRef.current = null;
+      }
+      if (clearCurrentFileTimeoutRef.current) {
+        clearTimeout(clearCurrentFileTimeoutRef.current);
+        clearCurrentFileTimeoutRef.current = null;
+      }
+      if (pendingFilesTimeoutRef.current) {
+        clearTimeout(pendingFilesTimeoutRef.current);
+        pendingFilesTimeoutRef.current = null;
+      }
+      pendingFilesRef.current = [];
+      flushPendingResults(true);
+
       setIsAnalyzing(false);
-      setAnalysisProgress({ current: 0, total: 0, currentFile: '' });
+      const clearedProgress = { current: 0, total: 0, currentFile: '', lastActivity: 0 };
+      analysisProgressRef.current = clearedProgress;
+      setAnalysisProgress(clearedProgress);
       setCurrentAnalysisFile('');
+      actions.setPhaseData('currentAnalysisFile', '');
 
       try {
         localStorage.removeItem('stratosort_workflow_state');
@@ -387,7 +424,14 @@ export function useAnalysis(options = {}) {
         // Non-fatal
       }
     },
-    [setIsAnalyzing, setAnalysisProgress, setCurrentAnalysisFile]
+    [
+      setIsAnalyzing,
+      setAnalysisProgress,
+      setCurrentAnalysisFile,
+      setGlobalAnalysisActive,
+      flushPendingResults,
+      actions
+    ]
   );
 
   /**
@@ -523,7 +567,7 @@ export function useAnalysis(options = {}) {
       }
 
       // Atomic lock acquisition (use refs to avoid stale closures)
-      const lockAcquired = (() => {
+      const tryAcquireLock = () => {
         if (analysisLockRef.current || globalAnalysisActiveRef.current || isAnalyzingRef.current) {
           logger.debug('Analysis lock not acquired', {
             locked: analysisLockRef.current,
@@ -534,7 +578,27 @@ export function useAnalysis(options = {}) {
         }
         analysisLockRef.current = true;
         return true;
-      })();
+      };
+
+      let lockAcquired = tryAcquireLock();
+
+      if (!lockAcquired) {
+        const lastActivity = Number.isFinite(analysisProgressRef.current?.lastActivity)
+          ? analysisProgressRef.current.lastActivity
+          : 0;
+        const inactivityMs = lastActivity ? Date.now() - lastActivity : Infinity;
+        const staleThreshold = TIMEOUTS.ANALYSIS_LOCK || 5 * 60 * 1000;
+
+        if (inactivityMs > staleThreshold) {
+          logger.warn('Stale analysis lock detected, resetting', {
+            inactivityMs,
+            lastActivity,
+            thresholdMs: staleThreshold
+          });
+          resetAnalysisState('Stale analysis lock detected');
+          lockAcquired = tryAcquireLock();
+        }
+      }
 
       if (!lockAcquired) {
         // Queue files for analysis when current batch completes
@@ -553,6 +617,9 @@ export function useAnalysis(options = {}) {
         );
         return;
       }
+
+      const runId = ++analysisRunIdRef.current;
+      const isActiveRun = () => analysisRunIdRef.current === runId;
 
       // FIX Issue-4: Mark as "resumed" ONLY after lock is acquired
       // This prevents the resume useEffect from showing "Resuming..." notification
@@ -575,21 +642,34 @@ export function useAnalysis(options = {}) {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Safety timeout - store in ref for proper cleanup
-      lockTimeoutRef.current = setTimeout(() => {
-        if (analysisLockRef.current) {
-          logger.warn('Analysis lock timeout, forcing release');
-          analysisLockRef.current = false;
-          if (heartbeatIntervalRef.current) {
-            clearInterval(heartbeatIntervalRef.current);
-            heartbeatIntervalRef.current = null;
+      const scheduleLockTimeoutCheck = () => {
+        lockTimeoutRef.current = setTimeout(() => {
+          if (!isActiveRun()) {
+            lockTimeoutRef.current = null;
+            return;
           }
-          if (analysisTimeoutRef.current) {
-            clearTimeout(analysisTimeoutRef.current);
-            analysisTimeoutRef.current = null;
+
+          const lastProgressAt = Number.isFinite(lastProgressAtRef.current)
+            ? lastProgressAtRef.current
+            : 0;
+          const inactivityMs = lastProgressAt ? Date.now() - lastProgressAt : Infinity;
+          const thresholdMs = TIMEOUTS.ANALYSIS_LOCK;
+
+          if (inactivityMs < thresholdMs) {
+            scheduleLockTimeoutCheck();
+            return;
           }
-        }
-        lockTimeoutRef.current = null;
-      }, TIMEOUTS.ANALYSIS_LOCK);
+
+          logger.warn('Analysis lock timeout, forcing release', {
+            inactivityMs,
+            lastProgressAt,
+            thresholdMs
+          });
+          resetAnalysisState('Analysis lock timeout');
+          lockTimeoutRef.current = null;
+        }, TIMEOUTS.ANALYSIS_LOCK);
+      };
+      scheduleLockTimeoutCheck();
 
       // FIX: Filter duplicates upfront to ensure progress tracking matches total
       // This prevents "stuck" progress bars where processed count < total due to internal skipping
@@ -598,6 +678,7 @@ export function useAnalysis(options = {}) {
       );
 
       setIsAnalyzing(true);
+      lastProgressAtRef.current = Date.now();
       const initialProgress = {
         current: 0,
         total: uniqueFiles.length,
@@ -616,6 +697,13 @@ export function useAnalysis(options = {}) {
       // Heartbeat interval - just updates lastActivity to keep analysis alive
       // FIX: Read from analysisProgressRef (Redux state) instead of local ref
       heartbeatIntervalRef.current = setInterval(() => {
+        if (!isActiveRun()) {
+          if (heartbeatIntervalRef.current) {
+            clearInterval(heartbeatIntervalRef.current);
+            heartbeatIntervalRef.current = null;
+          }
+          return;
+        }
         if (localAnalyzingRef.current) {
           const prev = analysisProgressRef.current;
           const currentProgress = {
@@ -641,6 +729,9 @@ export function useAnalysis(options = {}) {
       // Global timeout
       analysisTimeoutRef.current = setTimeout(() => {
         logger.warn('Global analysis timeout (10 min)');
+        if (analysisRunIdRef.current === runId) {
+          analysisRunIdRef.current += 1;
+        }
         if (heartbeatIntervalRef.current) {
           clearInterval(heartbeatIntervalRef.current);
           heartbeatIntervalRef.current = null;
@@ -735,6 +826,7 @@ export function useAnalysis(options = {}) {
         completedCountRef.current = 0;
 
         const processFile = async (file) => {
+          if (!isActiveRun() || abortSignal.aborted) return;
           if (processedFiles.has(file.path)) return;
 
           const fileName = file.name || file.path.split(/[\\/]/).pop();
@@ -776,11 +868,12 @@ export function useAnalysis(options = {}) {
 
             // Fix: Check for abort signal immediately after async operation
             // This prevents state updates if the user cancelled while analysis was in flight
-            if (abortSignal.aborted) return;
+            if (!isActiveRun() || abortSignal.aborted) return;
 
             // FIX CRIT-2: Atomically increment and capture counter in single expression
             // This prevents race conditions where multiple workers read same value
             const newCompletedCount = ++completedCountRef.current;
+            lastProgressAtRef.current = Date.now();
             const progress = {
               current: Math.min(newCompletedCount, uniqueFiles.length),
               total: uniqueFiles.length,
@@ -801,7 +894,7 @@ export function useAnalysis(options = {}) {
             const shouldTreatAsReady =
               analysisForUi && (!analysisForUi.hadError || hasFallbackSuggestion(analysisForUi));
 
-            if (shouldTreatAsReady) {
+            if (shouldTreatAsReady && isActiveRun()) {
               const baseSuggestedName = analysisForUi.suggestedName || fileName;
               const enhancedAnalysis = {
                 ...analysisForUi,
@@ -827,7 +920,7 @@ export function useAnalysis(options = {}) {
                 created: fileInfo.created,
                 modified: fileInfo.modified
               });
-            } else {
+            } else if (isActiveRun()) {
               recordAnalysisResult({
                 ...fileInfo,
                 analysis: null,
@@ -841,9 +934,10 @@ export function useAnalysis(options = {}) {
               });
             }
           } catch (error) {
-            if (abortSignal.aborted) return;
+            if (!isActiveRun() || abortSignal.aborted) return;
             // FIX CRIT-2: Atomically increment and capture counter on error path too
             const newCompletedCount = ++completedCountRef.current;
+            lastProgressAtRef.current = Date.now();
             const progress = {
               current: Math.min(newCompletedCount, uniqueFiles.length),
               total: uniqueFiles.length,
@@ -859,6 +953,7 @@ export function useAnalysis(options = {}) {
               setAnalysisProgress(progress);
             }
 
+            if (!isActiveRun()) return;
             recordAnalysisResult({
               ...file,
               analysis: null,
@@ -873,17 +968,15 @@ export function useAnalysis(options = {}) {
         // Use a worker pool pattern for true parallel processing
         // This keeps all workers busy instead of waiting for batches to complete
         const runWorkerPool = async () => {
-          let fileIndex = 0;
+          const queue = fileQueue.slice().reverse();
 
           const worker = async () => {
-            while (fileIndex < fileQueue.length) {
-              if (abortSignal.aborted) {
+            while (queue.length > 0) {
+              if (abortSignal.aborted || !isActiveRun()) {
                 return;
               }
-              const currentIndex = fileIndex++;
-              if (currentIndex >= fileQueue.length) break;
-
-              const file = fileQueue[currentIndex];
+              const file = queue.pop();
+              if (!file) break;
               await processFile(file);
             }
           };
@@ -907,12 +1000,14 @@ export function useAnalysis(options = {}) {
             });
           }
 
-          if (abortSignal.aborted) {
+          if (!isActiveRun() || abortSignal.aborted) {
             addNotification('Analysis cancelled by user', 'info', 2000);
           }
         };
 
         await runWorkerPool();
+
+        if (!isActiveRun()) return;
 
         // FIX: Ensure final progress is dispatched (may have been throttled)
         const finalProgress = {
@@ -954,79 +1049,86 @@ export function useAnalysis(options = {}) {
           addNotification(`Analysis failed: ${error.message}`, 'error', 5000, 'analysis-error');
         }
       } finally {
-        if (heartbeatIntervalRef.current) {
-          clearInterval(heartbeatIntervalRef.current);
-          heartbeatIntervalRef.current = null;
-        }
-        if (analysisTimeoutRef.current) {
-          clearTimeout(analysisTimeoutRef.current);
-          analysisTimeoutRef.current = null;
-        }
-
-        // Update local refs to ensure proper lock synchronization
-        localAnalyzingRef.current = false;
-
-        const trackedTotal =
-          Number.isInteger(analysisProgressRef.current?.total) &&
-          analysisProgressRef.current.total > 0
-            ? analysisProgressRef.current.total
-            : files.length;
-        const didComplete = trackedTotal > 0 && completedCountRef.current >= trackedTotal;
-
-        // CRITICAL FIX: Only preserve Redux state if analysis is still in-flight.
-        // If we already completed, clear state even if component unmounted to avoid
-        // "analysis continuing in background" banners with 100% progress.
-        if (isMountedRef.current || didComplete) {
-          isAnalyzingRef.current = false;
-          setIsAnalyzing(false);
-
-          // FIX: Delay clearing the current file name to allow UI to show final state
-          if (clearCurrentFileTimeoutRef.current) {
-            clearTimeout(clearCurrentFileTimeoutRef.current);
+        const shouldCleanup = isActiveRun();
+        if (shouldCleanup) {
+          if (heartbeatIntervalRef.current) {
+            clearInterval(heartbeatIntervalRef.current);
+            heartbeatIntervalRef.current = null;
           }
-          clearCurrentFileTimeoutRef.current = setTimeout(() => {
-            if (isMountedRef.current) {
-              setCurrentAnalysisFile('');
-              actions.setPhaseData('currentAnalysisFile', '');
-            }
-          }, 500);
-
-          // FIX: Include lastActivity in reset to fully clear progress state
-          setAnalysisProgress({ current: 0, total: 0, lastActivity: 0 });
-          // Redux is the single source of truth for isAnalyzing.
-        } else {
-          logger.info('Analysis interrupted by navigation - preserving state for resume');
-        }
-
-        analysisLockRef.current = false;
-        setGlobalAnalysisActive(false);
-        if (lockTimeoutRef.current) {
-          clearTimeout(lockTimeoutRef.current);
-          lockTimeoutRef.current = null;
-        }
-
-        try {
-          localStorage.removeItem('stratosort_workflow_state');
-        } catch {
-          // Non-fatal
-        }
-
-        // Process any files that were queued during this analysis batch
-        if (pendingFilesRef.current.length > 0) {
-          const filesToProcess = [...pendingFilesRef.current];
-          pendingFilesRef.current = [];
-          logger.info('Processing queued files', {
-            fileCount: filesToProcess.length
-          });
-          // Use setTimeout to allow state to settle before starting next batch
-          if (pendingFilesTimeoutRef.current) {
-            clearTimeout(pendingFilesTimeoutRef.current);
+          if (analysisTimeoutRef.current) {
+            clearTimeout(analysisTimeoutRef.current);
+            analysisTimeoutRef.current = null;
           }
-          pendingFilesTimeoutRef.current = setTimeout(() => {
-            if (isMountedRef.current && analyzeFilesRef.current) {
-              analyzeFilesRef.current(filesToProcess);
+
+          // Update local refs to ensure proper lock synchronization
+          localAnalyzingRef.current = false;
+
+          const trackedTotal =
+            Number.isInteger(analysisProgressRef.current?.total) &&
+            analysisProgressRef.current.total > 0
+              ? analysisProgressRef.current.total
+              : files.length;
+          const didComplete = trackedTotal > 0 && completedCountRef.current >= trackedTotal;
+
+          // CRITICAL FIX: Only preserve Redux state if analysis is still in-flight.
+          // If we already completed, clear state even if component unmounted to avoid
+          // "analysis continuing in background" banners with 100% progress.
+          if (isMountedRef.current || didComplete) {
+            isAnalyzingRef.current = false;
+            setIsAnalyzing(false);
+
+            // FIX: Delay clearing the current file name to allow UI to show final state
+            if (clearCurrentFileTimeoutRef.current) {
+              clearTimeout(clearCurrentFileTimeoutRef.current);
             }
-          }, 100);
+            clearCurrentFileTimeoutRef.current = setTimeout(() => {
+              if (isMountedRef.current) {
+                setCurrentAnalysisFile('');
+                actions.setPhaseData('currentAnalysisFile', '');
+              }
+            }, 500);
+
+            // FIX: Include lastActivity in reset to fully clear progress state
+            setAnalysisProgress({ current: 0, total: 0, lastActivity: 0 });
+            // Redux is the single source of truth for isAnalyzing.
+          } else {
+            logger.info('Analysis interrupted by navigation - preserving state for resume');
+          }
+
+          analysisLockRef.current = false;
+          setGlobalAnalysisActive(false);
+          if (lockTimeoutRef.current) {
+            clearTimeout(lockTimeoutRef.current);
+            lockTimeoutRef.current = null;
+          }
+
+          try {
+            localStorage.removeItem('stratosort_workflow_state');
+          } catch {
+            // Non-fatal
+          }
+
+          // Process any files that were queued during this analysis batch
+          if (pendingFilesRef.current.length > 0) {
+            const filesToProcess = [...pendingFilesRef.current];
+            pendingFilesRef.current = [];
+            logger.info('Processing queued files', {
+              fileCount: filesToProcess.length
+            });
+            // Use setTimeout to allow state to settle before starting next batch
+            if (pendingFilesTimeoutRef.current) {
+              clearTimeout(pendingFilesTimeoutRef.current);
+            }
+            pendingFilesTimeoutRef.current = setTimeout(() => {
+              if (
+                isMountedRef.current &&
+                analyzeFilesRef.current &&
+                analysisRunIdRef.current === runId
+              ) {
+                analyzeFilesRef.current(filesToProcess);
+              }
+            }, 100);
+          }
         }
       }
     },
@@ -1061,10 +1163,13 @@ export function useAnalysis(options = {}) {
       abortControllerRef.current = null;
       logger.info('Analysis aborted by user');
     }
+    clearAutoAdvanceTimeoutRef(autoAdvanceTimeoutRef);
+    analysisRunIdRef.current += 1;
     // Ensure locks/timeouts are cleared so a new run can start immediately.
     analysisLockRef.current = false;
     isAnalyzingRef.current = false;
     setGlobalAnalysisActive(false);
+    globalAnalysisActiveRef.current = false;
     if (heartbeatIntervalRef.current) {
       clearInterval(heartbeatIntervalRef.current);
       heartbeatIntervalRef.current = null;
@@ -1090,12 +1195,19 @@ export function useAnalysis(options = {}) {
     // Clear any pending files when cancelling
     pendingFilesRef.current = [];
     setIsAnalyzing(false);
-    setAnalysisProgress({ current: 0, total: 0 });
+    const clearedProgress = { current: 0, total: 0, lastActivity: 0 };
+    analysisProgressRef.current = clearedProgress;
+    setAnalysisProgress(clearedProgress);
     // Redux is the single source of truth for isAnalyzing.
     // FIX: Removed redundant setPhaseData('analysisProgress') - already updated via setAnalysisProgress
 
     // FIX: Delay clearing the file name to allow UI to settle
-    setTimeout(() => {
+    // Store timeout in ref so it can be cleared on unmount (Bug 17)
+    if (clearCurrentFileTimeoutRef.current) {
+      clearTimeout(clearCurrentFileTimeoutRef.current);
+    }
+    clearCurrentFileTimeoutRef.current = setTimeout(() => {
+      clearCurrentFileTimeoutRef.current = null;
       setCurrentAnalysisFile('');
       actions.setPhaseData('currentAnalysisFile', '');
     }, 300);

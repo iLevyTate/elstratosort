@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { AlertTriangle, X, Sparkles, RefreshCw, Network, FolderOpen, Settings } from 'lucide-react';
 import { PHASES } from '../../shared/constants';
 import { TIMEOUTS } from '../../shared/performanceConstants';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useNotification } from '../contexts/NotificationContext';
 import { useFloatingSearch } from '../contexts/FloatingSearchContext';
 import { useConfirmDialog, useDragAndDrop, useSettingsSubscription } from '../hooks';
@@ -34,8 +34,7 @@ const normalizeForComparison = (path) => {
   return isWindowsPath(path) ? normalized.toLowerCase() : normalized;
 };
 
-logger.setContext('DiscoverPhase');
-
+const logger = createLogger('DiscoverPhase');
 function DiscoverPhase() {
   const {
     selectedFiles,
@@ -417,7 +416,7 @@ function DiscoverPhase() {
       </Stack>
 
       {/* Toolbar */}
-      <Inline className="justify-between" gap="cozy" wrap={false}>
+      <Inline className="justify-between pt-2" gap="cozy" wrap={false}>
         <Inline gap="compact">{/* Left side toolbar items if any */}</Inline>
         <Inline gap="relaxed" wrap>
           <Button variant="secondary" size="sm" onClick={() => setShowNamingSettings(true)}>

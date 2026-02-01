@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { useDispatch } from 'react-redux';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { ToastContainer, useToast } from '../components/Toast';
 import {
   addNotification as addSystemNotification,
@@ -9,8 +9,7 @@ import {
   clearNotifications
 } from '../store/slices/systemSlice';
 
-logger.setContext('NotificationContext');
-
+const logger = createLogger('NotificationContext');
 const NotificationContext = createContext(null);
 
 export function NotificationProvider({ children }) {

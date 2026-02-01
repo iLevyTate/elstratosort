@@ -65,6 +65,7 @@ const SimilarityEdge = memo(
     const isCrossCluster = data?.kind === 'cross_cluster';
     const similarity = data?.similarity ?? 0;
     const similarityPercent = Math.round(similarity * 100);
+    const tooltipsEnabled = data?.showEdgeTooltips !== false;
 
     // Source and target metadata from data
     const sourceData = data?.sourceData || {};
@@ -216,15 +217,17 @@ const SimilarityEdge = memo(
     return (
       <>
         {/* Invisible wider path for easier hovering */}
-        <path
-          d={edgePath}
-          fill="none"
-          stroke="transparent"
-          strokeWidth={20}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-          style={{ cursor: 'pointer' }}
-        />
+        {tooltipsEnabled && (
+          <path
+            d={edgePath}
+            fill="none"
+            stroke="transparent"
+            strokeWidth={20}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+            style={{ cursor: 'pointer' }}
+          />
+        )}
 
         {/* Visible edge */}
         <BaseEdge id={id} path={edgePath} style={edgeStyle} markerEnd={markerEnd} />
@@ -256,8 +259,8 @@ const SimilarityEdge = memo(
                           : 'bg-white border-slate-200 text-slate-500'
                   }
                 `}
-                onMouseEnter={handleMouseEnter}
-                onMouseLeave={handleMouseLeave}
+                onMouseEnter={tooltipsEnabled ? handleMouseEnter : undefined}
+                onMouseLeave={tooltipsEnabled ? handleMouseLeave : undefined}
               >
                 {labelText}
               </div>
@@ -266,105 +269,113 @@ const SimilarityEdge = memo(
         )}
 
         {/* Edge label and tooltip */}
-        <BaseEdgeTooltip
-          isHovered={isHovered}
-          labelX={labelX}
-          labelY={labelY}
-          badgeText={labelText}
-          badgeColorClass={
-            primaryType === 'tag'
-              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-              : primaryType === 'category'
-                ? 'bg-violet-50 text-violet-700 border border-violet-200'
-                : primaryType === 'content'
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+        {tooltipsEnabled && (
+          <BaseEdgeTooltip
+            isHovered={isHovered}
+            labelX={labelX}
+            labelY={labelY}
+            badgeText={labelText}
+            badgeColorClass={
+              primaryType === 'tag'
+                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                : primaryType === 'category'
+                  ? 'bg-violet-50 text-violet-700 border border-violet-200'
+                  : primaryType === 'content'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                    : primaryType === 'cross'
+                      ? 'bg-slate-50 text-slate-700 border border-slate-200'
+                      : 'bg-slate-100 text-slate-500 border border-slate-200'
+            }
+            title={
+              badgeTitle || (primaryType === 'cross' ? 'Cluster Bridge' : 'Content Similarity')
+            }
+            headerColorClass={
+              primaryType === 'tag'
+                ? 'text-blue-600'
+                : primaryType === 'category'
+                  ? 'text-violet-600'
                   : primaryType === 'cross'
-                    ? 'bg-slate-50 text-slate-700 border border-slate-200'
-                    : 'bg-slate-100 text-slate-500 border border-slate-200'
-          }
-          title={badgeTitle || (primaryType === 'cross' ? 'Cluster Bridge' : 'Content Similarity')}
-          headerColorClass={
-            primaryType === 'tag'
-              ? 'text-blue-600'
-              : primaryType === 'category'
-                ? 'text-violet-600'
-                : primaryType === 'cross'
-                  ? 'text-slate-600'
-                  : 'text-emerald-600'
-          }
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-        >
-          {!isCrossCluster ? (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="text-system-gray-500">Similarity:</span>
-                <span className="font-medium text-emerald-600">{similarityPercent}%</span>
-                <div className="flex-1 h-1.5 bg-system-gray-200 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-emerald-500 rounded-full"
-                    style={{ width: `${similarityPercent}%` }}
-                  />
+                    ? 'text-slate-600'
+                    : 'text-emerald-600'
+            }
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+          >
+            {!isCrossCluster ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <span className="text-system-gray-500">Similarity:</span>
+                  <span className="font-medium text-emerald-600">{similarityPercent}%</span>
+                  <div className="flex-1 h-1.5 bg-system-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 rounded-full"
+                      style={{ width: `${similarityPercent}%` }}
+                    />
+                  </div>
                 </div>
-              </div>
 
-              {commonTags.length > 0 && (
-                <div>
-                  <span className="text-system-gray-500">Common tags: </span>
-                  <span className="text-blue-600">
-                    {commonTags.slice(0, 4).join(', ')}
-                    {commonTags.length > 4 && ` +${commonTags.length - 4} more`}
-                  </span>
-                </div>
-              )}
+                {commonTags.length > 0 && (
+                  <div>
+                    <span className="text-system-gray-500">Common tags: </span>
+                    <span className="text-blue-600">
+                      {commonTags.slice(0, 4).join(', ')}
+                      {commonTags.length > 4 && ` +${commonTags.length - 4} more`}
+                    </span>
+                  </div>
+                )}
 
-              {sameCategory && (
-                <div>
-                  <span className="text-system-gray-500">Category: </span>
-                  <span className="text-purple-600">{sourceCategory}</span>
-                </div>
-              )}
+                {sameCategory && (
+                  <div>
+                    <span className="text-system-gray-500">Category: </span>
+                    <span className="text-purple-600">{sourceCategory}</span>
+                  </div>
+                )}
 
-              {hasSubjects && (
-                <div className="space-y-0.5">
-                  {sourceSubject && (
-                    <div className="text-[11px]">
-                      <span className="text-system-gray-500">A: </span>
-                      <span className="text-amber-600 truncate">{sourceSubject.slice(0, 40)}</span>
-                    </div>
-                  )}
-                  {targetSubject && (
-                    <div className="text-[11px]">
-                      <span className="text-system-gray-500">B: </span>
-                      <span className="text-amber-600 truncate">{targetSubject.slice(0, 40)}</span>
-                    </div>
-                  )}
-                </div>
-              )}
+                {hasSubjects && (
+                  <div className="space-y-0.5">
+                    {sourceSubject && (
+                      <div className="text-[11px]">
+                        <span className="text-system-gray-500">A: </span>
+                        <span className="text-amber-600 truncate">
+                          {sourceSubject.slice(0, 40)}
+                        </span>
+                      </div>
+                    )}
+                    {targetSubject && (
+                      <div className="text-[11px]">
+                        <span className="text-system-gray-500">B: </span>
+                        <span className="text-amber-600 truncate">
+                          {targetSubject.slice(0, 40)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
-              <div className="text-system-gray-500 italic text-[11px] pt-1 border-t border-system-gray-200">
-                {explanation}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="text-system-gray-500">Bridge strength:</span>
-                <span className="font-medium text-system-gray-700">{similarityPercent}%</span>
-              </div>
-              {Array.isArray(data?.sharedTerms) && data.sharedTerms.length > 0 && (
-                <div className="text-[11px] text-system-gray-600">
-                  Shared terms: {data.sharedTerms.slice(0, 4).join(', ')}
+                <div className="text-system-gray-500 italic text-[11px] pt-1 border-t border-system-gray-200">
+                  {explanation}
                 </div>
-              )}
-              {data?.bridgeCount > 0 && (
-                <div className="text-[11px] text-system-gray-600">
-                  Bridge files: {data.bridgeCount}
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  <span className="text-system-gray-500">Bridge strength:</span>
+                  <span className="font-medium text-system-gray-700">{similarityPercent}%</span>
                 </div>
-              )}
-            </>
-          )}
-        </BaseEdgeTooltip>
+                {Array.isArray(data?.sharedTerms) && data.sharedTerms.length > 0 && (
+                  <div className="text-[11px] text-system-gray-600">
+                    Shared terms: {data.sharedTerms.slice(0, 4).join(', ')}
+                  </div>
+                )}
+                {data?.bridgeCount > 0 && (
+                  <div className="text-[11px] text-system-gray-600">
+                    Bridge files: {data.bridgeCount}
+                  </div>
+                )}
+              </>
+            )}
+          </BaseEdgeTooltip>
+        )}
       </>
     );
   }
@@ -382,6 +393,8 @@ SimilarityEdge.propTypes = {
   targetPosition: PropTypes.oneOf(['top', 'right', 'bottom', 'left']),
   data: PropTypes.shape({
     similarity: PropTypes.number,
+    showEdgeLabels: PropTypes.bool,
+    showEdgeTooltips: PropTypes.bool,
     sourceData: PropTypes.shape({
       label: PropTypes.string,
       tags: PropTypes.arrayOf(PropTypes.string),

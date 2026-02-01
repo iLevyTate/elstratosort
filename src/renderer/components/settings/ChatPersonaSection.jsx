@@ -10,7 +10,7 @@ function ChatPersonaSection({ settings, setSettings }) {
   const currentValue = settings.chatPersona || DEFAULT_CHAT_PERSONA_ID;
 
   return (
-    <Card variant="default" className="p-5 space-y-4">
+    <Card variant="default" className="space-y-5">
       <div>
         <Text variant="tiny" className="font-semibold uppercase tracking-wide text-system-gray-500">
           Chat persona

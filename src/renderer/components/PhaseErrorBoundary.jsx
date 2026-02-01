@@ -1,14 +1,13 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useAppDispatch } from '../store/hooks';
 import { resetUi } from '../store/slices/uiSlice';
 import { resetFilesState } from '../store/slices/filesSlice';
 import { resetAnalysisState, resetToSafeState } from '../store/slices/analysisSlice';
 import { ErrorBoundaryCore } from './ErrorBoundary';
 
-logger.setContext('PhaseErrorBoundary');
-
+const logger = createLogger('PhaseErrorBoundary');
 /**
  * Phase-specific error boundary wrapper
  *

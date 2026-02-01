@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { normalizeFileUri, isAbsolutePath, extractFileName } from '../utils/pathNormalization';
+import { isAbsolutePath, extractFileName } from '../utils/pathNormalization';
+import { extractDroppedFiles, isFileDragEvent } from '../utils/dragAndDrop';
 
 /**
  * useFileDrop - Standardized hook for handling file drag and drop operations
@@ -14,7 +15,7 @@ export function useFileDrop(onFilesDropped) {
     e.preventDefault();
     e.stopPropagation();
     // Only activate for file drags
-    if (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/uri-list')) {
+    if (isFileDragEvent(e)) {
       setIsDragging(true);
     }
   }, []);
@@ -30,7 +31,11 @@ export function useFileDrop(onFilesDropped) {
   const handleDragOver = useCallback((e) => {
     e.preventDefault();
     e.stopPropagation();
-    e.dataTransfer.dropEffect = 'copy';
+    if (!isFileDragEvent(e)) return;
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+    setIsDragging(true);
   }, []);
 
   const handleDrop = useCallback(
@@ -42,35 +47,11 @@ export function useFileDrop(onFilesDropped) {
       // FIX: Use optional chaining consistently for defensive null checks
       if (!e.dataTransfer) return;
 
-      const fileList = Array.from(e.dataTransfer?.files || []);
-      const uriListRaw = e.dataTransfer?.getData?.('text/uri-list') || '';
-      const textPlainRaw = e.dataTransfer?.getData?.('text/plain') || '';
+      const { paths } = extractDroppedFiles(e.dataTransfer);
 
-      // Parse URIs (common on Linux/GTK)
-      const parsedUris = uriListRaw
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith('#'))
-        .map((line) => normalizeFileUri(line));
-
-      // Parse plain text (common on Windows for some apps)
-      const parsedPlainText =
-        textPlainRaw && !textPlainRaw.includes('\n')
-          ? [normalizeFileUri(textPlainRaw)]
-          : textPlainRaw
-              .split('\n')
-              .map((line) => line.trim())
-              .filter(Boolean)
-              .map((line) => normalizeFileUri(line));
-
-      // Combine and deduplicate
-      const collectedPaths = [
-        ...fileList.map((f) => normalizeFileUri(f.path || f.name)),
-        ...parsedUris,
-        ...parsedPlainText
-      ].filter((pathValue) => isAbsolutePath(pathValue, { collapseWhitespace: false }));
-
-      const uniquePaths = Array.from(new Set(collectedPaths));
+      const uniquePaths = paths.filter((pathValue) =>
+        isAbsolutePath(pathValue, { collapseWhitespace: false })
+      );
 
       if (uniquePaths.length > 0 && onFilesDropped) {
         const fileObjects = uniquePaths.map((pathValue) => ({

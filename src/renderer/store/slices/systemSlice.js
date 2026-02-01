@@ -2,6 +2,12 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { serializeData } from '../../utils/serialization';
 import { filesIpc, systemIpc } from '../../services/ipc';
 
+let notificationSeq = 0;
+const generateNotificationId = () => {
+  notificationSeq = (notificationSeq + 1) % 1000;
+  return `${Date.now().toString(36)}-${notificationSeq.toString(36)}`;
+};
+
 // Normalize the documents path returned from IPC to a plain string.
 // Some IPC implementations return { success, path }, while others return the
 // string path directly. We only want to store the path string in Redux.
@@ -99,16 +105,26 @@ const systemSlice = createSlice({
         state.notifications.shift();
       }
       const safePayload = serializeData(action.payload);
+      const {
+        id: incomingId,
+        timestamp: incomingTimestamp,
+        status: _ignoredStatus,
+        displayedAt: _ignoredDisplayedAt,
+        seenAt: _ignoredSeenAt,
+        dismissedAt: _ignoredDismissedAt,
+        ...safeFields
+      } = safePayload || {};
+      const nowIso = new Date().toISOString();
       const notification = {
+        ...safeFields,
         // Preserve ID from main process if present, otherwise generate
-        id: safePayload.id || Date.now().toString(),
-        timestamp: safePayload.timestamp || new Date().toISOString(),
+        id: incomingId || generateNotificationId(),
+        timestamp: incomingTimestamp || nowIso,
         // Mark as displayed when added to Redux
         status: NotificationStatus.DISPLAYED,
-        displayedAt: new Date().toISOString(),
+        displayedAt: nowIso,
         seenAt: null,
-        dismissedAt: null,
-        ...safePayload
+        dismissedAt: null
       };
       state.notifications.push(notification);
       // Increment unread count

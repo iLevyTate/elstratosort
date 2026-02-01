@@ -31,7 +31,7 @@ const TOUR_STEPS = [
     icon: Map,
     title: 'Navigate the graph',
     content:
-      'Use the minimap in the corner to navigate large graphs. Drag to pan, scroll to zoom, and click nodes to see details.',
+      'Use the minimap in the corner to navigate large graphs. Drag to pan, use Ctrl/Cmd + scroll to zoom, and click nodes to see details.',
     position: 'center'
   }
 ];
@@ -49,11 +49,15 @@ const GraphTour = ({ isOpen, onComplete, forceShow = false }) => {
 
   // Check if user has already dismissed the tour (or force show via help button)
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setIsVisible(false);
+      return;
+    }
+
+    setCurrentStep(0);
 
     // If forceShow is true, always show immediately
     if (forceShow) {
-      setCurrentStep(0);
       setIsVisible(true);
       return;
     }

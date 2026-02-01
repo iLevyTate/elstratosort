@@ -385,7 +385,7 @@ const SearchAutocomplete = memo(
         </div>
 
         {showDropdown && (
-          <div className="absolute z-50 w-full mt-1 bg-white border border-system-gray-200 rounded-lg shadow-lg overflow-hidden">
+          <div className="absolute z-50 w-full mt-1 bg-white border border-system-gray-200 rounded-xl shadow-lg overflow-hidden animate-dropdown-enter">
             <div className="px-3 py-1.5 bg-system-gray-50 border-b border-system-gray-100 flex items-center gap-3">
               <Text
                 as="span"
@@ -418,8 +418,8 @@ const SearchAutocomplete = memo(
                   aria-selected={index === selectedIndex}
                   onClick={() => handleSelectSuggestion(item)}
                   className={`
-                  px-3 py-2 cursor-pointer flex items-center gap-2 text-sm
-                  ${index === selectedIndex ? 'bg-stratosort-blue/10 text-stratosort-blue' : 'hover:bg-system-gray-50'}
+                  px-3 py-2.5 cursor-pointer flex items-center gap-2 text-sm bg-white transition-colors duration-100
+                  ${index === selectedIndex ? 'bg-stratosort-blue/10 text-stratosort-blue' : 'text-system-gray-800 hover:bg-system-gray-50'}
                 `}
                 >
                   {item.type === 'recent' && (

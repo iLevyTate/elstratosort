@@ -5,6 +5,7 @@ import { Text, Code, Caption } from './ui/Typography';
 import { Stack } from './layout';
 import StatusBadge from './ui/StatusBadge';
 import Card from './ui/Card';
+import Collapsible from './ui/Collapsible';
 import { formatDisplayPath } from '../utils/pathDisplay';
 
 const isValuePresent = (value) => value !== null && value !== undefined && value !== '';
@@ -15,6 +16,30 @@ const truncateContent = (content, maxLength = 10000) => {
   return (
     content.slice(0, maxLength) +
     `... (${(content.length - maxLength).toLocaleString()} more characters)`
+  );
+};
+
+const getPreviewText = (value, maxLength = 240) => {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, maxLength).trimEnd()}...`;
+};
+
+const getTextLength = (value) => (typeof value === 'string' ? value.length : 0);
+
+const buildCollapsedPreview = (text, { maxLength = 240, mono = false, label } = {}) => {
+  const preview = getPreviewText(text, maxLength);
+  if (!preview) return null;
+  return (
+    <div className="space-y-1">
+      <Text variant="small" className={`text-system-gray-600 ${mono ? 'font-mono' : ''}`.trim()}>
+        {preview}
+      </Text>
+      <Text variant="tiny" className="text-system-gray-400">
+        {label || `${getTextLength(text).toLocaleString()} characters`}
+      </Text>
+    </div>
   );
 };
 
@@ -50,6 +75,19 @@ const SectionCard = ({ title, icon: Icon, children, className = '' }) => (
     </div>
     {children}
   </Card>
+);
+
+const SectionHeader = ({ title, icon: Icon }) => (
+  <span className="flex items-center gap-2">
+    {Icon && (
+      <span className="w-7 h-7 rounded-lg bg-stratosort-blue/10 text-stratosort-blue flex items-center justify-center shrink-0">
+        <Icon className="w-4 h-4" aria-hidden="true" />
+      </span>
+    )}
+    <span className="text-xs uppercase tracking-wider font-semibold text-system-gray-500">
+      {title}
+    </span>
+  </span>
 );
 
 const MetaItem = ({ label, value, truncate = false }) => {
@@ -94,6 +132,12 @@ const AnalysisDetails = memo(function AnalysisDetails({
   const keywordList = Array.isArray(analysis.keywords)
     ? analysis.keywords.filter((k) => typeof k === 'string' && k.trim().length > 0).slice(0, 50) // Limit to 50 keywords to prevent rendering issues
     : [];
+  const keywordPreview =
+    keywordList.length > 0
+      ? `${keywordList.slice(0, 6).join(', ')}${
+          keywordList.length > 6 ? ` (+${keywordList.length - 6} more)` : ''
+        }`
+      : '';
 
   const confidenceValue =
     typeof analysis.confidence === 'number' && Number.isFinite(analysis.confidence)
@@ -132,6 +176,13 @@ const AnalysisDetails = memo(function AnalysisDetails({
     { label: 'Method', value: analysis.extractionMethod },
     { label: 'Length', value: contentLength }
   ].filter((item) => isValuePresent(item.value));
+  const extractedTextLength =
+    getTextLength(analysis.extractedText) +
+    getTextLength(analysis.ocrText) +
+    getTextLength(analysis.transcript);
+  const extractedPreviewSource =
+    analysis.extractedText || analysis.ocrText || analysis.transcript || '';
+  const keywordSectionOpen = keywordList.length <= 12;
 
   return (
     <Stack gap="relaxed" className="w-full">
@@ -212,27 +263,42 @@ const AnalysisDetails = memo(function AnalysisDetails({
       )}
 
       {analysis.summary && (
-        <SectionCard
-          title="Summary"
-          icon={Sparkles}
-          className="bg-gradient-to-br from-system-gray-50/80 to-white border-border-soft/70"
+        <Collapsible
+          title={<SectionHeader title="Summary" icon={Sparkles} />}
+          defaultOpen
+          className="rounded-xl border border-border-soft/70 bg-gradient-to-br from-system-gray-50/80 to-white"
+          collapsedPreview={buildCollapsedPreview(analysis.summary, { maxLength: 220 })}
         >
           <Text variant="small" className="leading-relaxed text-system-gray-700">
             {truncateContent(analysis.summary, 2000)}
           </Text>
-        </SectionCard>
+        </Collapsible>
       )}
 
       {analysis.reasoning && (
-        <SectionCard title="Reasoning" icon={Lightbulb}>
+        <Collapsible
+          title={<SectionHeader title="Reasoning" icon={Lightbulb} />}
+          defaultOpen={false}
+          className="rounded-xl border border-border-soft/70 bg-white"
+          collapsedPreview={buildCollapsedPreview(analysis.reasoning, { maxLength: 200 })}
+        >
           <Text variant="small" className="leading-relaxed text-system-gray-700">
             {truncateContent(analysis.reasoning, 2000)}
           </Text>
-        </SectionCard>
+        </Collapsible>
       )}
 
       {keywordList.length > 0 && (
-        <SectionCard title="Keywords" icon={Tag}>
+        <Collapsible
+          title={<SectionHeader title="Keywords" icon={Tag} />}
+          defaultOpen={keywordSectionOpen}
+          className="rounded-xl border border-border-soft/70 bg-white"
+          collapsedPreview={
+            <Text variant="small" className="text-system-gray-600">
+              {keywordPreview}
+            </Text>
+          }
+        >
           <div className="flex flex-wrap gap-2">
             {keywordList.map((keyword, i) => (
               <Text
@@ -245,11 +311,29 @@ const AnalysisDetails = memo(function AnalysisDetails({
               </Text>
             ))}
           </div>
-        </SectionCard>
+        </Collapsible>
       )}
 
       {(analysis.ocrText || analysis.transcript || analysis.extractedText) && (
-        <SectionCard title="Extracted Text" icon={AlignLeft} className="bg-system-gray-50/60">
+        <Collapsible
+          title={<SectionHeader title="Extracted Text" icon={AlignLeft} />}
+          defaultOpen={false}
+          className="rounded-xl border border-border-soft/70 bg-system-gray-50/60"
+          collapsedPreview={buildCollapsedPreview(extractedPreviewSource, {
+            maxLength: 200,
+            mono: true,
+            label: extractedTextLength
+              ? `${extractedTextLength.toLocaleString()} characters total`
+              : undefined
+          })}
+          actions={
+            extractedTextLength ? (
+              <Text variant="tiny" className="text-system-gray-400">
+                {extractedTextLength.toLocaleString()} chars
+              </Text>
+            ) : null
+          }
+        >
           <div className="space-y-3">
             {analysis.ocrText && (
               <div>
@@ -263,7 +347,9 @@ const AnalysisDetails = memo(function AnalysisDetails({
                   variant="tiny"
                   className="font-mono bg-white/80 p-2 rounded border border-border-soft line-clamp-4"
                   title={
-                    analysis.ocrText.length > 10000 ? 'Content truncated for display' : undefined
+                    typeof analysis.ocrText === 'string' && analysis.ocrText.length > 10000
+                      ? 'Content truncated for display'
+                      : undefined
                   }
                 >
                   {truncateContent(analysis.ocrText)}
@@ -282,7 +368,9 @@ const AnalysisDetails = memo(function AnalysisDetails({
                   variant="tiny"
                   className="font-mono bg-white/80 p-2 rounded border border-border-soft line-clamp-4"
                   title={
-                    analysis.transcript.length > 10000 ? 'Content truncated for display' : undefined
+                    typeof analysis.transcript === 'string' && analysis.transcript.length > 10000
+                      ? 'Content truncated for display'
+                      : undefined
                   }
                 >
                   {truncateContent(analysis.transcript)}
@@ -301,6 +389,7 @@ const AnalysisDetails = memo(function AnalysisDetails({
                   variant="tiny"
                   className="font-mono bg-white/80 p-2 rounded border border-border-soft line-clamp-4"
                   title={
+                    typeof analysis.extractedText === 'string' &&
                     analysis.extractedText.length > 10000
                       ? 'Content truncated for display'
                       : undefined
@@ -311,7 +400,7 @@ const AnalysisDetails = memo(function AnalysisDetails({
               </div>
             )}
           </div>
-        </SectionCard>
+        </Collapsible>
       )}
     </Stack>
   );

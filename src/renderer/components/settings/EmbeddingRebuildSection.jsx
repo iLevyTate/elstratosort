@@ -3,10 +3,13 @@ import PropTypes from 'prop-types';
 import { ChevronDown } from 'lucide-react';
 import Button from '../ui/Button';
 import Switch from '../ui/Switch';
-import { logger } from '../../../shared/logger';
+import Card from '../ui/Card';
+import { createLogger } from '../../../shared/logger';
 import { useAppSelector } from '../../store/hooks';
 import { Text } from '../ui/Typography';
 import { Stack } from '../layout';
+
+const logger = createLogger('EmbeddingRebuildSection');
 
 /**
  * Embedding rebuild section for folder and file embeddings
@@ -21,8 +24,6 @@ function EmbeddingRebuildSection({ addNotification }) {
 
   const isAnalyzing = useAppSelector((state) => Boolean(state?.analysis?.isAnalyzing));
   const analysisProgress = useAppSelector((state) => state?.analysis?.analysisProgress);
-
-  logger.setContext('EmbeddingRebuildSection');
 
   const refreshStats = useCallback(async () => {
     if (!window?.electronAPI?.embeddings?.getStats) return;
@@ -208,121 +209,132 @@ function EmbeddingRebuildSection({ addNotification }) {
   const analysisTotal = Number.isFinite(analysisProgress?.total) ? analysisProgress.total : 0;
 
   return (
-    <Stack gap="default">
+    <Card variant="default" className="space-y-5">
       <div>
-        <Text as="label" variant="small" className="block font-medium text-system-gray-700 mb-2">
+        <Text variant="tiny" className="font-semibold uppercase tracking-wide text-system-gray-500">
           Embeddings maintenance
         </Text>
-        <Text variant="small" className="text-system-gray-500">
-          {statsLabel}
-          {stats?.serverUrl ? ` • ${stats.serverUrl}` : ''}
+        <Text variant="small" className="text-system-gray-600">
+          Rebuild embeddings and reanalyze files when models or indexing needs change.
         </Text>
-        <Text variant="tiny" className="text-system-gray-400 mt-1">
-          When changing embedding models, use <strong>Rebuild All Embeddings</strong> to update
-          everything. This preserves your analysis data but regenerates the search index.
-        </Text>
-        {analysisIsActive && (
-          <Text variant="tiny" className="text-system-gray-500 mt-2">
-            Background analysis running: {analysisCurrent}/{analysisTotal} files
+      </div>
+
+      <Stack gap="default">
+        <div>
+          <Text variant="small" className="font-medium text-system-gray-700">
+            Embeddings status
           </Text>
-        )}
-      </div>
+          <Text variant="small" className="text-system-gray-600">
+            {statsLabel}
+            {stats?.serverUrl ? ` • ${stats.serverUrl}` : ''}
+          </Text>
+          <Text variant="tiny" className="text-system-gray-400 mt-1">
+            When changing embedding models, use <strong>Rebuild All Embeddings</strong> to update
+            everything. This preserves your analysis data but regenerates the search index.
+          </Text>
+          {analysisIsActive && (
+            <Text variant="tiny" className="text-system-gray-500 mt-2">
+              Background analysis running: {analysisCurrent}/{analysisTotal} files
+            </Text>
+          )}
+        </div>
 
-      {/* Primary Action: Full Rebuild */}
-      <div className="pt-2">
-        <Button
-          onClick={handleFullRebuild}
-          variant="primary"
-          disabled={isFullRebuilding || isReanalyzingAll}
-          isLoading={isFullRebuilding}
-          type="button"
-          title="Clear all embeddings and rebuild everything with current model"
-          size="sm"
-          className="shrink-0 w-full sm:w-auto"
-        >
-          {isFullRebuilding ? 'Rebuilding All Embeddings…' : 'Rebuild All Embeddings'}
-        </Button>
-        <Text variant="tiny" className="text-system-gray-500 mt-2">
-          Use this after changing the embedding model setting. It updates folder matches, file
-          search, and sorting.
-        </Text>
-      </div>
+        {/* Primary Action: Full Rebuild */}
+        <div className="pt-2">
+          <Button
+            onClick={handleFullRebuild}
+            variant="primary"
+            disabled={isFullRebuilding || isReanalyzingAll}
+            isLoading={isFullRebuilding}
+            type="button"
+            title="Clear all embeddings and rebuild everything with current model"
+            size="sm"
+            className="shrink-0 w-full sm:w-auto"
+          >
+            {isFullRebuilding ? 'Rebuilding All Embeddings…' : 'Rebuild All Embeddings'}
+          </Button>
+          <Text variant="tiny" className="text-system-gray-500 mt-2">
+            Use this after changing the embedding model setting. It updates folder matches, file
+            search, and sorting.
+          </Text>
+        </div>
 
-      {/* Advanced Options Toggle */}
-      <div className="pt-4 border-t border-system-gray-100">
-        <Button
-          onClick={() => setShowAdvanced(!showAdvanced)}
-          variant="ghost"
-          size="sm"
-          rightIcon={
-            <ChevronDown
-              className={`w-3.5 h-3.5 transition-transform ${showAdvanced ? 'rotate-180' : ''}`}
-            />
-          }
-          className="text-stratosort-blue hover:text-stratosort-blue/80"
-        >
-          {showAdvanced ? 'Hide Advanced Options' : 'Show Advanced Options'}
-        </Button>
+        {/* Advanced Options Toggle */}
+        <div className="pt-4 border-t border-system-gray-100">
+          <Button
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            variant="ghost"
+            size="sm"
+            rightIcon={
+              <ChevronDown
+                className={`w-3.5 h-3.5 transition-transform ${showAdvanced ? 'rotate-180' : ''}`}
+              />
+            }
+            className="text-stratosort-blue hover:text-stratosort-blue/80"
+          >
+            {showAdvanced ? 'Hide Advanced Options' : 'Show Advanced Options'}
+          </Button>
 
-        {showAdvanced && (
-          <div className="mt-4 space-y-4 pl-4 border-l-2 border-system-gray-100">
-            {/* Reanalyze All (Destructive) */}
-            <div className="pt-2 border-t border-system-gray-100">
-              <Text
-                as="label"
-                variant="tiny"
-                className="block font-medium text-stratosort-danger mb-2"
-              >
-                Danger Zone
-              </Text>
-              <Text variant="tiny" className="text-system-gray-500 mb-2">
-                <strong>Reanalyze All Files</strong> will delete all analysis history and re-process
-                every file with the LLM. Use this only if you changed the <em>Text/Vision Model</em>{' '}
-                (not just the embedding model).
-              </Text>
-              <div className="mb-3">
-                <div className="flex items-center gap-3">
-                  <Switch
-                    id="apply-naming-on-reanalyze"
-                    checked={applyNamingOnReanalyze}
-                    onChange={setApplyNamingOnReanalyze}
-                    disabled={isReanalyzingAll || analysisIsActive || isFullRebuilding}
-                  />
-                  <Text
-                    as="label"
-                    htmlFor="apply-naming-on-reanalyze"
-                    variant="small"
-                    className="font-medium text-system-gray-700"
-                  >
-                    Apply naming conventions to files during reanalysis
+          {showAdvanced && (
+            <div className="mt-4 space-y-4 rounded-lg border border-system-gray-100 bg-system-gray-50 p-4">
+              {/* Reanalyze All (Destructive) */}
+              <div>
+                <Text
+                  as="label"
+                  variant="tiny"
+                  className="block font-semibold uppercase tracking-wide text-stratosort-danger mb-2"
+                >
+                  Danger Zone
+                </Text>
+                <Text variant="tiny" className="text-system-gray-500 mb-2">
+                  <strong>Reanalyze All Files</strong> will delete all analysis history and
+                  re-process every file with the LLM. Use this only if you changed the{' '}
+                  <em>Text/Vision Model</em> (not just the embedding model).
+                </Text>
+                <div className="mb-3">
+                  <div className="flex items-center gap-3">
+                    <Switch
+                      id="apply-naming-on-reanalyze"
+                      checked={applyNamingOnReanalyze}
+                      onChange={setApplyNamingOnReanalyze}
+                      disabled={isReanalyzingAll || analysisIsActive || isFullRebuilding}
+                    />
+                    <Text
+                      as="label"
+                      htmlFor="apply-naming-on-reanalyze"
+                      variant="small"
+                      className="font-medium text-system-gray-700"
+                    >
+                      Apply naming conventions to files during reanalysis
+                    </Text>
+                  </div>
+                  <Text variant="tiny" className="text-system-gray-400 mt-1 ml-14">
+                    When enabled, files will be renamed according to your naming convention
+                    settings. When disabled, original file names will be preserved.
                   </Text>
                 </div>
-                <Text variant="tiny" className="text-system-gray-400 mt-1 ml-14">
-                  When enabled, files will be renamed according to your naming convention settings.
-                  When disabled, original file names will be preserved.
-                </Text>
+                <Button
+                  onClick={handleReanalyzeAll}
+                  variant="danger"
+                  disabled={isReanalyzingAll || analysisIsActive || isFullRebuilding}
+                  isLoading={isReanalyzingAll || analysisIsActive}
+                  type="button"
+                  title="Clear all data and reanalyze every file with current AI models"
+                  size="sm"
+                  className="shrink-0"
+                >
+                  {isReanalyzingAll
+                    ? 'Starting Reanalysis…'
+                    : analysisIsActive
+                      ? `Reanalyzing… ${analysisCurrent}/${analysisTotal}`
+                      : 'Reanalyze All Files (Slow)'}
+                </Button>
               </div>
-              <Button
-                onClick={handleReanalyzeAll}
-                variant="danger"
-                disabled={isReanalyzingAll || analysisIsActive || isFullRebuilding}
-                isLoading={isReanalyzingAll || analysisIsActive}
-                type="button"
-                title="Clear all data and reanalyze every file with current AI models"
-                size="sm"
-                className="shrink-0"
-              >
-                {isReanalyzingAll
-                  ? 'Starting Reanalysis…'
-                  : analysisIsActive
-                    ? `Reanalyzing… ${analysisCurrent}/${analysisTotal}`
-                    : 'Reanalyze All Files (Slow)'}
-              </Button>
             </div>
-          </div>
-        )}
-      </div>
-    </Stack>
+          )}
+        </div>
+      </Stack>
+    </Card>
   );
 }
 

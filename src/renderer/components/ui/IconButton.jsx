@@ -16,6 +16,7 @@ function IconButton({
   size = 'md',
   variant = 'default',
   className = '',
+  disabled = false,
   'aria-label': ariaLabel,
   ...props
 }) {
@@ -46,6 +47,8 @@ function IconButton({
         ${className}
       `}
       aria-label={ariaLabel}
+      aria-disabled={disabled}
+      disabled={disabled}
       {...props}
     >
       {icon}
@@ -58,6 +61,7 @@ IconButton.propTypes = {
   size: PropTypes.oneOf(['sm', 'md', 'lg']),
   variant: PropTypes.oneOf(['default', 'primary', 'secondary', 'ghost']),
   className: PropTypes.string,
+  disabled: PropTypes.bool,
   'aria-label': PropTypes.string
 };
 

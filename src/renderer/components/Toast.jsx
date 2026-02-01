@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { CheckCircle2, XCircle, AlertTriangle, Info, X, Bell } from 'lucide-react';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { TIMEOUTS } from '../../shared/performanceConstants';
 import { IconButton } from './ui';
 import { Text } from './ui/Typography';
 
-logger.setContext('Toast');
-
+const logger = createLogger('Toast');
 // Simple ID counter - crypto API is overkill for toast IDs
 let toastIdCounter = 0;
 const generateSecureId = () => Date.now() + ++toastIdCounter;

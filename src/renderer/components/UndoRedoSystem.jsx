@@ -329,15 +329,16 @@ export function UndoRedoProvider({ children }) {
   const { showSuccess, showError, showInfo } = useNotification();
 
   const isMountedRef = React.useRef(true);
-  React.useEffect(() => {
-    isMountedRef.current = true;
 
+  // Sync with main process state
+  const syncFromMainProcess = useCallback(async () => {
+    let state = null;
     try {
-      const saved = localStorage.getItem('stratosort_undo_stack');
-      if (saved) {
-        const { stack, pointer } = JSON.parse(saved);
-        if (Array.isArray(stack)) {
-          const rehydratedStack = stack
+      state = await window.electronAPI?.undoRedo?.getState?.();
+      if (state && isMountedRef.current) {
+        // Update our local stack with main process state
+        if (Array.isArray(state.stack) && state.stack.length > 0) {
+          const rehydratedStack = state.stack
             .map((item) => {
               const action = rehydrateAction(item);
               return action ? { ...item, ...action } : null;
@@ -345,18 +346,73 @@ export function UndoRedoProvider({ children }) {
             .filter(Boolean);
 
           if (rehydratedStack.length > 0) {
-            undoStack.load(rehydratedStack, pointer);
+            undoStack.load(rehydratedStack, state.pointer);
+          }
+        } else {
+          undoStack.clear();
+          try {
+            localStorage.removeItem('stratosort_undo_stack');
+          } catch {
+            // ignore
           }
         }
+        setCanUndo(state.canUndo);
+        setCanRedo(state.canRedo);
+        logger.debug('Synced undo/redo state from main process', {
+          stackLength: state.stack?.length,
+          pointer: state.pointer
+        });
       }
     } catch (e) {
-      logger.error('Failed to load undo stack', e);
+      logger.error('Failed to sync undo state from main process', e);
     }
+    return state;
+  }, [undoStack]);
+
+  React.useEffect(() => {
+    isMountedRef.current = true;
+
+    // First, try to sync from main process (source of truth)
+    syncFromMainProcess().then((state) => {
+      // If main process not reachable, fall back to localStorage
+      if (!state && undoStack.getFullStack().length === 0) {
+        try {
+          const saved = localStorage.getItem('stratosort_undo_stack');
+          if (saved) {
+            const { stack, pointer } = JSON.parse(saved);
+            if (Array.isArray(stack)) {
+              const rehydratedStack = stack
+                .map((item) => {
+                  const action = rehydrateAction(item);
+                  return action ? { ...item, ...action } : null;
+                })
+                .filter(Boolean);
+
+              if (rehydratedStack.length > 0) {
+                undoStack.load(rehydratedStack, pointer);
+              }
+            }
+          }
+        } catch (e) {
+          logger.error('Failed to load undo stack from localStorage', e);
+        }
+      }
+    });
+
+    // Listen for state changes from main process
+    const cleanup = window.electronAPI?.undoRedo?.onStateChanged?.((data) => {
+      logger.debug('Undo/redo state changed in main process', data);
+      // Refresh our state from main process
+      syncFromMainProcess();
+    });
 
     return () => {
       isMountedRef.current = false;
+      if (typeof cleanup === 'function') {
+        cleanup();
+      }
     };
-  }, [undoStack]);
+  }, [undoStack, syncFromMainProcess]);
 
   const actionMutexRef = React.useRef(false);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -571,7 +627,14 @@ export function UndoRedoProvider({ children }) {
     return action.description || 'Unknown action';
   };
 
-  const clearHistory = useCallback(() => {
+  const clearHistory = useCallback(async () => {
+    try {
+      // Clear in main process first (source of truth)
+      await window.electronAPI?.undoRedo?.clear?.();
+    } catch (e) {
+      logger.error('Failed to clear history in main process', e);
+    }
+    // Then clear local state
     undoStack.clear();
     localStorage.removeItem('stratosort_undo_stack');
     showInfo('Undo/redo history cleared');

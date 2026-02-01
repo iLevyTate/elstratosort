@@ -173,11 +173,12 @@ const EmptySearchState = memo(function EmptySearchState({
   let suggestedQuery = null;
   if (corrections && corrections.length > 0) {
     // Basic reconstruction: replace misspelled words in original query
+    const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     let fixed = query;
     for (const { original, corrected } of corrections) {
       if (original && corrected) {
         // Case-insensitive replacement
-        const regex = new RegExp(`\\b${original}\\b`, 'gi');
+        const regex = new RegExp(`\\b${escapeRegExp(original)}\\b`, 'gi');
         fixed = fixed.replace(regex, corrected);
       }
     }

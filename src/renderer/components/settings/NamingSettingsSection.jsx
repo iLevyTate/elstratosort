@@ -1,10 +1,10 @@
 import React, { useCallback } from 'react';
 import PropTypes from 'prop-types';
-import { FileText } from 'lucide-react';
 import Select from '../ui/Select';
 import Input from '../ui/Input';
+import Card from '../ui/Card';
 import SettingRow from './SettingRow';
-import { Text, Heading } from '../ui/Typography';
+import { Text } from '../ui/Typography';
 
 // Characters that could break file paths - used for separator validation
 const UNSAFE_SEPARATOR_CHARS = /[/\\:*?"<>|]/;
@@ -51,20 +51,14 @@ function NamingSettingsSection({ settings, setSettings }) {
   );
 
   return (
-    <div className="space-y-6">
-      {/* Section header */}
+    <Card variant="default" className="space-y-5">
       <div>
-        <div className="flex items-center gap-2 mb-1">
-          <FileText className="w-5 h-5 text-stratosort-blue" />
-          <Heading as="h3" variant="h6">
-            File Naming Defaults (Watchers &amp; Reanalysis)
-          </Heading>
-        </div>
-        <Text variant="small" className="text-system-gray-500 ml-7">
-          Configure how files are renamed by <strong>Download Watcher</strong>,{' '}
-          <strong>Smart Folder Watcher</strong>, and when running{' '}
-          <strong>Reanalyze All Files</strong>. These settings do not affect the Discover phase —
-          Discover has its own naming controls in the analysis interface.
+        <Text variant="tiny" className="font-semibold uppercase tracking-wide text-system-gray-500">
+          File naming defaults
+        </Text>
+        <Text variant="small" className="text-system-gray-600">
+          Configure how files are renamed by Download Watcher, Smart Folder Watcher, and Reanalyze
+          All Files. These settings do not affect the Discover phase.
         </Text>
       </div>
 
@@ -133,7 +127,7 @@ function NamingSettingsSection({ settings, setSettings }) {
           />
         </SettingRow>
       </div>
-    </div>
+    </Card>
   );
 }
 

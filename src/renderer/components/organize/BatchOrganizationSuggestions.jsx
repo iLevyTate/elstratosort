@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 import {
   CheckCircle,
@@ -28,6 +28,14 @@ function BatchOrganizationSuggestions({
   const [showPreview, setShowPreview] = useState(false);
   const [memoryNote, setMemoryNote] = useState('');
   const [savingMemory, setSavingMemory] = useState(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // FIX: Memoize toggleGroup to prevent unnecessary re-renders
   const toggleGroup = useCallback((groupIndex) => {
@@ -75,15 +83,21 @@ function BatchOrganizationSuggestions({
     setSavingMemory(true);
     try {
       await window.electronAPI.suggestions.addFeedbackMemory(trimmed);
-      setMemoryNote('');
-      addNotification('Memory saved', 'success');
-      if (onMemorySaved) {
-        onMemorySaved();
+      if (isMountedRef.current) {
+        setMemoryNote('');
+        addNotification('Memory saved', 'success');
+        if (onMemorySaved) {
+          onMemorySaved();
+        }
       }
     } catch {
-      addNotification('Failed to save memory', 'warning');
+      if (isMountedRef.current) {
+        addNotification('Failed to save memory', 'warning');
+      }
     } finally {
-      setSavingMemory(false);
+      if (isMountedRef.current) {
+        setSavingMemory(false);
+      }
     }
   };
 
@@ -360,7 +374,7 @@ function BatchOrganizationSuggestions({
                               size="sm"
                               className="h-auto px-2 py-1 text-xs bg-white border border-system-gray-300 rounded-md hover:border-stratosort-blue"
                               onClick={() =>
-                                onCustomizeGroup(groupIndex, {
+                                onCustomizeGroup?.(groupIndex, {
                                   ...group,
                                   folder: alt.folder
                                 })
@@ -381,12 +395,13 @@ function BatchOrganizationSuggestions({
 
       {/* Actions */}
       <div className="flex justify-between pt-4 border-t">
-        <Button variant="secondary" onClick={onRejectAll}>
+        <Button variant="secondary" size="sm" onClick={onRejectAll}>
           Cancel Batch Organization
         </Button>
         <div className="flex gap-cozy">
           <Button
             variant="secondary"
+            size="sm"
             onClick={() => setShowPreview(true)}
             className="flex items-center gap-1.5"
           >
@@ -395,6 +410,7 @@ function BatchOrganizationSuggestions({
           </Button>
           <Button
             variant="primary"
+            size="sm"
             onClick={handleStrategyAccept}
             className="bg-stratosort-blue hover:bg-stratosort-blue/90"
           >
@@ -489,11 +505,12 @@ function BatchOrganizationSuggestions({
             </div>
 
             <div className="p-4 border-t flex justify-end gap-3">
-              <Button variant="secondary" onClick={() => setShowPreview(false)}>
+              <Button variant="secondary" size="sm" onClick={() => setShowPreview(false)}>
                 Close Preview
               </Button>
               <Button
                 variant="primary"
+                size="sm"
                 onClick={() => {
                   setShowPreview(false);
                   handleStrategyAccept();

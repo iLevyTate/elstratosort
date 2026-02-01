@@ -8,13 +8,12 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { PHASES } from '../../../shared/constants';
-import { logger } from '../../../shared/logger';
+import { createLogger } from '../../../shared/logger';
 import { createOrganizeBatchAction } from '../../components/UndoRedoSystem';
 import { updateResultPathsAfterMove } from '../../store/slices/analysisSlice';
 import { updateFilePathsAfterMove } from '../../store/slices/filesSlice';
 
-logger.setContext('OrganizePhase-Organization');
-
+const logger = createLogger('OrganizePhase-Organization');
 /**
  * Hook for progress tracking
  * @returns {Object} Progress state and setter

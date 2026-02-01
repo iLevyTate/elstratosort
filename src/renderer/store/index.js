@@ -69,7 +69,8 @@ const loadState = () => {
               settingsLoading: false,
               isOrganizing: false,
               isAnalyzing: false,
-              navigationError: null
+              navigationError: null,
+              resetCounter: 0
             },
             files: {
               // Serialize dates in legacy state
@@ -128,7 +129,8 @@ const loadState = () => {
           settingsLoading: false,
           isOrganizing: false,
           isAnalyzing: false,
-          navigationError: null
+          navigationError: null,
+          resetCounter: 0
         },
         files: {
           selectedFiles: [],
@@ -174,15 +176,17 @@ const loadState = () => {
         currentPhase: parsed.ui?.currentPhase || (PHASES?.WELCOME ?? 'welcome'),
         previousPhase: parsed.ui?.previousPhase || null,
         sidebarOpen: parsed.ui?.sidebarOpen !== false, // default true
-        showSettings: parsed.ui?.showSettings || false,
+        // Do not rehydrate transient overlays on startup
+        showSettings: false,
         isLoading: false, // Always reset loading state
         loadingMessage: '',
-        activeModal: parsed.ui?.activeModal || null,
+        activeModal: null,
         settings: parsed.ui?.settings || null,
         settingsLoading: false,
         isOrganizing: false,
         isAnalyzing: false,
-        navigationError: null
+        navigationError: null,
+        resetCounter: 0
       },
       files: {
         // Ensure arrays and serialize dates, with explicit defaults for all properties

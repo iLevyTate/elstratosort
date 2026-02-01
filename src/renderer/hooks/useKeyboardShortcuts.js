@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useMemo, useRef } from 'react';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { toggleSettings, setPhase } from '../store/slices/uiSlice';
 import { useNotification } from '../contexts/NotificationContext';
@@ -7,8 +7,7 @@ import { useUndoRedo } from '../components/UndoRedoSystem';
 import { PHASES, PHASE_TRANSITIONS, PHASE_METADATA } from '../../shared/constants';
 import { TIMEOUTS } from '../../shared/performanceConstants';
 
-logger.setContext('useKeyboardShortcuts');
-
+const logger = createLogger('useKeyboardShortcuts');
 export function useKeyboardShortcuts() {
   const dispatch = useAppDispatch();
   const currentPhase = useAppSelector((state) => state.ui.currentPhase);
