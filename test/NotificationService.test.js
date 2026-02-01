@@ -24,15 +24,16 @@ jest.mock('electron', () => {
   };
 });
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     debug: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 const electron = require('electron');
 const { logger } = require('../src/shared/logger');

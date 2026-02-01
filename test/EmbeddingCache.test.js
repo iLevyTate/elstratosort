@@ -1,15 +1,16 @@
 const EmbeddingCache = require('../src/main/services/EmbeddingCache');
 
 // Mock logger to avoid console output during tests
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 describe('EmbeddingCache', () => {
   let cache;

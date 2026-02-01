@@ -7,15 +7,16 @@ import React from 'react';
 import { renderHook, act, render, screen, fireEvent } from '@testing-library/react';
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock Modal component with testable buttons
 jest.mock('../src/renderer/components/ui/Modal', () => ({

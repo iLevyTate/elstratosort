@@ -1025,10 +1025,33 @@ describe('Embeddings/Semantic IPC', () => {
       expect(String(badTopK.error)).toContain('topK');
 
       // Valid request calls SearchService.hybridSearch
-      const ok = await handler({}, { query: 'quarterly', topK: 5, mode: 'hybrid', minScore: 0.5 });
+      const ok = await handler(
+        {},
+        {
+          query: 'quarterly',
+          topK: 5,
+          mode: 'hybrid',
+          minScore: 0.5,
+          graphExpansion: true,
+          graphExpansionWeight: 0.3,
+          graphExpansionMaxNeighbors: 80,
+          chunkContext: true,
+          chunkContextMaxNeighbors: 1
+        }
+      );
       expect(ok.success).toBe(true);
       expect(ok.mode).toBe('hybrid');
-      expect(hybridSearch).toHaveBeenCalledWith('quarterly', expect.objectContaining({ topK: 5 }));
+      expect(hybridSearch).toHaveBeenCalledWith(
+        'quarterly',
+        expect.objectContaining({
+          topK: 5,
+          graphExpansion: true,
+          graphExpansionWeight: 0.3,
+          graphExpansionMaxNeighbors: 80,
+          chunkContext: true,
+          chunkContextMaxNeighbors: 1
+        })
+      );
     });
   });
 

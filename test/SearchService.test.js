@@ -5,15 +5,16 @@
  */
 
 // Mock logger before requiring the service
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // FIX: Mock fs to prevent file validation from filtering out test results
 // The _validateFileExistence method checks if files exist on disk, but test paths don't exist
@@ -77,6 +78,7 @@ describe('SearchService', () => {
 
   // BM25 uses canonical, path-based IDs ("file:" / "image:") instead of per-analysis IDs.
   const DOC1_CANONICAL_ID = 'file:/files/quarterly-report.pdf';
+  const DOC2_CANONICAL_ID = 'file:/files/project-proposal.docx';
 
   // Generate mock embedding vector
   const createMockVector = (seed = 1) => {
@@ -154,6 +156,61 @@ describe('SearchService', () => {
       const diagnostics = await service.diagnoseSearchIssues('test');
       expect(diagnostics.details.embeddingCoverage).toBeDefined();
       expect(diagnostics.details.embeddingCoverage).toBeCloseTo(2 / 3, 3);
+    });
+  });
+
+  describe('graph expansion', () => {
+    test('adds neighbors from relationship index', async () => {
+      const mockRelationshipIndex = {
+        getNeighborEdges: jest.fn().mockResolvedValue({
+          success: true,
+          edges: [
+            {
+              id: `rel:${DOC1_CANONICAL_ID}->${DOC2_CANONICAL_ID}`,
+              source: DOC1_CANONICAL_ID,
+              target: DOC2_CANONICAL_ID,
+              weight: 3,
+              concepts: ['beta', 'apollo']
+            }
+          ]
+        })
+      };
+
+      const serviceWithGraph = new SearchService({
+        chromaDbService: mockChromaDb,
+        analysisHistoryService: mockHistoryService,
+        parallelEmbeddingService: mockEmbeddingService,
+        relationshipIndexService: mockRelationshipIndex
+      });
+
+      // Force hybrid to rely on vector results only.
+      serviceWithGraph.bm25Search = jest.fn().mockReturnValue([]);
+      mockChromaDb.querySimilarFiles.mockResolvedValueOnce([
+        {
+          id: DOC1_CANONICAL_ID,
+          score: 0.92,
+          distance: 0.08,
+          metadata: {
+            path: '/files/quarterly-report.pdf',
+            name: 'quarterly-report.pdf',
+            tags: ['finance', 'quarterly'],
+            category: 'Finance'
+          }
+        }
+      ]);
+
+      const result = await serviceWithGraph.hybridSearch('quarterly report', {
+        topK: 5,
+        rerank: false,
+        graphExpansion: true,
+        graphExpansionWeight: 0.4,
+        minScore: 0
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockRelationshipIndex.getNeighborEdges).toHaveBeenCalled();
+      expect(result.results.some((r) => r.id === DOC2_CANONICAL_ID)).toBe(true);
+      expect(result.meta.graphExpansion.enabled).toBe(true);
     });
   });
 

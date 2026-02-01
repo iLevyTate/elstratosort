@@ -10,15 +10,16 @@ const {
 } = require('../src/main/analysis/ollamaImageAnalysis');
 
 // Mock all dependencies BEFORE importing the module
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
     setContext: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 jest.mock('sharp', () => {
   return jest.fn(() => ({

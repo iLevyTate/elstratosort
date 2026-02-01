@@ -9,14 +9,15 @@ const mockIpcWrappers = {
 };
 jest.mock('../src/main/ipc/ipcWrappers', () => mockIpcWrappers);
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     info: jest.fn(),
     error: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock ChromaDB service instance
 const mockChromaDbService = {

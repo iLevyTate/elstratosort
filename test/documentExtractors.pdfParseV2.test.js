@@ -2,15 +2,16 @@
  * Targeted coverage for pdf-parse 2.x/unknown API branches in extractTextFromPdf
  */
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Other deps used by documentExtractors; keep them mocked to avoid requiring native modules.
 jest.mock('sharp');

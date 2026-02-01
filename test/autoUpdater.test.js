@@ -1,15 +1,16 @@
 const mockGetAllWindows = jest.fn();
 let mockAutoUpdaterHandlers = new Map();
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
     setContext: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 jest.mock('electron', () => ({
   BrowserWindow: {

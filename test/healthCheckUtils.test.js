@@ -2,13 +2,14 @@
  * Tests for healthCheckUtils
  */
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 const { createHealthCheckInterval } = require('../src/shared/healthCheckUtils');
 

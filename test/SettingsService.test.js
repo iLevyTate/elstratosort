@@ -47,15 +47,16 @@ jest.mock('fs', () => ({
 }));
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock settings validation
 jest.mock('../src/shared/settingsValidation', () => ({
@@ -64,13 +65,37 @@ jest.mock('../src/shared/settingsValidation', () => ({
 }));
 
 // Mock default settings
-jest.mock('../src/shared/defaultSettings', () => ({
-  DEFAULT_SETTINGS: {
+jest.mock('../src/shared/defaultSettings', () => {
+  const DEFAULTS = {
     autoOrganize: false,
     confidenceThreshold: 0.75,
     notifications: true
-  }
-}));
+  };
+  return {
+    DEFAULT_SETTINGS: DEFAULTS,
+    mergeWithDefaults: (overrides) => {
+      if (!overrides || typeof overrides !== 'object') return { ...DEFAULTS };
+      const merged = { ...DEFAULTS };
+      for (const [key, value] of Object.entries(overrides)) {
+        if (value === undefined) continue;
+        if (value === null && key in DEFAULTS) {
+          merged[key] = value;
+          continue;
+        }
+        const defaultValue = DEFAULTS[key];
+        if (
+          defaultValue !== undefined &&
+          defaultValue !== null &&
+          typeof value !== typeof defaultValue
+        ) {
+          continue;
+        }
+        merged[key] = value;
+      }
+      return merged;
+    }
+  };
+});
 
 // Mock atomic file operations
 jest.mock('../src/shared/atomicFileOperations', () => ({

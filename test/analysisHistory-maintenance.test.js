@@ -4,15 +4,16 @@
  */
 
 // Mock dependencies
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 jest.mock('../src/main/services/analysisHistory/cacheManager', () => ({
   updateIncrementalStatsOnRemove: jest.fn(),

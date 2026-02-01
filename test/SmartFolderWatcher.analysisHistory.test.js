@@ -5,15 +5,16 @@
  * correct argument shape to recordAnalysisResult (including analysisHistory).
  */
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
     debug: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 const mockRecordAnalysisResult = jest.fn().mockResolvedValue(undefined);
 jest.mock('../src/main/ipc/analysisUtils', () => ({
@@ -30,12 +31,30 @@ jest.mock('../src/main/ipc/semantic', () => ({
   }))
 }));
 
-// Avoid chokidar touching the filesystem during module init
+// Avoid chokidar touching the filesystem during module init.
+// The mock watcher emits 'ready' asynchronously so that _doStart's
+// `await new Promise(resolve => watcher.on('ready', resolve))` resolves
+// instead of hanging indefinitely.
 jest.mock('chokidar', () => ({
-  watch: jest.fn(() => ({
-    on: jest.fn().mockReturnThis(),
-    close: jest.fn().mockResolvedValue(undefined)
-  }))
+  watch: jest.fn(() => {
+    const listeners = {};
+    const mockWatcher = {
+      on: jest.fn((event, cb) => {
+        if (!listeners[event]) listeners[event] = [];
+        listeners[event].push(cb);
+        // Emit 'ready' on next tick so the await in _doStart resolves
+        if (event === 'ready') {
+          process.nextTick(() => {
+            listeners.ready.forEach((fn) => fn());
+          });
+        }
+        return mockWatcher;
+      }),
+      close: jest.fn().mockResolvedValue(undefined),
+      removeAllListeners: jest.fn()
+    };
+    return mockWatcher;
+  })
 }));
 
 // Mock fileOperationTracker to prevent infinite loop protection from interfering with tests

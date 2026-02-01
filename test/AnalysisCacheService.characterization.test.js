@@ -8,15 +8,16 @@
 const AnalysisCacheService = require('../src/main/services/AnalysisCacheService');
 
 // Mock the logger to avoid noise in tests
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     debug: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
     setContext: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock the cache invalidation bus
 jest.mock('../src/shared/cacheInvalidation', () => {

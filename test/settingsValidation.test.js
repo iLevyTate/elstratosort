@@ -59,6 +59,8 @@ describe('Settings Validation', () => {
       expect(VALIDATION_RULES.ollamaHost).toBeDefined();
       expect(VALIDATION_RULES.maxFileSize).toBeDefined();
       expect(VALIDATION_RULES.maxConcurrentAnalysis).toBeDefined();
+      expect(VALIDATION_RULES.graphExpansionEnabled).toBeDefined();
+      expect(VALIDATION_RULES.chunkContextEnabled).toBeDefined();
     });
   });
 
@@ -121,6 +123,15 @@ describe('Settings Validation', () => {
           VALIDATION_RULES.maxConcurrentAnalysis
         );
         expect(errors.length).toBeGreaterThan(0);
+      });
+
+      test('validates graph expansion weight limits', () => {
+        expect(
+          validateSetting('graphExpansionWeight', 0.2, VALIDATION_RULES.graphExpansionWeight)
+        ).toEqual([]);
+        expect(
+          validateSetting('graphExpansionWeight', 1.2, VALIDATION_RULES.graphExpansionWeight)
+        ).not.toEqual([]);
       });
     });
 

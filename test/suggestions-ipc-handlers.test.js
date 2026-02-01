@@ -4,15 +4,16 @@
  */
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock electron
 jest.mock('electron', () => ({
@@ -243,7 +244,12 @@ describe('Suggestions IPC Handlers', () => {
       const result = await handler({}, { file, suggestion, accepted });
 
       expect(result.success).toBe(true);
-      expect(mockSuggestionService.recordFeedback).toHaveBeenCalledWith(file, suggestion, accepted);
+      expect(mockSuggestionService.recordFeedback).toHaveBeenCalledWith(
+        file,
+        suggestion,
+        accepted,
+        undefined
+      );
     });
 
     test('records feedback note when provided', async () => {

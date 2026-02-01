@@ -4,15 +4,16 @@
  */
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock electron
 jest.mock('electron', () => ({
@@ -29,7 +30,8 @@ const mockFs = {
   unlink: jest.fn()
 };
 jest.mock('fs', () => ({
-  promises: mockFs
+  promises: mockFs,
+  existsSync: jest.fn().mockReturnValue(false)
 }));
 
 // Mock axios
@@ -40,6 +42,11 @@ jest.mock('axios', () => ({
 // Mock asyncSpawnUtils
 jest.mock('../src/main/utils/asyncSpawnUtils', () => ({
   asyncSpawn: jest.fn()
+}));
+
+jest.mock('../src/main/utils/ollamaDetection', () => ({
+  findOllamaBinary: jest.fn(),
+  getOllamaVersion: jest.fn()
 }));
 
 // Mock platformUtils
@@ -65,7 +72,7 @@ describe('Preflight Checks', () => {
     jest.resetModules();
 
     // Reset mock defaults
-    mockFs.access.mockResolvedValue(undefined);
+    mockFs.access.mockRejectedValue(new Error('not found'));
     mockFs.mkdir.mockResolvedValue(undefined);
     mockFs.writeFile.mockResolvedValue(undefined);
     mockFs.unlink.mockResolvedValue(undefined);
@@ -127,11 +134,9 @@ describe('Preflight Checks', () => {
 
   describe('checkOllamaInstallation', () => {
     test('returns installed when ollama is found', async () => {
-      asyncSpawn.mockResolvedValueOnce({
-        status: 0,
-        stdout: 'ollama version 0.1.0',
-        stderr: ''
-      });
+      const { findOllamaBinary, getOllamaVersion } = require('../src/main/utils/ollamaDetection');
+      findOllamaBinary.mockResolvedValueOnce({ found: true, path: 'ollama', source: 'path' });
+      getOllamaVersion.mockResolvedValueOnce('ollama version 0.1.0');
 
       const result = await checkOllamaInstallation();
 
@@ -140,7 +145,8 @@ describe('Preflight Checks', () => {
     });
 
     test('returns not installed on error', async () => {
-      asyncSpawn.mockRejectedValueOnce(new Error('Not found'));
+      const { findOllamaBinary } = require('../src/main/utils/ollamaDetection');
+      findOllamaBinary.mockRejectedValueOnce(new Error('Not found'));
 
       const result = await checkOllamaInstallation();
 
@@ -148,12 +154,9 @@ describe('Preflight Checks', () => {
       expect(result.version).toBeNull();
     });
 
-    test('returns not installed on non-zero status', async () => {
-      asyncSpawn.mockResolvedValueOnce({
-        status: 127,
-        stdout: '',
-        stderr: 'command not found'
-      });
+    test('returns not installed when binary is missing', async () => {
+      const { findOllamaBinary } = require('../src/main/utils/ollamaDetection');
+      findOllamaBinary.mockResolvedValueOnce({ found: false, path: null, source: null });
 
       const result = await checkOllamaInstallation();
 

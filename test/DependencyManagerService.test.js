@@ -4,15 +4,16 @@
  * Covers: getStatus, installOllama (happy path + failure), installChromaDb (python missing, pip args).
  */
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Force Windows behavior via platform utils
 jest.mock('../src/shared/platformUtils', () => ({
@@ -53,14 +54,15 @@ jest.mock('https', () => ({
 
 const mockFsPromises = {
   mkdir: jest.fn().mockResolvedValue(undefined),
-  access: jest.fn().mockResolvedValue(undefined),
+  access: jest.fn(),
   unlink: jest.fn().mockResolvedValue(undefined)
 };
 const mockCreateWriteStream = jest.fn();
 jest.mock('fs', () => ({
   promises: mockFsPromises,
   createWriteStream: (...args) => mockCreateWriteStream(...args),
-  unlink: jest.fn((_p, cb) => (typeof cb === 'function' ? cb(null) : undefined))
+  unlink: jest.fn((_p, cb) => (typeof cb === 'function' ? cb(null) : undefined)),
+  existsSync: jest.fn().mockReturnValue(false)
 }));
 
 // Mock ollamaDetection globally for all tests in this file
@@ -70,6 +72,10 @@ jest.mock('../src/main/utils/ollamaDetection', () => ({
   isOllamaRunning: jest.fn().mockResolvedValue(true),
   getInstalledModels: jest.fn().mockResolvedValue([]),
   findOllamaBinary: jest.fn()
+}));
+
+jest.mock('../src/main/utils/tesseractUtils', () => ({
+  getTesseractBinaryInfo: jest.fn().mockResolvedValue({ installed: false })
 }));
 
 describe('DependencyManagerService', () => {
@@ -87,6 +93,11 @@ describe('DependencyManagerService', () => {
     ollamaService = require('../src/main/services/startup/ollamaService');
     childProcess = require('child_process');
     ollamaDetection = require('../src/main/utils/ollamaDetection');
+    ollamaDetection.findOllamaBinary.mockResolvedValue({
+      found: true,
+      path: 'ollama',
+      source: 'path'
+    });
     // default asyncSpawn to resolve success to avoid undefined catches
     asyncSpawnUtils.asyncSpawn.mockImplementation(() => Promise.resolve({ status: 0 }));
     const svc = require('../src/main/services/DependencyManagerService').DependencyManagerService;
@@ -99,6 +110,8 @@ describe('DependencyManagerService', () => {
 
     // Default resources path (can be overridden per test)
     process.resourcesPath = undefined;
+
+    mockFsPromises.access.mockRejectedValue(new Error('ENOENT'));
 
     DependencyManagerService = reloadService();
   });
@@ -212,6 +225,7 @@ describe('DependencyManagerService', () => {
   test('installChromaDb uses embedded python without --user and sets PYTHONHOME', async () => {
     process.resourcesPath = '/app';
     DependencyManagerService = reloadService();
+    mockFsPromises.access.mockResolvedValue(undefined);
     preflight.checkPythonInstallation.mockResolvedValue({ installed: false, version: null });
     asyncSpawnUtils.findPythonLauncherAsync.mockResolvedValue(null);
 
@@ -241,13 +255,14 @@ describe('DependencyManagerService', () => {
     expect(args).not.toContain('--user'); // embedded runtime should not use --user
     const opts = installCall[2];
     expect((opts?.env?.PYTHONHOME || '').replace(/\\\\/g, '/').replace(/\\/g, '/')).toContain(
-      '/app/assets/runtime/python'
+      '/assets/runtime/python'
     );
   });
 
   test('installOllama uses bundled portable binary when present', async () => {
     process.resourcesPath = '/app';
     DependencyManagerService = reloadService();
+    mockFsPromises.access.mockResolvedValue(undefined);
     preflight.checkOllamaInstallation.mockResolvedValue({ installed: false, version: null });
     ollamaDetection.isOllamaInstalled.mockResolvedValue(false);
     ollamaDetection.findOllamaBinary.mockResolvedValue({
@@ -277,13 +292,9 @@ describe('DependencyManagerService', () => {
 
     const spawnCall = childProcess.spawn.mock.calls[0];
     expect(spawnCall).toBeDefined();
-    expect(String(spawnCall[0]).replace(/\\/g, '/')).toContain(
-      '/app/assets/runtime/ollama/ollama.exe'
-    );
+    expect(String(spawnCall[0]).replace(/\\/g, '/')).toContain('/assets/runtime/ollama/ollama.exe');
     expect(spawnCall[1]).toEqual(['serve']);
-    expect(String(spawnCall[2]?.cwd || '').replace(/\\/g, '/')).toContain(
-      '/app/assets/runtime/ollama'
-    );
+    expect(String(spawnCall[2]?.cwd || '').replace(/\\/g, '/')).toContain('/assets/runtime/ollama');
   });
 
   test('installOllama short-circuits when already installed', async () => {
@@ -318,6 +329,11 @@ describe('DependencyManagerService', () => {
 
   test('installOllama downloads (follows redirect), runs installer, and spawns ollama serve', async () => {
     const ollamaDetection = require('../src/main/utils/ollamaDetection');
+    ollamaDetection.findOllamaBinary.mockResolvedValueOnce({
+      found: false,
+      path: null,
+      source: null
+    });
     ollamaDetection.isOllamaInstalled.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     ollamaDetection.getOllamaVersion.mockResolvedValue('0.2.0');
     ollamaDetection.isOllamaRunning.mockResolvedValue(true);
@@ -387,6 +403,11 @@ describe('DependencyManagerService', () => {
 
   test('installOllama returns error when installer fails', async () => {
     const ollamaDetection = require('../src/main/utils/ollamaDetection');
+    ollamaDetection.findOllamaBinary.mockResolvedValueOnce({
+      found: false,
+      path: null,
+      source: null
+    });
     ollamaDetection.isOllamaInstalled.mockResolvedValueOnce(false);
 
     // Simple 200 download

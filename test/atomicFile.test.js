@@ -13,13 +13,14 @@ jest.mock('../src/shared/performanceConstants', () => ({
   }
 }));
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     error: jest.fn(),
     warn: jest.fn(),
     debug: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 const {
   atomicWriteFile,

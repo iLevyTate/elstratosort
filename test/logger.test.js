@@ -274,16 +274,18 @@ describe('Logger', () => {
   });
 
   describe('getLogger factory', () => {
-    test('returns singleton with context set', () => {
+    test('returns a new logger instance with context set', () => {
       const log = getLogger('TestContext');
-      expect(log).toBe(logger);
+      expect(log).toBeInstanceOf(Logger);
       expect(log.context).toBe('TestContext');
     });
 
-    test('overwrites previous context', () => {
-      getLogger('Context1');
-      const log = getLogger('Context2');
-      expect(log.context).toBe('Context2');
+    test('returns independent instances so contexts do not collide', () => {
+      const log1 = getLogger('Context1');
+      const log2 = getLogger('Context2');
+      expect(log1).not.toBe(log2);
+      expect(log1.context).toBe('Context1');
+      expect(log2.context).toBe('Context2');
     });
   });
 

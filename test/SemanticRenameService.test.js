@@ -2,13 +2,14 @@ const path = require('path');
 const { SemanticRenameService } = require('../src/main/services/SemanticRenameService');
 
 // Mock logger to prevent console noise during tests
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     error: jest.fn(),
     info: jest.fn(),
     warn: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 describe('SemanticRenameService', () => {
   let service;

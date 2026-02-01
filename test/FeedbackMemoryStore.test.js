@@ -12,24 +12,14 @@ jest.mock('electron', () => ({
 
 // Mock logger
 jest.mock('../src/shared/logger', () => {
-  const baseLogger = {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
   };
-  const createdLogger = {
-    info: jest.fn(),
-    debug: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn()
-  };
-  return {
-    logger: baseLogger,
-    createLogger: jest.fn(() => createdLogger),
-    __createdLogger: createdLogger
-  };
+  return { logger, createLogger: jest.fn(() => logger) };
 });
 
 // Mock fs
@@ -460,7 +450,7 @@ describe('FeedbackMemoryStore chromaPrimary Warning', () => {
     mockFs.access.mockResolvedValue(undefined);
     mockFs.readFile.mockResolvedValue(JSON.stringify({ items: [] }));
 
-    const { logger, __createdLogger } = require('../src/shared/logger');
+    const { logger } = require('../src/shared/logger');
 
     const store = new FeedbackMemoryStore({
       chromaDbService: chromaMock,
@@ -472,10 +462,7 @@ describe('FeedbackMemoryStore chromaPrimary Warning', () => {
     await store.load();
 
     // Should have logged a warning about chromaPrimary not being fully supported
-    const warnCalls = [
-      ...(logger.warn?.mock?.calls || []),
-      ...(__createdLogger?.warn?.mock?.calls || [])
-    ];
+    const warnCalls = [...(logger.warn?.mock?.calls || [])];
     expect(
       warnCalls.some((call) =>
         String(call?.[0] || '').includes('chromaPrimary mode is not fully supported')

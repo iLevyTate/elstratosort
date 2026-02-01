@@ -47,15 +47,16 @@ jest.mock('fs', () => ({
 }));
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock atomic file operations
 jest.mock('../src/shared/atomicFileOperations', () => ({
@@ -115,7 +116,12 @@ jest.mock('../src/shared/securityConfig', () => ({
       'lastBrowsedPath',
       'autoUpdateOllama',
       'autoUpdateChromaDb',
-      'dependencyWizardShown'
+      'dependencyWizardShown',
+      'graphExpansionEnabled',
+      'graphExpansionWeight',
+      'graphExpansionMaxNeighbors',
+      'chunkContextEnabled',
+      'chunkContextMaxNeighbors'
     ]),
     patterns: {
       url: /^https?:\/\/[a-zA-Z0-9][-a-zA-Z0-9._:]*(?:\/[^\s]*)?$/,

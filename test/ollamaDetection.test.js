@@ -44,12 +44,16 @@ describe('ollamaDetection', () => {
 
   describe('getOllamaVersion', () => {
     test('returns trimmed stdout on success', async () => {
-      asyncSpawn.mockResolvedValueOnce({ status: 0, stdout: 'ollama version 1.2.3\n', stderr: '' });
+      asyncSpawn
+        .mockResolvedValueOnce({ status: 0, stdout: 'ollama version 1.2.3\n', stderr: '' })
+        .mockResolvedValueOnce({ status: 0, stdout: 'ollama version 1.2.3\n', stderr: '' });
       await expect(getOllamaVersion()).resolves.toBe('ollama version 1.2.3');
     });
 
     test('falls back to stderr on success when stdout missing', async () => {
-      asyncSpawn.mockResolvedValueOnce({ status: 0, stdout: '', stderr: 'ollama version 9.9.9\n' });
+      asyncSpawn
+        .mockResolvedValueOnce({ status: 0, stdout: 'ollama version 9.9.9\n', stderr: '' })
+        .mockResolvedValueOnce({ status: 0, stdout: '', stderr: 'ollama version 9.9.9\n' });
       await expect(getOllamaVersion()).resolves.toBe('ollama version 9.9.9');
     });
 
@@ -144,15 +148,19 @@ describe('ollamaDetection', () => {
     });
 
     test('returns empty array on non-zero status', async () => {
-      asyncSpawn.mockResolvedValueOnce({ status: 1, stdout: '', stderr: '' });
+      asyncSpawn
+        .mockResolvedValueOnce({ status: 0, stdout: 'ollama version 1.0.0\n', stderr: '' })
+        .mockResolvedValueOnce({ status: 1, stdout: '', stderr: '' });
       await expect(getInstalledModels()).resolves.toEqual([]);
     });
 
     test('parses model list and lowercases names', async () => {
-      asyncSpawn.mockResolvedValueOnce({
-        status: 0,
-        stdout: `NAME            ID              SIZE    MODIFIED\nLlama3:Latest    abc             1GB     today\nqwen3:0.6b       def             500MB   today\n\n`
-      });
+      asyncSpawn
+        .mockResolvedValueOnce({ status: 0, stdout: 'ollama version 1.0.0\n', stderr: '' })
+        .mockResolvedValueOnce({
+          status: 0,
+          stdout: `NAME            ID              SIZE    MODIFIED\nLlama3:Latest    abc             1GB     today\nqwen3:0.6b       def             500MB   today\n\n`
+        });
 
       await expect(getInstalledModels()).resolves.toEqual(['llama3:latest', 'qwen3:0.6b']);
     });
