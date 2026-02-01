@@ -100,12 +100,41 @@ function registerUndoRedoIpc(servicesOrParams) {
       serviceName: 'undoRedo',
       getService: getUndoRedoService,
       fallbackResponse: [],
-      handler: async (event, limit = 50, service) => {
+      handler: async (event, payload, service) => {
         try {
-          return (await service.getHistory(limit)) || [];
+          const limit = payload && typeof payload === 'number' ? payload : 50;
+          return (await service.getActionHistory(limit)) || [];
         } catch (error) {
           logger.error('Failed to get action history:', error);
           return [];
+        }
+      }
+    })
+  );
+
+  // Get full undo/redo state for UI synchronization
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.UNDO_REDO.GET_STATE,
+    createHandler({
+      logger,
+      context,
+      serviceName: 'undoRedo',
+      getService: getUndoRedoService,
+      fallbackResponse: { stack: [], pointer: -1, canUndo: false, canRedo: false },
+      handler: async (event, service) => {
+        try {
+          return (
+            service.getFullState() || {
+              stack: [],
+              pointer: -1,
+              canUndo: false,
+              canRedo: false
+            }
+          );
+        } catch (error) {
+          logger.error('Failed to get undo/redo state:', error);
+          return { stack: [], pointer: -1, canUndo: false, canRedo: false };
         }
       }
     })

@@ -8,10 +8,9 @@ const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceConte
 const { createHandler, createErrorResponse, safeHandle } = require('./ipcWrappers');
 const { schemas } = require('./validationSchemas');
 const OrganizationSuggestionService = require('../services/organization');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('IPC:Suggestions');
-
+const logger = createLogger('IPC:Suggestions');
 function registerSuggestionsIpc(servicesOrParams) {
   let container;
   if (servicesOrParams instanceof IpcServiceContext) {
@@ -165,7 +164,7 @@ function registerSuggestionsIpc(servicesOrParams) {
             accepted
           });
 
-          service.recordFeedback(file, suggestion, accepted);
+          await service.recordFeedback(file, suggestion, accepted, note);
           if (note) {
             await service.recordFeedbackNote(file, suggestion, accepted, note);
           }

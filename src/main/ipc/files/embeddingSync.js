@@ -94,6 +94,7 @@ function buildEmbeddingMeta({
     purpose: (analysis.purpose || '').substring(0, 1000),
     reasoning: (analysis.reasoning || '').substring(0, 500),
     documentType,
+    keyEntities: Array.isArray(analysis.keyEntities) ? analysis.keyEntities.slice(0, 20) : [],
     extractedText: extractedText.substring(0, 5000),
     smartFolder: smartFolder?.name || null,
     smartFolderPath: smartFolder?.path || null
@@ -138,8 +139,11 @@ async function removeEmbeddingsForPath(filePath, services, log = logger) {
     if (typeof chromaDbService.batchDeleteFileEmbeddings === 'function') {
       const result = await chromaDbService.batchDeleteFileEmbeddings(ids);
       // FIX: Check return value for success/queued status
-      if (result && (result.success || result.queued)) {
+      if (result && result.success) {
         dbRemovedCount = ids.length;
+      } else if (result && result.queued) {
+        dbRemovedCount = 0; // Queued for later, not yet removed
+        logger.debug('[EmbeddingSync] Embedding deletions queued, not yet confirmed');
       } else if (result && result.error) {
         log.warn('[EmbeddingSync] Batch delete failed', { error: result.error });
       }
@@ -153,10 +157,19 @@ async function removeEmbeddingsForPath(filePath, services, log = logger) {
       }
     }
 
+    // PERF: Batch deleteFileChunks calls in parallel instead of sequential
     if (typeof chromaDbService.deleteFileChunks === 'function') {
-      for (const variant of pathVariants) {
-        await chromaDbService.deleteFileChunks(`file:${variant}`);
-        await chromaDbService.deleteFileChunks(`image:${variant}`);
+      const chunkDeletePromises = pathVariants.flatMap((variant) => [
+        chromaDbService.deleteFileChunks(`file:${variant}`),
+        chromaDbService.deleteFileChunks(`image:${variant}`)
+      ]);
+      const chunkResults = await Promise.allSettled(chunkDeletePromises);
+      const failures = chunkResults.filter((result) => result.status === 'rejected');
+      if (failures.length > 0) {
+        log.warn('[EmbeddingSync] Failed to delete some chunks', {
+          failures: failures.length,
+          errors: failures.map((result) => result.reason?.message || 'Unknown error')
+        });
       }
     }
 

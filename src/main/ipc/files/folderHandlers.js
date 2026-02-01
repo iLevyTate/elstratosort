@@ -11,7 +11,7 @@ const fs = require('fs').promises;
 const os = require('os');
 const { app } = require('electron');
 const { withErrorLogging, safeHandle } = require('../ipcWrappers');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { validateFileOperationPath } = require('../../../shared/pathSanitization');
 const {
   isNotFoundError,
@@ -21,8 +21,7 @@ const {
 } = require('../../../shared/errorClassifier');
 const { isUNCPath } = require('../../../shared/crossPlatformUtils');
 
-logger.setContext('IPC:Files:Folders');
-
+const logger = createLogger('IPC:Files:Folders');
 const { IpcServiceContext, createFromLegacyParams } = require('../IpcServiceContext');
 
 /**
@@ -166,6 +165,22 @@ function registerFolderHandlers(servicesOrParams) {
 
         const normalizedPath = path.resolve(folderPath);
 
+        // SECURITY: Validate path before any filesystem operations
+        const validation = await validateFileOperationPath(normalizedPath, {
+          checkSymlinks: true
+        });
+        if (!validation.valid) {
+          logger.warn('[FILE-OPS] Folder open blocked - unsafe path', {
+            path: folderPath,
+            error: validation.error
+          });
+          return {
+            success: false,
+            error: validation.error || 'Path is not allowed',
+            errorCode: 'PATH_NOT_ALLOWED'
+          };
+        }
+
         try {
           const stats = await fs.stat(normalizedPath);
           if (!stats.isDirectory()) {
@@ -220,6 +235,22 @@ function registerFolderHandlers(servicesOrParams) {
 
       try {
         const normalizedPath = path.resolve(fullPath);
+
+        // SECURITY: Validate path before any filesystem operations
+        const validation = await validateFileOperationPath(normalizedPath, {
+          checkSymlinks: true
+        });
+        if (!validation.valid) {
+          logger.warn('[FILE-OPS] Folder deletion blocked - unsafe path', {
+            path: fullPath,
+            error: validation.error
+          });
+          return {
+            success: false,
+            error: validation.error || 'Path is not allowed',
+            errorCode: 'PATH_NOT_ALLOWED'
+          };
+        }
 
         try {
           const stats = await fs.stat(normalizedPath);

@@ -69,7 +69,7 @@ function registerAnalysisIpc(servicesOrParams) {
             getFolderNamesString(folderCategories)
           );
 
-          const result = await analyzeDocumentFile(filePath, folderCategories);
+          const result = await analyzeDocumentFile(cleanPath, folderCategories);
           const duration = performance.now() - startTime;
           systemAnalytics.recordProcessingTime(duration);
 
@@ -136,7 +136,7 @@ function registerAnalysisIpc(servicesOrParams) {
             getFolderNamesString(folderCategories)
           );
 
-          const result = await analyzeImageFile(filePath, folderCategories);
+          const result = await analyzeImageFile(cleanPath, folderCategories);
           const duration = performance.now() - startTime;
 
           await recordAnalysisResult({

@@ -20,7 +20,7 @@ const {
   CHUNKING
 } = require('../../shared/performanceConstants');
 const { withErrorLogging, withChromaInit, safeHandle } = require('./ipcWrappers');
-const { cosineSimilarity } = require('../../shared/vectorMath');
+const { cosineSimilarity, padOrTruncateVector } = require('../../shared/vectorMath');
 const {
   getOllamaEmbeddingModel,
   getOllamaModel,
@@ -317,6 +317,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
         const historyService = serviceIntegration?.analysisHistory;
         const embeddingService = getParallelEmbeddingService();
         const ollamaService = serviceIntegration?.ollamaService;
+        const relationshipIndexService = serviceIntegration?.relationshipIndex;
 
         if (!historyService) {
           throw new Error(
@@ -331,7 +332,8 @@ function registerEmbeddingsIpc(servicesOrParams) {
           chromaDbService,
           analysisHistoryService: historyService,
           parallelEmbeddingService: embeddingService,
-          ollamaService // Pass OllamaService for LLM re-ranking
+          ollamaService, // Pass OllamaService for LLM re-ranking
+          relationshipIndexService
         });
 
         // Store reference for cross-module access (e.g., fileOperationHandlers)
@@ -1294,6 +1296,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
           if (Array.isArray(allEntries) && allEntries.length > 0) {
             const filePayloads = [];
             const chunkPayloads = [];
+            const processedFileIds = new Set();
 
             for (const entry of allEntries) {
               try {
@@ -1333,6 +1336,12 @@ function registerEmbeddingsIpc(servicesOrParams) {
                 const isImage = SUPPORTED_IMAGE_EXTENSIONS.includes(ext);
                 const fileId = getFileEmbeddingId(filePath, isImage ? 'image' : 'file');
 
+                // Skip duplicate file IDs (history may contain multiple entries per file)
+                if (processedFileIds.has(fileId)) {
+                  continue;
+                }
+                processedFileIds.add(fileId);
+
                 // Build text representation for embedding
                 const textParts = [
                   displayName,
@@ -1358,7 +1367,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
                     name: displayName,
                     category: analysis.category || '',
                     subject: analysis.subject || '',
-                    tags: (analysis.tags || []).join(', ')
+                    tags: JSON.stringify(analysis.tags || [])
                   },
                   document: embeddingText.slice(0, 500),
                   updatedAt: new Date().toISOString()
@@ -1557,7 +1566,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
         // Step 6: Queue all files for reanalysis with naming option
         logger.info('[EMBEDDINGS] Queueing all files for reanalysis...');
         const result = await smartFolderWatcher.forceReanalyzeAll({
-          applyNaming: options.applyNaming !== false // Default to false if not specified
+          applyNaming: options.applyNaming === true // Default to false if not specified
         });
 
         logger.info('[EMBEDDINGS] Reanalyze all queued:', result);
@@ -1774,7 +1783,14 @@ function registerEmbeddingsIpc(servicesOrParams) {
           correctSpelling = false, // DISABLED - causes false corrections (are->api, that->tax)
           // Re-ranking options
           rerank = true,
-          rerankTopN = 10
+          rerankTopN = 10,
+          // Graph expansion options
+          graphExpansion,
+          graphExpansionWeight,
+          graphExpansionMaxNeighbors,
+          // Contextual chunk options
+          chunkContext,
+          chunkContextMaxNeighbors
         } = {}
       ) => {
         const { MAX_TOP_K } = LIMITS;
@@ -1800,6 +1816,46 @@ function registerEmbeddingsIpc(servicesOrParams) {
           if (!Number.isInteger(rerankTopN) || rerankTopN < 1 || rerankTopN > 50) {
             rerankTopN = 10; // Reset to default if invalid
           }
+
+          let settings = null;
+          try {
+            const settingsService = container.settings?.settingsService;
+            if (settingsService?.load) {
+              settings = await settingsService.load();
+            }
+          } catch (settingsErr) {
+            logger.debug('[EMBEDDINGS] Failed to load settings for search', {
+              error: settingsErr?.message || String(settingsErr)
+            });
+          }
+
+          const graphExpansionSetting =
+            typeof graphExpansion === 'boolean'
+              ? graphExpansion
+              : typeof settings?.graphExpansionEnabled === 'boolean'
+                ? settings.graphExpansionEnabled
+                : undefined;
+          const graphExpansionWeightSetting = Number.isFinite(graphExpansionWeight)
+            ? graphExpansionWeight
+            : Number.isFinite(settings?.graphExpansionWeight)
+              ? settings.graphExpansionWeight
+              : undefined;
+          const graphExpansionMaxNeighborsSetting = Number.isInteger(graphExpansionMaxNeighbors)
+            ? graphExpansionMaxNeighbors
+            : Number.isInteger(settings?.graphExpansionMaxNeighbors)
+              ? settings.graphExpansionMaxNeighbors
+              : undefined;
+          const chunkContextSetting =
+            typeof chunkContext === 'boolean'
+              ? chunkContext
+              : typeof settings?.chunkContextEnabled === 'boolean'
+                ? settings.chunkContextEnabled
+                : undefined;
+          const chunkContextMaxNeighborsSetting = Number.isInteger(chunkContextMaxNeighbors)
+            ? chunkContextMaxNeighbors
+            : Number.isInteger(settings?.chunkContextMaxNeighbors)
+              ? settings.chunkContextMaxNeighbors
+              : undefined;
 
           // FIX P1-7: Verify embedding model for vector/hybrid modes
           // BM25-only mode doesn't need embeddings
@@ -1844,6 +1900,21 @@ function registerEmbeddingsIpc(servicesOrParams) {
               : {}),
             ...(Number.isInteger(chunkTopK) && chunkTopK >= 1 && chunkTopK <= MAX_TOP_K * 20
               ? { chunkTopK }
+              : {}),
+            ...(typeof graphExpansionSetting === 'boolean'
+              ? { graphExpansion: graphExpansionSetting }
+              : {}),
+            ...(Number.isFinite(graphExpansionWeightSetting)
+              ? { graphExpansionWeight: graphExpansionWeightSetting }
+              : {}),
+            ...(Number.isInteger(graphExpansionMaxNeighborsSetting)
+              ? { graphExpansionMaxNeighbors: graphExpansionMaxNeighborsSetting }
+              : {}),
+            ...(typeof chunkContextSetting === 'boolean'
+              ? { chunkContext: chunkContextSetting }
+              : {}),
+            ...(Number.isInteger(chunkContextMaxNeighborsSetting)
+              ? { chunkContextMaxNeighbors: chunkContextMaxNeighborsSetting }
               : {}),
             // Query processing options
             expandSynonyms: Boolean(expandSynonyms),
@@ -1952,16 +2023,6 @@ function registerEmbeddingsIpc(servicesOrParams) {
     IPC_CHANNELS.EMBEDDINGS.SCORE_FILES,
     createChromaHandler(async (event, { query, fileIds } = {}) => {
       const QUERY_TIMEOUT = TIMEOUTS.SEMANTIC_QUERY;
-
-      const padOrTruncateVector = (vector, expectedDim) => {
-        if (!Array.isArray(vector) || vector.length === 0) return null;
-        if (!Number.isInteger(expectedDim) || expectedDim <= 0) return vector;
-        if (vector.length === expectedDim) return vector;
-        if (vector.length < expectedDim) {
-          return vector.concat(new Array(expectedDim - vector.length).fill(0));
-        }
-        return vector.slice(0, expectedDim);
-      };
 
       try {
         const cleanQuery = normalizeText(query, { maxLength: 2000 });

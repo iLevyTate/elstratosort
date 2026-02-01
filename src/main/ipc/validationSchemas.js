@@ -580,7 +580,12 @@ if (!z) {
     mode: z.enum(['hybrid', 'vector', 'bm25']).optional().default('hybrid'),
     minScore: z.number().min(0).max(1).optional(),
     chunkWeight: z.number().min(0).max(1).optional(),
-    chunkTopK: z.number().int().min(1).max(2000).optional()
+    chunkTopK: z.number().int().min(1).max(2000).optional(),
+    graphExpansion: z.boolean().optional(),
+    graphExpansionWeight: z.number().min(0).max(1).optional(),
+    graphExpansionMaxNeighbors: z.number().int().min(1).max(500).optional(),
+    chunkContext: z.boolean().optional(),
+    chunkContextMaxNeighbors: z.number().int().min(0).max(3).optional()
   });
 
   /**
@@ -648,6 +653,11 @@ if (!z) {
     minWeight: z.number().int().min(1).max(20).optional().default(2),
     maxEdges: z.number().int().min(1).max(2000).optional().default(500)
   });
+
+  /**
+   * Knowledge relationship index stats parameters
+   */
+  const relationshipStatsSchema = z.object({}).optional().default({});
 
   /**
    * Chat query parameters
@@ -764,6 +774,7 @@ if (!z) {
     getFileMetadata: getFileMetadataSchema,
     findDuplicates: findDuplicatesSchema,
     relationshipEdges: relationshipEdgesSchema,
+    relationshipStats: relationshipStatsSchema,
 
     // Chat
     chatQuery: chatQuerySchema,

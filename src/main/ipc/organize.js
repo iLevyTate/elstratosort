@@ -7,12 +7,11 @@
 const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 const { createHandler, createErrorResponse, safeHandle } = require('./ipcWrappers');
 const { schemas } = require('./validationSchemas');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { isNotFoundError } = require('../../shared/errorClassifier');
 const fs = require('fs').promises;
 
-logger.setContext('IPC:Organize');
-
+const logger = createLogger('IPC:Organize');
 /**
  * Validate that a source file exists and is a file before moving
  * @param {string} sourcePath - Path to validate

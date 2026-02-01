@@ -38,6 +38,7 @@ const {
 } = require('../../services/organization/learningFeedback');
 const { syncEmbeddingForMove } = require('./embeddingSync');
 const { withTimeout } = require('../../../shared/promiseUtils');
+const { crossDeviceMove } = require('../../../shared/atomicFileOperations');
 
 // Alias for backward compatibility
 const operationSchema = schemas?.fileOperation || null;
@@ -292,7 +293,16 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
             PathChangeReason.USER_MOVE
           );
 
-          await fs.rename(moveValidation.source, moveValidation.destination);
+          try {
+            await fs.rename(moveValidation.source, moveValidation.destination);
+          } catch (renameError) {
+            if (renameError.code === 'EXDEV') {
+              // Cross-device move: fall back to copy + delete
+              await crossDeviceMove(moveValidation.source, moveValidation.destination);
+            } else {
+              throw renameError;
+            }
+          }
 
           // PATH-TRACE: Log move complete (fs operation)
           traceMoveComplete(

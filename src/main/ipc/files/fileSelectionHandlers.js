@@ -16,11 +16,11 @@ const {
   SUPPORTED_DESIGN_EXTENSIONS
 } = require('../../../shared/constants');
 const { withErrorLogging, safeHandle } = require('../ipcWrappers');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
+const { validateFileOperationPath } = require('../../../shared/pathSanitization');
 const SettingsService = require('../../services/SettingsService');
 
-logger.setContext('IPC:Files:Selection');
-
+const logger = createLogger('IPC:Files:Selection');
 /**
  * Get the last browsed path from settings, falling back to documents folder
  * @returns {Promise<string|undefined>} The default path for file dialogs
@@ -239,7 +239,12 @@ function registerFileSelectionHandlers(servicesOrParams) {
         if (!filePath || typeof filePath !== 'string') {
           return { success: false, error: 'Invalid file path', stats: null };
         }
-        const stats = await fs.stat(filePath);
+        // SECURITY: Validate path before filesystem access
+        const validation = await validateFileOperationPath(filePath);
+        if (!validation.valid) {
+          return { success: false, error: 'Invalid file path', stats: null };
+        }
+        const stats = await fs.stat(validation.normalizedPath);
         return {
           success: true,
           stats: {
@@ -268,12 +273,18 @@ function registerFileSelectionHandlers(servicesOrParams) {
         if (!dirPath || typeof dirPath !== 'string') {
           return { success: false, error: 'Invalid directory path', files: [] };
         }
-        const items = await fs.readdir(dirPath, { withFileTypes: true });
+        // SECURITY: Validate path before filesystem access
+        const dirValidation = await validateFileOperationPath(dirPath);
+        if (!dirValidation.valid) {
+          return { success: false, error: 'Invalid directory path', files: [] };
+        }
+        const validatedDirPath = dirValidation.normalizedPath;
+        const items = await fs.readdir(validatedDirPath, { withFileTypes: true });
         const files = items
           .filter((item) => item.isFile())
           .map((item) => ({
             name: item.name,
-            path: path.join(dirPath, item.name)
+            path: path.join(validatedDirPath, item.name)
           }));
         return { success: true, files };
       } catch (error) {
