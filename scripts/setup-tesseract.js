@@ -1,4 +1,7 @@
 const { spawnSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const { resolveRuntimeRoot } = require('../src/main/utils/runtimePaths');
 
 function parseBool(value) {
   return String(value).toLowerCase() === 'true';
@@ -19,6 +22,13 @@ function hasTesseractBinary() {
     shell: isWindows
   });
   return result.status === 0;
+}
+
+function hasEmbeddedTesseract() {
+  const runtimeRoot = resolveRuntimeRoot();
+  const exe = process.platform === 'win32' ? 'tesseract.exe' : 'tesseract';
+  const candidate = path.join(runtimeRoot, 'tesseract', exe);
+  return fs.existsSync(candidate);
 }
 
 function installOnWindows() {
@@ -85,6 +95,11 @@ function main({ env = process.env } = {}) {
 
   if (env.TESSERACT_PATH && env.TESSERACT_PATH.trim()) {
     console.log('[tesseract] TESSERACT_PATH is set, skipping auto-install');
+    return 0;
+  }
+
+  if (hasEmbeddedTesseract()) {
+    console.log('[tesseract] Embedded Tesseract found, skipping auto-install');
     return 0;
   }
 
