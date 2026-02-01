@@ -25,13 +25,19 @@ This repository is configured with automated dependency updates and release buil
 2. Add it as a repository secret named `DEPENDABOT_PAT`
 3. Uncomment the auto-approve step in the workflow
 
-### 3. Release Builds (`.github/workflows/release.yml`)
+### 3. CI (`.github/workflows/ci.yml`)
+
+- Runs formatting, lint, unit tests, and build
+- Triggered on pushes and PRs to main/master/develop
+
+### 4. Windows Release Builds (`.github/workflows/release.yml`)
 
 #### Automatic Releases
 
 - **Triggers on version tags** (e.g., `v1.0.0`, `v2.1.3`)
-- Automatically builds Windows installer
-- Publishes to GitHub Releases
+- Stages bundled runtimes (`npm run setup:runtime`)
+- Builds Windows installer
+- Publishes to GitHub Releases with `checksums.sha256`
 
 To create a release:
 
@@ -42,9 +48,8 @@ git push origin v1.0.0
 
 #### Manual Builds
 
-- Go to Actions → "Build and Release" → Run workflow
-- Select platform: `windows`, `macos`, `linux`, or `all`
-- Artifacts are uploaded to the workflow run
+- Go to Actions → "Windows Dist (Manual)" → Run workflow
+- Artifacts and `checksums.sha256` are uploaded to the workflow run
 
 ## Build Outputs
 
@@ -52,6 +57,8 @@ git push origin v1.0.0
 
 - **NSIS Installer**: `StratoSort-<version>-win-x64.exe`
 - **Portable**: `StratoSort-<version>-win-x64.portable.exe`
+- **Checksums**: `checksums.sha256`
+- **Updater metadata**: `latest.yml`, `*.blockmap`
 
 ### macOS (manual only)
 
@@ -68,7 +75,7 @@ git push origin v1.0.0
 ### `electron-builder.json`
 
 - Configures build outputs and installer settings
-- Publishes to GitHub when `GH_TOKEN` is available
+- Publishing is handled by GitHub Actions; build commands use `--publish never`
 - Clean artifact naming: `StratoSort-${version}-${os}-${arch}.${ext}`
 
 ## Required Secrets
@@ -79,13 +86,15 @@ git push origin v1.0.0
 
 ### Optional
 
-- `DEPENDABOT_PAT`: Personal Access Token for auto-approving PRs (only if branch protection requires reviews)
+- `DEPENDABOT_PAT`: Personal Access Token for auto-approving PRs (only if branch protection requires
+  reviews)
 
 ## Testing Locally
 
 ### Build Windows installer:
 
 ```bash
+npm run setup:runtime
 npm run dist:win
 ```
 
@@ -109,7 +118,7 @@ Output location: `release/build/`
 
 1. Ensure tag follows format `v*.*.*`
 2. Check Actions tab for build errors
-3. Verify `GH_TOKEN` is available (automatic in Actions)
+3. Verify `GITHUB_TOKEN` is available (automatic in Actions)
 
 ### Build errors
 

@@ -82,8 +82,9 @@ single consent (use “Install All” in the AI setup modal)—no CLI required.
 
 ### Platform Setup Notes
 
-- **Windows:** Fully bundled AI runtime. Portable Ollama + embeddable Python are included; click
-  “Install All (Background)” on first launch. No CLI or admin prompts; models download on first use.
+- **Windows:** Fully bundled AI runtime. Portable Ollama + embeddable Python + Tesseract are staged
+  during packaging via `npm run setup:runtime`; click “Install All (Background)” on first launch. No
+  CLI or admin prompts; models download on first use.
 - **macOS:** Uses system Python 3.9+ and Homebrew/manual Ollama. “Install All” will guide you; brew
   may prompt. Tesseract auto-installs via brew and falls back to the built-in OCR fallback if
   missing. Models download on first use.
@@ -134,6 +135,7 @@ results, ensuring the top results are conceptually relevant to your query, not j
 | [Learning Guide](docs/LEARNING_GUIDE.md)   | Codebase onboarding          |
 | [Graph Features](docs/FEATURES_GRAPH.md)   | Knowledge Graph capabilities |
 | [IPC Contracts](docs/IPC_CONTRACTS.md)     | IPC communication specs      |
+| [Release Guide](docs/RELEASING.md)         | Release process and checks   |
 
 ## Contributing
 

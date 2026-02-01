@@ -12,6 +12,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## Release Checklist
+
+See [docs/RELEASING.md](docs/RELEASING.md) for versioning, runtime staging, checksums, and release
+notes.
+
 ## [1.2.2] - 2026-01-29
 
 ### Improved
