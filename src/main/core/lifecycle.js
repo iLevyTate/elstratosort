@@ -123,7 +123,12 @@ async function verifyShutdownCleanup() {
  * Handle before-quit event - performs all cleanup operations
  * @returns {Promise<void>}
  */
+let _quitCleanupStarted = false;
 async function handleBeforeQuit() {
+  // FIX: Guard against re-entrant quit (CMD+Q, dock quit, app.quit() overlap)
+  if (_quitCleanupStarted) return;
+  _quitCleanupStarted = true;
+
   lifecycleConfig.setIsQuitting?.(true);
 
   // FIX: CRITICAL - Enable IPC shutdown gate immediately to prevent new handler calls
@@ -496,16 +501,16 @@ function registerLifecycleHandlers(createWindow) {
   // Register before-quit handler
   app.on('before-quit', handleBeforeQuit);
 
-  // FIX: Add will-quit handler for final cleanup opportunity and forced exit detection
-  // will-quit fires after all windows closed, app WILL quit after this (no preventDefault)
-  app.on('will-quit', () => {
+  // Store handler references so they can be removed during cleanup
+  const willQuitHandler = () => {
     logger.info('[SHUTDOWN] will-quit event - app will terminate');
-  });
-
-  // FIX: Add quit handler to log exit code (useful for debugging forced exits)
-  app.on('quit', (event, exitCode) => {
+  };
+  const quitHandler = (event, exitCode) => {
     logger.info(`[SHUTDOWN] App quit with exit code: ${exitCode}`);
-  });
+  };
+
+  app.on('will-quit', willQuitHandler);
+  app.on('quit', quitHandler);
 
   // Register window-all-closed handler
   app.on('window-all-closed', handleWindowAllClosed);
@@ -524,6 +529,8 @@ function registerLifecycleHandlers(createWindow) {
   return {
     cleanupAppListeners: () => {
       app.removeListener('before-quit', handleBeforeQuit);
+      app.removeListener('will-quit', willQuitHandler);
+      app.removeListener('quit', quitHandler);
       app.removeListener('window-all-closed', handleWindowAllClosed);
       app.removeListener('activate', activateHandler);
     },

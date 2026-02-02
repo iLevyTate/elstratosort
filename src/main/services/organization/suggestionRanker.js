@@ -34,9 +34,9 @@ function rankSuggestions(suggestions) {
     if (!key) continue;
 
     if (!uniqueSuggestions.has(key)) {
-      uniqueSuggestions.set(key, suggestion);
+      uniqueSuggestions.set(key, { ...suggestion });
     } else {
-      // Merge scores if duplicate
+      // Merge scores if duplicate (working on our cloned copy, not caller's object)
       const existing = uniqueSuggestions.get(key);
 
       // Keep the source that provided higher confidence (check BEFORE updating)
@@ -149,8 +149,7 @@ function combineSuggestions(sources) {
 
   for (const [source, suggestions] of Object.entries(sources)) {
     for (const suggestion of suggestions) {
-      suggestion.source = source;
-      allSuggestions.push(suggestion);
+      allSuggestions.push({ ...suggestion, source });
     }
   }
 

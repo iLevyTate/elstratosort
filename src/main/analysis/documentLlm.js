@@ -2,7 +2,6 @@ const path = require('path');
 const { getOllamaModel, loadOllamaConfig, getOllama } = require('../ollamaUtils');
 const { buildOllamaOptions } = require('../services/PerformanceService');
 const { globalDeduplicator } = require('../utils/llmOptimization');
-// const { enrichFileTextForEmbedding } = require('./semanticExtensionMap');
 const { generateWithRetry } = require('../utils/ollamaApiRetry');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
 const { attemptJsonRepairWithOllama } = require('../utils/ollamaJsonRepair');

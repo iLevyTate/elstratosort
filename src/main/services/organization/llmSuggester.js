@@ -136,14 +136,19 @@ Return JSON: {
         }
         return true;
       })
-      .map((s) => ({
-        folder: String(s.folder).trim(),
-        score: s.confidence || 0.5,
-        confidence: s.confidence || 0.5,
-        reasoning: s.reasoning,
-        strategy: s.strategy,
-        method: 'llm_creative'
-      }));
+      .map((s) => {
+        const rawConf = typeof s.confidence === 'number' ? s.confidence : 0.5;
+        const normalizedConf = rawConf > 1 ? rawConf / 100 : rawConf;
+        const clampedConf = Math.max(0, Math.min(1, normalizedConf));
+        return {
+          folder: String(s.folder).trim(),
+          score: clampedConf,
+          confidence: clampedConf,
+          reasoning: s.reasoning,
+          strategy: s.strategy,
+          method: 'llm_creative'
+        };
+      });
   } catch (error) {
     logger.warn('[LLMSuggester] LLM suggestions failed:', error.message);
     return [];

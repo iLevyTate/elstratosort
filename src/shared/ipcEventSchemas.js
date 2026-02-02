@@ -310,18 +310,13 @@ const EVENT_SCHEMAS = z
  */
 function validateEventPayload(channel, data) {
   if (!z) {
-    const schema = EVENT_SCHEMAS[channel];
-    if (!schema) {
-      // No schema defined for this channel, allow through
-      return { valid: true, data };
-    }
-    // FIX CRIT-19: Log error if Zod is missing (validation bypassed)
-    const error = new Error('Zod is unavailable; IPC payload validation skipped');
+    // SECURITY FIX: Fail-closed when Zod is missing — do not silently pass unvalidated data.
+    // This ensures callers using strict mode won't send unvalidated payloads.
     if (!hasWarnedMissingZod) {
       hasWarnedMissingZod = true;
-      logger.error(`[ipcEventSchemas] CRITICAL: Zod missing, validation bypassed for ${channel}`);
+      logger.error(`[ipcEventSchemas] CRITICAL: Zod missing, validation will fail-closed`);
     }
-    return { valid: true, data, error };
+    return { valid: false, error: 'Zod validation library not available', data };
   }
 
   const schema = EVENT_SCHEMAS[channel];

@@ -349,7 +349,7 @@ class SmartFolderWatcher {
    * Stop watching
    * FIX MED-6: Clean up pending move detection timeouts to prevent callbacks after stop
    */
-  stop() {
+  async stop() {
     logger.info('[SMART-FOLDER-WATCHER] Stopping...');
     this._isStopping = true;
 
@@ -380,7 +380,10 @@ class SmartFolderWatcher {
     if (this.watcher) {
       try {
         this.watcher.removeAllListeners();
-        this.watcher.close();
+        const closeResult = this.watcher.close();
+        if (closeResult && typeof closeResult.then === 'function') {
+          await closeResult;
+        }
       } catch (error) {
         logger.error('[SMART-FOLDER-WATCHER] Error closing watcher:', error.message);
       }
@@ -403,8 +406,7 @@ class SmartFolderWatcher {
    */
   async restart() {
     logger.info('[SMART-FOLDER-WATCHER] Restarting...');
-    this.stop();
-    await new Promise((resolve) => setTimeout(resolve, 500)); // Brief pause
+    await this.stop();
     return this.start();
   }
 
@@ -523,6 +525,7 @@ class SmartFolderWatcher {
       }
       this._queueFileForAnalysis(filePath, mtime, eventType, stats);
     }, delay);
+    timeout.unref(); // Don't prevent process exit during shutdown
 
     this.pendingAnalysis.set(filePath, { mtime, timeout, eventType, firstEventAt });
   }
@@ -847,53 +850,51 @@ class SmartFolderWatcher {
       const batchSize = Math.max(1, this.maxConcurrentAnalysis || 1);
       const batch = this.analysisQueue.splice(0, batchSize);
 
-      for (const item of batch) {
-        try {
-          await withTimeout(
+      // Process batch items concurrently (maxConcurrentAnalysis controls batch size)
+      const results = await Promise.allSettled(
+        batch.map((item) =>
+          withTimeout(
             this._analyzeFile(item),
             TIMEOUTS.GLOBAL_ANALYSIS || 10 * 60 * 1000,
             `SmartFolderWatcher analyze ${item.filePath}`
-          );
-        } catch (error) {
-          logger.warn('[SMART-FOLDER-WATCHER] Analysis timed out or failed', {
-            filePath: item.filePath,
-            error: error.message
-          });
-          this.stats.errors++;
-
-          const nextRetry = (item.retryCount || 0) + 1;
-          if (nextRetry <= MAX_ANALYSIS_RETRIES) {
-            // Requeue for a later attempt to avoid permanent drop.
-            // Use _enqueueAnalysisItem to respect MAX_ANALYSIS_QUEUE_SIZE and deduplication.
-            // Preserve cachedAnalysis so expensive LLM results survive embedding retries.
-            this._enqueueAnalysisItem({
-              ...item,
-              retryCount: nextRetry,
-              cachedAnalysis: item._lastAnalysis || item.cachedAnalysis || null
-            });
-            logger.debug('[SMART-FOLDER-WATCHER] Re-queued file after failure', {
+          ).catch((error) => {
+            logger.warn('[SMART-FOLDER-WATCHER] Analysis timed out or failed', {
               filePath: item.filePath,
-              retryCount: nextRetry,
-              hasCachedAnalysis: !!(item._lastAnalysis || item.cachedAnalysis)
+              error: error.message
             });
-          } else {
-            logger.error('[SMART-FOLDER-WATCHER] Max retries reached, giving up', {
-              filePath: item.filePath,
-              retries: nextRetry
-            });
+            this.stats.errors++;
 
-            // Notify about permanently failed file so the user is aware
-            if (this.notificationService) {
-              this.notificationService
-                .notifyWatcherError(
-                  'Analysis Failed',
-                  `File "${path.basename(item.filePath)}" failed after ${nextRetry} attempts: ${error?.message || 'Max retries exceeded'}`
-                )
-                .catch(() => {});
+            const nextRetry = (item.retryCount || 0) + 1;
+            if (nextRetry <= MAX_ANALYSIS_RETRIES) {
+              this._enqueueAnalysisItem({
+                ...item,
+                retryCount: nextRetry,
+                cachedAnalysis: item._lastAnalysis || item.cachedAnalysis || null
+              });
+              logger.debug('[SMART-FOLDER-WATCHER] Re-queued file after failure', {
+                filePath: item.filePath,
+                retryCount: nextRetry,
+                hasCachedAnalysis: !!(item._lastAnalysis || item.cachedAnalysis)
+              });
+            } else {
+              logger.error('[SMART-FOLDER-WATCHER] Max retries reached, giving up', {
+                filePath: item.filePath,
+                retries: nextRetry
+              });
+
+              if (this.notificationService) {
+                this.notificationService
+                  .notifyWatcherError(
+                    'Analysis Failed',
+                    `File "${path.basename(item.filePath)}" failed after ${nextRetry} attempts: ${error?.message || 'Max retries exceeded'}`
+                  )
+                  .catch(() => {});
+              }
             }
-          }
-        }
-      }
+          })
+        )
+      );
+      void results; // Errors handled per-item above
     } catch (error) {
       logger.error('[SMART-FOLDER-WATCHER] Queue processing error:', error.message);
       this.stats.errors++;
@@ -907,6 +908,8 @@ class SmartFolderWatcher {
    * @private
    */
   async _analyzeFile(item) {
+    if (this._isStopping) return;
+
     const { filePath, eventType, applyNaming } = item;
     const isReanalyze = eventType === 'reanalyze';
 
@@ -949,6 +952,8 @@ class SmartFolderWatcher {
           bypassCache: isReanalyze
         });
       }
+
+      if (this._isStopping) return;
 
       if (result) {
         // Apply user's naming convention to the suggested name (unless explicitly disabled)
@@ -1794,8 +1799,8 @@ class SmartFolderWatcher {
   /**
    * Shutdown handler for DI container compatibility
    */
-  shutdown() {
-    this.stop();
+  async shutdown() {
+    await this.stop();
   }
 }
 

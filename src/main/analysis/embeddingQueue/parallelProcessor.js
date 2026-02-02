@@ -172,11 +172,12 @@ async function processItemsInParallel({
         throw new Error(result.error || `Upsert ${type} failed`);
       }
 
+      const completed = ++processedCount;
       onProgress({
         phase: 'processing',
         total: totalBatchSize,
-        completed: ++processedCount,
-        percent: totalBatchSize > 0 ? Math.round((processedCount / totalBatchSize) * 100) : 0,
+        completed,
+        percent: totalBatchSize > 0 ? Math.round((completed / totalBatchSize) * 100) : 0,
         itemType: type,
         currentItem: item.id
       });

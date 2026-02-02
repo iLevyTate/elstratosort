@@ -123,6 +123,15 @@ async function cleanupOldEntries(
     });
 
     delete analysisHistory.entries[id];
+    // Update aggregate counters (must match pattern in AnalysisHistoryServiceCore.removeEntriesByPath)
+    analysisHistory.totalAnalyzed = Math.max(0, analysisHistory.totalAnalyzed - 1);
+    analysisHistory.totalSize = Math.max(0, analysisHistory.totalSize - (entry.fileSize || 0));
+    if (analysisHistory.metadata) {
+      analysisHistory.metadata.totalEntries = Math.max(
+        0,
+        (analysisHistory.metadata.totalEntries || 0) - 1
+      );
+    }
     // Update incremental stats before removing from indexes
     updateIncrementalStatsOnRemove(cache, entry);
     removeFromIndexes(analysisIndex, entry);
@@ -136,7 +145,10 @@ async function cleanupOldEntries(
     });
   }
 
-  analysisHistory.metadata.lastCleanup = new Date().toISOString();
+  // FIX: Guard against missing metadata (e.g., migrated from older format)
+  if (analysisHistory.metadata) {
+    analysisHistory.metadata.lastCleanup = new Date().toISOString();
+  }
   await saveHistory();
   await saveIndex();
 
@@ -177,6 +189,15 @@ async function removeExpiredEntries(
       });
 
       delete analysisHistory.entries[id];
+      // Update aggregate counters (must match pattern in AnalysisHistoryServiceCore.removeEntriesByPath)
+      analysisHistory.totalAnalyzed = Math.max(0, analysisHistory.totalAnalyzed - 1);
+      analysisHistory.totalSize = Math.max(0, analysisHistory.totalSize - (entry.fileSize || 0));
+      if (analysisHistory.metadata) {
+        analysisHistory.metadata.totalEntries = Math.max(
+          0,
+          (analysisHistory.metadata.totalEntries || 0) - 1
+        );
+      }
       // Update incremental stats before removing from indexes
       updateIncrementalStatsOnRemove(cache, entry);
       removeFromIndexes(analysisIndex, entry);

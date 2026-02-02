@@ -86,16 +86,16 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
           // Check destination collision and adjust
           if (destinationExists) {
             let counter = 1;
-            let uniqueDestination = op.destination;
+            let uniqueDestination;
             const ext = path.extname(op.destination);
             const baseName =
               ext && ext.length > 0 ? op.destination.slice(0, -ext.length) : op.destination;
             while (counter <= 1000) {
+              const base = baseName || op.destination;
+              uniqueDestination = `${base}_${counter}${ext}`;
               try {
                 await fs.access(uniqueDestination);
                 counter += 1;
-                const base = baseName || op.destination;
-                uniqueDestination = `${base}_${counter}${ext}`;
               } catch (accessErr) {
                 if (accessErr?.code && accessErr.code !== 'ENOENT') {
                   logger.warn('[RESUME] Unexpected fs.access error:', {

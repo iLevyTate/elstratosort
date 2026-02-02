@@ -39,7 +39,9 @@ async function persistQueueData(filePath, queue) {
   try {
     await persistData(filePath, queue);
   } catch (error) {
-    logger.debug('[EmbeddingQueue] Error persisting queue to disk:', error.message);
+    // Log but don't re-throw: persistence errors should not break callers
+    // (shutdown, periodic save) who expect fire-and-forget semantics
+    logger.error('[EmbeddingQueue] Error persisting queue to disk:', error.message);
   }
 }
 
@@ -52,7 +54,7 @@ async function persistFailedItems(filePath, failedItems) {
   try {
     await persistMap(filePath, failedItems);
   } catch (error) {
-    logger.debug('[EmbeddingQueue] Error persisting failed items:', error.message);
+    logger.error('[EmbeddingQueue] Error persisting failed items:', error.message);
   }
 }
 
@@ -65,7 +67,7 @@ async function persistDeadLetterQueue(filePath, deadLetterQueue) {
   try {
     await persistData(filePath, deadLetterQueue, { pretty: true });
   } catch (error) {
-    logger.debug('[EmbeddingQueue] Error persisting dead letter queue:', error.message);
+    logger.error('[EmbeddingQueue] Error persisting dead letter queue:', error.message);
   }
 }
 

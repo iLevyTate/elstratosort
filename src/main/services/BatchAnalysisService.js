@@ -70,8 +70,8 @@ class BatchAnalysisService {
       });
     }
 
-    // Cap at reasonable maximum to avoid overwhelming Ollama
-    concurrency = Math.min(concurrency, 8);
+    // Cap at global Ollama semaphore limit (3) to avoid holding memory while waiting for slots
+    concurrency = Math.min(concurrency, 3);
 
     logger.debug('[BATCH-ANALYSIS] Calculated optimal concurrency', {
       cpuCores,
@@ -124,12 +124,13 @@ class BatchAnalysisService {
 
     const startTime = Date.now();
 
-    // FIX: Subscribe to embedding queue progress if callback provided
+    // Subscribe to embedding queue progress if callback provided
+    // Use local variable to avoid race condition with concurrent analyzeFiles calls
+    let embeddingProgressUnsubscribe = null;
     if (onEmbeddingProgress) {
-      this._embeddingProgressUnsubscribe = embeddingQueue.onProgress(onEmbeddingProgress);
+      embeddingProgressUnsubscribe = embeddingQueue.onProgress(onEmbeddingProgress);
     }
 
-    // FIX P1-5: Use try-finally to ensure event listener cleanup even on error
     try {
       return await this._executeAnalysis(filePaths, smartFolders, {
         concurrency,
@@ -138,10 +139,9 @@ class BatchAnalysisService {
         startTime
       });
     } finally {
-      // FIX P1-5: Always unsubscribe from embedding progress, even on error
-      if (this._embeddingProgressUnsubscribe) {
-        this._embeddingProgressUnsubscribe();
-        this._embeddingProgressUnsubscribe = null;
+      // Always unsubscribe from embedding progress, even on error
+      if (embeddingProgressUnsubscribe) {
+        embeddingProgressUnsubscribe();
       }
     }
   }
@@ -412,18 +412,24 @@ class BatchAnalysisService {
       total: filePaths.length
     };
 
-    // Process each group
-    for (const [type, files] of Object.entries(groups)) {
-      logger.info(`[BATCH-ANALYSIS] Processing ${type} group`, {
-        count: files.length
-      });
+    // Process all groups in parallel -- concurrency is controlled within analyzeFiles
+    const groupEntries = Object.entries(groups);
+    const groupResults = await Promise.allSettled(
+      groupEntries.map(([type, files]) => {
+        logger.info(`[BATCH-ANALYSIS] Processing ${type} group`, { count: files.length });
+        return this.analyzeFiles(files, smartFolders, options);
+      })
+    );
 
-      const groupResult = await this.analyzeFiles(files, smartFolders, options);
-
-      // Merge results
-      allResults.results.push(...groupResult.results);
-      allResults.errors.push(...groupResult.errors);
-      allResults.successful += groupResult.successful;
+    // Merge results from all groups
+    for (const result of groupResults) {
+      if (result.status === 'fulfilled') {
+        allResults.results.push(...result.value.results);
+        allResults.errors.push(...result.value.errors);
+        allResults.successful += result.value.successful;
+      } else {
+        logger.error('[BATCH-ANALYSIS] Group processing failed', { error: result.reason?.message });
+      }
     }
 
     return {

@@ -1,11 +1,15 @@
 const { app } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
+const crypto = require('crypto');
 const { createLogger } = require('../../shared/logger');
 const { getLegacyUserDataPaths } = require('./userDataMigration');
 
 const logger = createLogger('CustomFolders');
 const CUSTOM_FOLDERS_FILENAME = 'custom-folders.json';
+
+// Serialize concurrent save operations to prevent race conditions
+let _saveQueue = Promise.resolve();
 
 const normalizeName = (value) =>
   String(value || '')
@@ -178,10 +182,12 @@ async function recoverLegacyCustomFolders(currentFolders, defaultNameSet) {
  * These provide a good starting point for file organization
  */
 function getDefaultSmartFolders(baseDir) {
-  const timestamp = Date.now();
+  // FIX (M-8): Use crypto.randomUUID() instead of Date.now() offsets.
+  // Two calls in the same millisecond previously produced identical IDs.
+  const uid = () => crypto.randomUUID().slice(0, 8);
   return [
     {
-      id: `default-documents-${timestamp}`,
+      id: `default-documents-${uid()}`,
       name: 'Documents',
       path: path.join(baseDir, 'Documents'),
       description: 'PDF, Word, and text documents',
@@ -191,7 +197,7 @@ function getDefaultSmartFolders(baseDir) {
       createdAt: new Date().toISOString()
     },
     {
-      id: `default-images-${timestamp + 1}`,
+      id: `default-images-${uid()}`,
       name: 'Images',
       path: path.join(baseDir, 'Images'),
       description: 'Photos and image files',
@@ -201,7 +207,7 @@ function getDefaultSmartFolders(baseDir) {
       createdAt: new Date().toISOString()
     },
     {
-      id: `default-videos-${timestamp + 2}`,
+      id: `default-videos-${uid()}`,
       name: 'Videos',
       path: path.join(baseDir, 'Videos'),
       description: 'Video and movie files',
@@ -211,7 +217,7 @@ function getDefaultSmartFolders(baseDir) {
       createdAt: new Date().toISOString()
     },
     {
-      id: `default-music-${timestamp + 3}`,
+      id: `default-music-${uid()}`,
       name: 'Music',
       path: path.join(baseDir, 'Music'),
       description: 'Audio and music files',
@@ -221,7 +227,7 @@ function getDefaultSmartFolders(baseDir) {
       createdAt: new Date().toISOString()
     },
     {
-      id: `default-spreadsheets-${timestamp + 4}`,
+      id: `default-spreadsheets-${uid()}`,
       name: 'Spreadsheets',
       path: path.join(baseDir, 'Spreadsheets'),
       description: 'Excel and spreadsheet files',
@@ -231,7 +237,7 @@ function getDefaultSmartFolders(baseDir) {
       createdAt: new Date().toISOString()
     },
     {
-      id: `default-presentations-${timestamp + 5}`,
+      id: `default-presentations-${uid()}`,
       name: 'Presentations',
       path: path.join(baseDir, 'Presentations'),
       description: 'PowerPoint and presentation files',
@@ -241,7 +247,7 @@ function getDefaultSmartFolders(baseDir) {
       createdAt: new Date().toISOString()
     },
     {
-      id: `default-archives-${timestamp + 6}`,
+      id: `default-archives-${uid()}`,
       name: 'Archives',
       path: path.join(baseDir, 'Archives'),
       description: 'Compressed and archive files',
@@ -251,7 +257,7 @@ function getDefaultSmartFolders(baseDir) {
       createdAt: new Date().toISOString()
     },
     {
-      id: `default-uncategorized-${timestamp + 7}`,
+      id: `default-uncategorized-${uid()}`,
       name: 'Uncategorized',
       path: path.join(baseDir, 'Uncategorized'),
       description: "Default folder for files that don't match any smart folder",
@@ -328,47 +334,54 @@ async function loadCustomFolders() {
   }
 }
 
-async function saveCustomFolders(folders) {
+function saveCustomFolders(folders) {
+  // Serialize saves through a queue to prevent concurrent write races
+  const op = _saveQueue
+    .then(() => _doSaveCustomFolders(folders))
+    .catch((error) => {
+      logger.error('[ERROR] Failed to save custom folders:', error);
+      throw error;
+    });
+  _saveQueue = op.catch(() => {}); // Ensure queue continues even after errors
+  return op;
+}
+
+async function _doSaveCustomFolders(folders) {
+  const filePath = getCustomFoldersPath();
+  const toSave = normalizeFolderPaths(folders);
+  const data = JSON.stringify(toSave, null, 2);
+
+  // Create backup before saving to prevent data loss
   try {
-    const filePath = getCustomFoldersPath();
-    const toSave = normalizeFolderPaths(folders);
-    const data = JSON.stringify(toSave, null, 2);
-
-    // FIX: Create backup before saving to prevent data loss
-    try {
-      const existingData = await fs.readFile(filePath, 'utf-8');
-      if (existingData && existingData.trim()) {
-        const backupPath = `${filePath}.backup`;
-        await fs.writeFile(backupPath, existingData);
-        logger.debug('[STORAGE] Created backup of custom folders');
-      }
-    } catch (backupError) {
-      // File might not exist yet, that's OK
-      if (backupError.code !== 'ENOENT') {
-        logger.warn('[STORAGE] Failed to create backup:', backupError.message);
-      }
+    const existingData = await fs.readFile(filePath, 'utf-8');
+    if (existingData && existingData.trim()) {
+      const backupPath = `${filePath}.backup`;
+      await fs.writeFile(backupPath, existingData);
+      logger.debug('[STORAGE] Created backup of custom folders');
     }
-
-    // FIX: Use atomic write (temp file + rename) to prevent corruption on crash
-    const tempPath = `${filePath}.tmp.${Date.now()}`;
-    try {
-      await fs.writeFile(tempPath, data);
-      await fs.rename(tempPath, filePath);
-    } catch (writeError) {
-      // Clean up temp file on failure
-      try {
-        await fs.unlink(tempPath);
-      } catch {
-        // Ignore cleanup errors
-      }
-      throw writeError;
+  } catch (backupError) {
+    // File might not exist yet, that's OK
+    if (backupError.code !== 'ENOENT') {
+      logger.warn('[STORAGE] Failed to create backup:', backupError.message);
     }
-
-    logger.info('[STORAGE] Saved custom folders to:', filePath);
-  } catch (error) {
-    logger.error('[ERROR] Failed to save custom folders:', error);
-    throw error; // FIX: Re-throw so callers know save failed
   }
+
+  // Use atomic write (temp file + rename) to prevent corruption on crash
+  const tempPath = `${filePath}.tmp.${Date.now()}`;
+  try {
+    await fs.writeFile(tempPath, data);
+    await fs.rename(tempPath, filePath);
+  } catch (writeError) {
+    // Clean up temp file on failure
+    try {
+      await fs.unlink(tempPath);
+    } catch {
+      // Ignore cleanup errors
+    }
+    throw writeError;
+  }
+
+  logger.info('[STORAGE] Saved custom folders to:', filePath);
 }
 
 /**
@@ -414,8 +427,19 @@ async function restoreFromBackup() {
       return { success: false, error: 'Backup file is empty or invalid' };
     }
 
-    // Restore the backup
-    await fs.writeFile(filePath, backupData);
+    // Restore the backup using atomic write (temp + rename)
+    const tempPath = `${filePath}.tmp.${Date.now()}`;
+    try {
+      await fs.writeFile(tempPath, backupData);
+      await fs.rename(tempPath, filePath);
+    } catch (restoreError) {
+      try {
+        await fs.unlink(tempPath);
+      } catch {
+        // Ignore temp cleanup errors
+      }
+      throw restoreError;
+    }
     logger.info('[STORAGE] Restored custom folders from backup');
 
     return { success: true, folders: parsed };

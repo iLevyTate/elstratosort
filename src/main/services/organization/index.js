@@ -40,7 +40,7 @@ const OrganizationSuggestionService = OrganizationSuggestionServiceCore;
 function createWithDefaults(config = {}) {
   const { getInstance: getChromaDB } = require('../chromadb');
   const FolderMatchingService = require('../FolderMatchingService');
-  const { getService: getSettingsService } = require('../SettingsService');
+  const { getInstance: getSettingsService } = require('../SettingsService');
   const { ClusteringService } = require('../ClusteringService');
   const { getInstance: getOllamaInstance } = require('../OllamaService');
 

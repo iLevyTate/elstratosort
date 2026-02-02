@@ -32,7 +32,11 @@ function hasProtocol(url) {
  */
 function collapseDuplicateProtocols(url) {
   if (/^(https?:\/\/){2,}/i.test(url)) {
-    const useHttps = isHttps(url);
+    // Use the LAST (innermost) protocol - that's the user's intended one
+    // e.g., "http://https://host" -> the user intended "https://host"
+    const protocolPrefix = url.match(/^(https?:\/\/)+/i)[0];
+    // Check if ANY of the duplicate protocols is https - prefer secure
+    const useHttps = /https:\/\//i.test(protocolPrefix);
     return url.replace(/^(https?:\/\/)+/i, useHttps ? 'https://' : 'http://');
   }
   return url;

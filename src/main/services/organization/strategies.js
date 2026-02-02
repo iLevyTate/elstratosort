@@ -90,8 +90,16 @@ function matchesStrategyPattern(filename, pattern) {
   const patternParts = pattern.toLowerCase().split('/');
   const nameParts = filename.toLowerCase().split(/[_\-\s.]/);
 
-  return patternParts.some((part) =>
-    nameParts.some((namePart) => namePart.includes(part) || part.includes(namePart))
+  // FIX: Skip template placeholders like {project_name}, {file_type}, etc.
+  // These contain common words that would falsely match most filenames.
+  const literalParts = patternParts.filter((part) => !part.includes('{'));
+
+  if (literalParts.length === 0) return false;
+
+  return literalParts.some((part) =>
+    nameParts.some(
+      (namePart) => namePart.length > 1 && (namePart.includes(part) || part.includes(namePart))
+    )
   );
 }
 
@@ -223,6 +231,8 @@ function selectBestStrategy(patterns, files = []) {
     name: 'Adaptive Categorization',
     description: 'AI-assisted categorization based on detected patterns',
     pattern: 'Adaptive/{category}/{file_type}',
+    // FIX: Include priority array so scoreFileForStrategy() doesn't throw TypeError
+    priority: ['category', 'purpose', 'file_type'],
     score: 0.75 + fileBoost
   };
 }

@@ -28,7 +28,10 @@ const logger = createLogger('PromiseUtils');
  */
 function delay(ms) {
   return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+    const timer = setTimeout(resolve, ms);
+    // FIX: Actually unref the timer as documented, so it doesn't
+    // prevent process exit during shutdown retry/batch operations
+    if (typeof timer.unref === 'function') timer.unref();
   });
 }
 
@@ -147,10 +150,9 @@ async function withAbortableTimeout(fn, timeoutMs, operationName = 'Operation') 
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
-    // Ensure abort is called if not already (for cleanup)
-    if (!abortController.signal.aborted) {
-      abortController.abort();
-    }
+    // Note: do NOT abort on success. The timeout handler (line above) handles
+    // abort when timeout fires. Aborting on success would trigger spurious
+    // abort event handlers in callers that already completed successfully.
   }
 }
 
@@ -265,7 +267,10 @@ function withRetry(fn, options = {}) {
             }
           }
 
-          await new Promise((resolve) => setTimeout(resolve, waitTime));
+          await new Promise((resolve) => {
+            const t = setTimeout(resolve, waitTime);
+            if (t && typeof t.unref === 'function') t.unref();
+          });
         } else {
           if (attempt === effectiveMaxRetries) {
             logger.error(`[Retry] ${operationName} failed after ${effectiveMaxRetries} attempts`, {
@@ -451,6 +456,7 @@ function debounce(fn, waitMs, options = {}) {
       }
       if (hasMaxWait) {
         // Handle invocations in a tight maxWait loop
+        clearTimeout(timeoutId);
         timeoutId = setTimeout(timerExpired, waitMs);
         return invokeFunc(time);
       }
@@ -615,7 +621,10 @@ function createTimeoutRace(timeoutMs, message = 'Operation timed out') {
       reject(new Error(`${message} after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    // Allow process to exit
+    // Allow process to exit without waiting for this timer
+    if (timeoutId && typeof timeoutId.unref === 'function') {
+      timeoutId.unref();
+    }
   });
 
   const cleanup = () => {

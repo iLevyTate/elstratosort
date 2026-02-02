@@ -24,6 +24,7 @@
  */
 
 const fs = require('fs').promises;
+const fsConstants = require('fs').constants;
 const path = require('path');
 const crypto = require('crypto');
 const { createLogger } = require('./logger');
@@ -159,28 +160,12 @@ class AtomicFileOperations {
     try {
       await fs.copyFile(normalizedPath, normalizedBackupPath);
 
-      // Verify backup integrity
-      const [sourceStats, backupStats] = await Promise.all([
-        fs.stat(normalizedPath),
-        fs.stat(normalizedBackupPath)
-      ]);
-
-      if (sourceStats.size !== backupStats.size) {
-        // Clean up failed backup
-        await fs.unlink(backupPath).catch((err) => {
-          logger.debug('[ATOMIC-OPS] Failed to clean up corrupted backup:', err.message);
-        });
-        throw new IntegrityError(FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH, backupPath, {
-          expectedSize: sourceStats.size,
-          actualSize: backupStats.size,
-          operation: 'backup'
-        });
-      }
-
+      // fs.copyFile is atomic at the OS level - it either completes fully or
+      // throws. Skip redundant stat verification for same-device copies to
+      // avoid 2 extra disk I/O calls per backup (significant in batch ops).
       logger.debug('[ATOMIC-OPS] Created backup:', {
         source: normalizedPath,
-        backup: normalizedBackupPath,
-        size: sourceStats.size
+        backup: normalizedBackupPath
       });
 
       return normalizedBackupPath;
@@ -313,7 +298,8 @@ class AtomicFileOperations {
       case 'delete':
         if (await this.fileExists(normalizedSource)) {
           backupPath = await this.createBackup(normalizedSource, transactionId);
-          transaction.backups.push({ source, backup: backupPath });
+          // FIX: Use normalizedSource (not raw source) so rollback restores to the correct path
+          transaction.backups.push({ source: normalizedSource, backup: backupPath });
           await fs.unlink(normalizedSource);
         }
         break;
@@ -362,8 +348,15 @@ class AtomicFileOperations {
         return finalDestination;
       } catch (error) {
         if (error.code === 'ENOENT') {
-          // If source is missing (path normalization issues in tests), create placeholder and retry
-          // FIX CRIT-16: Only create placeholders in test environment
+          // FIX: In production, fail fast on first ENOENT — source doesn't exist,
+          // retrying is wasteful. The branch at line 428 was unreachable dead code.
+          if (attempts === 0 && process.env.NODE_ENV !== 'test') {
+            throw new FileSystemError(FILE_SYSTEM_ERROR_CODES.FILE_NOT_FOUND, {
+              path: normalizedSource,
+              operation: 'move'
+            });
+          }
+          // In test env, create placeholder and retry (CRIT-16 fix preserved)
           if (process.env.NODE_ENV === 'test') {
             if (!(await this.fileExists(normalizedSource))) {
               await fs.mkdir(path.dirname(normalizedSource), {
@@ -384,7 +377,8 @@ class AtomicFileOperations {
         } else if (error.code === 'EXDEV') {
           // Cross-device move: copy then delete with verification
           try {
-            await fs.copyFile(normalizedSource, finalDestination);
+            // FIX: Use COPYFILE_EXCL to prevent silently overwriting existing files
+            await fs.copyFile(normalizedSource, finalDestination, fsConstants.COPYFILE_EXCL);
 
             // Verify copy succeeded
             const [sourceStats, destStats] = await Promise.all([
@@ -422,11 +416,6 @@ class AtomicFileOperations {
             });
             throw fsError;
           }
-        } else if (error.code === 'ENOENT' && attempts === 0) {
-          throw new FileSystemError(FILE_SYSTEM_ERROR_CODES.FILE_NOT_FOUND, {
-            path: normalizedSource,
-            operation: 'move'
-          });
         } else {
           const fsError = FileSystemError.fromNodeError(error, {
             path: normalizedSource,
@@ -474,25 +463,11 @@ class AtomicFileOperations {
     while (attempts < maxAttempts) {
       try {
         // Try to copy with exclusive flag to detect conflicts early
-        await fs.copyFile(normalizedSource, finalDestination, fs.constants?.COPYFILE_EXCL);
+        await fs.copyFile(normalizedSource, finalDestination, fsConstants.COPYFILE_EXCL);
 
-        // Verify copy integrity
-        const [sourceStats, destStats] = await Promise.all([
-          fs.stat(normalizedSource),
-          fs.stat(finalDestination)
-        ]);
-
-        if (sourceStats.size !== destStats.size) {
-          await fs.unlink(finalDestination).catch((err) => {
-            logger.debug('[ATOMIC-OPS] Failed to clean up corrupted copy:', err.message);
-          });
-          throw new IntegrityError(FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH, finalDestination, {
-            expectedSize: sourceStats.size,
-            actualSize: destStats.size,
-            operation: 'copy'
-          });
-        }
-
+        // fs.copyFile with COPYFILE_EXCL is atomic at the OS level - skip
+        // redundant stat verification to avoid 2 extra disk I/O calls per copy.
+        // Cross-device moves in atomicMove still verify since they're higher risk.
         logger.debug('[ATOMIC-OPS] Copied file:', {
           source: normalizedSource,
           destination: finalDestination

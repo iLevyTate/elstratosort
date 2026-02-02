@@ -24,6 +24,10 @@ const logger = createLogger('AutoOrganize-FileProcessor');
 // FIX CRIT-24: Module-level lock to prevent concurrent processing of the same file
 const processingLocks = new Set();
 
+// Normalize file paths for lock comparison (case-insensitive on Windows)
+const normalizeLockPath = (filePath) =>
+  process.platform === 'win32' ? path.resolve(filePath).toLowerCase() : path.resolve(filePath);
+
 /**
  * Process files without analysis (use default folder)
  * @param {Array} files - Files without analysis
@@ -259,7 +263,7 @@ async function processFilesIndividually(files, smartFolders, options, results, s
  * @param {Object} undoRedo - Undo/redo service
  * @returns {Promise<Object|null>} Organization result or null
  */
-async function processNewFile(filePath, smartFolders, options, suggestionService, undoRedo) {
+async function processNewFile(filePath, smartFolders, options, suggestionService, _undoRedo) {
   const {
     autoOrganizeEnabled = false,
     // Default confidence threshold - user can override via settings
@@ -275,11 +279,13 @@ async function processNewFile(filePath, smartFolders, options, suggestionService
   }
 
   // FIX CRIT-24: Check and acquire lock for this file
-  if (processingLocks.has(filePath)) {
+  // FIX: Normalize path for case-insensitive comparison on Windows
+  const lockKey = normalizeLockPath(filePath);
+  if (processingLocks.has(lockKey)) {
     logger.debug('[AutoOrganize] File already being processed, skipping:', filePath);
     return null;
   }
-  processingLocks.add(filePath);
+  processingLocks.add(lockKey);
 
   try {
     // Analyze the file first
@@ -408,8 +414,10 @@ async function processNewFile(filePath, smartFolders, options, suggestionService
         confidence: suggestion.confidence
       });
 
-      // Record the action for undo
-      const action = {
+      // Return the undo action data so the caller can record it AFTER the
+      // actual file move succeeds. Recording before the move creates a
+      // phantom undo entry if the move later fails.
+      const undoAction = {
         type: 'FILE_MOVE',
         data: {
           originalPath: filePath,
@@ -419,15 +427,12 @@ async function processNewFile(filePath, smartFolders, options, suggestionService
         description: `Auto-organized ${file.name}`
       };
 
-      if (undoRedo) {
-        await undoRedo.recordAction(action);
-      }
-
       return {
         source: filePath,
         destination,
         confidence: suggestion.confidence,
-        suggestion: suggestion.primary
+        suggestion: suggestion.primary,
+        undoAction
       };
     }
 
@@ -446,8 +451,8 @@ async function processNewFile(filePath, smartFolders, options, suggestionService
     });
     return null;
   } finally {
-    // FIX CRIT-24: Release lock
-    processingLocks.delete(filePath);
+    // FIX CRIT-24: Release lock (use normalized key)
+    processingLocks.delete(lockKey);
   }
 }
 

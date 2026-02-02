@@ -343,20 +343,20 @@ async function batchOrganize(
               destination
             });
 
-            // Record feedback with proper error handling
+            // FIX: Push feedback to array for batched await instead of blocking each file
             if (file.suggestion) {
-              try {
-                await withTimeout(
+              pendingFeedback.push(
+                withTimeout(
                   suggestionService.recordFeedback(file, file.suggestion, true),
                   TIMEOUTS.API_REQUEST,
                   'AutoOrganize feedback'
-                );
-              } catch (feedbackError) {
-                logger.warn('[AutoOrganize] Failed to record feedback for file:', {
-                  file: file.path,
-                  error: feedbackError.message
-                });
-              }
+                ).catch((feedbackError) => {
+                  logger.warn('[AutoOrganize] Failed to record feedback for file:', {
+                    file: file.path,
+                    error: feedbackError.message
+                  });
+                })
+              );
             }
           } catch (fileError) {
             const errorDetails = {

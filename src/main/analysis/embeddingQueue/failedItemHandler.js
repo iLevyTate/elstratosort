@@ -139,16 +139,22 @@ function createFailedItemHandler(config) {
   function getItemsToRetry() {
     const now = Date.now();
     const itemsToRetry = [];
+    const idsToRemove = [];
 
     for (const [id, data] of failedItems) {
-      // FIX LOW-2: Remove extra * 2 multiplier - exponential backoff per item: 10s, 20s, 40s
+      // Exponential backoff per item: 10s, 20s, 40s
       // Formula: BASE_MS * 2^(retryCount-1) gives 10s, 20s, 40s for retryCount 1, 2, 3
       const backoffMs = RETRY.BACKOFF_BASE_MS * 2 ** (data.retryCount - 1);
 
       if (now - data.lastAttempt >= backoffMs) {
         itemsToRetry.push(data.item);
-        failedItems.delete(id);
+        idsToRemove.push(id);
       }
+    }
+
+    // Batch delete after iteration to avoid mutating Map during for..of
+    for (const id of idsToRemove) {
+      failedItems.delete(id);
     }
 
     return itemsToRetry;
@@ -164,8 +170,9 @@ function createFailedItemHandler(config) {
 
     if (itemsToRetry.length > 0) {
       logger.info(`[EmbeddingQueue] Re-queuing ${itemsToRetry.length} failed items for retry`);
-      // Add to front of queue for priority processing
-      queue.unshift(...itemsToRetry);
+      // Prepend to queue for priority processing
+      // Use splice(0, 0, ...batch) in chunks to avoid stack overflow and O(n*m) unshift loop
+      queue.splice(0, 0, ...itemsToRetry);
       await persistQueue();
       await persistFailedItems(failedItemsPath, failedItems);
     }
@@ -228,7 +235,10 @@ function createFailedItemHandler(config) {
     const count = deadLetterQueue.length;
     const items = deadLetterQueue.map((entry) => entry.item);
     deadLetterQueue = [];
-    queue.push(...items);
+    // Push items individually to avoid stack overflow from spread on large arrays
+    for (const item of items) {
+      queue.push(item);
+    }
     await persistQueue();
     await persistDeadLetterQueue(deadLetterPath, deadLetterQueue);
     logger.info(`[EmbeddingQueue] Manually re-queued ${count} dead letter items`);

@@ -361,7 +361,7 @@ class ServiceIntegration {
    * @private
    */
   _registerCoreServices() {
-    const { getService: getSettingsService } = require('./SettingsService');
+    const { getInstance: getSettingsService } = require('./SettingsService');
 
     // Register settings service (singleton from existing factory)
     if (!container.has(ServiceIds.SETTINGS)) {
@@ -443,7 +443,7 @@ class ServiceIntegration {
     if (!container.has(ServiceIds.ORGANIZATION_SUGGESTION)) {
       container.registerSingleton(ServiceIds.ORGANIZATION_SUGGESTION, (c) => {
         const settingsService = c.resolve(ServiceIds.SETTINGS);
-        const settings = settingsService?.getSettings?.() || {};
+        const settings = settingsService?.getAll?.() || {};
         return new OrganizationSuggestionService({
           chromaDbService: c.resolve(ServiceIds.CHROMA_DB),
           folderMatchingService: c.resolve(ServiceIds.FOLDER_MATCHING),

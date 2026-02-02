@@ -315,6 +315,7 @@ const THROTTLED_CHANNELS = new Map([
 class SecureIPCManager {
   constructor() {
     this.activeListeners = new Map();
+    this._listenerCounter = 0;
     this.rateLimiter = new IpcRateLimiter({
       maxRequestsPerSecond: PERF_LIMITS.MAX_IPC_REQUESTS_PER_SECOND,
       perfLimits: PERF_LIMITS
@@ -346,9 +347,31 @@ class SecureIPCManager {
       channel === IPC_CHANNELS.SUGGESTIONS.GET_BATCH_SUGGESTIONS ||
       channel === IPC_CHANNELS.SUGGESTIONS.GET_FILE_SUGGESTIONS ||
       channel === IPC_CHANNELS.FILES.PERFORM_OPERATION ||
-      channel === IPC_CHANNELS.ORGANIZE.BATCH
+      channel === IPC_CHANNELS.ORGANIZE.BATCH ||
+      channel === IPC_CHANNELS.SMART_FOLDERS.ADD ||
+      channel === IPC_CHANNELS.SMART_FOLDERS.GENERATE_DESCRIPTION ||
+      channel === IPC_CHANNELS.SMART_FOLDERS.MATCH
     ) {
-      timeout = TIMEOUTS.AI_ANALYSIS_LONG || 120000;
+      timeout = TIMEOUTS.AI_ANALYSIS_LONG || 180000;
+    }
+    // Embedding search/scoring operations involve embedding generation through the semaphore
+    if (
+      channel === IPC_CHANNELS.EMBEDDINGS.SEARCH ||
+      channel === IPC_CHANNELS.EMBEDDINGS.FIND_SIMILAR ||
+      channel === IPC_CHANNELS.EMBEDDINGS.SCORE_FILES ||
+      channel === IPC_CHANNELS.EMBEDDINGS.FIND_MULTI_HOP ||
+      channel === IPC_CHANNELS.EMBEDDINGS.COMPUTE_CLUSTERS
+    ) {
+      timeout = TIMEOUTS.AI_ANALYSIS_LONG || 180000;
+    }
+    // Embedding rebuild/reanalyze operations are long-running batch jobs
+    if (
+      channel === IPC_CHANNELS.EMBEDDINGS.REBUILD_FILES ||
+      channel === IPC_CHANNELS.EMBEDDINGS.REBUILD_FOLDERS ||
+      channel === IPC_CHANNELS.EMBEDDINGS.FULL_REBUILD ||
+      channel === IPC_CHANNELS.EMBEDDINGS.REANALYZE_ALL
+    ) {
+      timeout = TIMEOUTS.AI_ANALYSIS_BATCH || 300000;
     }
     return timeout;
   }
@@ -359,6 +382,8 @@ class SecureIPCManager {
 
     try {
       const invokePromise = ipcRenderer.invoke(channel, ...sanitizedArgs);
+      // Attach a no-op catch to prevent unhandled rejection if timeout wins the race
+      invokePromise.catch(() => {});
       const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
           if (!completed) {
@@ -544,7 +569,10 @@ class SecureIPCManager {
     ipcRenderer.on(channel, wrappedCallback);
 
     // Track listener for cleanup
-    const listenerKey = `${channel}_${Date.now()}`;
+    // FIX: Use timestamp (not counter) in key so auditStaleListeners() can
+    // correctly determine listener age. Counter-based keys were always parsed
+    // as epoch-ms ~0, causing ALL listeners to be removed after 10 minutes.
+    const listenerKey = `${channel}_${++this._listenerCounter}_${Date.now()}`;
     this.activeListeners.set(listenerKey, {
       channel,
       callback: wrappedCallback
@@ -635,14 +663,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createFolder: (fullPath) =>
       secureIPC.safeInvoke(IPC_CHANNELS.FILES.CREATE_FOLDER_DIRECT, fullPath),
     normalizePath: (p) => {
+      const original = p;
       try {
         if (typeof p !== 'string') return p;
         // CRITICAL FIX: Do NOT convert backslashes to forward slashes
         // This causes HTML encoding issues when paths go through IPC sanitization
         // Let the main process handle path normalization with Node.js path module
 
+        // Preserve UNC path prefix (\\server\share) before collapsing duplicates
+        let uncPrefix = '';
+        if (p.startsWith('\\\\')) {
+          uncPrefix = '\\\\';
+          p = p.slice(2);
+        }
+
         // Only remove duplicate slashes (keeping backslash or forward slash as-is)
-        let normalized = p.replace(/([\\/])+/g, '$1');
+        let normalized = uncPrefix + p.replace(/([\\/])+/g, '$1');
 
         // Remove trailing slash unless it's the root (check both separator types)
         if (normalized.length > 3 && (normalized.endsWith('/') || normalized.endsWith('\\'))) {
@@ -653,7 +689,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         }
         return normalized;
       } catch {
-        return p;
+        return original;
       }
     },
     getStats: async (filePath) => {
@@ -727,11 +763,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
           throw new Error('Invalid file path');
         }
 
+        // SECURITY FIX: Block UNC paths (\\server\share) to prevent NTLM hash relay attacks.
+        // Accessing a UNC path on Windows triggers automatic NTLM authentication,
+        // which can be exploited to steal credential hashes.
+        if (filePath.startsWith('\\\\') || filePath.startsWith('//')) {
+          throw new Error(
+            'Invalid file path: network (UNC) paths are not allowed for security reasons'
+          );
+        }
+
         // Require absolute filesystem path to avoid CWD-relative resolution
-        const isAbsolute =
-          /^[a-zA-Z]:[\\/]/.test(filePath) ||
-          filePath.startsWith('\\\\') ||
-          filePath.startsWith('/');
+        const isAbsolute = /^[a-zA-Z]:[\\/]/.test(filePath) || filePath.startsWith('/');
         if (!isAbsolute) {
           throw new Error('Invalid file path: must be an absolute path');
         }
@@ -747,7 +789,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
           ext = filePath.slice(lastDot + 1).toLowerCase();
         }
 
-        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'tiff'];
+        const imageExts = [
+          'jpg',
+          'jpeg',
+          'png',
+          'gif',
+          'bmp',
+          'webp',
+          'svg',
+          'tiff',
+          'ico',
+          'heic'
+        ];
         const audioExts = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'aiff'];
 
         if (imageExts.includes(ext)) {

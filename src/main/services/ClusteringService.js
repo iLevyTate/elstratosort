@@ -771,18 +771,63 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
    * @returns {Array} Clusters with labels, metadata, and member info
    */
   getClustersForGraph() {
-    return this.clusters.map((c) => ({
-      id: `cluster:${c.id}`,
-      clusterId: c.id,
-      label: c.label || this.clusterLabels.get(c.id) || `Cluster ${c.id + 1}`,
-      memberCount: c.members.length,
-      memberIds: c.members.map((m) => m.id),
-      // Rich metadata for meaningful display
-      confidence: c.labelConfidence || 'low',
-      reason: c.labelReason || '',
-      dominantCategory: c.dominantCategory || null,
-      commonTags: c.commonTags || []
-    }));
+    const parseDateCandidateMs = (value) => {
+      if (!value) return null;
+      const ms = Date.parse(String(value));
+      return Number.isFinite(ms) ? ms : null;
+    };
+
+    const getMemberTimestampMs = (member) => {
+      const meta = member?.metadata || {};
+      // Prefer an actual document date if present, otherwise fall back to recency.
+      return (
+        parseDateCandidateMs(meta.documentDate) ??
+        parseDateCandidateMs(meta.date) ??
+        parseDateCandidateMs(meta.updatedAt) ??
+        null
+      );
+    };
+
+    return this.clusters.map((c) => {
+      const memberIds = c.members.map((m) => m.id);
+
+      // Derive a time range from member metadata when available.
+      const memberTimestamps = c.members
+        .map((m) => getMemberTimestampMs(m))
+        .filter((ms) => Number.isFinite(ms));
+      const timeRange =
+        memberTimestamps.length > 0
+          ? (() => {
+              // Avoid spread operator to prevent stack overflow for large clusters
+              let startMs = memberTimestamps[0];
+              let endMs = memberTimestamps[0];
+              for (let t = 1; t < memberTimestamps.length; t++) {
+                if (memberTimestamps[t] < startMs) startMs = memberTimestamps[t];
+                if (memberTimestamps[t] > endMs) endMs = memberTimestamps[t];
+              }
+              return {
+                start: new Date(startMs).toISOString(),
+                end: new Date(endMs).toISOString(),
+                startMs,
+                endMs
+              };
+            })()
+          : null;
+
+      return {
+        id: `cluster:${c.id}`,
+        clusterId: c.id,
+        label: c.label || this.clusterLabels.get(c.id) || `Cluster ${c.id + 1}`,
+        memberCount: c.members.length,
+        memberIds,
+        // Rich metadata for meaningful display
+        confidence: c.labelConfidence || 'low',
+        reason: c.labelReason || '',
+        dominantCategory: c.dominantCategory || null,
+        commonTags: c.commonTags || [],
+        timeRange
+      };
+    });
   }
 
   /**
@@ -938,8 +983,16 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
     } = options;
     const edges = [];
 
+    // Build a set of cluster IDs that actually exist (some may have been filtered)
+    const existingClusterIds = new Set(this.clusters.map((c) => c.id));
+
     for (let i = 0; i < this.centroids.length; i++) {
+      // Skip centroids whose clusters were filtered out (below minClusterSize)
+      if (!existingClusterIds.has(i)) continue;
+
       for (let j = i + 1; j < this.centroids.length; j++) {
+        if (!existingClusterIds.has(j)) continue;
+
         const similarity = cosineSimilarity(this.centroids[i], this.centroids[j]);
 
         if (similarity >= threshold) {

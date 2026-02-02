@@ -212,13 +212,40 @@ async function buildChromaSpawnPlan(config) {
   if (process.env.CHROMA_SERVER_COMMAND) {
     const parts = splitCommandLine(process.env.CHROMA_SERVER_COMMAND);
     if (parts.length > 0) {
-      logger.info('[ChromaDB] Using custom command from CHROMA_SERVER_COMMAND env var');
-      return {
-        command: parts[0],
-        args: parts.slice(1),
-        source: 'custom-command',
-        options: { windowsHide: true }
-      };
+      const customCmd = parts[0];
+      // SECURITY FIX: Validate the command is a plausible executable path.
+      // Block shell metacharacters and ensure it looks like a real path or binary name.
+      const dangerousChars = /[;&|`$(){}!<>]/;
+      if (dangerousChars.test(customCmd)) {
+        logger.error('[ChromaDB] CHROMA_SERVER_COMMAND contains dangerous characters, ignoring', {
+          command: customCmd.substring(0, 100)
+        });
+      } else {
+        // Verify the executable exists on disk (if it's an absolute path)
+        const isAbsolutePath = path.isAbsolute(customCmd);
+        let executableValid = true;
+        if (isAbsolutePath) {
+          try {
+            await fs.access(customCmd);
+          } catch {
+            logger.error('[ChromaDB] CHROMA_SERVER_COMMAND executable not found:', {
+              command: customCmd
+            });
+            executableValid = false;
+            // Fall through to other methods below
+          }
+        }
+        if (executableValid) {
+          logger.info('[ChromaDB] Using custom command from CHROMA_SERVER_COMMAND env var');
+          return {
+            command: customCmd,
+            args: parts.slice(1),
+            source: 'custom-command',
+            // SECURITY: Never use shell for custom commands to prevent injection
+            options: { windowsHide: true, shell: false }
+          };
+        }
+      }
     }
   }
   logger.debug('[ChromaDB] No custom CHROMA_SERVER_COMMAND set, checking other methods...');

@@ -135,10 +135,13 @@ function validateEmbeddingVector(vector) {
 }
 
 // Track dimension mismatch warnings to avoid log spam (warn once per dimension pair)
+// FIX: Cap size to prevent unbounded memory growth in long-running processes
 const _warnedDimPairs = new Set();
+const _MAX_WARNED_DIM_PAIRS = 100;
 function _warnDimMismatch(actual, expected) {
   const key = `${actual}->${expected}`;
   if (_warnedDimPairs.has(key)) return;
+  if (_warnedDimPairs.size >= _MAX_WARNED_DIM_PAIRS) _warnedDimPairs.clear();
   _warnedDimPairs.add(key);
   logger.warn(
     `[vectorMath] Vector dimension mismatch: ${actual} vs ${expected}. Search quality may be degraded. Consider rebuilding embeddings.`

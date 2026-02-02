@@ -91,9 +91,14 @@ function sanitizePath(filePath) {
     const ext = path.extname(normalized);
     const truncateLength = maxLength - ext.length;
     if (truncateLength > 0) {
-      normalized = normalized.substring(0, truncateLength) + ext;
+      // FIX (MED-5): Use Array.from for code-point-aware truncation.
+      // String.substring operates on UTF-16 code units and can split
+      // surrogate pairs (emoji, CJK supplementary characters).
+      const chars = Array.from(normalized);
+      normalized = chars.slice(0, truncateLength).join('') + ext;
     } else {
-      normalized = normalized.substring(0, maxLength);
+      const chars = Array.from(normalized);
+      normalized = chars.slice(0, maxLength).join('');
     }
   }
 
@@ -669,8 +674,9 @@ function normalizePathForIndex(filePath) {
   // First apply standard normalization (resolve . and ..)
   let normalized = path.normalize(filePath);
 
-  // On Windows, lowercase for case-insensitive comparison
-  if (os.platform() === 'win32') {
+  // On case-insensitive filesystems (Windows, macOS default), lowercase for consistent comparison
+  const platform = os.platform();
+  if (platform === 'win32' || platform === 'darwin') {
     normalized = normalized.toLowerCase();
   }
 

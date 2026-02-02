@@ -591,6 +591,10 @@ class SettingsService {
       resolveMutex = resolve;
     });
 
+    // FIX (H-2): Declare at function scope so the outer catch can access it.
+    // Previously captured inside try, out of scope for catch block.
+    let localAcquiredAt = null;
+
     try {
       // CRITICAL FIX: Add deadlock detection with timeout
       // Wait for previous operation with a timeout to prevent permanent deadlock
@@ -623,6 +627,9 @@ class SettingsService {
 
       // CRITICAL FIX: Track when this operation acquires the mutex for deadlock detection
       this._mutexAcquiredAt = Date.now();
+      // FIX (H-2): Capture in local variable — the inner finally clears _mutexAcquiredAt
+      // before the outer catch can read it, making timeElapsed always null.
+      localAcquiredAt = this._mutexAcquiredAt;
 
       // Execute the function and ensure mutex is always released
       let operationTimeoutId = null;
@@ -656,8 +663,9 @@ class SettingsService {
         resolveMutex();
       }
     } catch (error) {
-      // FIX: Preserve error context BEFORE clearing _mutexAcquiredAt
-      const acquiredAt = this._mutexAcquiredAt;
+      // FIX (H-2): Use local variable captured at acquisition time, not
+      // this._mutexAcquiredAt which was already cleared by the inner finally block
+      const acquiredAt = localAcquiredAt;
       const timeElapsed = acquiredAt ? Date.now() - acquiredAt : null;
 
       // CRITICAL FIX: Always release mutex even on deadlock/timeout errors
@@ -809,12 +817,17 @@ class SettingsService {
    * Start watching the settings file for external changes
    * @private
    */
-  _startFileWatcher() {
+  async _startFileWatcher() {
     try {
-      // Ensure settings directory exists
+      // Ensure settings directory exists (async to avoid blocking main thread)
       const settingsDir = path.dirname(this.settingsPath);
-      if (!fsSync.existsSync(settingsDir)) {
-        fsSync.mkdirSync(settingsDir, { recursive: true });
+      await fs.mkdir(settingsDir, { recursive: true });
+
+      // Ensure settings file exists before watching (first launch creates defaults)
+      try {
+        await fs.access(this.settingsPath);
+      } catch {
+        await fs.writeFile(this.settingsPath, JSON.stringify(this.defaults, null, 2), 'utf-8');
       }
 
       // Watch the settings file
@@ -863,11 +876,14 @@ class SettingsService {
           clearTimeout(this._restartTimer);
         }
 
-        // Attempt to restart watcher after a delay
+        // Attempt to restart watcher with exponential backoff
+        // Uses restart count for backoff factor (5s, 10s, 20s, 40s, ...)
+        const backoffDelay = 5000 * Math.pow(2, this._watcherRestartCount || 0);
+        const jitteredDelay = backoffDelay * (0.9 + Math.random() * 0.2);
         this._restartTimer = setTimeout(() => {
           this._restartTimer = null;
           this._restartFileWatcher();
-        }, 5000);
+        }, jitteredDelay);
       });
 
       logger.info(`[SettingsService] File watcher started for: ${this.settingsPath}`);
@@ -1050,12 +1066,8 @@ const { getInstance, createInstance, registerWithContainer, resetInstance } =
     shutdownMethod: 'shutdown'
   });
 
-// Backwards compatibility alias
-const getService = getInstance;
-
 module.exports = SettingsService;
 module.exports.getInstance = getInstance;
 module.exports.createInstance = createInstance;
 module.exports.registerWithContainer = registerWithContainer;
 module.exports.resetInstance = resetInstance;
-module.exports.getService = getService; // Deprecated: use getInstance

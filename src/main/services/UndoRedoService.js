@@ -54,6 +54,9 @@ class UndoRedoService {
     this.currentIndex = -1; // Points to the last executed action
     this.initialized = false;
     this.currentMemoryEstimate = 0; // Track estimated memory usage
+
+    // Promise-based mutex to serialize undo/redo/recordAction operations
+    this._mutex = Promise.resolve();
   }
 
   async ensureParentDirectory(filePath) {
@@ -188,7 +191,30 @@ class UndoRedoService {
     }
   }
 
+  /**
+   * Promise-based mutex to serialize async operations that modify shared state.
+   * Prevents race conditions when undo/redo/recordAction are called concurrently.
+   * @private
+   */
+  async _withMutex(fn) {
+    const prev = this._mutex;
+    let resolve;
+    this._mutex = new Promise((r) => {
+      resolve = r;
+    });
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      resolve();
+    }
+  }
+
   async recordAction(actionType, actionData) {
+    return this._withMutex(() => this._doRecordAction(actionType, actionData));
+  }
+
+  async _doRecordAction(actionType, actionData) {
     await this.initialize();
 
     // Fixed: Limit batch operation sizes to prevent memory issues
@@ -200,7 +226,7 @@ class UndoRedoService {
       logger.warn(
         `[UndoRedoService] Batch operation has ${actionData.operations.length} items, limiting to ${this.maxBatchSize}`
       );
-      actionData.operations = actionData.operations.slice(0, this.maxBatchSize);
+      actionData = { ...actionData, operations: actionData.operations.slice(0, this.maxBatchSize) };
     }
 
     const action = {
@@ -312,6 +338,10 @@ class UndoRedoService {
   }
 
   async undo() {
+    return this._withMutex(() => this._doUndo());
+  }
+
+  async _doUndo() {
     await this.initialize();
 
     if (!this.canUndo()) {
@@ -325,6 +355,8 @@ class UndoRedoService {
       delete action._operationResults;
 
       await this.executeReverseAction(action);
+      const operationResults = action._operationResults;
+      delete action._operationResults;
       this.currentIndex--;
       await this.saveActions();
 
@@ -341,10 +373,10 @@ class UndoRedoService {
       };
 
       // Include operation results for batch operations (for UI state updates)
-      if (action._operationResults) {
-        response.results = action._operationResults;
-        response.successCount = action._operationResults.filter((r) => r.success).length;
-        response.failCount = action._operationResults.filter((r) => !r.success).length;
+      if (operationResults) {
+        response.results = operationResults;
+        response.successCount = operationResults.filter((r) => r.success).length;
+        response.failCount = operationResults.filter((r) => !r.success).length;
         // Include original operation data for state reconstruction
         response.operations = action.data?.operations || [];
       }
@@ -359,6 +391,10 @@ class UndoRedoService {
   }
 
   async redo() {
+    return this._withMutex(() => this._doRedo());
+  }
+
+  async _doRedo() {
     await this.initialize();
 
     if (!this.canRedo()) {
@@ -372,6 +408,8 @@ class UndoRedoService {
       delete action._operationResults;
 
       await this.executeForwardAction(action);
+      const operationResults = action._operationResults;
+      delete action._operationResults;
       this.currentIndex++;
       await this.saveActions();
 
@@ -388,10 +426,10 @@ class UndoRedoService {
       };
 
       // Include operation results for batch operations (for UI state updates)
-      if (action._operationResults) {
-        response.results = action._operationResults;
-        response.successCount = action._operationResults.filter((r) => r.success).length;
-        response.failCount = action._operationResults.filter((r) => !r.success).length;
+      if (operationResults) {
+        response.results = operationResults;
+        response.successCount = operationResults.filter((r) => r.success).length;
+        response.failCount = operationResults.filter((r) => !r.success).length;
         // Include original operation data for state reconstruction
         response.operations = action.data?.operations || [];
       }

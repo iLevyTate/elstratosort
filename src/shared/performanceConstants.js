@@ -40,7 +40,7 @@ const TIMEOUTS = {
   ANIMATION_MEDIUM: 300,
   ANIMATION_LONG: 500,
   ANIMATION_FADE: 180, // Fade skeleton/overlay animations
-  FILE_READ: 5000,
+  FILE_READ: 15000,
   FILE_WRITE: 10000,
   FILE_COPY: 30000,
   DIRECTORY_SCAN: 60000,
@@ -164,16 +164,6 @@ const POLLING = {
   STARTUP_POLL_FINAL: 1000
 };
 
-const FILE_SIZE = {
-  MAX_INLINE_TEXT: 1024 * 1024,
-  MAX_DOCUMENT_SIZE: 50 * 1024 * 1024,
-  MAX_IMAGE_SIZE: 20 * 1024 * 1024,
-  MAX_UPLOAD_SIZE: 100 * 1024 * 1024,
-  MAX_TEXT_FOR_HASH: 50000,
-  LARGE_FILE_THRESHOLD: 10 * 1024 * 1024,
-  STREAM_THRESHOLD: 5 * 1024 * 1024
-};
-
 const PAGINATION = {
   DEFAULT_PAGE_SIZE: 50,
   MAX_PAGE_SIZE: 1000,
@@ -279,7 +269,8 @@ const LIMITS = {
   MAX_OVERLAP_ITERATIONS: 10000,
   MAX_OVERLAPS_REPORT: 100,
   BATCH_ORGANIZE_SIZE: 100, // Maximum files in a single batch organize operation
-  ANALYSIS_QUEUE_SIZE: 500 // Maximum size of analysis queue in SmartFolderWatcher
+  ANALYSIS_QUEUE_SIZE: 500, // Maximum size of analysis queue in SmartFolderWatcher
+  MAX_ANALYSIS_RESULTS: 5000 // Maximum analysis results kept in Redux store to prevent unbounded memory growth
 };
 
 const IMAGE = { MAX_DIMENSION: 1536 };
@@ -461,7 +452,6 @@ module.exports = {
   CACHE,
   BATCH,
   POLLING,
-  FILE_SIZE,
   PAGINATION,
   THRESHOLDS,
   SEARCH,

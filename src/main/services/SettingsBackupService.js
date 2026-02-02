@@ -245,8 +245,11 @@ class SettingsBackupService {
 
         logger.info('[SettingsBackupService] Backup integrity verified (SHA256 hash match)');
       } else {
-        logger.warn(
-          '[SettingsBackupService] Restoring from backup without SHA256 verification (old format)'
+        // All backups created by this app include a hash. A missing hash indicates
+        // the file was manually created or tampered with. Reject for safety.
+        throw new Error(
+          'Backup integrity check failed: missing SHA256 hash. ' +
+            'The backup file may have been tampered with or was not created by this application.'
         );
       }
 

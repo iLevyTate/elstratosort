@@ -91,8 +91,10 @@ function generateEventId() {
 function buildFileId(filePath, type = 'file') {
   if (!filePath) return `${type}:unknown`;
   // Normalize for consistent ID format
-  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
-  return `${type}:${normalized}`;
+  // Only lowercase on Windows/macOS (case-insensitive filesystems)
+  const normalized = filePath.replace(/\\/g, '/');
+  const caseFolded = process.platform === 'linux' ? normalized : normalized.toLowerCase();
+  return `${type}:${caseFolded}`;
 }
 
 /**

@@ -108,8 +108,8 @@ class EmbeddingCache {
    * @returns {string} - Cache key
    */
   generateKey(text, model) {
-    // Normalize text to improve cache hit rate
-    const normalized = text.trim().toLowerCase();
+    // Normalize whitespace only - do NOT lowercase since embedding models are case-sensitive
+    const normalized = text.trim().replace(/\s+/g, ' ');
     return crypto.createHash('sha256').update(`${normalized}:${model}`).digest('hex');
   }
 

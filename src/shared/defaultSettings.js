@@ -68,6 +68,8 @@ const DEFAULT_SETTINGS = {
   // Learning/Feedback ChromaDB Sync
   // When enabled, learning patterns and feedback are dual-written to ChromaDB in addition to JSON
   // This enables semantic retrieval of learned patterns in the future
+  // Chunking: auto-generate chunk embeddings during file analysis (opt-in)
+  autoChunkOnAnalysis: false,
   enableChromaLearningSync: false, // Default off - JSON primary for backward compatibility
   enableChromaLearningDryRun: false, // When true, logs ChromaDB operations without executing
   // Graph-aware retrieval (GraphRAG-lite)

@@ -235,6 +235,14 @@ class ServiceContainer {
       return registration.instance;
     }
 
+    // Prevent creating duplicate singleton when async initialization is in progress
+    if (registration.lifetime === ServiceLifetime.SINGLETON && this._initPromises.has(name)) {
+      throw new Error(
+        `Service '${name}' is being initialized asynchronously via resolveAsync(). ` +
+          `Use resolveAsync() to await the in-progress initialization instead of resolve().`
+      );
+    }
+
     // Track resolution for circular dependency detection
     this._resolutionStack.add(name);
 
@@ -301,12 +309,6 @@ class ServiceContainer {
       }
     }
 
-    // Check for circular dependencies
-    if (this._resolutionStack.has(name)) {
-      const chain = `${Array.from(this._resolutionStack).join(' -> ')} -> ${name}`;
-      throw new Error(`Circular dependency detected while resolving '${name}': ${chain}`);
-    }
-
     // Track resolution for circular dependency detection
     // FIX HIGH-69: Use AsyncLocalStorage for thread-safe circular dependency detection
     // Since we can't easily add ALS in this environment without breaking changes,
@@ -314,60 +316,67 @@ class ServiceContainer {
     // The synchronous resolve() still protects against the most common cycles.
     // this._resolutionStack.add(name);
 
-    try {
-      // Create initialization promise for singletons
-      const initPromise = (async () => {
-        const instance = await registration.factory(this);
+    // Create initialization promise for singletons
+    const rawInitPromise = (async () => {
+      const instance = await registration.factory(this);
 
-        // FIX M4: Check shutdown state after async factory completes
-        // If shutdown started while we were awaiting, discard the instance
-        if (this._isShuttingDown) {
-          logger.warn(`[ServiceContainer] Service '${name}' resolved during shutdown, discarding`);
-          this._initPromises.delete(name);
+      // FIX M4: Check shutdown state after async factory completes
+      // If shutdown started while we were awaiting, discard the instance
+      if (this._isShuttingDown) {
+        logger.warn(`[ServiceContainer] Service '${name}' resolved during shutdown, discarding`);
+        this._initPromises.delete(name);
 
-          // FIX: Attempt to cleanup the discarded instance to prevent resource leaks
-          // The instance may have acquired resources (connections, timers) during creation
-          if (instance) {
-            try {
-              if (typeof instance.shutdown === 'function') {
-                await instance.shutdown();
-              } else if (typeof instance.cleanup === 'function') {
-                await instance.cleanup();
-              } else if (typeof instance.dispose === 'function') {
-                await instance.dispose();
-              }
-            } catch (cleanupError) {
-              logger.warn(
-                `[ServiceContainer] Failed to cleanup discarded instance '${name}':`,
-                cleanupError?.message || String(cleanupError)
-              );
+        // FIX: Attempt to cleanup the discarded instance to prevent resource leaks
+        // The instance may have acquired resources (connections, timers) during creation
+        if (instance) {
+          try {
+            if (typeof instance.shutdown === 'function') {
+              await instance.shutdown();
+            } else if (typeof instance.cleanup === 'function') {
+              await instance.cleanup();
+            } else if (typeof instance.dispose === 'function') {
+              await instance.dispose();
             }
+          } catch (cleanupError) {
+            logger.warn(
+              `[ServiceContainer] Failed to cleanup discarded instance '${name}':`,
+              cleanupError?.message || String(cleanupError)
+            );
           }
-
-          return null;
         }
 
-        // Cache singleton instances
-        if (registration.lifetime === ServiceLifetime.SINGLETON) {
-          registration.instance = instance;
-          this._initPromises.delete(name);
-          logger.debug(`[ServiceContainer] Created async singleton: ${name}`);
-        } else {
-          logger.debug(`[ServiceContainer] Created async transient: ${name}`);
-        }
-
-        return instance;
-      })();
-
-      // Store init promise for singletons to prevent duplicate initialization
-      if (registration.lifetime === ServiceLifetime.SINGLETON) {
-        this._initPromises.set(name, initPromise);
+        return null;
       }
 
+      // Cache singleton instances
+      if (registration.lifetime === ServiceLifetime.SINGLETON) {
+        registration.instance = instance;
+        this._initPromises.delete(name);
+        logger.debug(`[ServiceContainer] Created async singleton: ${name}`);
+      } else {
+        logger.debug(`[ServiceContainer] Created async transient: ${name}`);
+      }
+
+      return instance;
+    })();
+
+    // For singletons, store promise to prevent duplicate initialization.
+    // Also ensure we clear the initPromise entry if initialization fails, otherwise
+    // the service becomes permanently "stuck" as initializing.
+    if (registration.lifetime === ServiceLifetime.SINGLETON) {
+      let initPromise;
+      initPromise = rawInitPromise.catch((err) => {
+        // Only delete if this is still the active tracked promise
+        if (this._initPromises.get(name) === initPromise) {
+          this._initPromises.delete(name);
+        }
+        throw err;
+      });
+      this._initPromises.set(name, initPromise);
       return await initPromise;
-    } finally {
-      this._resolutionStack.delete(name);
     }
+
+    return await rawInitPromise;
   }
 
   /**
@@ -428,10 +437,6 @@ class ServiceContainer {
       const wasCleared = registration.instance !== null;
       registration.instance = null;
       registration.initializing = false; // Reset initializing flag too
-
-      if (this._initPromises.has(name)) {
-        logger.error(`[ServiceContainer] Race detected clearing '${name}'`);
-      }
       logger.debug(`[ServiceContainer] Cleared singleton instance: ${name}`);
       return wasCleared;
     }

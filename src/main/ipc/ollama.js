@@ -40,6 +40,34 @@ function isValidOllamaUrl(url) {
 
 // Note: normalizeOllamaUrl is imported from shared ollamaUtils module
 
+/**
+ * FIX SSRF: Block requests to cloud metadata endpoints and clearly dangerous internal targets.
+ * Allows localhost/127.0.0.1 since Ollama commonly runs there.
+ * @param {string} hostname - Hostname to check
+ * @returns {boolean} True if the hostname is safe to connect to
+ */
+function isSafeOllamaHost(hostname) {
+  if (!hostname) return false;
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, ''); // strip IPv6 brackets
+
+  // Block cloud metadata endpoints (AWS, GCP, Azure)
+  if (h === '169.254.169.254' || h === 'metadata.google.internal') return false;
+
+  // Block link-local range (169.254.x.x) except the above already caught
+  if (/^169\.254\./.test(h)) return false;
+
+  // Allow common Ollama hosts
+  if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
+
+  // Allow non-IP hostnames (e.g., user's custom server hostname)
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+
+  // For raw IP addresses, block the 0.0.0.0 address
+  if (h === '0.0.0.0') return false;
+
+  return true;
+}
+
 // FIX: Consolidate validation to work identically with/without Zod
 function validateOllamaHost(hostUrl) {
   // DUP-1: Use shared URL normalization utility (adds http:// if missing)
@@ -47,6 +75,18 @@ function validateOllamaHost(hostUrl) {
   if (!isValidOllamaUrl(url)) {
     throw new Error('Invalid Ollama URL format');
   }
+
+  // FIX SSRF: Extract hostname and check against blocked targets
+  try {
+    const parsed = new URL(url);
+    if (!isSafeOllamaHost(parsed.hostname)) {
+      throw new Error('Connection to this host is not allowed');
+    }
+  } catch (e) {
+    if (e.message === 'Connection to this host is not allowed') throw e;
+    throw new Error('Invalid Ollama URL format');
+  }
+
   return url;
 }
 

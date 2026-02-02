@@ -34,6 +34,9 @@ async function sendChunkedResults(getMainWindow, batchId, results, maxPerChunk) 
   const totalChunks = Math.ceil(results.length / maxPerChunk);
 
   for (let i = 0; i < results.length; i += maxPerChunk) {
+    if (win.isDestroyed()) {
+      return { sent: false, totalChunks: Math.floor(i / maxPerChunk) };
+    }
     const chunk = results.slice(i, i + maxPerChunk);
     const chunkIndex = Math.floor(i / maxPerChunk);
 

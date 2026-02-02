@@ -83,7 +83,11 @@ function createInitializer(options) {
             // Exponential backoff with jitter
             const delay = baseDelay * 2 ** (attempt - 1) + Math.random() * 1000;
             customLogger.info(`${serviceName} Retrying in ${Math.round(delay)}ms...`);
-            await new Promise((resolve) => setTimeout(resolve, delay));
+            await new Promise((resolve) => {
+              const timer = setTimeout(resolve, delay);
+              // FIX 78: Prevent retry timer from keeping process alive during shutdown
+              if (typeof timer.unref === 'function') timer.unref();
+            });
           } else {
             customLogger.error(
               `${serviceName} All initialization attempts failed. Service will be unavailable.`

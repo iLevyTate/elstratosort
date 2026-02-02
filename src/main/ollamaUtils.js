@@ -191,13 +191,17 @@ async function setOllamaHost(host, shouldSave = true, options = {}) {
 
     // FIX: Validate connection BEFORE committing change (unless skipValidation)
     if (!skipValidation) {
+      let timeoutId;
       try {
         // Create temporary client to test connection
         const testOllama = new Ollama({ host: normalizedHost });
         const testPromise = testOllama.list();
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Connection test timeout')), validationTimeout)
-        );
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error('Connection test timeout')),
+            validationTimeout
+          );
+        });
 
         await Promise.race([testPromise, timeoutPromise]);
         logger.info('[OLLAMA] Connection validated for host:', normalizedHost);
@@ -210,6 +214,9 @@ async function setOllamaHost(host, shouldSave = true, options = {}) {
           error: `Connection test failed: ${validationError.message}`,
           host: normalizedHost
         };
+      } finally {
+        // FIX 80: Clear timeout to prevent timer leak when testPromise wins the race
+        if (timeoutId) clearTimeout(timeoutId);
       }
     }
 

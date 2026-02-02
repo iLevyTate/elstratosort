@@ -358,7 +358,7 @@ async function runPreflightChecks({ reportProgress, errors }) {
     // Check 4: Port availability (runs ChromaDB and Ollama reachability in parallel too)
     (async () => {
       logger.debug('[PREFLIGHT] Starting port availability check...');
-      const chromaPort = process.env.CHROMA_SERVER_PORT || 8000;
+      const chromaPort = parseInt(process.env.CHROMA_SERVER_PORT, 10) || 8000;
       const ollamaPort = 11434;
       logger.debug(`[PREFLIGHT] Checking ports: ChromaDB=${chromaPort}, Ollama=${ollamaPort}`);
 

@@ -398,6 +398,8 @@ class PatternPersistence {
    * @returns {Promise<void>}
    */
   async save(data) {
+    // FIX 92: Hoist tempPath so catch block can clean up orphaned temp files
+    let tempPath;
     try {
       // Throttle saves
       const now = Date.now();
@@ -440,7 +442,7 @@ class PatternPersistence {
       // Write atomically with temp file
       // FIX MED-24: Use random UUID for temp file to prevent collisions
       const randomId = require('crypto').randomUUID();
-      const tempPath = `${this.patternsFilePath}.${randomId}.tmp`;
+      tempPath = `${this.patternsFilePath}.${randomId}.tmp`;
       const serialized = JSON.stringify(saveData, null, 2);
       await fs.writeFile(tempPath, serialized);
       const expectedSize = Buffer.byteLength(serialized);
@@ -471,6 +473,10 @@ class PatternPersistence {
       logger.error('[Persistence] Failed to save patterns:', error);
       // FIX: Clear pendingSave on error to prevent throttle logic from breaking
       this.pendingSave = null;
+      // FIX 92: Clean up orphaned temp file on save failure
+      if (tempPath) {
+        fs.unlink(tempPath).catch(() => {});
+      }
       return { success: false, error: error.message };
     }
   }

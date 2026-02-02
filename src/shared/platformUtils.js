@@ -112,23 +112,6 @@ function getKillCommand(pid, force = false) {
 }
 
 /**
- * Check if shell: true should be used for spawn
- *
- * SECURITY NOTE: This returns true on Windows for backward compatibility,
- * but new code should use crossSpawn() which handles executable resolution
- * without requiring shell: true.
- *
- * @param {boolean} [forceShell=false] - Force shell usage
- * @returns {boolean}
- * @deprecated Use crossSpawn() which handles PATH resolution safely without shell
- */
-function shouldUseShell(forceShell = false) {
-  // Note: With crossSpawn and getExecutableName, shell is no longer needed
-  // for most cases. This is kept for backward compatibility.
-  return forceShell || isWindows;
-}
-
-/**
  * Get keyboard shortcut modifier for the current platform
  * @returns {string} 'Cmd' for macOS, 'Ctrl' for others
  */
@@ -200,7 +183,6 @@ module.exports = {
   getKillCommand,
 
   // Process helpers
-  shouldUseShell,
   getSpawnOptions,
 
   // UI helpers

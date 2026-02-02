@@ -395,11 +395,13 @@ function calculateFolderSimilarity(folder1, folder2) {
  * @returns {number} Similarity score 0-1
  */
 function calculateStringSimilarity(str1, str2) {
-  const words1 = str1.split(/\s+/);
-  const words2 = str2.split(/\s+/);
+  // FIX: Use Sets to avoid inflated scores from repeated words
+  // e.g. "the the the project" vs "the project files" previously scored 1.0
+  const set1 = new Set(str1.split(/\s+/).filter(Boolean));
+  const set2 = new Set(str2.split(/\s+/).filter(Boolean));
 
-  const commonWords = words1.filter((w) => words2.includes(w)).length;
-  const totalWords = Math.max(words1.length, words2.length);
+  const commonWords = [...set1].filter((w) => set2.has(w)).length;
+  const totalWords = Math.max(set1.size, set2.size);
 
   return totalWords > 0 ? commonWords / totalWords : 0;
 }

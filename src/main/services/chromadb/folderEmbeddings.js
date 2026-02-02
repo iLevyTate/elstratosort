@@ -278,7 +278,7 @@ async function queryFoldersByEmbedding({ embedding, topK = 5, folderCollection }
         continue;
       }
 
-      const score = Math.max(0, 1 - distance / 2);
+      const score = Number.isFinite(distance) ? Math.max(0, 1 - distance / 2) : 0;
 
       matches.push({
         folderId,
@@ -430,7 +430,7 @@ async function executeQueryFolders({ fileId, topK, fileCollection, folderCollect
         continue;
       }
 
-      const score = Math.max(0, 1 - distance / 2);
+      const score = Number.isFinite(distance) ? Math.max(0, 1 - distance / 2) : 0;
 
       matches.push({
         folderId,
@@ -539,7 +539,7 @@ async function batchQueryFolders({
 
         for (let j = 0; j < count; j++) {
           const distance = distancesArray[j];
-          const score = Math.max(0, 1 - distance / 2);
+          const score = Number.isFinite(distance) ? Math.max(0, 1 - distance / 2) : 0;
 
           matches.push({
             folderId: idsArray[j],

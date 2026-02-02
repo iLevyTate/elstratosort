@@ -99,43 +99,6 @@ function buildFileFilters() {
 }
 
 /**
- * Recursively scan folder for supported files
- */
-// Unused but kept for potential future recursive scanning needs
-// eslint-disable-next-line no-unused-vars
-async function scanFolder(folderPath, supportedExts, log, depth = 0, maxDepth = 3) {
-  if (depth > maxDepth) return [];
-
-  try {
-    const items = await fs.readdir(folderPath, { withFileTypes: true });
-    const foundFiles = [];
-
-    for (const item of items) {
-      const itemPath = path.join(folderPath, item.name);
-
-      if (item.isFile()) {
-        const ext = path.extname(item.name).toLowerCase();
-        if (supportedExts.includes(ext)) {
-          foundFiles.push(itemPath);
-        }
-      } else if (
-        item.isDirectory() &&
-        !item.name.startsWith('.') &&
-        !item.name.startsWith('node_modules')
-      ) {
-        const subFiles = await scanFolder(itemPath, supportedExts, log, depth + 1, maxDepth);
-        foundFiles.push(...subFiles);
-      }
-    }
-
-    return foundFiles;
-  } catch (error) {
-    log.warn(`[FILE-SELECTION] Error scanning folder ${folderPath}:`, error.message);
-    return [];
-  }
-}
-
-/**
  * Get supported extensions list
  */
 function getSupportedExtensions() {

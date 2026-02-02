@@ -340,16 +340,6 @@ class FileOperationTracker {
     this.clear();
     logger.debug('[FILE-OP-TRACKER] Shutdown complete');
   }
-
-  /**
-   * Reset for testing - allows creating fresh instance
-   */
-  // static resetInstance() {
-  //   if (_instance) {
-  //     _instance.shutdown();
-  //     _instance = null;
-  //   }
-  // }
 }
 
 // Use singleton factory to prevent race conditions in getInstance()

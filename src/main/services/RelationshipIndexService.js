@@ -20,6 +20,9 @@ class RelationshipIndexService {
     this.userDataPath = app.getPath('userData');
     this.indexPath = path.join(this.userDataPath, 'knowledge-relationships.json');
     this.index = null;
+
+    // Lock to prevent concurrent buildIndex calls from corrupting the index
+    this._buildPromise = null;
   }
 
   async _loadIndex() {
@@ -39,9 +42,16 @@ class RelationshipIndexService {
   }
 
   async _saveIndex(index) {
+    const tempPath = `${this.indexPath}.tmp.${Date.now()}`;
     try {
-      await fs.writeFile(this.indexPath, JSON.stringify(index, null, 2), 'utf8');
+      await fs.writeFile(tempPath, JSON.stringify(index, null, 2), 'utf8');
+      await fs.rename(tempPath, this.indexPath);
     } catch (error) {
+      try {
+        await fs.unlink(tempPath);
+      } catch {
+        // Ignore cleanup errors
+      }
       logger.error('[RelationshipIndexService] Failed to save index', {
         error: error.message
       });
@@ -102,6 +112,18 @@ class RelationshipIndexService {
   }
 
   async buildIndex() {
+    if (this._buildPromise) {
+      return this._buildPromise;
+    }
+    this._buildPromise = this._doBuildIndex();
+    try {
+      return await this._buildPromise;
+    } finally {
+      this._buildPromise = null;
+    }
+  }
+
+  async _doBuildIndex() {
     if (!this.analysisHistoryService) {
       logger.warn('[RelationshipIndexService] AnalysisHistoryService unavailable');
       return { success: false, error: 'AnalysisHistoryService unavailable' };
@@ -134,8 +156,15 @@ class RelationshipIndexService {
 
     const edgeCounts = new Map();
     const edgeConcepts = new Map();
+    // FIX: Cap files per concept to prevent O(n²) explosion on popular concepts
+    // A concept shared by 1000 files would generate ~500K pairs without this cap
+    const MAX_FILES_PER_CONCEPT = 100;
     conceptToFiles.forEach((fileSet, concept) => {
       const files = Array.from(fileSet);
+      if (files.length > MAX_FILES_PER_CONCEPT) {
+        // Concept is too generic — take the first N files to bound computation
+        files.length = MAX_FILES_PER_CONCEPT;
+      }
       for (let i = 0; i < files.length; i += 1) {
         for (let j = i + 1; j < files.length; j += 1) {
           const source = files[i];
@@ -273,12 +302,9 @@ class RelationshipIndexService {
       if (!sourceIsSeed && !targetIsSeed) continue;
 
       const neighborId = sourceIsSeed ? edge.target : edge.source;
-      const canAddNeighbor =
-        !seedSet.has(neighborId) && !neighbors.has(neighborId) && neighbors.size + 1 > maxNeighbors
-          ? false
-          : true;
-      if (!canAddNeighbor) continue;
-      if (!seedSet.has(neighborId)) {
+      const isNewNeighbor = !seedSet.has(neighborId) && !neighbors.has(neighborId);
+      if (isNewNeighbor && neighbors.size >= maxNeighbors) continue;
+      if (isNewNeighbor) {
         neighbors.add(neighborId);
       }
       edges.push(edge);

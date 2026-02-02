@@ -96,6 +96,10 @@ class ErrorHandler {
   }
 
   setupGlobalHandlers() {
+    // FIX: Guard against duplicate listener registration if initialize() is called twice
+    if (this._globalHandlersRegistered) return;
+    this._globalHandlersRegistered = true;
+
     // NOTE: process.on('uncaughtException') and process.on('unhandledRejection')
     // are handled by lifecycle.js with proper cleanup. Do NOT register them here
     // to avoid duplicate handlers which cause:
@@ -264,20 +268,39 @@ class ErrorHandler {
       ...normalized
     });
 
-    // Show error dialog
-    const response = await dialog.showMessageBox({
-      type: 'error',
-      title: 'Critical Error',
-      message: 'Stratosort encountered a critical error',
-      detail: `${message}\n\nWould you like to restart the application?`,
-      buttons: ['Restart', 'Quit'],
-      defaultId: 0
-    });
+    // Show error dialog with a hard timeout so we don't hang the main process
+    // in cases where UI is unresponsive (e.g., renderer crash/freeze).
+    const DIALOG_TIMEOUT_MS = 8000;
+    let timeoutId;
+    try {
+      const response = await Promise.race([
+        dialog.showMessageBox({
+          type: 'error',
+          title: 'Critical Error',
+          message: 'Stratosort encountered a critical error',
+          detail: `${message}\n\nWould you like to restart the application?`,
+          buttons: ['Restart', 'Quit'],
+          defaultId: 0
+        }),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error(`Critical error dialog timed out after ${DIALOG_TIMEOUT_MS}ms`)),
+            DIALOG_TIMEOUT_MS
+          );
+        })
+      ]);
 
-    if (response.response === 0) {
-      app.relaunch();
+      if (response?.response === 0) {
+        app.relaunch();
+      }
+    } catch (dialogError) {
+      logger.error('[CRITICAL ERROR] Failed to show critical error dialog:', {
+        error: dialogError?.message || String(dialogError)
+      });
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      app.quit();
     }
-    app.quit();
   }
 
   /**
@@ -328,11 +351,12 @@ class ErrorHandler {
    */
   async getRecentErrors(count = 50) {
     try {
+      if (!this.currentLogFile) return [];
       const logContent = await fs.readFile(this.currentLogFile, 'utf-8');
       const entries = parseJsonLines(logContent);
       const errors = entries
-        .slice(-count)
-        .filter((entry) => ['ERROR', 'CRITICAL'].includes(entry.level));
+        .filter((entry) => ['ERROR', 'CRITICAL'].includes(entry.level))
+        .slice(-count);
 
       return errors;
     } catch (error) {
@@ -347,6 +371,7 @@ class ErrorHandler {
    */
   async cleanupLogs(daysToKeep = 7) {
     try {
+      if (!this.logPath) return;
       const files = await fs.readdir(this.logPath);
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);

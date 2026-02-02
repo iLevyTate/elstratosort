@@ -57,8 +57,13 @@ function getEmbeddingDimension(modelName) {
   }
 
   // Check partial match (model names often include version suffixes)
+  // Sort by key length descending so more specific names match first (e.g. "nomic-embed-text" before "gte")
+  // Exclude "default" from partial matching to prevent false positives
   const normalizedName = modelName.toLowerCase();
-  for (const [key, dimension] of Object.entries(EMBEDDING_DIMENSIONS)) {
+  const partialEntries = Object.entries(EMBEDDING_DIMENSIONS)
+    .filter(([key]) => key !== 'default')
+    .sort(([a], [b]) => b.length - a.length);
+  for (const [key, dimension] of partialEntries) {
     if (normalizedName.includes(key.toLowerCase())) {
       return dimension;
     }
@@ -288,12 +293,12 @@ class FolderMatchingService {
       })
       .catch((error) => {
         logger.error('[FolderMatchingService] Initialization failed:', error.message);
+        // Clear _initPromise on failure so future calls can retry
+        this._initPromise = null;
         rejectInit(error);
       })
       .finally(() => {
         this._initializing = false;
-        // Keep _initPromise as resolved promise for future callers
-        // Don't clear it - concurrent callers need to await the same promise
       });
 
     return this._initPromise;
@@ -389,20 +394,37 @@ class FolderMatchingService {
       const expectedDim = getEmbeddingDimension(model);
       const actualDim = vector.length;
 
-      // Warn on dimension mismatch - this indicates model config may be wrong
-      if (actualDim !== expectedDim && actualDim > 0) {
-        logger.warn('[FolderMatchingService] Embedding dimension mismatch detected', {
-          model,
-          expected: expectedDim,
-          actual: actualDim,
-          action: actualDim < expectedDim ? 'padding' : 'truncating'
-        });
-      }
+      // Only normalize dimensions when model is in our known lookup table
+      // (meaning we're confident about the expected dimension).
+      // If the expected dimension came from the fallback default, trust the
+      // actual model output to avoid silently destroying vector data.
+      const modelIsKnown =
+        EMBEDDING_DIMENSIONS[model] ||
+        Object.keys(EMBEDDING_DIMENSIONS).some(
+          (key) => key !== 'default' && model.toLowerCase().includes(key.toLowerCase())
+        );
 
-      if (actualDim < expectedDim) {
-        vector = vector.concat(new Array(expectedDim - actualDim).fill(0));
-      } else if (actualDim > expectedDim) {
-        vector = vector.slice(0, expectedDim);
+      if (actualDim !== expectedDim && actualDim > 0) {
+        if (modelIsKnown) {
+          logger.warn('[FolderMatchingService] Embedding dimension mismatch for known model', {
+            model,
+            expected: expectedDim,
+            actual: actualDim,
+            action: actualDim < expectedDim ? 'padding' : 'truncating'
+          });
+          if (actualDim < expectedDim) {
+            vector = vector.concat(new Array(expectedDim - actualDim).fill(0));
+          } else if (actualDim > expectedDim) {
+            vector = vector.slice(0, expectedDim);
+          }
+        } else {
+          logger.info('[FolderMatchingService] Unknown model dimension, using actual', {
+            model,
+            lookupDefault: expectedDim,
+            actual: actualDim
+          });
+          // Trust the actual dimension from the model response
+        }
       }
 
       const result = { vector, model };

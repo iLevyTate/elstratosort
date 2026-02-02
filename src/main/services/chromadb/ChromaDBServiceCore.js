@@ -245,7 +245,9 @@ class ChromaDBServiceCore extends EventEmitter {
     return (
       error?.name === 'ChromaNotFoundError' ||
       /requested resource could not be found/i.test(msg) ||
-      /not found/i.test(msg)
+      /collection .* not found/i.test(msg) ||
+      /tenant .* not found/i.test(msg) ||
+      /database .* not found/i.test(msg)
     );
   }
 
@@ -1462,7 +1464,7 @@ class ChromaDBServiceCore extends EventEmitter {
         const distance = i < distances.length ? distances[i] : 1;
         matches.push({
           id: ids[i],
-          score: Math.max(0, 1 - distance / 2),
+          score: Number.isFinite(distance) ? Math.max(0, 1 - distance / 2) : 0,
           metadata: i < metadatas.length ? metadatas[i] : {},
           document: i < documents.length ? documents[i] : ''
         });
@@ -2190,6 +2192,9 @@ class ChromaDBServiceCore extends EventEmitter {
     await this.resetFiles();
     await this.resetFileChunks();
     await this.resetFolders();
+    // FIX: Also reset feedback and learning collections for a complete reset
+    await this.resetFeedbackMemory();
+    await this.resetLearningPatterns();
   }
 
   // ============== Orphan Management ==============
@@ -2483,7 +2488,7 @@ class ChromaDBServiceCore extends EventEmitter {
           const batch = await this.fileCollection.get({
             limit: batchSize,
             offset,
-            include: ['metadatas', 'documents', 'embeddings']
+            include: ['metadatas']
           });
 
           if (!batch?.ids || batch.ids.length === 0) {
@@ -2694,9 +2699,9 @@ class ChromaDBServiceCore extends EventEmitter {
     }
 
     try {
-      this.queryCache.clear();
+      this.queryCache.dispose();
     } catch (cacheError) {
-      logger.warn('[ChromaDB] Error clearing query cache:', cacheError.message);
+      logger.warn('[ChromaDB] Error disposing query cache:', cacheError.message);
     }
 
     this.inflightQueries.clear();

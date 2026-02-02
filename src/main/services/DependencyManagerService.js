@@ -57,7 +57,7 @@ async function fileExists(p) {
   }
 }
 
-async function downloadToFile(url, destPath, { onProgress } = {}) {
+async function downloadToFile(url, destPath, { onProgress, _redirectCount = 0 } = {}) {
   const https = require('https');
   const fsSync = require('fs');
 
@@ -96,9 +96,21 @@ async function downloadToFile(url, destPath, { onProgress } = {}) {
 
     const request = https.get(url, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        // Follow redirect
+        // Follow redirect with loop protection
         res.resume();
-        downloadToFile(res.headers.location, destPath, { onProgress }).then(resolve).catch(reject);
+        if (_redirectCount >= 5) {
+          cleanup(new Error('Too many redirects'));
+          return;
+        }
+        const redirectUrl = res.headers.location;
+        // Only follow HTTPS redirects to prevent protocol downgrade
+        if (!redirectUrl.startsWith('https://')) {
+          cleanup(new Error(`Refusing non-HTTPS redirect to: ${redirectUrl}`));
+          return;
+        }
+        downloadToFile(redirectUrl, destPath, { onProgress, _redirectCount: _redirectCount + 1 })
+          .then(resolve)
+          .catch(reject);
         return;
       }
 

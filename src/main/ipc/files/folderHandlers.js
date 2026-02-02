@@ -199,7 +199,15 @@ function registerFolderHandlers(servicesOrParams) {
           };
         }
 
-        await shell.openPath(normalizedPath);
+        const openResult = await shell.openPath(normalizedPath);
+        if (openResult) {
+          logger.warn('[FILE-OPS] Shell openPath returned error:', openResult);
+          return {
+            success: false,
+            error: openResult,
+            errorCode: 'OPEN_FAILED'
+          };
+        }
         logger.info('[FILE-OPS] Opened folder:', normalizedPath);
 
         return {

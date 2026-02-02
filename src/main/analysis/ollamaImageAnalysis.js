@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 const sharp = require('sharp');
 const { getOllamaVisionModel, loadOllamaConfig, getOllama } = require('../ollamaUtils');
 const { buildOllamaOptions } = require('../services/PerformanceService');
@@ -208,13 +209,18 @@ Analyze this image:`;
     // Use deduplicator to prevent duplicate LLM calls for identical images
     // Include 'type' to prevent cross-file cache contamination with document analysis
     const safeFolders = Array.isArray(smartFolders) ? smartFolders : [];
+    // Use a proper hash instead of slicing the first N chars of base64.
+    // Slicing is a weak signature: images with similar headers/metadata can
+    // share the same prefix, causing false dedup hits. MD5 is fast and
+    // collision-resistant enough for cache keying (not security-sensitive).
+    const imageHash = crypto.createHash('md5').update(imageBase64).digest('hex');
     const deduplicationKey = globalDeduplicator.generateKey({
       type: 'image', // Prevent cross-type contamination with document analysis
       fileName: originalFileName,
-      contentLength: imageBase64.length, // Additional uniqueness
-      image: imageBase64.slice(0, TRUNCATION.CACHE_SIGNATURE), // Use first chars as signature
+      imageHash,
       model: modelToUse,
-      folders: safeFolders.map((f) => f.name).join(',')
+      // FIX: Guard against null/undefined elements in safeFolders array
+      folders: safeFolders.map((f) => f?.name || '').join(',')
     });
 
     const client = await getOllama();
@@ -309,11 +315,12 @@ Analyze this image:`;
 
         // Validate and structure the date
         if (parsedJson.date) {
-          try {
-            parsedJson.date = new Date(parsedJson.date).toISOString().split('T')[0];
-          } catch {
+          const dateObj = new Date(parsedJson.date);
+          if (isNaN(dateObj.getTime())) {
             delete parsedJson.date;
             logger.warn('Ollama returned an invalid date for image, omitting.');
+          } else {
+            parsedJson.date = dateObj.toISOString().split('T')[0];
           }
         }
 
@@ -464,9 +471,6 @@ function validateAnalysisConsistency(analysis, fileName, extractedText = null) {
     analysis.hallucination_detected = true;
 
     // Override with filename-based suggestion
-    // const fallbackName = getIntelligentImageCategory(fileName, '')
-    //   .toLowerCase()
-    //   .replace(/\s+/g, '_');
     analysis.suggestedName = safeSuggestedName(fileName, '');
     logger.warn('[HALLUCINATION] Landscape suggested for financial file, overriding', {
       original: suggestedLower,
@@ -607,12 +611,24 @@ async function extractExifDate(imageBuffer) {
     if (meta && meta.exif) {
       const exif = require('exif-reader')(meta.exif);
       if (exif && (exif.exif || exif.image)) {
-        const dateStr = exif.exif?.DateTimeOriginal || exif.image?.ModifyDate;
-        if (dateStr) {
-          const parts = dateStr.split(' ')[0].replace(/:/g, '-');
-          if (parts.match(/^\d{4}-\d{2}-\d{2}$/)) {
-            logger.debug(`[IMAGE] Extracted EXIF date: ${parts}`);
-            return parts;
+        const dateVal = exif.exif?.DateTimeOriginal || exif.image?.ModifyDate;
+        if (dateVal) {
+          let dateResult;
+          if (dateVal instanceof Date) {
+            // exif-reader v2 returns Date objects
+            if (!isNaN(dateVal.getTime())) {
+              dateResult = dateVal.toISOString().split('T')[0];
+            }
+          } else {
+            // Legacy string format: "2024:01:15 10:30:00"
+            const parts = String(dateVal).split(' ')[0].replace(/:/g, '-');
+            if (parts.match(/^\d{4}-\d{2}-\d{2}$/)) {
+              dateResult = parts;
+            }
+          }
+          if (dateResult) {
+            logger.debug(`[IMAGE] Extracted EXIF date: ${dateResult}`);
+            return dateResult;
           }
         }
       }
@@ -634,9 +650,16 @@ async function extractExifDate(imageBuffer) {
 async function preprocessImageBuffer(imageBuffer, fileExtension) {
   // Wrap entire preprocessing in try/catch to catch synchronous sharp errors
   try {
-    const needsFormatConversion = ['.svg', '.tiff', '.tif', '.bmp', '.gif', '.webp'].includes(
-      fileExtension
-    );
+    const needsFormatConversion = [
+      '.svg',
+      '.tiff',
+      '.tif',
+      '.bmp',
+      '.gif',
+      '.webp',
+      '.heic',
+      '.ico'
+    ].includes(fileExtension);
     const maxDimension = 1024; // Reduced from 1536 to prevent timeouts on large images while maintaining quality
 
     let meta = null;
@@ -702,7 +725,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       keywords: [],
       confidence: 0,
       suggestedName:
-        fileName.replace(fileExtension, '').replace(/[^a-zA-Z0-9_-]/g, '_') + fileExtension
+        path.basename(fileName, fileExtension).replace(/[^a-zA-Z0-9_-]/g, '_') + fileExtension
     };
   }
 
@@ -819,6 +842,22 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
 
     logger.debug(`Image file size`, { bytes: stats.size });
 
+    // Guard against oversized images that would exhaust memory
+    const MAX_IMAGE_SIZE = 100 * 1024 * 1024; // 100MB
+    if (stats.size > MAX_IMAGE_SIZE) {
+      logger.error(`Image file too large`, {
+        bytes: stats.size,
+        maxBytes: MAX_IMAGE_SIZE,
+        path: filePath
+      });
+      return {
+        error: `Image file too large (${(stats.size / 1024 / 1024).toFixed(1)}MB exceeds ${MAX_IMAGE_SIZE / 1024 / 1024}MB limit)`,
+        category: 'error',
+        keywords: [],
+        confidence: 0
+      };
+    }
+
     // Handle TOCTOU race condition - file could be deleted between stat() and readFile()
     let imageBuffer;
     try {
@@ -841,7 +880,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
     const signature = `${IMAGE_SIGNATURE_VERSION}|${visionModelName}|${smartFolderSig}|${filePath}|${stats.size}|${stats.mtimeMs}`;
     if (!bypassCache) {
       const cached = getImageAnalysisCache().get(signature);
-      if (cached !== null) {
+      if (cached != null) {
         return cached;
       }
     } else {
@@ -1064,14 +1103,14 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
 
           const { vector } = await matcher.embedText(textToEmbed);
           if (vector) {
-            embeddingQueue.removeByFilePath?.(filePath);
-            embeddingQueue.enqueue({
+            await embeddingQueue.removeByFilePath?.(filePath);
+            await embeddingQueue.enqueue({
               id: getSemanticFileId(filePath),
               path: filePath,
               text: textToEmbed,
               vector,
               meta: {
-                fileName,
+                name: fileName,
                 fileSize: stats?.size,
                 fileExtension,
                 analysis,

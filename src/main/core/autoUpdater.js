@@ -17,6 +17,7 @@ const logger = createLogger('AutoUpdater');
 // Track active cleanup function and init guard
 let activeCleanup = null;
 let initPromise = null;
+let initialized = false;
 
 /**
  * Send update status to renderer
@@ -121,10 +122,15 @@ async function initializeAutoUpdater(isDev, getMainWindow) {
     return { cleanup: () => {} };
   }
 
-  // FIX HIGH-58: Prevent accumulation of cleanup functions on repeated init
+  // Prevent duplicate initialization: return existing promise if in-progress,
+  // or return cached cleanup if already completed
   if (initPromise) {
     logger.debug('[UPDATER] Initialization already in progress');
     return initPromise;
+  }
+  if (initialized && activeCleanup) {
+    logger.debug('[UPDATER] Already initialized');
+    return { cleanup: activeCleanup };
   }
 
   initPromise = (async () => {
@@ -162,9 +168,19 @@ async function initializeAutoUpdater(isDev, getMainWindow) {
 
       activeCleanup = cleanup;
 
-      // Check for updates
+      // Check for updates (with timeout to prevent hanging on network blackholes)
       try {
-        await autoUpdater.checkForUpdatesAndNotify();
+        const UPDATE_CHECK_TIMEOUT_MS = 30000;
+        await Promise.race([
+          autoUpdater.checkForUpdatesAndNotify(),
+          new Promise((_, reject) => {
+            const t = setTimeout(
+              () => reject(new Error('Update check timed out')),
+              UPDATE_CHECK_TIMEOUT_MS
+            );
+            if (typeof t.unref === 'function') t.unref();
+          })
+        ]);
         logger.info('[UPDATER] Update check completed');
       } catch (e) {
         logger.error('[UPDATER] Update check failed:', {
@@ -179,6 +195,7 @@ async function initializeAutoUpdater(isDev, getMainWindow) {
       return { cleanup: () => {} };
     } finally {
       initPromise = null;
+      initialized = true;
     }
   })();
 
@@ -197,6 +214,7 @@ function cleanupAutoUpdater() {
     logger.error('[UPDATER] Cleanup error:', error);
   } finally {
     activeCleanup = null;
+    initialized = false;
   }
 }
 

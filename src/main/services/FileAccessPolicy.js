@@ -1,5 +1,6 @@
 const path = require('path');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
+const logger = createLogger('FileAccessPolicy');
 
 /**
  * FileAccessPolicy
@@ -7,12 +8,9 @@ const { logger } = require('../../shared/logger');
  */
 class FileAccessPolicy {
   constructor() {
-    this.unsafePatterns = [
-      /^\./, // Hidden files
-      /node_modules/,
-      /\.git/,
-      /\.env/
-    ];
+    // Patterns tested against individual path segments (directory names and filename)
+    // to avoid false positives from matching substrings in full paths
+    this.unsafeSegmentNames = new Set(['node_modules', '.git', '.env']);
 
     // Windows reserved names
     this.reservedNames = [
@@ -87,9 +85,15 @@ class FileAccessPolicy {
       // Check hidden files (unix style)
       if (basename.startsWith('.') && basename !== '.') return false;
 
-      // Check unsafe patterns
-      if (this.unsafePatterns.some((p) => p.test(filePath))) {
-        return false;
+      // Check unsafe path segments - test each directory component individually
+      // to avoid false positives from substring matching on full paths
+      // FIX: Normalize path first to resolve .. traversals, then split on
+      // both / and \ to handle forward slashes on Windows
+      const segments = path.normalize(filePath).split(/[/\\]/);
+      for (const segment of segments) {
+        if (this.unsafeSegmentNames.has(segment)) {
+          return false;
+        }
       }
 
       return true;

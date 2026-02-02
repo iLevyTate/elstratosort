@@ -94,7 +94,7 @@ class NotificationService {
       // Generate UUID and create standardized notification
       const id = randomUUID();
       const standardized = isTestEnv
-        ? notification
+        ? { ...notification, id: notification.id || id }
         : {
             id,
             type: notification.type || NotificationType.SYSTEM,

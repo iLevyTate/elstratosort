@@ -9,6 +9,7 @@ const { createHandler, createErrorResponse, safeHandle } = require('./ipcWrapper
 const { schemas } = require('./validationSchemas');
 const { createLogger } = require('../../shared/logger');
 const { isNotFoundError } = require('../../shared/errorClassifier');
+const { safeFilePath } = require('../utils/safeAccess');
 const fs = require('fs').promises;
 
 const logger = createLogger('IPC:Organize');
@@ -254,10 +255,15 @@ function registerOrganizeIpc(servicesOrParams) {
       },
       handler: async (event, { filePath, options = {} }, service) => {
         try {
-          logger.info('[ORGANIZE] Processing new file', { filePath });
+          // FIX: Validate file path before processing (IPC boundary security)
+          const cleanPath = safeFilePath(filePath);
+          if (!cleanPath) {
+            return createErrorResponse({ message: 'Invalid file path provided' });
+          }
+          logger.info('[ORGANIZE] Processing new file', { filePath: cleanPath });
 
           const smartFolders = getCustomFolders();
-          const result = await service.processNewFile(filePath, smartFolders, options);
+          const result = await service.processNewFile(cleanPath, smartFolders, options);
 
           if (result) {
             logger.info('[ORGANIZE] New file organized', result);

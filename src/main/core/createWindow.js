@@ -256,8 +256,9 @@ function createMainWindow() {
     // Material-UI requires 'unsafe-inline' for styles to work
     // In a more secure setup, we'd use nonces or hashes, but for now we need inline styles
     const styleSrc = "'self' 'unsafe-inline'";
-    // Keep script-src strict to avoid Electron CSP warnings; avoid unsafe-eval even in dev
-    const scriptSrc = "'self' 'unsafe-eval'";
+    // Keep script-src strict — no unsafe-eval even in dev (webpack is configured for
+    // source-map devtool which doesn't require eval)
+    const scriptSrc = "'self'";
     const csp = `default-src 'self'; script-src ${scriptSrc}; style-src ${styleSrc}; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ${sanitizedOllamaHost} ${wsHost}; object-src 'none'; base-uri 'self'; form-action 'self';`;
 
     callback({
@@ -362,16 +363,28 @@ function createMainWindow() {
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    const allowedDomains = [
-      'https://github.com',
-      'https://docs.github.com',
-      'https://microsoft.com',
-      'https://docs.microsoft.com',
-      'https://ollama.ai',
-      'https://ollama.com' // FIX HIGH-60: Added ollama.com
+    // SECURITY: Use URL hostname matching instead of startsWith to prevent
+    // subdomain bypass (e.g., github.com.evil.com matching github.com)
+    const allowedHosts = [
+      'github.com',
+      'docs.github.com',
+      'microsoft.com',
+      'docs.microsoft.com',
+      'ollama.ai',
+      'ollama.com'
     ];
-    if (allowedDomains.some((domain) => url.startsWith(domain))) {
-      shell.openExternal(url);
+    try {
+      const parsed = new URL(url);
+      if (
+        parsed.protocol === 'https:' &&
+        allowedHosts.some(
+          (host) => parsed.hostname === host || parsed.hostname.endsWith('.' + host)
+        )
+      ) {
+        shell.openExternal(url).catch(() => {});
+      }
+    } catch {
+      // Invalid URL -- deny silently
     }
     return { action: 'deny' };
   });

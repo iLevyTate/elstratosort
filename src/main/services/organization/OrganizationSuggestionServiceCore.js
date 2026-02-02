@@ -861,7 +861,7 @@ class OrganizationSuggestionServiceCore {
                 });
                 return { file, suggestion };
               })(),
-              30000, // 30s timeout per file to prevent batch stall
+              60000, // 60s timeout per file - accounts for semaphore queue wait under load
               `Suggestion analysis for ${file.name}`
             );
           } catch (error) {
@@ -1039,10 +1039,17 @@ class OrganizationSuggestionServiceCore {
         this.config.topKSemanticMatches
       );
 
-      // Get analysis confidence (0-100 scale, default to 70 if not available)
+      // Get analysis confidence and normalize to 0-1 scale
+      // LLM responses may return confidence as 0-1 (e.g., 0.8) or 0-100 (e.g., 80)
       // Use it to dampen match scores - unreliable analysis shouldn't drive strong matches
-      const analysisConfidence = file.analysis?.confidence ?? 70;
-      const confidenceMultiplier = analysisConfidence / 100;
+      const rawConfidence = file.analysis?.confidence ?? 70;
+      const normalizedConfidence =
+        typeof rawConfidence === 'number'
+          ? rawConfidence > 1
+            ? rawConfidence / 100
+            : rawConfidence
+          : 0.7;
+      const confidenceMultiplier = Math.max(0, Math.min(1, normalizedConfidence));
 
       const suggestions = [];
       for (const match of matches) {
@@ -1067,7 +1074,7 @@ class OrganizationSuggestionServiceCore {
           score: weightedScore,
           confidence: weightedScore,
           baseScore: match.score,
-          analysisConfidence,
+          analysisConfidence: normalizedConfidence,
           description: smartFolder.description || match.description,
           method: 'semantic_embedding',
           isSmartFolder: true

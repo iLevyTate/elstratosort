@@ -106,6 +106,8 @@ class ModelManager {
 
       // Mark as initialized even if models aren't fully ready yet
       this.initialized = true;
+      // FIX: Clear _initPromise on success to allow GC of resolved Promise closure
+      this._initPromise = null;
 
       logger.info(`[ModelManager] Initialized with model: ${this.selectedModel}`);
       return true;
@@ -150,7 +152,7 @@ class ModelManager {
    * Analyze what a model can do based on its name and metadata
    */
   analyzeModelCapabilities(model) {
-    const modelName = model.name.toLowerCase();
+    const modelName = (model.name || '').toLowerCase();
     const capabilities = {
       text: false,
       vision: false,
@@ -424,11 +426,15 @@ class ModelManager {
    */
   async generateWithFallback(prompt, options = {}) {
     const modelsToTry = [
-      this.selectedModel,
-      ...this.fallbackPreferences.filter((p) =>
-        this.availableModels.some((m) => m.name.includes(p))
+      ...new Set(
+        [
+          this.selectedModel,
+          ...this.fallbackPreferences
+            .map((p) => this.availableModels.find((m) => m.name.includes(p))?.name)
+            .filter(Boolean)
+        ].filter(Boolean)
       )
-    ].filter(Boolean);
+    ];
 
     for (const modelName of modelsToTry) {
       try {

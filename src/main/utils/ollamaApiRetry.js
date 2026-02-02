@@ -19,11 +19,23 @@
 const axios = require('axios');
 const { createLogger } = require('../../shared/logger');
 const { calculateRetryDelay } = require('../../shared/promiseUtils');
+const { Semaphore } = require('../../shared/RateLimiter');
 
 const logger = createLogger('OllamaApiRetry');
 const { withRetry } = require('../../shared/errorHandlingUtils');
 const { SERVICE_URLS } = require('../../shared/configDefaults');
 const { isRetryable, isNetworkError } = require('../../shared/errorClassifier');
+
+/**
+ * Global Ollama request semaphore.
+ * Limits total concurrent Ollama API calls (embedding + generate + vision)
+ * across the entire application to prevent overwhelming Ollama.
+ * With GPU offloading Ollama can serve multiple parallel requests
+ * (default OLLAMA_NUM_PARALLEL=4). Without this, 8 concurrent
+ * file analyses can generate 24-56 simultaneous requests.
+ */
+const OLLAMA_MAX_CONCURRENT = 5;
+const ollamaGlobalSemaphore = new Semaphore(OLLAMA_MAX_CONCURRENT, 50, 120000);
 
 /**
  * Default jitter factor (0.3 = +/- 30% of delay)
@@ -166,7 +178,7 @@ async function withOllamaRetry(apiCall, options = {}) {
     maxTotalTime = 60000, // 60 second absolute maximum
     jitterFactor = DEFAULT_JITTER_FACTOR,
     onRetry = null,
-    useOfflineQueue = false
+    _useOfflineQueue = false
   } = options;
 
   let attemptNumber = 0;
@@ -203,6 +215,14 @@ async function withOllamaRetry(apiCall, options = {}) {
         }
       }
 
+      // Acquire global semaphore to limit concurrent Ollama requests
+      // Use semaphore retry/backoff rather than failing fast on bursts. This keeps the
+      // in-memory queue bounded while still allowing callers to eventually complete.
+      await ollamaGlobalSemaphore.acquire({
+        retry: true,
+        maxRetries: 10,
+        retryDelayMs: 50
+      });
       try {
         const result = await originalCall(...args);
 
@@ -242,6 +262,8 @@ async function withOllamaRetry(apiCall, options = {}) {
         }
 
         throw error;
+      } finally {
+        ollamaGlobalSemaphore.release();
       }
     };
 
@@ -289,19 +311,9 @@ async function withOllamaRetry(apiCall, options = {}) {
       logger.debug(`[${operation}] Error enrichment failed:`, enrichError.message);
     }
 
-    // Optionally queue for later retry via OllamaClient
-    if (useOfflineQueue && isRetryableError(error)) {
-      try {
-        const { getInstance: getOllamaClient } = require('../services/OllamaClient');
-        const client = getOllamaClient();
-        if (client && typeof client._addToOfflineQueue === 'function') {
-          logger.info(`[${operation}] Adding failed request to offline queue`);
-          // Note: The actual queueing happens in the caller with full context
-        }
-      } catch (queueError) {
-        logger.debug('[OllamaApiRetry] Could not access offline queue:', queueError.message);
-      }
-    }
+    // FIX 79: Removed misleading dead code that logged "Adding failed request
+    // to offline queue" without actually queueing anything. Offline queueing
+    // is handled by callers (OllamaClient) that have full operation context.
 
     throw error;
   }
@@ -469,5 +481,6 @@ module.exports = {
   categorizeError,
   calculateDelayWithJitter,
   checkOllamaHealth,
-  DEFAULT_JITTER_FACTOR
+  DEFAULT_JITTER_FACTOR,
+  ollamaGlobalSemaphore
 };

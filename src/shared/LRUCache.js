@@ -8,7 +8,21 @@
  * @module shared/LRUCache
  */
 
-const { logger } = require('./logger');
+// FIX: Robust logger import with fallback for cross-process safety
+let logger;
+try {
+  const loggerModule = require('./logger');
+  logger = loggerModule.createLogger ? loggerModule.createLogger('LRUCache') : loggerModule.logger;
+} catch {
+  logger = {
+    debug: () => {},
+    info: () => {},
+    // eslint-disable-next-line no-console
+    warn: console.warn.bind(console, '[LRUCache]'),
+    // eslint-disable-next-line no-console
+    error: console.error.bind(console, '[LRUCache]')
+  };
+}
 
 /**
  * LRU Cache with optional TTL, metrics, and lifecycle management
@@ -110,9 +124,11 @@ class LRUCache {
       return null;
     }
 
-    // Update access sequence for access-based LRU
+    // Update access order: delete and re-insert so Map iteration order reflects recency
     if (this.lruStrategy === 'access') {
       entry.accessSeq = ++this._accessCounter;
+      this.cache.delete(key);
+      this.cache.set(key, entry);
     }
 
     if (this.trackMetrics) this.metrics.hits++;
@@ -147,15 +163,15 @@ class LRUCache {
    * Peek at a cache entry without side effects.
    * Does not update LRU ordering or metrics.
    * @param {string} key - Cache key
-   * @returns {*} Cached value or null if not found/expired
+   * @returns {*} Cached value or undefined if not found/expired
    * @private
    */
   _peek(key) {
     const entry = this.cache.get(key);
-    if (!entry) return null;
+    if (!entry) return undefined;
     if (this._isExpired(entry)) {
       this.cache.delete(key);
-      return null;
+      return undefined;
     }
     return entry.data;
   }
@@ -166,7 +182,7 @@ class LRUCache {
    * @returns {boolean}
    */
   has(key) {
-    return this._peek(key) !== null;
+    return this._peek(key) !== undefined;
   }
 
   /**
@@ -290,21 +306,10 @@ class LRUCache {
    * @private
    */
   _evictOne() {
-    let keyToEvict;
-
-    if (this.lruStrategy === 'access') {
-      // Find entry with lowest access sequence (oldest access)
-      let lowestSeq = Infinity;
-      for (const [key, entry] of this.cache.entries()) {
-        if (entry.accessSeq < lowestSeq) {
-          lowestSeq = entry.accessSeq;
-          keyToEvict = key;
-        }
-      }
-    } else {
-      // Insertion-based: first entry in Map is oldest
-      keyToEvict = this.cache.keys().next().value;
-    }
+    // Both strategies now use Map insertion order (O(1)):
+    // - 'insertion': first entry is oldest by insertion
+    // - 'access': get() re-inserts on access, so first entry is least-recently-used
+    const keyToEvict = this.cache.keys().next().value;
 
     if (keyToEvict) {
       this.cache.delete(keyToEvict);

@@ -7,6 +7,12 @@ const { isNotFoundError } = require('../../shared/errorClassifier');
 const { RETRY } = require('../../shared/performanceConstants');
 
 const logger = createLogger('ProcessingStateService');
+
+// Cleanup thresholds: how long completed/failed entries are retained before eviction
+const COMPLETED_TTL_MS = 30 * 60 * 1000; // 30 minutes for done entries
+const FAILED_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours for failed entries
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000; // Run sweep every 5 minutes
+
 /**
  * ProcessingStateService
  * - Persists analysis jobs and organize batches to disk so work can resume after crashes/restarts
@@ -23,11 +29,19 @@ class ProcessingStateService {
     this._initPromise = null;
     this._writeLock = Promise.resolve();
 
+    // Debounce persistence: coalesce rapid state transitions into a single disk write
+    this._saveDebounceTimer = null;
+    this._saveDebounceMs = 500;
+    this._saveDebounceResolvers = [];
+
     // Track consecutive save failures for error monitoring
     this._consecutiveSaveFailures = 0;
     this._maxConsecutiveFailures = 3;
     // FIX: Track last save error so callers can check if save failed
     this._lastSaveError = null;
+
+    // Periodic cleanup interval reference (set during initialize, cleared on destroy)
+    this._sweepInterval = null;
   }
 
   /**
@@ -62,28 +76,34 @@ class ProcessingStateService {
       return Promise.resolve();
     }
 
-    this._initPromise = (async () => {
-      try {
-        await this.loadState();
-        this.initialized = true;
-      } catch {
-        // FIX: Wrap fallback logic in try-catch to handle save failures
-        try {
-          this.state = this.createEmptyState();
-          await this._saveStateInternal(); // Use internal method to avoid double-locking
-          this.initialized = true;
-          // FIX CRIT-32: Explicitly reset initialized flag on failure
-        } catch (saveError) {
-          // FIX: Clear _initPromise so next call can retry
-          logger.error('[ProcessingStateService] Failed to save initial state:', saveError.message);
-          this._initPromise = null;
-          this.initialized = false;
-          throw saveError;
-        }
-      }
-    })();
+    // FIX: Store promise and clear in external finally block (not inside the async body)
+    // to prevent the promise reference from being nulled before callers can observe it.
+    this._initPromise = this._doInitialize();
+    try {
+      return await this._initPromise;
+    } finally {
+      this._initPromise = null;
+    }
+  }
 
-    return this._initPromise;
+  /** @private */
+  async _doInitialize() {
+    try {
+      await this.loadState();
+      this.initialized = true;
+      this._startSweepInterval();
+    } catch {
+      try {
+        this.state = this.createEmptyState();
+        await this._saveStateInternal();
+        this.initialized = true;
+        this._startSweepInterval();
+      } catch (saveError) {
+        logger.error('[ProcessingStateService] Failed to save initial state:', saveError.message);
+        this.initialized = false;
+        throw saveError;
+      }
+    }
   }
 
   createEmptyState() {
@@ -190,18 +210,68 @@ class ProcessingStateService {
    */
   async saveState() {
     // Update the state timestamp immediately (for callers that check it)
+    this.state.updatedAt = new Date().toISOString();
+
+    // Debounce: coalesce rapid save calls into one disk write
+    return new Promise((resolve) => {
+      this._saveDebounceResolvers.push(resolve);
+      if (this._saveDebounceTimer) clearTimeout(this._saveDebounceTimer);
+      this._saveDebounceTimer = setTimeout(() => {
+        this._saveDebounceTimer = null;
+        this._flushSaveState();
+      }, this._saveDebounceMs);
+      // Allow the Node process to exit even if a debounced save is pending
+      if (this._saveDebounceTimer?.unref) {
+        this._saveDebounceTimer.unref();
+      }
+    });
+  }
+
+  /**
+   * Immediately flush debounced save (used during shutdown)
+   */
+  async flushSaveState() {
+    if (this._saveDebounceTimer) {
+      clearTimeout(this._saveDebounceTimer);
+      this._saveDebounceTimer = null;
+    }
+    if (this._saveDebounceResolvers.length > 0) {
+      await this._flushSaveState();
+    }
+  }
+
+  /** @private */
+  async _flushSaveState() {
+    const resolvers = this._saveDebounceResolvers;
+    this._saveDebounceResolvers = [];
+
+    // Capture state snapshot NOW
     const now = new Date().toISOString();
     this.state.updatedAt = now;
-
-    // Capture state snapshot NOW, before waiting for lock
-    // This ensures we save the state as it was when saveState was called
-    // FIX Bug 24: Use try/catch to handle potential circular references in state
     let stateSnapshot;
     try {
       stateSnapshot = JSON.parse(JSON.stringify(this.state));
     } catch {
-      // Fallback: shallow clone the state and stringify individual values
-      stateSnapshot = { ...this.state, updatedAt: now };
+      const deepCopySafe = (obj) => {
+        try {
+          return JSON.parse(JSON.stringify(obj));
+        } catch {
+          if (typeof structuredClone === 'function') {
+            try {
+              return structuredClone(obj);
+            } catch {
+              return { ...(obj || {}) };
+            }
+          }
+          return { ...(obj || {}) };
+        }
+      };
+      stateSnapshot = {
+        ...this.state,
+        updatedAt: now,
+        analysis: deepCopySafe(this.state.analysis),
+        organize: deepCopySafe(this.state.organize)
+      };
     }
 
     // Chain this save after any pending saves complete
@@ -215,11 +285,116 @@ class ProcessingStateService {
       })
       .catch((err) => {
         saveResult = this._handleSaveFailure(err);
-        // NOTE: Error is intentionally NOT re-thrown to maintain backward compatibility.
-        // Callers can use getLastSaveError() or isSaveHealthy() to check save status.
       });
 
-    return this._writeLock.then(() => saveResult);
+    await this._writeLock;
+    for (const r of resolvers) r(saveResult);
+    return saveResult;
+  }
+
+  // ===== Stale entry cleanup =====
+
+  /**
+   * Start the periodic sweep interval. Safe to call multiple times; only one
+   * interval will be active at a time.
+   * @private
+   */
+  _startSweepInterval() {
+    if (this._sweepInterval) return;
+    this._sweepInterval = setInterval(() => {
+      this._sweepStaleEntries().catch((err) => {
+        logger.error('[ProcessingStateService] Sweep failed:', err?.message);
+      });
+    }, SWEEP_INTERVAL_MS);
+    // Allow the Node process to exit even if the interval is still running
+    if (this._sweepInterval.unref) {
+      this._sweepInterval.unref();
+    }
+  }
+
+  /**
+   * Remove analysis jobs and organize batches that have reached a terminal
+   * state (done / failed) and are older than their respective TTL thresholds.
+   * Only persists to disk when at least one entry was evicted.
+   * @private
+   */
+  async _sweepStaleEntries() {
+    if (!this.state) return;
+
+    const now = Date.now();
+    let evicted = 0;
+
+    // --- Analysis jobs ---
+    const jobs = this.state.analysis.jobs;
+    for (const filePath of Object.keys(jobs)) {
+      const job = jobs[filePath];
+      if (job.status === 'done' || job.status === 'failed') {
+        const timestamp = job.completedAt || job.startedAt;
+        if (!timestamp) {
+          // No timestamp at all -- treat as stale
+          delete jobs[filePath];
+          evicted++;
+          continue;
+        }
+        const age = now - new Date(timestamp).getTime();
+        const ttl = job.status === 'done' ? COMPLETED_TTL_MS : FAILED_TTL_MS;
+        if (age > ttl) {
+          delete jobs[filePath];
+          evicted++;
+        }
+      }
+    }
+
+    // --- Organize batches ---
+    const batches = this.state.organize.batches;
+    for (const batchId of Object.keys(batches)) {
+      const batch = batches[batchId];
+      if (!batch.completedAt) continue; // Still in-progress -- keep
+
+      const age = now - new Date(batch.completedAt).getTime();
+      // Completed batches may contain failed ops; use the longer TTL
+      const hasFailed =
+        Array.isArray(batch.operations) && batch.operations.some((op) => op.status === 'failed');
+      const ttl = hasFailed ? FAILED_TTL_MS : COMPLETED_TTL_MS;
+      if (age > ttl) {
+        delete batches[batchId];
+        evicted++;
+      }
+    }
+
+    if (evicted > 0) {
+      logger.info(`[ProcessingStateService] Swept ${evicted} stale entries`);
+      this.state.analysis.lastUpdated = new Date().toISOString();
+      this.state.organize.lastUpdated = this.state.analysis.lastUpdated;
+      await this.saveState();
+    }
+  }
+
+  /**
+   * Shutdown hook for ServiceContainer compatibility.
+   * ServiceContainer calls shutdown() during coordinated teardown.
+   */
+  async shutdown() {
+    await this.destroy();
+  }
+
+  /**
+   * Tear down the service: stop the periodic sweep and run a final cleanup.
+   * Safe to call multiple times.
+   */
+  async destroy() {
+    if (this._sweepInterval) {
+      clearInterval(this._sweepInterval);
+      this._sweepInterval = null;
+    }
+    // Flush any pending debounced saves before shutdown
+    await this.flushSaveState();
+    // Final sweep before shutdown so stale entries do not persist on disk
+    try {
+      await this._sweepStaleEntries();
+    } catch {
+      // Best-effort during shutdown
+    }
   }
 
   // ===== Analysis tracking =====
@@ -294,6 +469,24 @@ class ProcessingStateService {
     await this.initialize();
     if (this.state.analysis.jobs[filePath]) {
       delete this.state.analysis.jobs[filePath];
+      this.state.analysis.lastUpdated = new Date().toISOString();
+      await this.saveState();
+    }
+  }
+
+  /**
+   * Move a job entry from one file path to another
+   * FIX: Provides a safe API for path updates that go through saveState's
+   * write lock, instead of external callers mutating state.analysis.jobs directly.
+   * @param {string} oldPath - Original file path
+   * @param {string} newPath - New file path
+   */
+  async moveJob(oldPath, newPath) {
+    await this.initialize();
+    const job = this.state.analysis.jobs[oldPath];
+    if (job) {
+      this.state.analysis.jobs[newPath] = { ...job, movedFrom: oldPath };
+      delete this.state.analysis.jobs[oldPath];
       this.state.analysis.lastUpdated = new Date().toISOString();
       await this.saveState();
     }

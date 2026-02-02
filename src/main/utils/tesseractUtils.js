@@ -50,8 +50,7 @@ function getTesseractBinaryPath() {
 function getTesseractOptions(baseOptions = {}) {
   const tesseractPath = getTesseractBinaryPath();
   if (!tesseractPath || tesseractPath === 'tesseract') return baseOptions;
-  const binary = /\s/.test(tesseractPath) ? `"${tesseractPath}"` : tesseractPath;
-  return { ...baseOptions, binary };
+  return { ...baseOptions, binary: tesseractPath };
 }
 
 function getAvailabilityFromCache() {
@@ -189,8 +188,11 @@ async function recognizeWithTesseractJs(input, options = {}) {
     return result?.data?.text || '';
   };
 
-  jsWorkerQueue = jsWorkerQueue.then(task, task);
-  return jsWorkerQueue;
+  // Swallow errors from previous tasks cleanly (queue is just for serialization)
+  // so current task's errors propagate correctly to its caller
+  const current = jsWorkerQueue.catch(() => {}).then(task);
+  jsWorkerQueue = current.catch(() => {}); // Keep queue alive even if task fails
+  return current;
 }
 
 async function recognizeIfAvailable(tesseract, input, options = {}) {
@@ -229,13 +231,32 @@ async function recognizeIfAvailable(tesseract, input, options = {}) {
   }
 }
 
-function resetTesseractAvailability() {
-  availabilityCache = null;
-  availabilityCheck = null;
-  warnedUnavailable = false;
+/**
+ * Terminate the tesseract.js worker if one is active.
+ * Safe to call even if no worker was created.
+ */
+async function terminateJsWorker() {
+  if (!jsWorkerPromise) return;
+  try {
+    const worker = await jsWorkerPromise;
+    if (worker && typeof worker.terminate === 'function') {
+      await worker.terminate();
+    }
+  } catch {
+    // Ignore errors during termination
+  }
   jsWorkerPromise = null;
   jsWorkerLang = null;
   jsWorkerQueue = Promise.resolve();
+}
+
+function resetTesseractAvailability() {
+  // FIX: Terminate the worker before dropping the reference to prevent process leak
+  // Use fire-and-forget since callers expect a sync function
+  terminateJsWorker().catch(() => {});
+  availabilityCache = null;
+  availabilityCheck = null;
+  warnedUnavailable = false;
 }
 
 module.exports = {
@@ -244,5 +265,6 @@ module.exports = {
   isTesseractAvailable,
   getTesseractBinaryInfo,
   recognizeIfAvailable,
-  resetTesseractAvailability
+  resetTesseractAvailability,
+  terminateJsWorker
 };

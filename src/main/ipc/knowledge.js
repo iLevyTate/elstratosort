@@ -15,6 +15,7 @@ function registerKnowledgeIpc(servicesOrParams) {
   const { ipcMain, IPC_CHANNELS, logger } = context.core;
   const { getServiceIntegration } = context;
 
+  let _cachedFallbackService = null;
   const getRelationshipService = () => {
     try {
       if (container?.has?.(ServiceIds.RELATIONSHIP_INDEX)) {
@@ -31,8 +32,13 @@ function registerKnowledgeIpc(servicesOrParams) {
       return integration.relationshipIndex;
     }
 
+    // FIX 81: Cache fallback instance and guard against null analysisHistory
     const analysisHistoryService = integration?.analysisHistory;
-    return new RelationshipIndexService({ analysisHistoryService });
+    if (!analysisHistoryService) return null;
+    if (!_cachedFallbackService) {
+      _cachedFallbackService = new RelationshipIndexService({ analysisHistoryService });
+    }
+    return _cachedFallbackService;
   };
 
   registerHandlers({
@@ -44,6 +50,7 @@ function registerKnowledgeIpc(servicesOrParams) {
         schema: schemas.relationshipEdges,
         handler: async (event, { fileIds, minWeight, maxEdges } = {}) => {
           const service = getRelationshipService();
+          if (!service) return [];
           return service.getEdges(fileIds, { minWeight, maxEdges });
         }
       },
@@ -51,6 +58,7 @@ function registerKnowledgeIpc(servicesOrParams) {
         schema: schemas.relationshipStats,
         handler: async () => {
           const service = getRelationshipService();
+          if (!service) return { totalEdges: 0, totalNodes: 0 };
           return service.getStats();
         }
       }

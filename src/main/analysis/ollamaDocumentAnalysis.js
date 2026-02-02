@@ -220,7 +220,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
     return {
       purpose: 'Video file',
-      project: fileName.replace(fileExtension, ''),
+      project: path.basename(fileName, fileExtension),
       category: safeCategory,
       date: fileDate,
       keywords: intelligentKeywords,
@@ -269,22 +269,14 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
     if (fileExtension === '.pdf') {
       try {
-        // FIX: Wrap long-running PDF extraction with timeout
-        // PDF extraction can hang indefinitely on malformed files
-        extractedText = await withTimeout(
-          extractTextFromPdf(filePath, fileName),
-          TIMEOUTS.FILE_READ || 30000,
-          `PDF extraction for ${fileName}`
-        );
+        // FIX: Don't double-wrap with withTimeout — extractTextFromPdf already has
+        // a 120s internal timeout, and ocrPdfIfNeeded has a 180s internal timeout.
+        // Wrapping with a 60s outer timeout killed extractions prematurely.
+        extractedText = await extractTextFromPdf(filePath, fileName);
 
         if (!extractedText || extractedText.trim().length === 0) {
-          // Try OCR fallback for image-only PDFs
-          // OCR is also heavy, so it needs its own timeout
-          const ocrText = await withTimeout(
-            ocrPdfIfNeeded(filePath),
-            TIMEOUTS.AI_ANALYSIS_MEDIUM || 60000,
-            `OCR for ${fileName}`
-          );
+          // Try OCR fallback for image-only PDFs (has internal 180s timeout)
+          const ocrText = await ocrPdfIfNeeded(filePath);
           extractedText = ocrText || '';
         }
       } catch (pdfError) {
@@ -292,13 +284,9 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
           fileName,
           error: pdfError.message
         });
-        // Attempt OCR fallback before giving up (with timeout)
+        // Attempt OCR fallback before giving up (has internal 180s timeout)
         try {
-          const ocrText = await withTimeout(
-            ocrPdfIfNeeded(filePath),
-            TIMEOUTS.AI_ANALYSIS_MEDIUM || 60000,
-            `Fallback OCR for ${fileName}`
-          );
+          const ocrText = await ocrPdfIfNeeded(filePath);
           if (ocrText && ocrText.trim().length > 0) {
             extractedText = ocrText;
           } else {
@@ -390,9 +378,11 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
       try {
         logExtraction();
+        // FIX: Use AI_ANALYSIS_LONG (120s) instead of AI_ANALYSIS_MEDIUM (60s)
+        // to avoid killing XLSX/PPTX extractions that have 90s internal timeouts.
         extractedText = await withTimeout(
           extractOfficeContent(),
-          TIMEOUTS.FILE_READ || 30000,
+          TIMEOUTS.AI_ANALYSIS_LONG || 120000,
           `Office extraction for ${fileName}`
         );
 
@@ -415,7 +405,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
           logExtraction();
           extractedText = await withTimeout(
             extractOfficeContent(),
-            TIMEOUTS.FILE_READ || 30000,
+            TIMEOUTS.AI_ANALYSIS_LONG || 120000,
             `Retry office extraction for ${fileName}`
           );
           logger.info(`Office extraction recovered after retry`, {
@@ -473,7 +463,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
           return {
             purpose,
-            project: fileName.replace(fileExtension, ''),
+            project: path.basename(fileName, fileExtension),
             category,
             date: fileDate,
             keywords: intelligentKeywords || [],
@@ -497,9 +487,9 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
       return {
         purpose: archiveInfo.summary || 'Archive file',
-        project: fileName.replace(fileExtension, ''),
+        project: path.basename(fileName, fileExtension),
         category,
-        date: new Date().toISOString().split('T')[0],
+        date: fileDate,
         keywords,
         confidence: 70,
         suggestedName: safeSuggestedName(fileName, fileExtension),

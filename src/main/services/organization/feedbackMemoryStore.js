@@ -372,7 +372,7 @@ class FeedbackMemoryStore {
         items: this._entries,
         lastUpdated: new Date().toISOString()
       };
-      const tempPath = `${this.filePath}.tmp`;
+      const tempPath = `${this.filePath}.${Date.now()}.tmp`;
       await fs.writeFile(tempPath, JSON.stringify(payload, null, 2));
       await fs.rename(tempPath, this.filePath);
       feedbackMetrics.jsonWrites++;
@@ -385,7 +385,7 @@ class FeedbackMemoryStore {
       this._saving = false;
       if (this._needsSave) {
         this._needsSave = false;
-        this._save();
+        await this._save();
       }
     }
   }

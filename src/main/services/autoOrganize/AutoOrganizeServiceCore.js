@@ -352,6 +352,9 @@ class AutoOrganizeServiceCore {
    * Update confidence thresholds
    */
   updateThresholds(newThresholds) {
+    if (newThresholds && typeof newThresholds.confidence !== 'undefined') {
+      newThresholds.confidence = coerceConfidence(newThresholds.confidence);
+    }
     this.thresholds = {
       ...this.thresholds,
       ...newThresholds

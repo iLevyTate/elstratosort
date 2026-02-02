@@ -35,7 +35,7 @@ const {
   loadOllamaConfig
 } = require('./ollamaUtils');
 const { buildOllamaOptions } = require('./services/PerformanceService');
-const { getService: getSettingsService } = require('./services/SettingsService');
+const { getInstance: getSettingsService } = require('./services/SettingsService');
 // Import service integration
 const ServiceIntegration = require('./services/ServiceIntegration');
 
@@ -220,7 +220,9 @@ function createWindow() {
   }
 
   // FIX: Set mutex for window creation - will be cleared once window is ready or on error
-  _windowCreationPromise = new Promise((resolve) => {
+  // FIX: Capture the promise in a local variable before returning, because the executor
+  // runs synchronously and may set _windowCreationPromise = null before the return statement
+  const promise = new Promise((resolve) => {
     try {
       // Double-check after acquiring mutex (another call might have created window)
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -267,8 +269,9 @@ function createWindow() {
       resolve();
     }
   });
+  _windowCreationPromise = promise;
 
-  return _windowCreationPromise;
+  return promise;
 }
 
 /**

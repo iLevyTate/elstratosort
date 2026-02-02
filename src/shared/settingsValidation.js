@@ -61,8 +61,11 @@ const isSafeWindowsAbsoluteFallback = (value) => {
   if (URL_SCHEME_PATTERN.test(value)) return false;
   if (WINDOWS_DRIVE_ONLY_PATTERN.test(value)) return false;
   if (TRAVERSAL_SEGMENT_PATTERN.test(value)) return false;
+  // FIX 88: Strip drive letter prefix before testing for invalid chars.
+  // The colon in "C:" was matching the invalid-char regex, rejecting all Windows paths.
+  const pathAfterDrive = value.replace(/^[a-zA-Z]:/, '');
   // eslint-disable-next-line no-control-regex
-  if (/[<>:"|?*\x00-\x1f]/.test(value)) return false;
+  if (/[<>:"|?*\x00-\x1f]/.test(pathAfterDrive)) return false;
   return true;
 };
 

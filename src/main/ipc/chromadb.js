@@ -34,7 +34,17 @@ function registerChromaDBIpc(servicesOrParams) {
   const { ipcMain, IPC_CHANNELS, logger } = container.core;
   const { getMainWindow } = container.electron;
 
-  const chromaDbService = getChromaDB();
+  // FIX 91: Lazy-resolve service per handler call to handle initialization race.
+  // Previously, getChromaDB() was called once at registration and cached as a const.
+  // If null at registration, all handlers would crash.
+  const resolveChromaDb = () => {
+    try {
+      return getChromaDB();
+    } catch {
+      return null;
+    }
+  };
+  const chromaDbService = resolveChromaDb();
 
   // Set up event forwarding to renderer
   _setupEventForwarding(chromaDbService, getMainWindow, IPC_CHANNELS, logger);
@@ -47,13 +57,23 @@ function registerChromaDBIpc(servicesOrParams) {
     ipcMain,
     IPC_CHANNELS.CHROMADB.GET_STATUS,
     withErrorLogging(logger, async () => {
+      const svc = resolveChromaDb();
+      if (!svc)
+        return {
+          isOnline: false,
+          isInitialized: false,
+          circuitState: 'UNKNOWN',
+          isServiceAvailable: false,
+          queueSize: 0,
+          serverUrl: null
+        };
       return {
-        isOnline: chromaDbService.isOnline,
-        isInitialized: chromaDbService.initialized,
-        circuitState: chromaDbService.getCircuitState(),
-        isServiceAvailable: chromaDbService.isServiceAvailable(),
-        queueSize: chromaDbService.offlineQueue?.size() || 0,
-        serverUrl: chromaDbService.serverUrl
+        isOnline: svc.isOnline,
+        isInitialized: svc.initialized,
+        circuitState: svc.getCircuitState(),
+        isServiceAvailable: svc.isServiceAvailable(),
+        queueSize: svc.offlineQueue?.size() || 0,
+        serverUrl: svc.serverUrl
       };
     })
   );

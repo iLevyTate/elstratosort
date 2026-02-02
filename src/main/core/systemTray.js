@@ -123,10 +123,11 @@ function registerGlobalShortcut() {
 
     if (success) {
       logger.info(`[TRAY] Registered global shortcut: ${SEARCH_SHORTCUT}`);
-      // FIX CRIT-27: Ensure global shortcuts are unregistered on app quit/crash
-      // Check if listener is already registered to avoid duplicates
-      if (app.listenerCount('will-quit') === 0) {
+      // FIX CRIT-27: Ensure global shortcuts are unregistered on app quit/crash.
+      // Use a dedicated flag instead of listenerCount (which includes unrelated listeners).
+      if (!registerGlobalShortcut._willQuitRegistered) {
         app.on('will-quit', unregisterGlobalShortcuts);
+        registerGlobalShortcut._willQuitRegistered = true;
       }
     } else {
       logger.warn(`[TRAY] Failed to register global shortcut: ${SEARCH_SHORTCUT}`);

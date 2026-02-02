@@ -32,7 +32,23 @@
  * module.exports = { MyService: MyServiceClass, getInstance, ... };
  */
 
-const { logger } = require('./logger');
+// FIX: Robust logger import with fallback for cross-process safety
+let logger;
+try {
+  const loggerModule = require('./logger');
+  logger = loggerModule.createLogger
+    ? loggerModule.createLogger('SingletonFactory')
+    : loggerModule.logger;
+} catch {
+  logger = {
+    debug: () => {},
+    info: () => {},
+    // eslint-disable-next-line no-console
+    warn: console.warn.bind(console, '[SingletonFactory]'),
+    // eslint-disable-next-line no-console
+    error: console.error.bind(console, '[SingletonFactory]')
+  };
+}
 
 /**
  * Get a Node-style require that bypasses Webpack static analysis when bundled.

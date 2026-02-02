@@ -1,6 +1,7 @@
 const path = require('path');
 const { processTemplate, makeUniqueFileName } = require('./autoOrganize/namingUtils');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
+const logger = createLogger('SemanticRenameService');
 
 /**
  * Service for semantic file renaming.

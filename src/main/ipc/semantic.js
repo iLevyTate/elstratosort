@@ -34,6 +34,8 @@ const {
   readEmbeddingIndexMetadata,
   writeEmbeddingIndexMetadata
 } = require('../services/chromadb/embeddingIndexMetadata');
+const { createLogger } = require('../../shared/logger');
+const _moduleLogger = createLogger('semantic-ipc');
 
 /**
  * Verify embedding model is available in Ollama
@@ -241,10 +243,18 @@ let _rebuildLock = {
  */
 function acquireRebuildLock(operation) {
   if (_rebuildLock.isLocked) {
-    return {
-      acquired: false,
-      reason: `Another rebuild operation is in progress: ${_rebuildLock.operation} (started ${Math.round((Date.now() - _rebuildLock.startedAt) / 1000)}s ago)`
-    };
+    const STALE_LOCK_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+    if (Date.now() - _rebuildLock.startedAt > STALE_LOCK_TIMEOUT) {
+      _moduleLogger.warn('[SEMANTIC] Force-releasing stale rebuild lock', {
+        staleLockOperation: _rebuildLock.operation,
+        heldForMs: Date.now() - _rebuildLock.startedAt
+      });
+    } else {
+      return {
+        acquired: false,
+        reason: `Another rebuild operation is in progress: ${_rebuildLock.operation} (started ${Math.round((Date.now() - _rebuildLock.startedAt) / 1000)}s ago)`
+      };
+    }
   }
   _rebuildLock = {
     isLocked: true,

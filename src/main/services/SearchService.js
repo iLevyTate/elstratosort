@@ -131,6 +131,12 @@ class SearchService {
     // Lock to prevent concurrent index builds (race condition fix)
     this._indexBuildPromise = null;
 
+    // FIX: Debounce timer for invalidateAndRebuild to prevent index thrashing
+    // during batch operations (e.g., multi-file move/rename/delete)
+    this._rebuildDebounceTimer = null;
+    this._rebuildDebounceResolvers = [];
+    this._REBUILD_DEBOUNCE_MS = 500;
+
     // Maximum cache size in bytes (50MB) to prevent unbounded growth
     this._maxCacheSize = 50 * 1024 * 1024;
   }
@@ -294,6 +300,12 @@ class SearchService {
         return [];
       };
 
+      // Release old index and document map before building new ones to avoid
+      // holding both old and new data structures in memory simultaneously.
+      // This prevents doubling memory usage during rebuilds.
+      this.bm25Index = null;
+      this.documentMap = new Map();
+
       // Build index into local variables first so a build failure doesn't leave partial state behind.
       const nextDocumentMap = new Map();
       const self = this;
@@ -395,6 +407,11 @@ class SearchService {
       // Cache serialized index for faster subsequent loads (with size limit)
       // Lunr indexes support JSON serialization
       try {
+        // Release old serialized caches before creating new ones to avoid
+        // holding both old and new serialized strings in memory simultaneously.
+        this._serializedIndex = null;
+        this._serializedDocMap = null;
+
         const serializedIndex = JSON.stringify(this.bm25Index);
         const serializedDocMap = JSON.stringify(Array.from(this.documentMap.entries()));
         const totalSize =
@@ -448,6 +465,12 @@ class SearchService {
 
     try {
       const startTime = Date.now();
+
+      // Release old references before assigning new ones to avoid
+      // holding both old and new data structures in memory simultaneously.
+      this.bm25Index = null;
+      this.documentMap = new Map();
+
       this.bm25Index = lunr.Index.load(JSON.parse(this._serializedIndex));
       this.documentMap = new Map(JSON.parse(this._serializedDocMap));
       this.indexBuiltAt = Date.now();
@@ -511,14 +534,16 @@ class SearchService {
 
         // FIX C-1: Throw descriptive error instead of returning null
         // This allows UI to display actionable message to user
-        throw new Error(errorMsg);
+        const err = new Error(errorMsg);
+        err.isDimensionMismatch = true;
+        throw err;
       }
 
       return vector;
     } catch (e) {
       // FIX C-1: Re-throw dimension mismatch errors so UI can display actionable message
       // Other errors (like ChromaDB unavailable) can fail safely to null
-      if (e.message && e.message.includes('Embedding model changed')) {
+      if (e.isDimensionMismatch) {
         throw e; // Propagate to UI with clear message
       }
       // If dimension check fails for other reasons, log and fail safe
@@ -1074,9 +1099,14 @@ class SearchService {
   _normalizeScores(results) {
     if (!results || results.length === 0) return results;
 
-    const scores = results.map((r) => r.score || 0);
-    const minScore = Math.min(...scores);
-    const maxScore = Math.max(...scores);
+    // Use loop instead of Math.min/max spread to avoid RangeError on large arrays
+    let minScore = Infinity;
+    let maxScore = -Infinity;
+    for (let i = 0; i < results.length; i++) {
+      const s = results[i].score || 0;
+      if (s < minScore) minScore = s;
+      if (s > maxScore) maxScore = s;
+    }
     const range = maxScore - minScore;
 
     // If all scores are the same, return with score 1.0
@@ -1163,8 +1193,11 @@ class SearchService {
     }
 
     // Normalize RRF scores to [0, 1]
-    const rrfValues = Array.from(rrfScores.values());
-    const maxRrf = Math.max(...rrfValues, SEARCH.MIN_EPSILON);
+    // Use loop instead of Math.max(...spread) to avoid stack overflow on large result sets
+    let maxRrf = SEARCH.MIN_EPSILON;
+    for (const val of rrfScores.values()) {
+      if (val > maxRrf) maxRrf = val;
+    }
 
     // Sort by RRF score
     const fusedResults = Array.from(rrfScores.entries())
@@ -1209,12 +1242,17 @@ class SearchService {
     let timeoutId = null;
 
     try {
+      const searchPromise = this.vectorSearch(query, topK).then((results) => {
+        // Clear timeout immediately when search completes to prevent leak
+        if (timeoutId) clearTimeout(timeoutId);
+        return { results, timedOut: false };
+      });
+
+      // Absorb rejection if timeout wins the race to prevent unhandled rejection
+      searchPromise.catch(() => {});
+
       const result = await Promise.race([
-        this.vectorSearch(query, topK).then((results) => {
-          // Clear timeout immediately when search completes to prevent leak
-          if (timeoutId) clearTimeout(timeoutId);
-          return { results, timedOut: false };
-        }),
+        searchPromise,
         new Promise((resolve) => {
           timeoutId = setTimeout(() => resolve({ results: [], timedOut: true }), timeout);
         })
@@ -1280,24 +1318,29 @@ class SearchService {
     const validResults = [];
     const ghostIds = [];
 
-    for (const result of results) {
+    // FIX (M-6): Check file existence in parallel instead of sequential awaits.
+    // 20 results previously required 20 serial filesystem round-trips.
+    const checks = results.map(async (result) => {
       const filePath = result.metadata?.path;
-
-      if (!filePath) {
-        // No path - can't validate, include anyway
-        validResults.push(result);
-        continue;
-      }
-
+      if (!filePath) return { result, exists: true }; // No path - can't validate, include anyway
       try {
         await fs.access(filePath);
-        validResults.push(result);
+        return { result, exists: true };
       } catch {
-        // File doesn't exist - ghost entry
+        return { result, exists: false };
+      }
+    });
+
+    const settled = await Promise.all(checks);
+
+    for (const { result, exists } of settled) {
+      if (exists) {
+        validResults.push(result);
+      } else {
         ghostIds.push(result.id);
         logger.debug('[SearchService] Ghost entry found in results:', {
           id: result.id,
-          path: filePath
+          path: result.metadata?.path
         });
       }
     }
@@ -1884,23 +1927,44 @@ class SearchService {
     this.invalidateIndex({ reason, oldPath, newPath });
 
     if (immediate) {
-      try {
-        logger.info('[SearchService] Triggering immediate BM25 rebuild', { reason });
-        const result = await this.buildBM25Index();
-        return {
-          success: result.success,
-          rebuilt: true,
-          indexed: result.indexed,
-          error: result.error
-        };
-      } catch (error) {
-        logger.warn('[SearchService] Immediate rebuild failed', { error: error.message });
-        return {
-          success: false,
-          rebuilt: false,
-          error: error.message
-        };
-      }
+      // FIX: Debounce rapid rebuild requests to prevent index thrashing
+      // during batch operations (e.g., moving 50 files triggers 50 invalidations).
+      // Callers get a promise that resolves once the coalesced rebuild completes.
+      return new Promise((resolve) => {
+        this._rebuildDebounceResolvers.push(resolve);
+
+        if (this._rebuildDebounceTimer) {
+          clearTimeout(this._rebuildDebounceTimer);
+        }
+
+        this._rebuildDebounceTimer = setTimeout(async () => {
+          this._rebuildDebounceTimer = null;
+          const resolvers = this._rebuildDebounceResolvers.splice(0);
+
+          try {
+            logger.info('[SearchService] Triggering debounced BM25 rebuild', {
+              reason,
+              coalescedRequests: resolvers.length
+            });
+            const result = await this.buildBM25Index();
+            const response = {
+              success: result.success,
+              rebuilt: true,
+              indexed: result.indexed,
+              error: result.error
+            };
+            for (const r of resolvers) r(response);
+          } catch (error) {
+            logger.warn('[SearchService] Debounced rebuild failed', { error: error.message });
+            const response = {
+              success: false,
+              rebuilt: false,
+              error: error.message
+            };
+            for (const r of resolvers) r(response);
+          }
+        }, this._REBUILD_DEBOUNCE_MS);
+      });
     }
 
     // If not immediate, just return success (index will rebuild on next search)
@@ -2688,6 +2752,18 @@ class SearchService {
    */
   cleanup() {
     logger.info('[SearchService] Cleaning up...');
+
+    // Clear rebuild debounce timer and resolve pending promises
+    if (this._rebuildDebounceTimer) {
+      clearTimeout(this._rebuildDebounceTimer);
+      this._rebuildDebounceTimer = null;
+    }
+    if (this._rebuildDebounceResolvers && this._rebuildDebounceResolvers.length > 0) {
+      const pendingResolvers = this._rebuildDebounceResolvers.splice(0);
+      for (const r of pendingResolvers) {
+        r({ success: false, rebuilt: false, error: 'Service shutting down' });
+      }
+    }
 
     // Clear index and cache
     this.bm25Index = null;

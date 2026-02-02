@@ -145,13 +145,8 @@ class ReRankerService {
 
     // Score cache keys are in format: "query::fileId"
     // We need to invalidate any entry where the fileId contains the path
-    let invalidated = 0;
-    for (const key of this.scoreCache.keys()) {
-      if (key.includes(filePath)) {
-        this.scoreCache.delete(key);
-        invalidated++;
-      }
-    }
+    // FIX: Use LRUCache.invalidateWhere() instead of non-existent keys() method
+    const invalidated = this.scoreCache.invalidateWhere((key) => key.includes(filePath));
 
     if (invalidated > 0) {
       logger.debug(`[ReRankerService] Invalidated ${invalidated} scores for path change`);
@@ -360,17 +355,16 @@ class ReRankerService {
     });
 
     try {
-      const responsePromise = this.ollamaService.generate({
-        prompt,
+      const responsePromise = this.ollamaService.analyzeText(prompt, {
         model: this.textModel,
-        options: {
+        ollamaOptions: {
           temperature: 0.1, // Low temperature for consistent scoring
           num_predict: 10 // Short response expected
         }
       });
 
       const response = await Promise.race([responsePromise, timeoutPromise]);
-      return response?.response || response?.text || '';
+      return response?.response || '';
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
