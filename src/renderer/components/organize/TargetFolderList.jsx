@@ -5,6 +5,7 @@ import { List } from 'react-window';
 import { Folder } from 'lucide-react';
 import { UI_VIRTUALIZATION } from '../../../shared/constants';
 import { formatDisplayPath } from '../../utils/pathDisplay';
+import { joinPath } from '../../utils/platform';
 import Card from '../ui/Card';
 import { Text } from '../ui/Typography';
 import { selectRedactPaths } from '../../store/selectors';
@@ -20,7 +21,7 @@ const getListHeight = (folderCount, viewportHeight) => {
 };
 
 const FolderItem = memo(function FolderItem({ folder, defaultLocation, style }) {
-  const fullPath = folder.path || `${defaultLocation}/${folder.name}`;
+  const fullPath = folder.path || joinPath(defaultLocation, folder.name);
   // PERF: Use memoized selector instead of inline Boolean coercion
   const redactPaths = useSelector(selectRedactPaths);
   const displayPath = formatDisplayPath(fullPath, { redact: redactPaths, segments: 2 });

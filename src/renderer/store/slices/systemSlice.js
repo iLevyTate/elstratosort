@@ -97,7 +97,11 @@ const systemSlice = createSlice({
       state.metrics = { ...state.metrics, ...action.payload };
     },
     updateHealth: (state, action) => {
-      state.health = { ...state.health, ...action.payload };
+      const payload = action.payload;
+      const changed = Object.keys(payload).some((key) => state.health[key] !== payload[key]);
+      if (changed) {
+        state.health = { ...state.health, ...payload };
+      }
     },
     addNotification: (state, action) => {
       // Limit notifications history

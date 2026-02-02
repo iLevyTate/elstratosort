@@ -135,7 +135,9 @@ const Select = memo(
         });
         setIsOpen(false);
       },
-      [rest]
+      // FIX: Use specific properties instead of [rest] which recreates every render
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [rest.onChange, rest.name]
     );
 
     const handleKeyDown = useCallback(

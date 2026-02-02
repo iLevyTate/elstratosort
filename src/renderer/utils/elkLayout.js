@@ -170,6 +170,8 @@ export async function elkLayout(nodes, edges, options = {}) {
 
   // Build ELK graph structure
   const nodeIds = new Set(nodes.map((n) => n.id));
+  let skippedEdgeCount = 0;
+  const skippedEdgeSamples = [];
   const elkGraph = {
     id: 'root',
     layoutOptions,
@@ -186,12 +188,17 @@ export async function elkLayout(nodes, edges, options = {}) {
         const hasSource = nodeIds.has(edge.source);
         const hasTarget = nodeIds.has(edge.target);
         if (!hasSource || !hasTarget) {
-          logger.warn(`[elkLayout] Skipping edge ${edge.id}: missing node(s)`, {
-            source: edge.source,
-            target: edge.target,
-            hasSource,
-            hasTarget
-          });
+          // Avoid log spam: collect and emit a single summary warning below.
+          skippedEdgeCount++;
+          if (skippedEdgeSamples.length < 10) {
+            skippedEdgeSamples.push({
+              id: edge.id,
+              source: edge.source,
+              target: edge.target,
+              hasSource,
+              hasTarget
+            });
+          }
           return false;
         }
         return true;
@@ -204,6 +211,11 @@ export async function elkLayout(nodes, edges, options = {}) {
   };
 
   try {
+    if (skippedEdgeCount > 0) {
+      logger.warn(`[elkLayout] Skipping ${skippedEdgeCount} edge(s) referencing missing node(s)`, {
+        sample: skippedEdgeSamples
+      });
+    }
     // Performance measurement for large graphs
     const startTime = performance.now();
 
@@ -836,7 +848,6 @@ export function clusterExpansionLayout(clusterNode, memberNodes, options = {}) {
   const {
     offsetX = 450, // Increased from 300 to prevent node overlap
     spacing = 80 // Increased from 60
-    // fanAngle = Math.PI / 3 // 60 degrees spread - reserved for future radial layout
   } = options;
 
   if (!clusterNode || !memberNodes || memberNodes.length === 0) {

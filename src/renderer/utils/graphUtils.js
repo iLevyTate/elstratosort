@@ -113,7 +113,7 @@ export function getEdgeStyle(kind, hop = 0) {
     }
   };
 
-  const style = baseStyles[kind] || baseStyles.similarity;
+  const style = { ...(baseStyles[kind] || baseStyles.similarity) };
 
   // Apply opacity decay for multi-hop edges
   if (hop > 0) {

@@ -267,7 +267,7 @@ const OrganizationSuggestions = memo(function OrganizationSuggestions({
                       )}
                       {alt.method && (
                         <Text as="span" variant="tiny" className="text-system-gray-500">
-                          Source: {alt.method.replace('_', ' ')}
+                          Source: {alt.method.replaceAll('_', ' ')}
                         </Text>
                       )}
                       {alt.memoryAdjustment && (

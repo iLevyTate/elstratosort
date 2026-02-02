@@ -31,13 +31,21 @@ export const isFileDragEvent = (event) => {
   const dataTransfer = event?.dataTransfer;
   if (!dataTransfer) return false;
 
+  // Check types first — available during dragenter, dragover, AND drop.
+  // dataTransfer.files and dataTransfer.items are empty/restricted during
+  // dragenter/dragover in most browsers, so checking them first caused the
+  // drop zone to never activate visually.
+  const types = collectDataTransferTypes(dataTransfer);
+  if (types.some((type) => FILE_DRAG_TYPES.has(String(type).toLowerCase()))) {
+    return true;
+  }
+
   if (dataTransfer.files && dataTransfer.files.length > 0) return true;
   if (dataTransfer.items && Array.from(dataTransfer.items).some((item) => item?.kind === 'file')) {
     return true;
   }
 
-  const types = collectDataTransferTypes(dataTransfer);
-  return types.some((type) => FILE_DRAG_TYPES.has(String(type).toLowerCase()));
+  return false;
 };
 
 export const extractDroppedFiles = (dataTransfer) => {

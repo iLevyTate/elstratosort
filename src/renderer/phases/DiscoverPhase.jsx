@@ -239,21 +239,9 @@ function DiscoverPhase() {
     }
   }, [addNotification, dismissEmbeddingPrompt]);
 
-  const phaseData = {
-    selectedFiles,
-    analysisResults,
-    isAnalyzing,
-    analysisProgress,
-    currentAnalysisFile,
-    fileStates,
-    namingConvention: {
-      convention: namingConvention,
-      dateFormat,
-      caseConvention,
-      separator
-    },
-    totalAnalysisFailure
-  };
+  // Stable ref for useFileActions -- only organizedFiles is accessed from phaseData
+  // and it's never set in this context, so use a stable empty object
+  const stablePhaseData = useRef({}).current;
 
   const extendedActions = useMemo(
     () => ({
@@ -308,7 +296,7 @@ function DiscoverPhase() {
     setFileStates,
     addNotification,
     showConfirm,
-    phaseData
+    phaseData: stablePhaseData
   });
 
   const handleFileDrop = useCallback(
@@ -378,30 +366,38 @@ function DiscoverPhase() {
   useEffect(() => {
     if (!isAnalyzing) return;
 
-    const lastActivity = analysisProgress?.lastActivity || Date.now();
-    const timeSinceActivity = Date.now() - lastActivity;
-    const current = analysisProgress?.current || 0;
-    const total = analysisProgress?.total || 0;
+    const checkStalled = () => {
+      const lastActivity = analysisProgress?.lastActivity || Date.now();
+      const timeSinceActivity = Date.now() - lastActivity;
+      const current = analysisProgress?.current || 0;
+      const total = analysisProgress?.total || 0;
 
-    if (current === 0 && total > 0 && timeSinceActivity > TIMEOUTS.STUCK_ANALYSIS_CHECK) {
-      addNotification('Analysis paused. Restarting...', 'info', 3000, 'analysis-stalled');
-      resetAnalysisState('Analysis stalled with no progress after 2 minutes');
-      return;
-    }
+      if (current === 0 && total > 0 && timeSinceActivity > TIMEOUTS.STUCK_ANALYSIS_CHECK) {
+        addNotification('Analysis paused. Restarting...', 'info', 3000, 'analysis-stalled');
+        resetAnalysisState('Analysis stalled with no progress after 2 minutes');
+        return;
+      }
 
-    if (timeSinceActivity > TIMEOUTS.ANALYSIS_LOCK) {
-      addNotification('Analysis timed out. Ready to retry.', 'info', 3000, 'analysis-auto-reset');
-      resetAnalysisState('Stuck analysis state after 5 minutes of inactivity');
-    }
+      if (timeSinceActivity > TIMEOUTS.ANALYSIS_LOCK) {
+        addNotification('Analysis timed out. Ready to retry.', 'info', 3000, 'analysis-auto-reset');
+        resetAnalysisState('Stuck analysis state after 5 minutes of inactivity');
+      }
+    };
+
+    // Check immediately on dependency change
+    checkStalled();
+
+    // Also check periodically in case dependencies stop updating (the exact stall scenario)
+    const intervalId = setInterval(checkStalled, 30000);
+    return () => clearInterval(intervalId);
   }, [isAnalyzing, analysisProgress, addNotification, resetAnalysisState]);
 
-  const getFileStateDisplay = useCallback(
-    (filePath, hasAnalysis) => {
-      const state = fileStates[filePath]?.state || 'pending';
-      return getFileStateDisplayInfo(state, hasAnalysis);
-    },
-    [fileStates]
-  );
+  const fileStatesRef = useRef(fileStates);
+  fileStatesRef.current = fileStates;
+  const getFileStateDisplay = useCallback((filePath, hasAnalysis) => {
+    const state = fileStatesRef.current[filePath]?.state || 'pending';
+    return getFileStateDisplayInfo(state, hasAnalysis);
+  }, []);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-relaxed lg:gap-spacious pb-6">

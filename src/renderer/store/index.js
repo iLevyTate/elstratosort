@@ -67,9 +67,13 @@ const loadState = () => {
               activeModal: null,
               settings: null,
               settingsLoading: false,
+              settingsError: null,
               isOrganizing: false,
               isAnalyzing: false,
+              isDiscovering: false,
+              isProcessing: false,
               navigationError: null,
+              lastOperationError: null,
               resetCounter: 0
             },
             files: {
@@ -77,6 +81,7 @@ const loadState = () => {
               selectedFiles: serializeLoadedFiles(parsedLegacy.phaseData?.selectedFiles || []),
               smartFolders: parsedLegacy.phaseData?.smartFolders || [],
               smartFoldersLoading: false,
+              smartFoldersError: null,
               organizedFiles: serializeLoadedFiles(parsedLegacy.phaseData?.organizedFiles || []),
               fileStates: parsedLegacy.phaseData?.fileStates || {},
               namingConvention: parsedLegacy.phaseData?.namingConvention || {
@@ -127,9 +132,13 @@ const loadState = () => {
           activeModal: null,
           settings: null,
           settingsLoading: false,
+          settingsError: null,
           isOrganizing: false,
           isAnalyzing: false,
+          isDiscovering: false,
+          isProcessing: false,
           navigationError: null,
+          lastOperationError: null,
           resetCounter: 0
         },
         files: {
@@ -163,7 +172,11 @@ const loadState = () => {
           unreadNotificationCount: 0,
           version: '1.0.0',
           documentsPath: parsed.system?.documentsPath || null,
-          documentsPathLoading: false
+          documentsPathLoading: false,
+          documentsPathError: null,
+          redactPaths: null,
+          redactPathsLoading: false,
+          redactPathsError: null
         }
       };
     }
@@ -183,9 +196,13 @@ const loadState = () => {
         activeModal: null,
         settings: parsed.ui?.settings || null,
         settingsLoading: false,
+        settingsError: null,
         isOrganizing: false,
         isAnalyzing: false,
+        isDiscovering: false,
+        isProcessing: false,
         navigationError: null,
+        lastOperationError: null,
         resetCounter: 0
       },
       files: {
@@ -222,7 +239,11 @@ const loadState = () => {
         unreadNotificationCount: 0,
         version: '1.0.0',
         documentsPath: parsed.system?.documentsPath || null,
-        documentsPathLoading: false
+        documentsPathLoading: false,
+        documentsPathError: null,
+        redactPaths: null,
+        redactPathsLoading: false,
+        redactPathsError: null
       }
     };
   } catch {

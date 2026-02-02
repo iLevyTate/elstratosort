@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, memo, useState, useCallback } from 'react';
+import React, { useEffect, useRef, memo, useState, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
 import PropTypes from 'prop-types';
 import { X, AlertTriangle, Info, HelpCircle, FileText } from 'lucide-react';
@@ -50,23 +50,50 @@ const Modal = memo(function Modal({
 }) {
   const modalRef = useRef(null);
   const previousFocusRef = useRef(null);
+  const focusTimerRef = useRef(null);
+  const closingTimerRef = useRef(null);
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const instanceId = useId();
+  const titleId = `modal-title-${instanceId}`;
+  const descriptionId = `modal-description-${instanceId}`;
 
   // Handle open/close with animation
+  // Timer is stored in a ref to avoid being canceled by effect cleanup
+  // when setIsClosing(true) triggers a dependency-driven re-run.
   useEffect(() => {
     if (isOpen && !isVisible && !isClosing) {
+      if (closingTimerRef.current) {
+        clearTimeout(closingTimerRef.current);
+        closingTimerRef.current = null;
+      }
       setIsVisible(true);
+    } else if (isOpen && isClosing) {
+      // Re-opened while closing - cancel close animation
+      if (closingTimerRef.current) {
+        clearTimeout(closingTimerRef.current);
+        closingTimerRef.current = null;
+      }
+      setIsClosing(false);
     } else if (!isOpen && isVisible && !isClosing) {
       // Start closing animation
       setIsClosing(true);
-      const timer = setTimeout(() => {
+      closingTimerRef.current = setTimeout(() => {
+        closingTimerRef.current = null;
         setIsVisible(false);
         setIsClosing(false);
       }, ANIMATION.EXIT);
-      return () => clearTimeout(timer);
     }
   }, [isOpen, isVisible, isClosing]);
+
+  // Clean up closing timer on unmount
+  useEffect(() => {
+    return () => {
+      if (closingTimerRef.current) {
+        clearTimeout(closingTimerRef.current);
+      }
+    };
+  }, []);
 
   // Handle ESC key
   useEffect(() => {
@@ -86,12 +113,11 @@ const Modal = memo(function Modal({
   useEffect(() => {
     if (isVisible && !isClosing) {
       previousFocusRef.current = document.activeElement;
-      // Small timeout to ensure render is complete
-      setTimeout(() => {
+      // Small timeout to ensure render is complete - store ref for cleanup
+      focusTimerRef.current = setTimeout(() => {
         if (initialFocusRef?.current) {
           initialFocusRef.current.focus();
         } else if (modalRef.current) {
-          // Find first focusable element or focus the modal itself
           const focusable = modalRef.current.querySelectorAll(
             'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
           );
@@ -103,23 +129,29 @@ const Modal = memo(function Modal({
         }
       }, 50);
     } else if (!isVisible) {
-      // Restore focus
       if (previousFocusRef.current) {
         previousFocusRef.current.focus();
       }
     }
+    return () => {
+      if (focusTimerRef.current) {
+        clearTimeout(focusTimerRef.current);
+        focusTimerRef.current = null;
+      }
+    };
   }, [isVisible, isClosing, initialFocusRef]);
 
   // Lock scroll on the actual app scroller (main-content) and body as fallback
   useEffect(() => {
     if (!isVisible) return undefined;
 
-    lockAppScroll();
+    const lockId = `modal-${instanceId}`;
+    lockAppScroll(lockId);
 
     return () => {
-      unlockAppScroll();
+      unlockAppScroll(lockId);
     };
-  }, [isVisible]);
+  }, [isVisible, instanceId]);
 
   if (!isVisible) return null;
 
@@ -141,8 +173,8 @@ const Modal = memo(function Modal({
       style={{ paddingTop: overlayPaddingTop, paddingBottom: overlayPaddingBottom }}
       role="dialog"
       aria-modal="true"
-      aria-labelledby="modal-title"
-      aria-describedby={description ? 'modal-description' : undefined}
+      aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
     >
       {/* Backdrop */}
       <div
@@ -167,11 +199,11 @@ const Modal = memo(function Modal({
           className={`flex items-center justify-between px-6 py-4 ${variantStyles.header} shrink-0`}
         >
           <div>
-            <Heading as="h3" variant="h4" id="modal-title" className={variantStyles.title}>
+            <Heading as="h3" variant="h4" id={titleId} className={variantStyles.title}>
               {title}
             </Heading>
             {description && (
-              <Text id="modal-description" variant="small" className="mt-1 text-system-gray-500">
+              <Text id={descriptionId} variant="small" className="mt-1 text-system-gray-500">
                 {description}
               </Text>
             )}

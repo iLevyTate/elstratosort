@@ -18,7 +18,15 @@ import { createSelector } from '@reduxjs/toolkit';
  * The previous implementation used WeakMap which fails for arrays because
  * array references change even when contents are the same. This simpler
  * approach stores the last result and compares with shallow equality.
+ *
+ * FIX C12: Prevents memory retention of mega-arrays. When the result is an
+ * array with more than LARGE_ARRAY_THRESHOLD items, we skip caching to avoid
+ * pinning large data structures in the closure indefinitely (e.g., after the
+ * consuming component unmounts). Small results are still cached for reference
+ * stability, which is the common case for filtered file lists.
  */
+const LARGE_ARRAY_THRESHOLD = 1000;
+
 const createStableSelector = (dependencies, combiner) => {
   const baseSelector = createSelector(dependencies, combiner);
 
@@ -62,6 +70,14 @@ const createStableSelector = (dependencies, combiner) => {
     }
 
     const result = baseSelector(state);
+
+    // FIX C12: Skip caching for large arrays to prevent pinning mega-arrays
+    // in the closure. Components handling 1000+ items should already handle
+    // reference changes via virtualization or their own memoization.
+    if (Array.isArray(result) && result.length > LARGE_ARRAY_THRESHOLD) {
+      lastResult = null;
+      return result;
+    }
 
     // Return cached result if shallowly equal
     if (shallowEqual(result, lastResult)) {
@@ -155,7 +171,8 @@ export const selectFilesWithAnalysis = createSelector(
       let { extension } = file;
       if (!extension && file.path) {
         const fileName = file.name || file.path.split(/[\\/]/).pop() || '';
-        extension = fileName.includes('.') ? `.${fileName.split('.').pop().toLowerCase()}` : '';
+        const dotIdx = fileName.lastIndexOf('.');
+        extension = dotIdx > 0 ? fileName.slice(dotIdx).toLowerCase() : '';
       }
 
       return {
@@ -267,11 +284,12 @@ export const selectRedactPaths = createSelector(
   (redactPaths) => Boolean(redactPaths)
 );
 
-// Re-export base selectors for convenience
+// Re-export base selectors and constants for convenience
 export {
   selectSelectedFiles,
   selectAnalysisResults,
   selectFileStates,
   selectSmartFolders,
-  selectOrganizedFiles
+  selectOrganizedFiles,
+  LARGE_ARRAY_THRESHOLD
 };

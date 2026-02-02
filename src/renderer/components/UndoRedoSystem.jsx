@@ -1,5 +1,5 @@
 // Undo/Redo System - Implementing Shneiderman's Golden Rule #6: Action Reversal Infrastructure
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import {
   FileText,
@@ -256,6 +256,13 @@ class UndoStack {
     this.notifyListeners();
 
     return action;
+  }
+
+  revertUndo() {
+    if (this.pointer < this.stack.length - 1) {
+      this.pointer++;
+      this.notifyListeners();
+    }
   }
 
   revertRedo() {
@@ -583,7 +590,7 @@ export function UndoRedoProvider({ children }) {
       await undoAction.undo(undoAction);
       showSuccess(`Undid: ${undoAction.description}`);
     } catch (error) {
-      undoStack.push(undoAction);
+      undoStack.revertUndo();
       showError(`Failed to undo ${undoAction.description}: ${error?.message || String(error)}`);
     } finally {
       actionMutexRef.current = false;
@@ -619,13 +626,13 @@ export function UndoRedoProvider({ children }) {
     }
   }, [undoStack, showInfo, showSuccess, showError]);
 
-  const getActionDescription = (action) => {
+  const getActionDescription = useCallback((action) => {
     const metadata = ACTION_METADATA[action.type];
     if (metadata) {
       return action.description || metadata.description;
     }
     return action.description || 'Unknown action';
-  };
+  }, []);
 
   const clearHistory = useCallback(async () => {
     try {
@@ -666,10 +673,25 @@ export function UndoRedoProvider({ children }) {
           const stepsToUndo = currentIndex - targetIndex;
           showInfo(`Jumping back ${stepsToUndo} step${stepsToUndo > 1 ? 's' : ''}...`);
 
+          let completedSteps = 0;
           for (let i = 0; i < stepsToUndo; i++) {
-            const action = undoStack.undo();
-            if (action) {
-              await action.undo(action);
+            try {
+              const action = undoStack.undo();
+              if (action) {
+                await action.undo(action);
+              }
+              completedSteps++;
+            } catch (stepError) {
+              // Pointer was already moved by undo(), restore it to keep stack consistent
+              try {
+                undoStack.redo();
+              } catch {
+                /* ignore restore failure */
+              }
+              showError(
+                `Jump failed at step ${completedSteps + 1}/${stepsToUndo}: ${stepError?.message || String(stepError)}`
+              );
+              return;
             }
           }
           showSuccess(`Jumped back to step ${targetIndex + 1}`);
@@ -677,10 +699,25 @@ export function UndoRedoProvider({ children }) {
           const stepsToRedo = targetIndex - currentIndex;
           showInfo(`Jumping forward ${stepsToRedo} step${stepsToRedo > 1 ? 's' : ''}...`);
 
+          let completedSteps = 0;
           for (let i = 0; i < stepsToRedo; i++) {
-            const action = undoStack.redo();
-            if (action) {
-              await action.redo(action);
+            try {
+              const action = undoStack.redo();
+              if (action) {
+                await action.redo(action);
+              }
+              completedSteps++;
+            } catch (stepError) {
+              // Pointer was already moved by redo(), restore it to keep stack consistent
+              try {
+                undoStack.undo();
+              } catch {
+                /* ignore restore failure */
+              }
+              showError(
+                `Jump failed at step ${completedSteps + 1}/${stepsToRedo}: ${stepError?.message || String(stepError)}`
+              );
+              return;
             }
           }
           showSuccess(`Jumped forward to step ${targetIndex + 1}`);
@@ -695,26 +732,44 @@ export function UndoRedoProvider({ children }) {
     [undoStack, showInfo, showSuccess, showError]
   );
 
-  const contextValue = {
-    executeAction,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-    isExecuting,
-    getHistory: () => undoStack.getHistory(),
-    getFullStack: () => undoStack.getFullStack(),
-    getCurrentIndex: () => undoStack.getCurrentIndex(),
-    fullStack: fullStackState,
-    currentIndex: currentIndexState,
-    jumpToPoint,
-    peek: () => undoStack.peek(),
-    peekRedo: () => undoStack.peekRedo(),
-    getActionDescription,
-    clearHistory,
-    isHistoryVisible,
-    setIsHistoryVisible
-  };
+  const contextValue = useMemo(
+    () => ({
+      executeAction,
+      undo,
+      redo,
+      canUndo,
+      canRedo,
+      isExecuting,
+      getHistory: () => undoStack.getHistory(),
+      getFullStack: () => undoStack.getFullStack(),
+      getCurrentIndex: () => undoStack.getCurrentIndex(),
+      fullStack: fullStackState,
+      currentIndex: currentIndexState,
+      jumpToPoint,
+      peek: () => undoStack.peek(),
+      peekRedo: () => undoStack.peekRedo(),
+      getActionDescription,
+      clearHistory,
+      isHistoryVisible,
+      setIsHistoryVisible
+    }),
+    [
+      executeAction,
+      undo,
+      redo,
+      canUndo,
+      canRedo,
+      isExecuting,
+      undoStack,
+      fullStackState,
+      currentIndexState,
+      jumpToPoint,
+      getActionDescription,
+      clearHistory,
+      isHistoryVisible,
+      setIsHistoryVisible
+    ]
+  );
 
   return (
     <UndoRedoContext.Provider value={contextValue}>

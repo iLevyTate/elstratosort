@@ -48,7 +48,7 @@ export function clearAutoAdvanceTimeout() {
  * @param {number} attempt - Current attempt number (1-based)
  * @returns {Promise<Object>} Analysis result
  */
-async function analyzeWithRetry(filePath, attempt = 1) {
+async function analyzeWithRetry(filePath, attempt = 1, abortSignal = null) {
   // Ensure electronAPI is available before attempting analysis
   if (!window.electronAPI?.files?.analyze) {
     throw new Error(
@@ -65,9 +65,17 @@ async function analyzeWithRetry(filePath, attempt = 1) {
       error.message?.includes('ECONNREFUSED');
 
     if (attempt < RETRY.MAX_ATTEMPTS_MEDIUM && isTransient) {
+      // Check abort signal before waiting for retry delay
+      if (abortSignal?.aborted) {
+        throw new Error('Analysis cancelled by user');
+      }
       const delay = RETRY.INITIAL_DELAY * 2 ** (attempt - 1);
       await new Promise((r) => setTimeout(r, delay));
-      return analyzeWithRetry(filePath, attempt + 1);
+      // Check again after delay in case cancellation happened during wait
+      if (abortSignal?.aborted) {
+        throw new Error('Analysis cancelled by user');
+      }
+      return analyzeWithRetry(filePath, attempt + 1, abortSignal);
     }
     throw error;
   }
@@ -349,7 +357,7 @@ export function useAnalysis(options = {}) {
       const mergedResults = dedupeSuggestedNames(
         mergeAnalysisResults(analysisResultsRef.current, pending)
       );
-      const mergedStates = mergeFileStates(fileStatesRef.current, mergedResults);
+      const mergedStates = mergeFileStates(fileStatesRef.current, pending);
 
       // Keep refs in sync to avoid stale merges between flushes
       analysisResultsRef.current = mergedResults;
@@ -357,10 +365,8 @@ export function useAnalysis(options = {}) {
 
       setAnalysisResults(mergedResults);
       setFileStates(mergedStates);
-      actions.setPhaseData('analysisResults', mergedResults);
-      actions.setPhaseData('fileStates', mergedStates);
     },
-    [setAnalysisResults, setFileStates, actions]
+    [setAnalysisResults, setFileStates]
   );
 
   const recordAnalysisResult = useCallback(
@@ -861,7 +867,7 @@ export function useAnalysis(options = {}) {
 
           try {
             const analysis = await withTimeout(
-              analyzeWithRetry(file.path),
+              analyzeWithRetry(file.path, 1, abortSignal),
               TIMEOUTS.AI_ANALYSIS_LONG,
               `Analysis for ${fileName}`
             );
@@ -1026,9 +1032,6 @@ export function useAnalysis(options = {}) {
 
         const mergedStates = mergeFileStates(fileStatesRef.current, mergedResults);
         setFileStates(mergedStates);
-
-        actions.setPhaseData('analysisResults', mergedResults);
-        actions.setPhaseData('fileStates', mergedStates);
 
         analysisResultsRef.current = mergedResults;
         fileStatesRef.current = mergedStates;
@@ -1226,6 +1229,8 @@ export function useAnalysis(options = {}) {
    * Clear analysis queue
    */
   const clearAnalysisQueue = useCallback(() => {
+    // Clear auto-advance timeout to prevent unexpected navigation
+    clearAutoAdvanceTimeoutRef(autoAdvanceTimeoutRef);
     // Clear any pending files
     pendingFilesRef.current = [];
     setAnalysisResults([]);

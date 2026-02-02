@@ -236,7 +236,7 @@ function SetupPhase() {
   };
 
   const handleSaveEdit = async () => {
-    if (!editingFolder.name.trim()) {
+    if (!editingFolder?.name?.trim()) {
       showWarning('Folder name cannot be empty');
       return;
     }

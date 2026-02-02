@@ -158,8 +158,8 @@ function safeDispatch(actionCreator, data) {
       dropOneEvent();
     }
 
-    // FIX HIGH-1: Track if we've already warned about overflow to avoid spam
-    if (!safeDispatch.hasWarnedOverflow) {
+    // FIX HIGH-1: Only warn about overflow when queue is actually near capacity
+    if (!safeDispatch.hasWarnedOverflow && eventQueue.length >= MAX_EVENT_QUEUE_SIZE * 0.8) {
       safeDispatch.hasWarnedOverflow = true;
       if (eventQueue.length >= MAX_EVENT_QUEUE_SIZE) {
         dropOneEvent();
@@ -242,6 +242,9 @@ export function markStoreReady() {
   if (safeDispatch.hasWarnedOverflow) {
     safeDispatch.hasWarnedOverflow = false;
   }
+
+  // Recover any critical events that were persisted to localStorage during overflow
+  recoverPersistedCriticalEvents();
 }
 
 const ipcMiddleware = (store) => {
@@ -286,13 +289,11 @@ const ipcMiddleware = (store) => {
         // Show success notification
         const fileCount = validatedData.affectedFiles?.length || 0;
         if (fileCount > 0) {
-          store.dispatch(
-            addNotification({
-              message: `${validatedData.operationType || 'Operation'} complete: ${fileCount} file(s)`,
-              severity: 'success',
-              duration: 3000
-            })
-          );
+          safeDispatch(addNotification, {
+            message: `${validatedData.operationType || 'Operation'} complete: ${fileCount} file(s)`,
+            severity: 'success',
+            duration: 3000
+          });
         }
       });
       if (completeCleanup) cleanupFunctions.push(completeCleanup);
@@ -314,19 +315,14 @@ const ipcMiddleware = (store) => {
           errorType: validatedData.errorType,
           operationType: validatedData.operationType || 'Operation'
         });
-        store.dispatch(addNotification(notification));
+        safeDispatch(addNotification, notification);
 
         // Stop analysis if it was an analysis operation
-        // FIX: Wrap dispatch in try-catch to prevent silent failures
         if (
           validatedData.operationType === 'analyze' ||
           validatedData.operationType === 'batch_analyze'
         ) {
-          try {
-            store.dispatch(stopAnalysis());
-          } catch (e) {
-            logger.error('[IPC Middleware] Failed to dispatch stopAnalysis', { error: e.message });
-          }
+          safeDispatch(stopAnalysis, undefined);
         }
       });
       if (errorCleanup) cleanupFunctions.push(errorCleanup);
@@ -358,11 +354,11 @@ const ipcMiddleware = (store) => {
               oldPaths: validatedData.files,
               newPaths: validatedData.destinations
             };
-            store.dispatch(atomicUpdateFilePathsAfterMove(pathUpdate));
+            safeDispatch(atomicUpdateFilePathsAfterMove, pathUpdate);
           } else if (validatedData.operation === 'delete' && validatedData.files) {
             // FIX HIGH-7: Use atomic action to remove files from BOTH filesSlice AND analysisSlice
             // This prevents orphaned analysis results from accumulating
-            store.dispatch(atomicRemoveFilesWithCleanup(validatedData.files));
+            safeDispatch(atomicRemoveFilesWithCleanup, validatedData.files);
           }
 
           // FIX: Dispatch DOM event for components that need to react to file operations
@@ -396,7 +392,7 @@ const ipcMiddleware = (store) => {
 
         // Pass standardized notification directly to Redux
         // Main process now sends unified schema with: id, message, severity, duration, etc.
-        store.dispatch(addNotification(validatedData));
+        safeDispatch(addNotification, validatedData);
 
         // Emit custom event for toast display (decoupled from IPC middleware)
         // This allows NotificationContext to listen without duplicate IPC listeners
@@ -437,13 +433,11 @@ const ipcMiddleware = (store) => {
         if (!valid) return;
         logger.error('[IPC] App error event received', validatedData);
 
-        store.dispatch(
-          addNotification({
-            message: validatedData.message || validatedData.error || 'An error occurred',
-            severity: 'error',
-            duration: 6000
-          })
-        );
+        safeDispatch(addNotification, {
+          message: validatedData.message || validatedData.error || 'An error occurred',
+          severity: 'error',
+          duration: 6000
+        });
       });
       if (appErrorCleanup) cleanupFunctions.push(appErrorCleanup);
     }
@@ -488,9 +482,9 @@ const ipcMiddleware = (store) => {
         logger.debug('[IPC] ChromaDB status changed', { status: validatedData?.status });
 
         // Update health state with new ChromaDB status
-        if (validatedData?.status) {
-          const mapped = normalizeServiceHealth(validatedData.status);
-          store.dispatch(updateHealth({ chromadb: mapped }));
+        if (validatedData?.status || validatedData?.health) {
+          const mapped = normalizeServiceHealth(validatedData.status, validatedData.health);
+          safeDispatch(updateHealth, { chromadb: mapped });
         }
       });
       if (chromaStatusCleanup) cleanupFunctions.push(chromaStatusCleanup);
@@ -513,20 +507,18 @@ const ipcMiddleware = (store) => {
         if (validatedData?.service && (validatedData?.status || validatedData?.health)) {
           const service = validatedData.service.toLowerCase();
           if (service === 'chromadb' || service === 'ollama') {
-            const prevHealth = store.getState().system?.health?.[service];
+            const prevHealth = store.getState()?.system?.health?.[service];
             const mapped = normalizeServiceHealth(validatedData.status, validatedData.health);
-            store.dispatch(updateHealth({ [service]: mapped }));
+            safeDispatch(updateHealth, { [service]: mapped });
 
             // FIX HIGH-NOTIF-1: Notify user when critical services go offline
             if (prevHealth === 'online' && mapped === 'offline') {
               const serviceName = service === 'ollama' ? 'Ollama' : 'ChromaDB';
-              store.dispatch(
-                addNotification({
-                  message: `${serviceName} went offline. Some features may be unavailable.`,
-                  severity: 'warning',
-                  duration: 8000
-                })
-              );
+              safeDispatch(addNotification, {
+                message: `${serviceName} went offline. Some features may be unavailable.`,
+                severity: 'warning',
+                duration: 8000
+              });
             }
           }
         }
@@ -548,12 +540,12 @@ const ipcMiddleware = (store) => {
             status?.ollama?.status || (status?.ollama?.running ? 'running' : 'stopped'),
             status?.ollama?.health
           );
-          store.dispatch(updateHealth({ chromadb: chromaStatus, ollama: ollamaStatus }));
+          safeDispatch(updateHealth, { chromadb: chromaStatus, ollama: ollamaStatus });
         })
         .catch((error) => {
           logger.debug('[IPC] Failed to fetch dependency status', { error: error?.message });
           // FIX: Set services to 'unknown' on fetch failure so UI can show appropriate state
-          store.dispatch(updateHealth({ chromadb: 'unknown', ollama: 'unknown' }));
+          safeDispatch(updateHealth, { chromadb: 'unknown', ollama: 'unknown' });
         });
     }
 
@@ -607,6 +599,10 @@ export const cleanupIpcListeners = (isTeardown = false) => {
     isStoreReady = false;
     eventQueue = [];
     storeRef = null;
+    // FIX: Reset overflow warning flag so it can fire again after reinit
+    if (typeof safeDispatch !== 'undefined') {
+      safeDispatch.hasWarnedOverflow = false;
+    }
   }
 };
 

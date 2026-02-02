@@ -155,15 +155,19 @@ const SmartFolderItem = memo(function SmartFolderItem({
           <IconButton
             type="button"
             onClick={async () => {
+              const targetFolderId = editingFolder?.id;
               try {
                 const result = await window.electronAPI?.smartFolders?.generateDescription?.(
                   editingFolder.name
                 );
                 if (result?.success && result.description) {
-                  setEditingFolder((prev) => ({
-                    ...(prev || folder),
-                    description: result.description
-                  }));
+                  setEditingFolder((prev) => {
+                    if (prev?.id !== targetFolderId) return prev;
+                    return {
+                      ...(prev || folder),
+                      description: result.description
+                    };
+                  });
                   addNotification?.('Description generated', 'success');
                 } else {
                   addNotification?.(result?.error || 'Failed to generate description', 'error');
@@ -255,10 +259,18 @@ const SmartFolderItem = memo(function SmartFolderItem({
           {!folder.physicallyExists && (
             <IconButton
               onClick={async () => {
-                const result = await onCreateDirectory(folder.path);
-                if (result.success)
-                  addNotification?.(`Created directory: ${folder.name}`, 'success');
-                else addNotification?.(`Failed to create: ${result.error}`, 'error');
+                try {
+                  const result = await onCreateDirectory(folder.path);
+                  if (result?.success)
+                    addNotification?.(`Created directory: ${folder.name}`, 'success');
+                  else
+                    addNotification?.(
+                      `Failed to create: ${result?.error || 'Unknown error'}`,
+                      'error'
+                    );
+                } catch (err) {
+                  addNotification?.(`Failed to create directory: ${err.message}`, 'error');
+                }
               }}
               title="Create directory"
               variant="ghost"

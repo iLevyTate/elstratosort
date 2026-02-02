@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { AlertTriangle, Database, Info, FileText } from 'lucide-react';
 import Select from '../ui/Select';
@@ -36,18 +36,12 @@ function ModelSelectionSection({
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [stats, setStats] = useState(null);
   const [isRebuilding, setIsRebuilding] = useState(false);
-  const didMountRef = useRef(false);
-
   useEffect(() => {
-    if (!didMountRef.current) {
-      didMountRef.current = true;
-      if (window.electronAPI?.embeddings?.getStats) {
-        window.electronAPI.embeddings
-          .getStats()
-          .then((s) => setStats(s))
-          .catch((err) => logger.error('Failed to fetch stats', err));
-      }
-      return;
+    if (window.electronAPI?.embeddings?.getStats) {
+      window.electronAPI.embeddings
+        .getStats()
+        .then((s) => setStats(s))
+        .catch((err) => logger.error('Failed to fetch stats', err));
     }
   }, [settings.embeddingModel]);
 

@@ -36,6 +36,13 @@ const ORGANIZATION_STEPS = [
   { id: 'organize', label: 'Organize', Icon: CheckCircle }
 ];
 
+/** Normalize confidence from 0-1 or 0-100 to a 0-100 integer. */
+const normalizeConfidencePercent = (value) => {
+  if (!Number.isFinite(value)) return 0;
+  const normalized = value > 1 ? value : value * 100;
+  return Math.round(Math.min(100, Math.max(0, normalized)));
+};
+
 /**
  * SmartOrganizer - Simplified, intuitive interface for file organization
  * Guides users through the organization process with clear steps
@@ -134,14 +141,18 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
 
     if (files.length === 1) {
       const suggestion = suggestions[files[0].path];
-      if (suggestion?.confidence >= 0.8) {
+      if (normalizeConfidencePercent(suggestion?.confidence) >= 80) {
         highConfidenceSuggestions[files[0].path] = suggestion.primary;
       }
     } else if (Array.isArray(batchSuggestions?.groups)) {
       batchSuggestions.groups.forEach((group) => {
-        if (group.confidence >= 0.8) {
+        if (normalizeConfidencePercent(group.confidence) >= 80) {
           group.files.forEach((file) => {
-            highConfidenceSuggestions[file.path] = group.folder;
+            highConfidenceSuggestions[file.path] = {
+              folder: group.folder,
+              path: group.folder,
+              confidence: group.confidence
+            };
           });
         }
       });
@@ -297,13 +308,6 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
     ),
     [currentStep]
   );
-
-  // FIX: Memoize average confidence calculation to prevent recalculation on every render
-  const normalizeConfidencePercent = (value) => {
-    if (!Number.isFinite(value)) return 0;
-    const normalized = value > 1 ? value : value * 100;
-    return Math.round(Math.min(100, Math.max(0, normalized)));
-  };
 
   const averageConfidence = useMemo(() => {
     if (files.length === 1) {
@@ -554,7 +558,22 @@ function SmartOrganizer({ files = [], smartFolders = [], onOrganize, onCancel })
               <BatchOrganizationSuggestions
                 batchSuggestions={batchSuggestions}
                 onAcceptStrategy={() => {
-                  // Apply strategy to all files
+                  // Apply strategy to all files - populate acceptedSuggestions from batch groups
+                  const batchAccepted = {};
+                  if (Array.isArray(batchSuggestions?.groups)) {
+                    batchSuggestions.groups.forEach((group) => {
+                      if (Array.isArray(group.files)) {
+                        group.files.forEach((file) => {
+                          batchAccepted[file.path] = {
+                            folder: group.folder,
+                            path: group.folder,
+                            confidence: group.confidence
+                          };
+                        });
+                      }
+                    });
+                  }
+                  setAcceptedSuggestions(batchAccepted);
                   setCurrentStep('preview');
                 }}
                 onCustomizeGroup={handleCustomizeGroup}

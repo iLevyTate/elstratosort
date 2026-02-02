@@ -136,6 +136,15 @@ function OrganizePhase() {
     )
   });
 
+  // Reset index-based state when the file list changes to prevent index mismatches
+  const prevUnprocessedLengthRef = useRef(baseUnprocessedFiles.length);
+  useEffect(() => {
+    if (baseUnprocessedFiles.length !== prevUnprocessedLengthRef.current) {
+      prevUnprocessedLengthRef.current = baseUnprocessedFiles.length;
+      setEditingFiles({});
+    }
+  }, [baseUnprocessedFiles.length, setEditingFiles]);
+
   const { selectedFiles, setSelectedFiles, toggleFileSelection, selectAllFiles } = useFileSelection(
     baseUnprocessedFiles.length
   );
@@ -196,7 +205,7 @@ function OrganizePhase() {
         });
         results.forEach((result) => {
           if (result.success && result.path) {
-            markFilesAsProcessed([{ path: result.path, originalPath: result.originalPath }]);
+            markFilesAsProcessed([result.originalPath || result.path]);
           }
         });
       }

@@ -28,16 +28,13 @@ function AutoOrganizeSection({ settings, setSettings }) {
     [setSettings]
   );
 
-  const confidencePercent = useMemo(
-    () => Math.round((settings.confidenceThreshold ?? DEFAULT_CONFIDENCE) * 100),
-    [settings.confidenceThreshold]
-  );
   const clampedConfidence = useMemo(() => {
     const raw = settings.confidenceThreshold ?? DEFAULT_CONFIDENCE;
     const safe = Number.isFinite(raw) ? raw : DEFAULT_CONFIDENCE;
     return Math.min(CONFIDENCE_MAX, Math.max(CONFIDENCE_MIN, safe));
   }, [settings.confidenceThreshold]);
-  const confidenceSliderValue = Math.round(clampedConfidence * 100);
+  const confidencePercent = Math.round(clampedConfidence * 100);
+  const confidenceSliderValue = confidencePercent;
 
   return (
     <Card variant="default" className="space-y-5">

@@ -251,7 +251,7 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
 
   const isEmpty = safeResults.length === 0;
   const items = safeResults;
-  const handleAction = useCallback((action, path) => onFileAction(action, path), [onFileAction]);
+  const handleAction = onFileAction;
 
   const [containerNode, setContainerNode] = useState(null);
   const containerRef = useCallback((node) => {
@@ -288,19 +288,27 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
       return undefined;
     }
 
+    let rafId = null;
     const observer = new ResizeObserverCtor((entries) => {
       const entry = entries[0];
       if (entry) {
-        const { width, height } = entry.contentRect;
-        setDimensions({
-          width: width || 0,
-          height: height || (typeof window !== 'undefined' ? window.innerHeight * 0.6 : 600)
+        // Defer state update to avoid 'ResizeObserver loop limit exceeded' errors
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() => {
+          const { width, height } = entry.contentRect;
+          setDimensions({
+            width: width || 0,
+            height: height || (typeof window !== 'undefined' ? window.innerHeight * 0.6 : 600)
+          });
         });
       }
     });
 
     observer.observe(containerNode);
-    return () => observer.disconnect();
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      observer.disconnect();
+    };
   }, [containerNode]);
 
   const shouldVirtualize = items.length > VIRTUALIZATION_THRESHOLD;
@@ -351,15 +359,16 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
           Showing {items.length} files
         </Text>
         <List
-          key={`list-${items.length}`}
-          rowCount={items.length}
-          rowHeight={ITEM_HEIGHT + ITEM_GAP}
-          rowComponent={AnalysisResultRow}
-          rowProps={rowProps}
+          itemCount={items.length}
+          itemSize={ITEM_HEIGHT + ITEM_GAP}
+          itemData={listItemData}
           overscanCount={5}
+          height={dimensions.height || 600}
+          width="100%"
           className="scrollbar-thin scrollbar-thumb-system-gray-300 scrollbar-track-transparent"
-          style={{ height: dimensions.height, width: '100%' }}
-        />
+        >
+          {AnalysisResultRow}
+        </List>
       </div>
     );
   }

@@ -4,6 +4,7 @@ import { Folder, CheckCircle, XCircle } from 'lucide-react';
 import { Card, Button } from '../ui';
 import { Heading, Text } from '../ui/Typography';
 import { ErrorBoundaryCore } from '../ErrorBoundary';
+import { normalizeConfidence } from '../../utils/scoreUtils';
 
 function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel }) {
   const [previewTree, setPreviewTree] = useState({});
@@ -37,6 +38,7 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
       if (!suggestion) return;
 
       const folderPath = suggestion.path || suggestion.folder;
+      if (!folderPath) return; // Skip files with no target folder
       let newName = suggestion.suggestedName || file.name;
 
       // Ensure the original file extension is preserved
@@ -68,8 +70,9 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
 
       tree[folderPath].fileCount += 1;
       const count = tree[folderPath].fileCount;
-      tree[folderPath].confidence =
-        (tree[folderPath].confidence * (count - 1) + (suggestion.confidence || 0.5)) / count;
+      const normConf = normalizeConfidence(suggestion.confidence);
+      const safeConf = typeof normConf === 'number' && !isNaN(normConf) ? normConf : 50;
+      tree[folderPath].confidence = (tree[folderPath].confidence * (count - 1) + safeConf) / count;
 
       movedCount++;
       if (newName !== file.name) renamedCount++;
@@ -86,14 +89,14 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
     // Auto-expand folders with high confidence
     const toExpand = new Set();
     Object.entries(tree).forEach(([path, folder]) => {
-      if (folder.confidence > 0.7 || folder.files.length <= 5) {
+      if (folder.confidence > 70 || folder.files.length <= 5) {
         toExpand.add(path);
       }
     });
     setExpandedFolders(toExpand);
 
     return undefined;
-  }, [files, suggestions]);
+  }, [files, suggestions, strategy]);
 
   const normalizeConfidenceFraction = (value) => {
     if (!Number.isFinite(value)) return 0;

@@ -7,7 +7,7 @@ const SAVE_DEBOUNCE_MS = 1000;
 const MAX_DEBOUNCE_WAIT_MS = 5000;
 const MAX_LOCALSTORAGE_BYTES = 4 * 1024 * 1024;
 let saveTimeout = null;
-let lastSaveAttempt = 0; // Track when we last tried to save
+let firstPendingRequestTime = 0; // Track when the first unsaved debounce request was made
 let lastSavedPhase = null;
 let lastSavedFilesCount = -1;
 let lastSavedResultsCount = -1;
@@ -15,10 +15,10 @@ let lastSavedOrganizedFilesCount = -1;
 let lastSavedSmartFoldersCount = -1;
 // FIX: Track fileStates changes to ensure file state updates trigger persistence
 let lastSavedFileStatesCount = -1;
-let lastSavedFileStatesHash = '';
+let lastSavedFileStatesRef = null;
 // FIX: Track UI state changes
 let lastSavedSidebarOpen = null;
-let lastSavedShowSettings = null;
+// NOTE: showSettings is intentionally NOT persisted (transient overlay state).
 
 // FIX: Re-entry guard to prevent infinite loops if save triggers actions
 let isSaving = false;
@@ -31,20 +31,19 @@ let isSaving = false;
  * @returns {{ success: boolean, degraded?: string }} - Result with optional degradation level
  */
 function saveWithQuotaHandling(key, stateToSave) {
-  const estimateSize = (value) => {
-    try {
-      const json = JSON.stringify(value);
-      if (typeof TextEncoder !== 'undefined') {
-        return new TextEncoder().encode(json).length;
-      }
-      return json.length;
-    } catch {
-      return Number.POSITIVE_INFINITY;
-    }
-  };
-
+  // Pre-serialize once and reuse for both size estimation and storage
   let candidate = stateToSave;
-  const estimatedBytes = estimateSize(candidate);
+  let json;
+  try {
+    json = JSON.stringify(candidate);
+  } catch {
+    logger.error('Failed to serialize state');
+    return { success: false };
+  }
+
+  const estimatedBytes =
+    typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(json).length : json.length;
+
   if (estimatedBytes > MAX_LOCALSTORAGE_BYTES) {
     candidate = {
       ...stateToSave,
@@ -62,11 +61,18 @@ function saveWithQuotaHandling(key, stateToSave) {
       },
       _partial: true
     };
+    // Re-serialize the reduced candidate
+    try {
+      json = JSON.stringify(candidate);
+    } catch {
+      logger.error('Failed to serialize reduced state');
+      return { success: false };
+    }
   }
 
-  // Try full save first
+  // Try full save first, reusing pre-serialized JSON
   try {
-    localStorage.setItem(key, JSON.stringify(candidate));
+    localStorage.setItem(key, json);
     return { success: true };
   } catch (error) {
     if (error.name !== 'QuotaExceededError') {
@@ -152,120 +158,253 @@ function saveWithQuotaHandling(key, stateToSave) {
 }
 
 /**
- * FIX MEDIUM-3: Generate a simple hash of fileStates to detect changes efficiently
- * Uses a numeric hash for performance instead of concatenating strings
+ * FIX MEDIUM-3: Detect fileStates changes using a cheap reference + count check.
+ * The previous implementation computed a full hash over every key and value on
+ * every Redux action dispatch (O(n*m) where m = avg key length). This was the
+ * single hottest path in the persistence middleware.
+ *
+ * New approach: track the object reference itself. Redux Toolkit produces a new
+ * object reference whenever fileStates actually changes, so a strict equality
+ * check is sufficient. The count check is kept as a secondary guard for edge
+ * cases where the reference might be reused (e.g., direct mutations).
+ *
  * @param {Object} fileStates - Map of file paths to state objects
- * @returns {string} A hash string representing the current state
+ * @returns {Object} fileStates reference (used for identity comparison)
  */
-function computeFileStatesHash(fileStates) {
-  if (!fileStates || typeof fileStates !== 'object') return '';
-  const keys = Object.keys(fileStates);
-  if (keys.length === 0) return '';
-
-  // FIX MEDIUM-3: Use numeric hashing instead of string concatenation
-  // This is O(n) instead of O(n²) for string building
-  let hash = 0;
-  for (const key of keys) {
-    const state = fileStates[key]?.state || 'unknown';
-    // Simple string hash using charCodeAt
-    for (let i = 0; i < key.length; i++) {
-      hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
-    }
-    for (let i = 0; i < state.length; i++) {
-      hash = ((hash << 5) - hash + state.charCodeAt(i)) | 0;
-    }
-  }
-  return hash.toString(36);
+function getFileStatesRef(fileStates) {
+  return fileStates || null;
 }
 
-const persistenceMiddleware = (store) => (next) => (action) => {
-  const result = next(action);
-  const state = store.getState();
+// Track beforeunload handler for cleanup
+let persistenceUnloadHandler = null;
 
-  // FIX: Skip if we're currently in a save operation to prevent infinite loops
-  if (isSaving) {
-    return result;
+const persistenceMiddleware = (store) => {
+  // Register a beforeunload handler to force a final save when the window closes.
+  // Without this, up to 5s of debounced state changes could be lost on close.
+  if (!persistenceUnloadHandler && typeof window !== 'undefined') {
+    persistenceUnloadHandler = () => cleanupPersistence(store);
+    window.addEventListener('beforeunload', persistenceUnloadHandler);
   }
 
-  const isWelcomePhase = state.ui.currentPhase === (PHASES?.WELCOME ?? 'welcome');
-  const currentOrganizedFilesCount = state.files.organizedFiles.length;
-  const currentSmartFoldersCount = state.files.smartFolders.length;
-  const hasDurableData = currentOrganizedFilesCount > 0 || currentSmartFoldersCount > 0;
-  // Track if durable data changed (for potential future optimizations)
-  const _hasDurableChange =
-    hasDurableData &&
-    (currentOrganizedFilesCount !== lastSavedOrganizedFilesCount ||
-      currentSmartFoldersCount !== lastSavedSmartFoldersCount);
+  return (next) => (action) => {
+    const result = next(action);
+    const state = store.getState();
 
-  // FIX: Never save in WELCOME phase unless there's actual durable data to preserve.
-  // This prevents persisting empty/default state when user hasn't done anything yet.
-  if (isWelcomePhase && !hasDurableData) {
-    return result;
-  }
-
-  // Only save if not loading action
-  if (action.type.indexOf('setLoading') === -1) {
-    // Performance: Skip save if key state hasn't changed
-    const { currentPhase, sidebarOpen, showSettings } = state.ui;
-    const currentFilesCount = state.files.selectedFiles.length;
-    const currentResultsCount = state.analysis.results.length;
-    // FIX: Track fileStates changes
-    const currentFileStatesCount = Object.keys(state.files.fileStates || {}).length;
-    const currentFileStatesHash = computeFileStatesHash(state.files.fileStates);
-
-    const hasRelevantChange =
-      currentPhase !== lastSavedPhase ||
-      currentFilesCount !== lastSavedFilesCount ||
-      currentResultsCount !== lastSavedResultsCount ||
-      // FIX: Check organizedFiles count
-      currentOrganizedFilesCount !== lastSavedOrganizedFilesCount ||
-      currentSmartFoldersCount !== lastSavedSmartFoldersCount ||
-      // FIX: Check fileStates changes by count and hash
-      currentFileStatesCount !== lastSavedFileStatesCount ||
-      currentFileStatesHash !== lastSavedFileStatesHash ||
-      // FIX: Check UI state changes
-      sidebarOpen !== lastSavedSidebarOpen ||
-      showSettings !== lastSavedShowSettings;
-
-    if (!hasRelevantChange) {
+    // FIX: Skip if we're currently in a save operation to prevent infinite loops
+    if (isSaving) {
       return result;
     }
 
-    if (saveTimeout) {
-      clearTimeout(saveTimeout);
+    const isWelcomePhase = state.ui.currentPhase === (PHASES?.WELCOME ?? 'welcome');
+    const currentOrganizedFilesCount = state.files.organizedFiles.length;
+    const currentSmartFoldersCount = state.files.smartFolders.length;
+    const hasDurableData = currentOrganizedFilesCount > 0 || currentSmartFoldersCount > 0;
+
+    // FIX: Never save in WELCOME phase unless there's actual durable data to preserve.
+    // This prevents persisting empty/default state when user hasn't done anything yet.
+    if (isWelcomePhase && !hasDurableData) {
+      return result;
     }
 
-    // FIX #24: Force save if we've been debouncing too long
-    const now = Date.now();
-    const shouldForceImmediate =
-      lastSaveAttempt > 0 && now - lastSaveAttempt > MAX_DEBOUNCE_WAIT_MS;
-    const delay = shouldForceImmediate ? 0 : SAVE_DEBOUNCE_MS;
+    // Only save if not loading action
+    if (action.type.indexOf('setLoading') === -1) {
+      // Performance: Skip save if key state hasn't changed
+      const { currentPhase, sidebarOpen } = state.ui;
+      const currentFilesCount = state.files.selectedFiles.length;
+      const currentResultsCount = state.analysis.results.length;
+      // FIX: Track fileStates changes
+      const currentFileStatesCount = Object.keys(state.files.fileStates || {}).length;
+      const currentFileStatesRef = getFileStatesRef(state.files.fileStates);
 
-    saveTimeout = setTimeout(() => {
-      // FIX: Set re-entry guard before save
-      isSaving = true;
+      const hasRelevantChange =
+        currentPhase !== lastSavedPhase ||
+        currentFilesCount !== lastSavedFilesCount ||
+        currentResultsCount !== lastSavedResultsCount ||
+        // FIX: Check organizedFiles count
+        currentOrganizedFilesCount !== lastSavedOrganizedFilesCount ||
+        currentSmartFoldersCount !== lastSavedSmartFoldersCount ||
+        // FIX: Check fileStates changes by reference and count
+        currentFileStatesCount !== lastSavedFileStatesCount ||
+        currentFileStatesRef !== lastSavedFileStatesRef ||
+        // FIX: Check UI state changes (sidebar only; settings overlay is transient)
+        sidebarOpen !== lastSavedSidebarOpen;
 
+      if (!hasRelevantChange) {
+        return result;
+      }
+
+      if (saveTimeout) {
+        clearTimeout(saveTimeout);
+      }
+
+      // FIX #24: Force save if we've been debouncing too long
+      const now = Date.now();
+      // Track when the first pending request was made (reset after each save)
+      if (firstPendingRequestTime === 0) {
+        firstPendingRequestTime = now;
+      }
+      const shouldForceImmediate =
+        firstPendingRequestTime > 0 && now - firstPendingRequestTime > MAX_DEBOUNCE_WAIT_MS;
+      const delay = shouldForceImmediate ? 0 : SAVE_DEBOUNCE_MS;
+
+      saveTimeout = setTimeout(() => {
+        // FIX: Set re-entry guard before save
+        isSaving = true;
+
+        try {
+          // FIX: Get fresh state at save time instead of using stale closure reference.
+          // The debounce delay (up to 5s) means the state captured at dispatch time
+          // may be significantly outdated by the time this callback fires.
+          const freshState = store.getState();
+
+          const stateToSave = {
+            ui: {
+              currentPhase: freshState.ui.currentPhase,
+              sidebarOpen: freshState.ui.sidebarOpen
+            },
+            files: {
+              selectedFiles: freshState.files.selectedFiles.slice(0, 200), // Limit size
+              smartFolders: freshState.files.smartFolders,
+              organizedFiles: freshState.files.organizedFiles,
+              namingConvention: freshState.files.namingConvention,
+              fileStates: {}
+            },
+            analysis: {
+              // Analysis results
+              results: freshState.analysis.results.slice(0, 200),
+              isAnalyzing: freshState.analysis.isAnalyzing,
+              analysisProgress: freshState.analysis.analysisProgress,
+              currentAnalysisFile: freshState.analysis.currentAnalysisFile
+            },
+            timestamp: Date.now()
+          };
+
+          // IMPORTANT: Naming conventions are now separated into two independent systems:
+          // 1. Discover phase (Redux state.files.namingConvention) - Session-based, UI-only
+          // 2. Settings (persisted settings.namingConvention) - Persistent, used by watchers/reanalysis
+          //
+          // We do NOT sync Discover phase naming to Settings anymore. This ensures:
+          // - Settings naming conventions control: DownloadWatcher, SmartFolderWatcher, Reanalyze
+          // - Discover naming conventions control: Manual file analysis in Discover phase only
+          //
+          // Previous behavior synced Redux → Settings, which caused Discover choices to
+          // overwrite the user's Settings, breaking the intended separation.
+
+          // Persist fileStates separately or limited
+          // FIX: Prioritize in-progress and error states over completed ones
+          // This prevents losing important state information on restart
+          const fileStatesEntries = Object.entries(freshState.files.fileStates);
+          if (fileStatesEntries.length > 0) {
+            const MAX_STATES = 100;
+            if (fileStatesEntries.length <= MAX_STATES) {
+              stateToSave.files.fileStates = Object.fromEntries(fileStatesEntries);
+            } else {
+              // Separate by priority: in-progress/error states are more important
+              const priorityStates = [];
+              const completedStates = [];
+
+              for (const [path, stateInfo] of fileStatesEntries) {
+                const stateType = stateInfo?.state || '';
+                if (stateType === 'analyzing' || stateType === 'error' || stateType === 'pending') {
+                  priorityStates.push([path, stateInfo]);
+                } else {
+                  completedStates.push([path, stateInfo]);
+                }
+              }
+
+              // Take all priority states, then fill remaining slots with recent completed
+              const remainingSlots = MAX_STATES - priorityStates.length;
+              const recentCompleted = completedStates.slice(-Math.max(0, remainingSlots));
+              const combinedStates = [...priorityStates, ...recentCompleted].slice(-MAX_STATES);
+
+              stateToSave.files.fileStates = Object.fromEntries(combinedStates);
+            }
+          }
+
+          // FIX #1: Use graceful quota handling instead of silent data loss
+          const saveResult = saveWithQuotaHandling('stratosort_redux_state', stateToSave);
+
+          // FIX CRIT-5: Notify user if data was degraded due to storage limits
+          if (saveResult.degraded) {
+            const messages = {
+              reduced:
+                'Storage space limited - some file history may not be preserved between sessions.',
+              minimal:
+                'Storage space very limited - only settings and current phase will be preserved.',
+              emergency: 'Storage space critically low - cleared old data to continue.',
+              failed: 'Unable to save any data - changes will be lost when you close the app.'
+            };
+            const severity = saveResult.degraded === 'failed' ? 'error' : 'warning';
+            store.dispatch(
+              addNotification({
+                message: messages[saveResult.degraded],
+                severity,
+                duration: saveResult.degraded === 'failed' ? 0 : 8000 // 0 = persistent
+              })
+            );
+          }
+
+          // FIX CRIT-18: Only update tracking variables if save succeeded
+          // This prevents state staleness where we think we saved but actually failed
+          // FIX: Recompute tracking values from freshState to match what was actually saved
+          if (saveResult.success) {
+            lastSavedPhase = freshState.ui.currentPhase;
+            lastSavedFilesCount = freshState.files.selectedFiles.length;
+            lastSavedResultsCount = freshState.analysis.results.length;
+            lastSavedOrganizedFilesCount = freshState.files.organizedFiles.length;
+            lastSavedSmartFoldersCount = freshState.files.smartFolders.length;
+            lastSavedFileStatesCount = Object.keys(freshState.files.fileStates || {}).length;
+            lastSavedFileStatesRef = getFileStatesRef(freshState.files.fileStates);
+            lastSavedSidebarOpen = freshState.ui.sidebarOpen;
+            firstPendingRequestTime = 0; // Reset so next debounce cycle tracks fresh
+          }
+        } finally {
+          // FIX: Clear re-entry guard
+          isSaving = false;
+        }
+      }, delay);
+    }
+
+    return result;
+  };
+};
+
+/**
+ * Cleanup function for HMR and app shutdown.
+ * Forces a final synchronous save if a debounced save was pending,
+ * then resets all tracking state.
+ * @param {Object} [store] - Redux store instance for final save (optional)
+ */
+export const cleanupPersistence = (store) => {
+  // Remove beforeunload handler to prevent accumulation during HMR
+  if (persistenceUnloadHandler && typeof window !== 'undefined') {
+    window.removeEventListener('beforeunload', persistenceUnloadHandler);
+    persistenceUnloadHandler = null;
+  }
+
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
+    saveTimeout = null;
+
+    // Force a final save if store is provided and there's pending data
+    if (store && firstPendingRequestTime > 0) {
       try {
-        // FIX: Get fresh state at save time instead of using stale closure reference.
-        // The debounce delay (up to 5s) means the state captured at dispatch time
-        // may be significantly outdated by the time this callback fires.
         const freshState = store.getState();
-
         const stateToSave = {
           ui: {
             currentPhase: freshState.ui.currentPhase,
-            sidebarOpen: freshState.ui.sidebarOpen,
-            showSettings: freshState.ui.showSettings
+            sidebarOpen: freshState.ui.sidebarOpen
           },
           files: {
-            selectedFiles: freshState.files.selectedFiles.slice(0, 200), // Limit size
+            selectedFiles: freshState.files.selectedFiles.slice(0, 200),
             smartFolders: freshState.files.smartFolders,
             organizedFiles: freshState.files.organizedFiles,
             namingConvention: freshState.files.namingConvention,
-            fileStates: {}
+            fileStates: Object.fromEntries(
+              Object.entries(freshState.files.fileStates || {}).slice(-100)
+            )
           },
           analysis: {
-            // Analysis results
             results: freshState.analysis.results.slice(0, 200),
             isAnalyzing: freshState.analysis.isAnalyzing,
             analysisProgress: freshState.analysis.analysisProgress,
@@ -273,113 +412,21 @@ const persistenceMiddleware = (store) => (next) => (action) => {
           },
           timestamp: Date.now()
         };
-
-        // IMPORTANT: Naming conventions are now separated into two independent systems:
-        // 1. Discover phase (Redux state.files.namingConvention) - Session-based, UI-only
-        // 2. Settings (persisted settings.namingConvention) - Persistent, used by watchers/reanalysis
-        //
-        // We do NOT sync Discover phase naming to Settings anymore. This ensures:
-        // - Settings naming conventions control: DownloadWatcher, SmartFolderWatcher, Reanalyze
-        // - Discover naming conventions control: Manual file analysis in Discover phase only
-        //
-        // Previous behavior synced Redux → Settings, which caused Discover choices to
-        // overwrite the user's Settings, breaking the intended separation.
-
-        // Persist fileStates separately or limited
-        // FIX: Prioritize in-progress and error states over completed ones
-        // This prevents losing important state information on restart
-        const fileStatesEntries = Object.entries(freshState.files.fileStates);
-        if (fileStatesEntries.length > 0) {
-          const MAX_STATES = 100;
-          if (fileStatesEntries.length <= MAX_STATES) {
-            stateToSave.files.fileStates = Object.fromEntries(fileStatesEntries);
-          } else {
-            // Separate by priority: in-progress/error states are more important
-            const priorityStates = [];
-            const completedStates = [];
-
-            for (const [path, stateInfo] of fileStatesEntries) {
-              const stateType = stateInfo?.state || '';
-              if (stateType === 'analyzing' || stateType === 'error' || stateType === 'pending') {
-                priorityStates.push([path, stateInfo]);
-              } else {
-                completedStates.push([path, stateInfo]);
-              }
-            }
-
-            // Take all priority states, then fill remaining slots with recent completed
-            const remainingSlots = MAX_STATES - priorityStates.length;
-            const recentCompleted = completedStates.slice(-Math.max(0, remainingSlots));
-            const combinedStates = [...priorityStates, ...recentCompleted].slice(-MAX_STATES);
-
-            stateToSave.files.fileStates = Object.fromEntries(combinedStates);
-          }
-        }
-
-        // FIX #1: Use graceful quota handling instead of silent data loss
-        const saveResult = saveWithQuotaHandling('stratosort_redux_state', stateToSave);
-
-        // FIX CRIT-5: Notify user if data was degraded due to storage limits
-        if (saveResult.degraded) {
-          const messages = {
-            reduced:
-              'Storage space limited - some file history may not be preserved between sessions.',
-            minimal:
-              'Storage space very limited - only settings and current phase will be preserved.',
-            emergency: 'Storage space critically low - cleared old data to continue.',
-            failed: 'Unable to save any data - changes will be lost when you close the app.'
-          };
-          const severity = saveResult.degraded === 'failed' ? 'error' : 'warning';
-          store.dispatch(
-            addNotification({
-              message: messages[saveResult.degraded],
-              severity,
-              duration: saveResult.degraded === 'failed' ? 0 : 8000 // 0 = persistent
-            })
-          );
-        }
-
-        // FIX CRIT-18: Only update tracking variables if save succeeded
-        // This prevents state staleness where we think we saved but actually failed
-        // FIX: Recompute tracking values from freshState to match what was actually saved
-        if (saveResult.success) {
-          lastSavedPhase = freshState.ui.currentPhase;
-          lastSavedFilesCount = freshState.files.selectedFiles.length;
-          lastSavedResultsCount = freshState.analysis.results.length;
-          lastSavedOrganizedFilesCount = freshState.files.organizedFiles.length;
-          lastSavedSmartFoldersCount = freshState.files.smartFolders.length;
-          lastSavedFileStatesCount = Object.keys(freshState.files.fileStates || {}).length;
-          lastSavedFileStatesHash = computeFileStatesHash(freshState.files.fileStates);
-          lastSavedSidebarOpen = freshState.ui.sidebarOpen;
-          lastSavedShowSettings = freshState.ui.showSettings;
-          lastSaveAttempt = Date.now();
-        }
-      } finally {
-        // FIX: Clear re-entry guard
-        isSaving = false;
+        saveWithQuotaHandling('stratosort_redux_state', stateToSave);
+      } catch (err) {
+        logger.error('Failed to save state during cleanup:', { error: err?.message });
       }
-    }, delay);
-  }
-
-  return result;
-};
-
-// Cleanup function for HMR and app shutdown
-export const cleanupPersistence = () => {
-  if (saveTimeout) {
-    clearTimeout(saveTimeout);
-    saveTimeout = null;
+    }
   }
   lastSavedPhase = null;
   lastSavedFilesCount = -1;
   lastSavedResultsCount = -1;
   lastSavedOrganizedFilesCount = -1;
   lastSavedSmartFoldersCount = -1;
-  // FIX: Reset fileStates tracking variables
   lastSavedFileStatesCount = -1;
-  lastSavedFileStatesHash = '';
+  lastSavedFileStatesRef = null;
   lastSavedSidebarOpen = null;
-  lastSavedShowSettings = null;
+  firstPendingRequestTime = 0;
 };
 
 export default persistenceMiddleware;

@@ -98,7 +98,7 @@ function OllamaConfigSection({
         <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
           <Input
             type="text"
-            value={settings.ollamaHost}
+            value={settings.ollamaHost ?? ''}
             onChange={(e) =>
               setSettings((prev) => ({
                 ...prev,

@@ -180,7 +180,6 @@ export function useOrganizeState() {
  */
 export function useLoadInitialData(refs, addNotification) {
   const { smartFoldersRef, dispatchRef } = refs;
-  const dispatch = dispatchRef?.current;
   const documentsPath = useAppSelector((state) => state.system.documentsPath);
 
   // Keep notification function stable via ref to avoid effect churn
@@ -217,10 +216,11 @@ export function useLoadInitialData(refs, addNotification) {
 
   // Fetch documents path
   useEffect(() => {
-    if (!documentsPath && dispatch) {
-      dispatch(fetchDocumentsPath());
+    const currentDispatch = dispatchRef?.current;
+    if (!documentsPath && currentDispatch) {
+      currentDispatch(fetchDocumentsPath());
     }
-  }, [dispatch, documentsPath]);
+  }, [dispatchRef, documentsPath]);
 }
 
 export default useOrganizeState;

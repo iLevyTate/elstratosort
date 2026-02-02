@@ -129,7 +129,11 @@ export function useKeyboardShortcuts() {
             const allowedTransitions = PHASE_TRANSITIONS[phase] || [];
             if (allowedTransitions.includes(previousPhase)) {
               actions.advancePhase(previousPhase);
-              addNotification(`Navigated to ${PHASE_METADATA[previousPhase].title}`, 'info', 2000);
+              addNotification(
+                `Navigated to ${PHASE_METADATA[previousPhase]?.title || previousPhase}`,
+                'info',
+                2000
+              );
             }
           }
         }
@@ -144,7 +148,11 @@ export function useKeyboardShortcuts() {
             const allowedTransitions = PHASE_TRANSITIONS[phase] || [];
             if (allowedTransitions.includes(nextPhase)) {
               actions.advancePhase(nextPhase);
-              addNotification(`Navigated to ${PHASE_METADATA[nextPhase].title}`, 'info', 2000);
+              addNotification(
+                `Navigated to ${PHASE_METADATA[nextPhase]?.title || nextPhase}`,
+                'info',
+                2000
+              );
             }
           }
         }

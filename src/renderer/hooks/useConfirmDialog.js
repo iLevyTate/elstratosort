@@ -26,6 +26,9 @@ export function useConfirmDialog() {
       fileName = null
     }) => {
       return new Promise((resolve) => {
+        if (typeof resolverRef.current === 'function') {
+          resolverRef.current(false);
+        }
         resolverRef.current = resolve;
         setConfirmState({
           isOpen: true,

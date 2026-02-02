@@ -62,13 +62,15 @@ const isElectronAPIAvailable = () => {
 };
 
 const ALLOWED_EMBED_MODELS = [
-  'embeddinggemma',
   'mxbai-embed-large',
   'nomic-embed-text',
+  'embeddinggemma',
   'all-minilm',
   'bge-large'
 ];
-const DEFAULT_EMBED_MODEL = 'embeddinggemma';
+// FIX: Must match DEFAULT_AI_MODELS.EMBEDDING in shared/constants.js to avoid
+// ChromaDB dimension mismatch (mxbai-embed-large=1024d, embeddinggemma=768d)
+const DEFAULT_EMBED_MODEL = 'mxbai-embed-large';
 
 const stableStringify = (value) =>
   JSON.stringify(
@@ -344,7 +346,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   useEffect(() => {
     if (!isApiAvailable) return undefined;
     if (!settingsLoaded) return undefined;
-    if (settings === null) return undefined;
+    if (settingsRef.current === null) return undefined;
     if (didAutoHealthCheckRef.current) return undefined;
     didAutoHealthCheckRef.current = true;
 
@@ -352,7 +354,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
 
     (async () => {
       try {
-        const res = await ollamaIpc.testConnection(settings.ollamaHost);
+        const res = await ollamaIpc.testConnection(settingsRef.current.ollamaHost);
         if (!isMounted) return;
         setOllamaHealth(res?.ollamaHealth || null);
         if (res?.success && isMounted) {
@@ -368,13 +370,13 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     return () => {
       isMounted = false;
     };
-  }, [isApiAvailable, settingsLoaded, settings, loadOllamaModels]);
+  }, [isApiAvailable, settingsLoaded, loadOllamaModels]);
 
   useEffect(() => {
-    lockAppScroll();
+    lockAppScroll('settings-panel');
 
     return () => {
-      unlockAppScroll();
+      unlockAppScroll('settings-panel');
     };
   }, []);
 
@@ -461,7 +463,11 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       return;
     }
     if (skipAutoSaveRef.current > 0) {
-      skipAutoSaveRef.current = Math.max(0, skipAutoSaveRef.current - 1);
+      // Reset to 0 (not decrement) because React 18+ batching can merge multiple
+      // programmatic setSettings calls into one render, so only one effect fires
+      // but multiple skip tokens may have been issued. Zeroing ensures auto-save
+      // resumes after the first batched programmatic update completes.
+      skipAutoSaveRef.current = 0;
       return;
     }
     autoSaveSettings();

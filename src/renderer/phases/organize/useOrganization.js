@@ -435,7 +435,7 @@ function buildPreview({
  */
 export function useOrganization({
   unprocessedFiles = [],
-  editingFiles = [],
+  editingFiles = {},
   getFileWithEdits = () => {},
   findSmartFolderForCategory = () => {},
   defaultLocation = '',

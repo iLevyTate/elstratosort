@@ -27,11 +27,19 @@ export function joinPath(...segments) {
   const sep = getPathSeparator();
   const otherSep = isWindows ? '/' : '\\';
 
-  return segments
+  let result = segments
     .filter((s) => s && typeof s === 'string')
     .map((s) => s.replace(new RegExp(`[${otherSep.replace('\\', '\\\\')}]`, 'g'), sep))
-    .join(sep)
-    .replace(new RegExp(`[${sep.replace('\\', '\\\\')}]+`, 'g'), sep); // Remove duplicate separators
+    .join(sep);
+
+  // Preserve UNC path prefix (\\server\share) on Windows before collapsing duplicates
+  if (isWindows && result.startsWith('\\\\')) {
+    result = '\\\\' + result.slice(2).replace(/\\+/g, '\\');
+  } else {
+    result = result.replace(new RegExp(`[${sep.replace('\\', '\\\\')}]+`, 'g'), sep);
+  }
+
+  return result;
 }
 
 /**

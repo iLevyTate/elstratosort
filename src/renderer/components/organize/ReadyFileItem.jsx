@@ -13,14 +13,14 @@ import { selectRedactPaths } from '../../store/selectors';
 function ReadyFileItem({
   file,
   index,
-  isSelected,
+  isSelected = false,
   onToggleSelected,
   stateDisplay,
-  smartFolders,
-  editing,
+  smartFolders = [],
+  editing = null,
   onEdit,
-  category: categoryProp,
-  onViewDetails
+  category: categoryProp = null,
+  onViewDetails = null
 }) {
   // PERF: Use memoized selector instead of inline Boolean coercion
   const redactPaths = useSelector(selectRedactPaths);
@@ -49,6 +49,10 @@ function ReadyFileItem({
   const handleEditCategory = useCallback(
     (e) => onEdit(index, 'category', e.target.value),
     [onEdit, index]
+  );
+  const handleViewDetails = useCallback(
+    () => onViewDetails && onViewDetails(file),
+    [onViewDetails, file]
   );
 
   const filePath = file.path || '';
@@ -182,7 +186,7 @@ function ReadyFileItem({
           {/* View Details Link */}
           <button
             type="button"
-            onClick={() => onViewDetails && onViewDetails(file)}
+            onClick={handleViewDetails}
             className="flex items-center gap-1.5 text-xs font-medium text-system-gray-500 hover:text-stratosort-blue transition-colors"
             aria-label={`View analysis details for ${file.name}`}
           >
@@ -207,14 +211,6 @@ ReadyFileItem.propTypes = {
   onEdit: PropTypes.func.isRequired,
   category: PropTypes.string,
   onViewDetails: PropTypes.func
-};
-
-ReadyFileItem.defaultProps = {
-  isSelected: false,
-  smartFolders: [],
-  editing: null,
-  category: null,
-  onViewDetails: null
 };
 
 function areReadyFileItemPropsEqual(prev, next) {

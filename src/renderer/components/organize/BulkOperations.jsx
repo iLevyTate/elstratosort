@@ -16,7 +16,7 @@ function BulkOperations({
   bulkCategory,
   setBulkCategory,
   onApplyBulkCategory,
-  smartFolders,
+  smartFolders = [],
   isProcessing = false
 }) {
   return (

@@ -102,6 +102,9 @@ export function useGraphKeyboardNav({
       }
 
       const currentIndex = nodes.findIndex((n) => n.id === selectedNodeId);
+      if (currentIndex === -1) {
+        return nodes[0]?.id || null;
+      }
 
       // Handle list navigation (up/down)
       if (direction === 'next') {

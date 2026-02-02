@@ -267,14 +267,16 @@ LazyLoadingSpinner.propTypes = {
 
 // Modal loading overlay for lazy-loaded modals/panels
 // Uses fade-in animation to prevent jarring black flash during Suspense loads
-export function ModalLoadingOverlay({ message = 'Loading...' }) {
+export function ModalLoadingOverlay({ message = 'Loading...', inline = false }) {
+  // IMPORTANT: inline overlays should never block clicks on modal controls (close/back buttons),
+  // otherwise a slow IPC call can make the UI feel "stuck".
+  const containerClass = inline
+    ? 'absolute inset-0 z-40 flex items-center justify-center bg-white/80 backdrop-blur-sm pointer-events-none'
+    : 'fixed inset-0 bg-black/40 flex items-center justify-center z-modal animate-modal-backdrop pointer-events-none';
+
   return (
-    <div
-      className="fixed inset-0 bg-black/40 flex items-center justify-center z-modal animate-modal-backdrop"
-      role="status"
-      aria-label={message}
-    >
-      <div className="bg-white rounded-xl shadow-xl px-8 py-6 text-center animate-modal-enter">
+    <div className={containerClass} role="status" aria-label={message}>
+      <div className="bg-white rounded-xl shadow-xl px-8 py-6 text-center animate-modal-enter pointer-events-none">
         <div className="animate-spin w-10 h-10 border-3 border-stratosort-blue border-t-transparent rounded-full mx-auto mb-3" />
         <Text variant="small" className="text-system-gray-600">
           {message}
@@ -286,5 +288,6 @@ export function ModalLoadingOverlay({ message = 'Loading...' }) {
 }
 
 ModalLoadingOverlay.propTypes = {
-  message: PropTypes.string
+  message: PropTypes.string,
+  inline: PropTypes.bool
 };

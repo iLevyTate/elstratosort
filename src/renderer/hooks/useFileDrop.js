@@ -24,7 +24,7 @@ export function useFileDrop(onFilesDropped) {
     e.preventDefault();
     e.stopPropagation();
     // Only set false if leaving the drop zone entirely (not entering child)
-    if (e.currentTarget.contains(e.relatedTarget)) return;
+    if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return;
     setIsDragging(false);
   }, []);
 

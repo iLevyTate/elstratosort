@@ -7,7 +7,8 @@ import { smartFoldersIpc } from '../../services/ipc';
 // FIX: Added forceRefresh parameter to allow cache invalidation when folders change
 export const fetchSmartFolders = createAsyncThunk(
   'files/fetchSmartFolders',
-  async (forceRefresh = false, { getState, rejectWithValue }) => {
+  async (arg, { getState, rejectWithValue }) => {
+    const forceRefresh = arg === true;
     const { files } = getState();
     // Return cached value if already fetched, not empty, and not forcing refresh
     if (!forceRefresh && files.smartFolders && files.smartFolders.length > 0) {
@@ -94,13 +95,7 @@ const filesSlice = createSlice({
       };
     },
     setFileStates: (state, action) => {
-      const serializedStates = {};
-      if (action.payload && typeof action.payload === 'object') {
-        Object.entries(action.payload).forEach(([path, data]) => {
-          serializedStates[path] = serializeData(data);
-        });
-      }
-      state.fileStates = serializedStates;
+      state.fileStates = action.payload && typeof action.payload === 'object' ? action.payload : {};
     },
     setSmartFolders: (state, action) => {
       state.smartFolders = action.payload;
@@ -117,7 +112,11 @@ const filesSlice = createSlice({
     },
     removeOrganizedFiles: (state, action) => {
       if (!Array.isArray(action.payload)) return;
-      const normalize = (p) => (p || '').replace(/[\\/]+/g, '/').toLowerCase();
+      const isWinPath = (p) => p && (p.includes('\\') || /^[A-Za-z]:/.test(p));
+      const normalize = (p) => {
+        const n = (p || '').replace(/[\\/]+/g, '/');
+        return isWinPath(p) ? n.toLowerCase() : n;
+      };
       const pathsToRemove = new Set(action.payload.map(normalize));
 
       state.organizedFiles = state.organizedFiles.filter(

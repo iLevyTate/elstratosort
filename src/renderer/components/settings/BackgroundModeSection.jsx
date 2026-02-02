@@ -22,7 +22,7 @@ function BackgroundModeSection({ settings, setSettings }) {
         description="Keep running in the background when the window is closed."
       >
         <Switch
-          checked={settings.backgroundMode}
+          checked={!!settings.backgroundMode}
           onChange={(checked) =>
             setSettings((prev) => ({
               ...prev,

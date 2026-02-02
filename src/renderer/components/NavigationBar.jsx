@@ -161,12 +161,20 @@ const NavTab = memo(function NavTab({
   isActive,
   canNavigate,
   isLoading,
-  onClick,
+  onPhaseChange,
   onHover,
   isHovered
 }) {
   const metadata = PHASE_METADATA[phase];
   const IconComponent = PHASE_ICONS[phase];
+
+  // Stable click handler - avoids inline arrow in parent's render loop
+  const handleClick = useCallback(() => {
+    if (canNavigate) onPhaseChange(phase);
+  }, [canNavigate, onPhaseChange, phase]);
+
+  const handleMouseEnter = useCallback(() => onHover(phase), [onHover, phase]);
+  const handleMouseLeave = useCallback(() => onHover(null), [onHover]);
 
   // Get short label for nav
   const label = useMemo(() => {
@@ -193,9 +201,9 @@ const NavTab = memo(function NavTab({
   return (
     <button
       type="button"
-      onClick={onClick}
-      onMouseEnter={() => onHover(phase)}
-      onMouseLeave={() => onHover(null)}
+      onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       disabled={!canNavigate}
       className={`
         phase-nav-tab
@@ -246,7 +254,7 @@ NavTab.propTypes = {
   isActive: PropTypes.bool.isRequired,
   canNavigate: PropTypes.bool.isRequired,
   isLoading: PropTypes.bool.isRequired,
-  onClick: PropTypes.func.isRequired,
+  onPhaseChange: PropTypes.func.isRequired,
   onHover: PropTypes.func.isRequired,
   isHovered: PropTypes.bool.isRequired
 };
@@ -590,8 +598,9 @@ function NavigationBar() {
         </div>
 
         {/* Center: Phase Navigation - Absolute center relative to viewport width */}
-        {/* NOTE: Do not disable pointer events on the wrapper; it blocks nav buttons. */}
-        <div className="absolute inset-0 flex items-center justify-center">
+        {/* pointer-events-none on wrapper so it doesn't block Brand/Actions; */}
+        {/* the inner <nav> restores pointer-events via .phase-nav CSS class. */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <nav
             className="phase-nav max-w-[60vw]"
             style={{ WebkitAppRegion: 'no-drag' }}
@@ -628,7 +637,7 @@ function NavigationBar() {
                     isActive={isActive}
                     canNavigate={canNavigate}
                     isLoading={isActive && navSpinnerActive}
-                    onClick={() => canNavigate && handlePhaseChange(phase)}
+                    onPhaseChange={handlePhaseChange}
                     onHover={setHoveredTab}
                     isHovered={hoveredTab === phase}
                   />

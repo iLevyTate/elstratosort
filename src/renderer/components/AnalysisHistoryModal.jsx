@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { TrendingUp, ClipboardList, Download, Folder, RefreshCw, FileText } from 'lucide-react';
 import { createLogger } from '../../shared/logger';
@@ -42,41 +42,49 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
       }
     };
 
-    window.electronAPI.analysisHistory
-      .getStatistics()
-      .then((stats) => {
-        if (isMountedRef.current) {
-          setAnalysisStats(stats);
-        }
-      })
-      .catch((error) => {
-        if (isMountedRef.current) {
-          logger.warn('Failed to load statistics', { error: error?.message });
-        }
-      })
-      .finally(markLoaded);
+    const statsPromise = window.electronAPI?.analysisHistory?.getStatistics?.();
+    if (statsPromise && typeof statsPromise.then === 'function') {
+      statsPromise
+        .then((stats) => {
+          if (isMountedRef.current) {
+            setAnalysisStats(stats);
+          }
+        })
+        .catch((error) => {
+          if (isMountedRef.current) {
+            logger.warn('Failed to load statistics', { error: error?.message });
+          }
+        })
+        .finally(markLoaded);
+    } else {
+      markLoaded();
+    }
 
-    window.electronAPI.analysisHistory
-      .get({ all: true })
-      .then((history) => {
-        if (!isMountedRef.current) return;
-        if (Array.isArray(history)) {
-          setHistoryData(history);
-        } else {
-          logger.warn('History data is not an array, falling back to empty array', {
-            historyType: typeof history,
-            history
-          });
-          setHistoryData([]);
-        }
-      })
-      .catch((error) => {
-        if (isMountedRef.current) {
-          addNotification('Failed to load analysis history', 'error');
-          logger.warn('Failed to load history', { error: error?.message });
-        }
-      })
-      .finally(markLoaded);
+    const historyPromise = window.electronAPI?.analysisHistory?.get?.({ all: true });
+    if (historyPromise && typeof historyPromise.then === 'function') {
+      historyPromise
+        .then((history) => {
+          if (!isMountedRef.current) return;
+          if (Array.isArray(history)) {
+            setHistoryData(history);
+          } else {
+            logger.warn('History data is not an array, falling back to empty array', {
+              historyType: typeof history,
+              history
+            });
+            setHistoryData([]);
+          }
+        })
+        .catch((error) => {
+          if (isMountedRef.current) {
+            addNotification('Failed to load analysis history', 'error');
+            logger.warn('Failed to load history', { error: error?.message });
+          }
+        })
+        .finally(markLoaded);
+    } else {
+      markLoaded();
+    }
   }, [addNotification, setAnalysisStats]);
 
   useEffect(() => {
@@ -91,7 +99,7 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
     if (isExporting) return;
     setIsExporting(true);
     try {
-      const exportResponse = await window.electronAPI.analysisHistory.export(format);
+      const exportResponse = await window.electronAPI?.analysisHistory?.export?.(format);
       if (!exportResponse || exportResponse.success === false)
         throw new Error(exportResponse?.error || 'Export failed');
       const blob = new Blob(
@@ -122,11 +130,13 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
     }
   };
 
+  const isClearingRef = useRef(false);
   const doClearHistory = useCallback(async () => {
-    if (isClearing) return;
+    if (isClearingRef.current) return;
+    isClearingRef.current = true;
     setIsClearing(true);
     try {
-      const result = await window.electronAPI.analysisHistory.clear();
+      const result = await window.electronAPI?.analysisHistory?.clear?.();
       if (result?.success === false) {
         throw new Error(result?.error || 'Failed to clear history');
       }
@@ -135,11 +145,12 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
     } catch {
       addNotification('Failed to clear analysis history', 'error');
     } finally {
+      isClearingRef.current = false;
       if (isMountedRef.current) {
         setIsClearing(false);
       }
     }
-  }, [isClearing, loadAnalysisData, addNotification]);
+  }, [loadAnalysisData, addNotification]);
 
   const handleClearClick = useCallback(() => {
     setShowClearConfirm(true);
@@ -368,14 +379,14 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
                                     </Text>
                                   </Text>
                                 </div>
-                                {(entry?.analysis?.confidence || entry?.confidence) && (
+                                {(entry?.analysis?.confidence ?? entry?.confidence) != null && (
                                   <StatusBadge
                                     variant={getConfidenceVariant(
-                                      entry?.analysis?.confidence || entry?.confidence
+                                      entry?.analysis?.confidence ?? entry?.confidence
                                     )}
                                     className="shrink-0"
                                   >
-                                    {entry?.analysis?.confidence || entry?.confidence}% Match
+                                    {entry?.analysis?.confidence ?? entry?.confidence}% Match
                                   </StatusBadge>
                                 )}
                               </div>

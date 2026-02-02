@@ -9,6 +9,7 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { debounce } from '../../utils/performance';
+import { isWindows } from '../../utils/platform';
 
 // Inline SVG Icons (keep UI visuals)
 function CheckCircleIcon({ className }) {
@@ -185,12 +186,12 @@ export function useFileEditing({ onEditChange } = {}) {
     (file, index) => {
       const edits = editingFiles[index];
       if (!edits) return file;
-      const updatedCategory = edits.category || file.analysis?.category;
+      const updatedCategory = edits.category ?? file.analysis?.category;
       return {
         ...file,
         analysis: {
           ...file.analysis,
-          suggestedName: edits.suggestedName || file.analysis?.suggestedName,
+          suggestedName: edits.suggestedName ?? file.analysis?.suggestedName,
           category: updatedCategory
         }
       };
@@ -335,7 +336,11 @@ export function useProcessedFiles(organizedFiles) {
 
   // FIX Issue-5/6: Normalize paths consistently for Windows/Unix compatibility
   // This ensures undo/redo operations work correctly regardless of path separators or case
-  const normalizePath = useCallback((p) => (p || '').replace(/[\\/]+/g, '/').toLowerCase(), []);
+  // FIX: Only lowercase on Windows — Linux filesystems are case-sensitive
+  const normalizePath = useCallback((p) => {
+    const normalized = (p || '').replace(/[\\/]+/g, '/');
+    return isWindows ? normalized.toLowerCase() : normalized;
+  }, []);
 
   const markFilesAsProcessed = useCallback(
     (filePaths) =>

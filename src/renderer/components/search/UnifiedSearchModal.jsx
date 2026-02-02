@@ -27,8 +27,8 @@ import {
   HelpCircle
 } from 'lucide-react';
 
-import Modal, { ConfirmModal } from '../Modal';
-import { ModalLoadingOverlay } from '../LoadingSkeleton';
+import Modal, { ConfirmModal } from '../ui/Modal';
+import { ModalLoadingOverlay } from '../ui/LoadingSkeleton';
 import { Button, IconButton, Input, Select, StateMessage, Textarea } from '../ui';
 import HighlightedText from '../ui/HighlightedText';
 import { getFileCategory } from '../ui/FileIcon';
@@ -37,6 +37,7 @@ import { TIMEOUTS } from '../../../shared/performanceConstants';
 import { createLogger } from '../../../shared/logger';
 import { GRAPH_FEATURE_FLAGS } from '../../../shared/featureFlags';
 import { safeBasename } from '../../utils/pathUtils';
+import { joinPath } from '../../utils/platform';
 import { formatDisplayPath } from '../../utils/pathDisplay';
 import { scoreToOpacity, clamp01 } from '../../utils/scoreUtils';
 import { makeQueryNodeId, defaultNodePosition } from '../../utils/graphUtils';
@@ -61,6 +62,7 @@ import EmptySearchState from './EmptySearchState';
 import GraphTour from './GraphTour';
 import GraphErrorBoundary from './GraphErrorBoundary';
 import ChatPanel from './ChatPanel';
+import { mapErrorToNotification } from '../../utils/errorMapping';
 
 const logger = createLogger('UnifiedSearchModal');
 // Maximum nodes allowed in graph to prevent memory exhaustion
@@ -725,7 +727,10 @@ export default function UnifiedSearchModal({
   const [clusterMode, setClusterMode] = useState(DEFAULT_CLUSTER_MODE); // topic | time | type | tag
   const [clusterFilters, setClusterFilters] = useState(getDefaultClusterFilters);
   const clusterFiltersRef = useRef(clusterFilters);
+  const clusterModeRef = useRef(clusterMode);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const lastClustersRef = useRef(null);
+  const lastCrossClusterEdgesRef = useRef(null);
 
   // Guide assistant state
   const [showGuidePanel, setShowGuidePanel] = useState(false);
@@ -765,6 +770,11 @@ export default function UnifiedSearchModal({
   useEffect(() => {
     clusterFiltersRef.current = clusterFilters;
   }, [clusterFilters]);
+
+  // Sync clusterMode ref so cluster rendering can update without recomputing
+  useEffect(() => {
+    clusterModeRef.current = clusterMode;
+  }, [clusterMode]);
 
   // Sync ref with state
   useEffect(() => {
@@ -917,7 +927,6 @@ export default function UnifiedSearchModal({
 
   // Refs for tracking auto-load state
   const hasAutoLoadedClusters = useRef(false);
-  const hasShownClusterCelebration = useRef(false);
 
   // Ref to avoid temporal dead zone with loadClusters in keyboard shortcuts
   const loadClustersRef = useRef(null);
@@ -930,6 +939,9 @@ export default function UnifiedSearchModal({
 
   // Ref for cluster action callbacks to rehydrate saved graphs
   const clusterActionRefs = useRef({});
+
+  // Track the last fetched document details path to avoid re-fetching
+  const lastFetchedDetailsPathRef = useRef(null);
 
   // Refs to access current nodes/edges in callbacks without creating stale closures
   const nodesRef = useRef(nodes);
@@ -1104,7 +1116,8 @@ export default function UnifiedSearchModal({
         setChatMessages((prev) => [...prev, assistantMessage]);
       } catch (chatErr) {
         logger.warn('[KnowledgeOS] Chat query failed', { error: chatErr?.message || chatErr });
-        setChatError(chatErr?.message || 'Chat request failed');
+        const { message } = mapErrorToNotification({ error: chatErr?.message || chatErr });
+        setChatError(message);
         setChatWarning('');
       } finally {
         setIsChatting(false);
@@ -1263,6 +1276,13 @@ export default function UnifiedSearchModal({
       cancelPendingLayout();
       hasAutoLoadedClusters.current = false;
       reactFlowInstance.current = null; // Clear ref to prevent memory leak
+      // Clear accumulated state to prevent memory buildup while modal is closed
+      setSearchResults([]);
+      setChatMessages([]);
+      graphActions.setNodes([]);
+      graphActions.setEdges([]);
+      setBulkSelectedIds(new Set());
+      setDuplicateGroups([]);
       return () => {};
     }
 
@@ -1920,28 +1940,9 @@ export default function UnifiedSearchModal({
     });
   }, []);
 
-  const _selectAllResults = useCallback(() => {
-    setBulkSelectedIds(new Set(searchResults.map((r) => r.id)));
-  }, [searchResults]);
-
   const clearBulkSelection = useCallback(() => {
     setBulkSelectedIds(new Set());
   }, []);
-
-  const _copySelectedPaths = useCallback(async () => {
-    const paths = searchResults
-      .filter((r) => bulkSelectedIds.has(r.id))
-      .map((r) => r.metadata?.path)
-      .filter(Boolean);
-    if (paths.length === 0) return;
-    try {
-      await navigator.clipboard.writeText(paths.join('\n'));
-      setGraphStatus(`Copied ${paths.length} path(s) to clipboard`);
-    } catch (e) {
-      logger.warn('[Search] Clipboard write failed', e);
-      setError('Could not copy to clipboard. Check browser permissions.');
-    }
-  }, [searchResults, bulkSelectedIds]);
 
   const moveSelectedToFolder = useCallback(async () => {
     const selectedFiles = searchResults.filter((r) => bulkSelectedIds.has(r.id));
@@ -1971,7 +1972,7 @@ export default function UnifiedSearchModal({
           await window.electronAPI?.files?.performOperation?.({
             operation: 'move',
             source: sourcePath,
-            destination: `${destFolder}/${fileName}`
+            destination: joinPath(destFolder, fileName)
           });
           successCount++;
         } catch (e) {
@@ -2011,7 +2012,7 @@ export default function UnifiedSearchModal({
       const folderName = clusterData.label || 'Cluster Folder';
 
       // Build the full path for the new smart folder
-      const folderPath = `${basePath}/${folderName}`;
+      const folderPath = joinPath(basePath, folderName);
 
       // Create the smart folder using existing API
       const result = await window.electronAPI?.smartFolders?.add?.({
@@ -2083,7 +2084,7 @@ export default function UnifiedSearchModal({
           await window.electronAPI?.files?.performOperation?.({
             operation: 'move',
             source: sourcePath,
-            destination: `${destFolder}/${fileName}`
+            destination: joinPath(destFolder, fileName)
           });
           successCount++;
         } catch (e) {
@@ -2202,15 +2203,12 @@ export default function UnifiedSearchModal({
         }
       }
 
-      if (openedCount > 0) {
+      if (openedCount > 0 && failedCount > 0) {
+        setGraphStatus(`Opened ${openedCount} file(s) (${failedCount} failed)`);
+      } else if (openedCount > 0) {
         setGraphStatus(`Opened ${openedCount} file(s)`);
-      }
-      if (failedCount > 0 && openedCount === 0) {
-        setError('Unable to open files. They may have been moved or deleted.');
       } else if (failedCount > 0) {
-        setGraphStatus((prev) =>
-          prev ? `${prev} (${failedCount} failed)` : `${openedCount} opened, ${failedCount} failed`
-        );
+        setError('Unable to open files. They may have been moved or deleted.');
       }
     } catch (e) {
       logger.error('[Graph] Open all files failed', e);
@@ -2293,27 +2291,6 @@ export default function UnifiedSearchModal({
 
     setGraphStatus(`Expanded ${clusterNodes.length} clusters`);
   }, [nodes]);
-
-  /**
-   * Focus on a specific node - shows only the node and its neighbors up to focusDepth
-   */
-  const _handleFocusOnNode = useCallback(
-    (nodeId) => {
-      if (!nodeId) return;
-      setFocusNodeId(nodeId);
-      setGraphStatus(`Focused on node. Showing ${focusDepth} level(s) of connections.`);
-
-      // Center view on focused node
-      const node = nodes.find((n) => n.id === nodeId);
-      if (node && reactFlowInstance.current) {
-        reactFlowInstance.current.setCenter(node.position.x + 100, node.position.y + 50, {
-          duration: 300,
-          zoom: 1.2
-        });
-      }
-    },
-    [focusDepth, nodes]
-  );
 
   /**
    * Clear focus mode - show all nodes again
@@ -2693,15 +2670,12 @@ export default function UnifiedSearchModal({
 
     if (!path) {
       setSelectedDocumentDetails(null);
+      lastFetchedDetailsPathRef.current = null;
       return undefined;
     }
 
     // Don't re-fetch if we already have details for this path
-    if (
-      selectedDocumentDetails?.metadata?.path === path ||
-      selectedDocumentDetails?.originalPath === path
-    )
-      return undefined;
+    if (lastFetchedDetailsPathRef.current === path) return undefined;
 
     let cancelled = false;
     const fetchDetails = async () => {
@@ -2709,6 +2683,7 @@ export default function UnifiedSearchModal({
       try {
         const history = await window.electronAPI?.analysisHistory?.getFileHistory?.(path);
         if (!cancelled && history) {
+          lastFetchedDetailsPathRef.current = path;
           setSelectedDocumentDetails(history);
         }
       } catch (err) {
@@ -2721,7 +2696,7 @@ export default function UnifiedSearchModal({
     return () => {
       cancelled = true;
     };
-  }, [selectedSearchResult, selectedNode, freshMetadata, selectedDocumentDetails, activeTab]);
+  }, [selectedSearchResult, selectedNode, freshMetadata, activeTab]);
 
   useEffect(() => {
     if (activeTab !== 'search') return undefined;
@@ -2996,20 +2971,6 @@ export default function UnifiedSearchModal({
     }
   }, []);
 
-  const handleGraphWheel = useCallback((event) => {
-    if (!reactFlowInstance.current) return;
-    if (!event.ctrlKey && !event.metaKey) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    if (event.deltaY < 0 && typeof reactFlowInstance.current.zoomIn === 'function') {
-      reactFlowInstance.current.zoomIn();
-    } else if (event.deltaY > 0 && typeof reactFlowInstance.current.zoomOut === 'function') {
-      reactFlowInstance.current.zoomOut();
-    }
-  }, []);
-
   /**
    * Handle file drop to add files to graph
    */
@@ -3162,37 +3123,86 @@ export default function UnifiedSearchModal({
   /**
    * Load and display semantic clusters
    */
-  const loadClusters = useCallback(async () => {
-    setIsComputingClusters(true);
-    setGraphStatus('Analyzing file relationships...');
-    setError('');
-
+  const formatDateLabel = useCallback((iso) => {
+    if (!iso) return '';
+    const ms = Date.parse(String(iso));
+    if (!Number.isFinite(ms)) return '';
     try {
-      // First compute clusters. The IPC only accepts 'auto' or a numeric k; our UI "clusterMode"
-      // is a display/filter choice, so keep computation on auto to avoid invalid k errors.
-      const computeResp = await window.electronAPI?.embeddings?.computeClusters?.('auto');
-      if (!computeResp || computeResp.success !== true) {
-        throw new Error(computeResp?.error || 'Failed to compute clusters');
+      return new Date(ms).toLocaleDateString();
+    } catch {
+      return '';
+    }
+  }, []);
+
+  const getClusterDisplayLabel = useCallback(
+    (cluster) => {
+      const mode = clusterModeRef.current || DEFAULT_CLUSTER_MODE;
+      const fallback = cluster?.label || 'Cluster';
+
+      if (mode === 'type') {
+        return cluster?.dominantCategory ? String(cluster.dominantCategory) : fallback;
+      }
+      if (mode === 'tag') {
+        const tag = Array.isArray(cluster?.commonTags) ? cluster.commonTags[0] : null;
+        return tag ? String(tag) : fallback;
+      }
+      if (mode === 'time') {
+        const start = cluster?.timeRange?.start;
+        const end = cluster?.timeRange?.end;
+        const startLabel = formatDateLabel(start);
+        const endLabel = formatDateLabel(end);
+        if (startLabel && endLabel && startLabel !== endLabel) return `${startLabel} – ${endLabel}`;
+        if (endLabel) return endLabel;
+        return fallback;
       }
 
-      // Get clusters for display
-      const clustersResp = await window.electronAPI?.embeddings?.getClusters?.();
-      if (!clustersResp || clustersResp.success !== true) {
-        throw new Error(clustersResp?.error || 'Failed to get clusters');
-      }
+      // topic (semantic) default
+      return fallback;
+    },
+    [formatDateLabel]
+  );
 
-      const clusters = clustersResp.clusters || [];
-      const crossClusterEdges = clustersResp.crossClusterEdges || [];
+  const sortClustersForMode = useCallback((clusters) => {
+    const mode = clusterModeRef.current || DEFAULT_CLUSTER_MODE;
+    const list = Array.isArray(clusters) ? clusters.slice() : [];
 
-      if (clusters.length === 0) {
-        setGraphStatus('No related groups found yet. Try indexing more files.');
-        return;
-      }
+    if (mode === 'time') {
+      list.sort((a, b) => {
+        const aMs = Number.isFinite(a?.timeRange?.endMs)
+          ? a.timeRange.endMs
+          : Date.parse(a?.timeRange?.end);
+        const bMs = Number.isFinite(b?.timeRange?.endMs)
+          ? b.timeRange.endMs
+          : Date.parse(b?.timeRange?.end);
+        const aVal = Number.isFinite(aMs) ? aMs : 0;
+        const bVal = Number.isFinite(bMs) ? bMs : 0;
+        return bVal - aVal;
+      });
+      return list;
+    }
 
-      // Apply filters (confidence, size, type, search) using ref to avoid re-creating callback on filter change
+    if (mode === 'type') {
+      list.sort((a, b) =>
+        String(a?.dominantCategory || '').localeCompare(String(b?.dominantCategory || ''))
+      );
+      return list;
+    }
+
+    if (mode === 'tag') {
+      const firstTag = (c) => (Array.isArray(c?.commonTags) ? String(c.commonTags[0] || '') : '');
+      list.sort((a, b) => firstTag(a).localeCompare(firstTag(b)));
+      return list;
+    }
+
+    return list;
+  }, []);
+
+  const renderClustersToGraph = useCallback(
+    (clusters, crossClusterEdges) => {
       const currentFilters = clusterFiltersRef.current;
       const normalizedSearch = (currentFilters.search || '').trim().toLowerCase();
-      const filteredClusters = clusters.filter((cluster) => {
+
+      const filteredClusters = (Array.isArray(clusters) ? clusters : []).filter((cluster) => {
         const confOk = currentFilters.confidence.includes(cluster.confidence || 'low');
         const sizeOk = (cluster.memberCount || 0) >= (currentFilters.minSize || 1);
         const typeOk =
@@ -3208,8 +3218,17 @@ export default function UnifiedSearchModal({
         return confOk && sizeOk && searchOk && typeOk;
       });
 
-      // Create cluster nodes with rich metadata
-      const clusterNodes = filteredClusters.map((cluster, idx) => ({
+      if (filteredClusters.length === 0) {
+        graphActions.setNodes([]);
+        graphActions.setEdges([]);
+        setShowClusters(true);
+        setGraphStatus('No groups match your current filters.');
+        return;
+      }
+
+      const ordered = sortClustersForMode(filteredClusters);
+
+      const clusterNodes = ordered.map((cluster, idx) => ({
         id: cluster.id,
         type: 'clusterNode',
         position: defaultNodePosition(idx),
@@ -3217,62 +3236,56 @@ export default function UnifiedSearchModal({
           kind: 'cluster',
           id: cluster.id,
           clusterId: cluster.clusterId,
-          label: cluster.label,
+          label: getClusterDisplayLabel(cluster),
           memberCount: cluster.memberCount,
           memberIds: cluster.memberIds,
           expanded: false,
           topTerms: cluster.topTerms || cluster.commonTags || [],
-          // Rich metadata for meaningful cluster display
           confidence: cluster.confidence || 'low',
           dominantCategory: cluster.dominantCategory || null,
           commonTags: cluster.commonTags || [],
+          timeRange: cluster.timeRange || null,
           isAutoGenerated: true,
-          // Action callbacks for cluster context menu
           onCreateSmartFolder: handleCreateSmartFolderFromCluster,
           onMoveAllToFolder: handleMoveAllToFolder,
           onExportFileList: handleExportFileList,
-          // New action callbacks
           onOpenAllFiles: handleOpenAllFilesInCluster,
           onSearchWithinCluster: handleSearchWithinCluster,
           onRenameCluster: handleRenameCluster,
-          // Expand/collapse callback
           onExpand: handleClusterExpand
         },
         draggable: true
       }));
 
-      // Create cross-cluster edges with visible similarity labels
-      // Dynamic filtering: reduce clutter by keeping only top connections per cluster
-
-      // 1. Deduplicate edges (A->B and B->A are the same connection)
       const filteredClusterIds = new Set(filteredClusters.map((c) => c.id));
       const uniqueEdgesMap = new Map();
-      crossClusterEdges
+      (Array.isArray(crossClusterEdges) ? crossClusterEdges : [])
         .filter(
           (edge) => filteredClusterIds.has(edge.source) && filteredClusterIds.has(edge.target)
         )
         .forEach((edge) => {
-          // Create a sorted key so A->B and B->A produce the same key "A-B" (if A < B)
           const [u, v] = [edge.source, edge.target].sort();
           const key = `${u}|${v}`;
 
-          // Keep the one with higher similarity if duplicates exist (though usually they are equal)
           const current = uniqueEdgesMap.get(key) || {
             similarity: 0,
             count: 0,
             sharedTerms: [],
             bridgeFiles: []
           };
+
           const mergedBridgeFiles = [
             ...(current.bridgeFiles || []),
             ...(edge.bridgeFiles || []).slice(0, 6)
           ].filter(Boolean);
+
           const uniqueBridgeFiles = Array.from(
             new Map(
               mergedBridgeFiles.map((file) => [file?.id || file?.path || file, file])
             ).values()
           );
-          const merged = {
+
+          uniqueEdgesMap.set(key, {
             ...current,
             source: u,
             target: v,
@@ -3289,43 +3302,33 @@ export default function UnifiedSearchModal({
                 3
               )
             ].filter(Boolean)
-          };
-          uniqueEdgesMap.set(key, merged);
+          });
         });
-      const uniqueEdges = Array.from(uniqueEdgesMap.values());
 
-      // 2. Group by source to limit connections per cluster
+      const uniqueEdges = Array.from(uniqueEdgesMap.values());
       const edgesByNode = new Map();
       uniqueEdges.forEach((edge) => {
-        // Add to source bucket
         if (!edgesByNode.has(edge.source)) edgesByNode.set(edge.source, []);
         edgesByNode.get(edge.source).push(edge);
 
-        // Add to target bucket too so we count connections for both sides
         if (!edgesByNode.has(edge.target)) edgesByNode.set(edge.target, []);
         edgesByNode.get(edge.target).push(edge);
       });
 
-      // 3. Strict filtering: Only keep edges that are among the "Top N" for BOTH nodes
-      // or at least very strong. This creates a "Nearest Neighbor" graph.
       const MAX_CONNECTIONS = 2;
       const STRICT_THRESHOLD = 0.65;
-
       const meaningfulEdges = uniqueEdges.filter((edge) => {
         const sim = edge.similarity || 0;
         if (sim < STRICT_THRESHOLD) return false;
 
-        // Check if this edge is important for Source
         const sourceEdges = edgesByNode.get(edge.source) || [];
         sourceEdges.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
         const isTopForSource = sourceEdges.indexOf(edge) < MAX_CONNECTIONS;
 
-        // Check if this edge is important for Target
         const targetEdges = edgesByNode.get(edge.target) || [];
         targetEdges.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
         const isTopForTarget = targetEdges.indexOf(edge) < MAX_CONNECTIONS;
 
-        // Keep if it's a top connection for EITHER side (to ensure connectivity)
         return isTopForSource || isTopForTarget;
       });
 
@@ -3337,11 +3340,11 @@ export default function UnifiedSearchModal({
         animated: true,
         style: {
           stroke: '#9ca3af',
-          strokeWidth: Math.max(1, (edge.similarity || 0.5) * 1.5), // Even thinner
-          strokeDasharray: '4,8', // Very sparse dashing
-          opacity: 0.35 // Subtle by default to reduce clutter
+          strokeWidth: Math.max(1, (edge.similarity || 0.5) * 1.5),
+          strokeDasharray: '4,8',
+          opacity: 0.35
         },
-        className: 'cross-cluster-edge', // Subtle by default
+        className: 'cross-cluster-edge',
         data: {
           kind: 'cross_cluster',
           similarity: edge.similarity || 0.5,
@@ -3353,18 +3356,16 @@ export default function UnifiedSearchModal({
         }
       }));
 
-      // Update graph
       graphActions.setNodes(clusterNodes);
       graphActions.setEdges(clusterEdges);
       setShowClusters(true);
-      setGraphStatus(`Found ${filteredClusters.length} groups of related files`);
 
-      // Apply intelligent layout for better cluster visualization
-      // Layout considers: confidence levels (inner/outer rings), relationships (connected clusters nearby)
+      const mode = clusterModeRef.current || DEFAULT_CLUSTER_MODE;
+      setGraphStatus(`Found ${filteredClusters.length} groups (cluster by: ${mode})`);
+
       if (clusterNodes.length > 0) {
         try {
-          // Calculate dynamic radius based on cluster count and card size to prevent overlap
-          const estimatedArcWidth = 320 + 140; // cluster card width + padding
+          const estimatedArcWidth = 320 + 140;
           const minRadius = 450;
           const dynamicRadius = Math.max(
             minRadius,
@@ -3377,42 +3378,70 @@ export default function UnifiedSearchModal({
             radius: dynamicRadius
           });
           graphActions.setNodes(layoutedNodes);
-
-          // Update status with celebration or regular info
-          const highCount = filteredClusters.filter((c) => c.confidence === 'high').length;
-          const firstClusterLabel = filteredClusters[0]?.label || 'your files';
-
-          // First time celebration - explain what happened
-          if (!hasShownClusterCelebration.current) {
-            hasShownClusterCelebration.current = true;
-            setGraphStatus(
-              `Discovered ${filteredClusters.length} groups! Try double-clicking "${firstClusterLabel}" to explore.`
-            );
-          } else if (highCount > 0) {
-            setGraphStatus(
-              `Found ${filteredClusters.length} groups (${highCount} strong match${highCount > 1 ? 'es' : ''})`
-            );
-          }
         } catch (layoutError) {
           logger.warn('[Graph] Cluster layout failed:', layoutError);
         }
       }
+    },
+    [
+      graphActions,
+      getClusterDisplayLabel,
+      sortClustersForMode,
+      handleCreateSmartFolderFromCluster,
+      handleMoveAllToFolder,
+      handleExportFileList,
+      handleOpenAllFilesInCluster,
+      handleSearchWithinCluster,
+      handleRenameCluster,
+      handleClusterExpand
+    ]
+  );
+
+  const loadClusters = useCallback(async () => {
+    setIsComputingClusters(true);
+    setGraphStatus('Analyzing file relationships...');
+    setError('');
+
+    try {
+      // Prefer using cached clusters when available; recompute only if stale.
+      let clustersResp = await window.electronAPI?.embeddings?.getClusters?.();
+      if (!clustersResp || clustersResp.success !== true) {
+        throw new Error(clustersResp?.error || 'Failed to get clusters');
+      }
+
+      if (clustersResp.stale === true) {
+        const computeResp = await window.electronAPI?.embeddings?.computeClusters?.('auto');
+        if (!computeResp || computeResp.success !== true) {
+          throw new Error(computeResp?.error || 'Failed to compute clusters');
+        }
+        clustersResp = await window.electronAPI?.embeddings?.getClusters?.();
+        if (!clustersResp || clustersResp.success !== true) {
+          throw new Error(clustersResp?.error || 'Failed to get clusters');
+        }
+      }
+
+      const clusters = clustersResp.clusters || [];
+      const crossClusterEdges = clustersResp.crossClusterEdges || [];
+
+      if (!Array.isArray(clusters) || clusters.length === 0) {
+        setGraphStatus('No related groups found yet. Try indexing more files.');
+        setShowClusters(true);
+        graphActions.setNodes([]);
+        graphActions.setEdges([]);
+        return;
+      }
+
+      lastClustersRef.current = clusters;
+      lastCrossClusterEdgesRef.current = crossClusterEdges;
+
+      renderClustersToGraph(clusters, crossClusterEdges);
     } catch (e) {
       setError(getErrorMessage(e, 'Cluster loading'));
       setGraphStatus('');
     } finally {
       setIsComputingClusters(false);
     }
-  }, [
-    handleCreateSmartFolderFromCluster,
-    handleMoveAllToFolder,
-    handleExportFileList,
-    handleOpenAllFilesInCluster,
-    handleSearchWithinCluster,
-    handleRenameCluster,
-    handleClusterExpand,
-    graphActions
-  ]);
+  }, [graphActions, renderClustersToGraph]);
 
   // Assign to ref so keyboard shortcuts can access it
   loadClustersRef.current = loadClusters;
@@ -3429,6 +3458,31 @@ export default function UnifiedSearchModal({
     hasAutoLoadedClusters.current = true;
     loadClusters();
   }, [isOpen, activeTab, stats, nodes.length, loadClusters, enableAutoClustering]);
+
+  // Refresh cluster presentation when mode/filters change (no recompute needed).
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'graph') return;
+    if (!showClusters) return;
+    if (isComputingClusters) return;
+
+    const clusters = lastClustersRef.current;
+    if (!Array.isArray(clusters) || clusters.length === 0) return;
+    const crossEdges = lastCrossClusterEdgesRef.current || [];
+
+    const timer = setTimeout(() => {
+      renderClustersToGraph(clusters, crossEdges);
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [
+    isOpen,
+    activeTab,
+    showClusters,
+    isComputingClusters,
+    clusterMode,
+    clusterFilters,
+    renderClustersToGraph
+  ]);
 
   // Real-time updates: Listen for file operations
   useEffect(() => {
@@ -3641,12 +3695,12 @@ export default function UnifiedSearchModal({
       setGraphStatus('Searching...');
 
       try {
-        // Use hybrid search with LLM re-ranking for graph results
+        // Graph search should be fast and interactive.
+        // LLM re-ranking can exceed IPC timeouts and make the modal feel "stuck".
         const resp = await window.electronAPI?.embeddings?.search?.(q, {
           topK: defaultTopK,
           mode: 'hybrid',
-          rerank: true, // Enable LLM re-ranking
-          rerankTopN: 10 // Re-rank top 10 results
+          rerank: false
         });
         if (!resp || resp.success !== true) {
           throw new Error(resp?.error || 'Search failed');
@@ -4049,8 +4103,10 @@ export default function UnifiedSearchModal({
           setGraphStatus('Applying layout...');
           try {
             // Get the final nodes and edges for layout
+            // Use refs to get current state (nodes/edges from closure may be stale)
             const finalNodes = (() => {
-              const map = new Map(nodes.map((n) => [n.id, n]));
+              const currentNodes = nodesRef.current || [];
+              const map = new Map(currentNodes.map((n) => [n.id, n]));
               nextNodes.forEach((n) => {
                 if (!map.has(n.id)) map.set(n.id, n);
               });
@@ -4058,7 +4114,8 @@ export default function UnifiedSearchModal({
             })();
 
             const finalEdges = (() => {
-              const map = new Map(edges.map((e) => [e.id, e]));
+              const currentEdges = edgesRef.current || [];
+              const map = new Map(currentEdges.map((e) => [e.id, e]));
               nextEdges.forEach((e) => map.set(e.id, e));
               return Array.from(map.values());
             })();
@@ -4145,8 +4202,6 @@ export default function UnifiedSearchModal({
     [
       selectedNode,
       autoLayout,
-      nodes,
-      edges,
       hopCount,
       decayFactor,
       graphActions,
@@ -4481,8 +4536,10 @@ export default function UnifiedSearchModal({
     });
   }, [nodes, selectedNodeId, showClusters]);
 
-  const rfNodeTypes = useMemo(() => STABLE_NODE_TYPES, []);
-  const rfEdgeTypes = useMemo(() => STABLE_EDGE_TYPES, []);
+  // Keep ReactFlow type maps stable across renders (React Flow warning #002).
+  // Even if hot reload swaps module-level bindings, these refs remain stable for this mount.
+  const rfNodeTypes = useRef(STABLE_NODE_TYPES).current;
+  const rfEdgeTypes = useRef(STABLE_EDGE_TYPES).current;
 
   // FIX: Filter edges based on visible nodes to prevent "dangling" edges
   // Split into baseEdges (expensive, no hover deps) and rfEdges (lightweight hover overlay)
@@ -5733,7 +5790,6 @@ export default function UnifiedSearchModal({
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleFileDrop}
-              onWheel={handleGraphWheel}
             >
               {/* Graph Controls: Help & Maximize */}
               <div className="absolute top-3 right-3 z-20 flex gap-2">
@@ -5974,7 +6030,8 @@ export default function UnifiedSearchModal({
                     minZoom={0.2}
                     maxZoom={2}
                     zoomOnScroll={false}
-                    panOnScroll
+                    // Wheel scrolling should scroll the modal page; panning is available via drag.
+                    panOnScroll={false}
                     defaultViewport={rfDefaultViewport}
                     proOptions={rfProOptions}
                   >

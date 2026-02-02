@@ -67,7 +67,7 @@ function ProgressIndicator() {
                 {metadata.title}
               </Heading>
               <Text variant="tiny" className="text-system-gray-500">
-                Step {currentIndex + 1} of {phases.length}
+                Step {currentIndex >= 0 ? currentIndex + 1 : '-'} of {phases.length}
               </Text>
             </div>
             {getPersistKeysForPhase().length > 0 && (

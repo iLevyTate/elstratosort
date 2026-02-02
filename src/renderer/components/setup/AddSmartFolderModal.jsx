@@ -9,6 +9,7 @@ import { Inline, Stack } from '../layout';
 import { createLogger } from '../../../shared/logger';
 import { filesIpc, smartFoldersIpc } from '../../services/ipc';
 import { selectRedactPaths } from '../../store/selectors';
+import { mapErrorToNotification } from '../../utils/errorMapping';
 
 const logger = createLogger('AddSmartFolderModal');
 const getPathSeparator = (path) => (path && path.includes('\\') ? '\\' : '/');
@@ -44,6 +45,13 @@ function AddSmartFolderModal({
     setIsGeneratingDescription(false);
   }, []);
 
+  // Reset form state when modal opens to ensure a fresh form each time
+  useEffect(() => {
+    if (isOpen) {
+      resetForm();
+    }
+  }, [isOpen, resetForm]);
+
   const handleGenerateDescription = async () => {
     if (!folderName.trim()) {
       showNotification?.('Please enter a folder name first', 'warning');
@@ -62,7 +70,11 @@ function AddSmartFolderModal({
     } catch (err) {
       logger.error('Failed to generate description', { error: err.message });
       if (isMountedRef.current) {
-        showNotification?.('Failed to generate description', 'error');
+        const { message, severity } = mapErrorToNotification({
+          error: err.message,
+          operationType: 'Description generation'
+        });
+        showNotification?.(message, severity);
       }
     } finally {
       if (isMountedRef.current) {
@@ -101,7 +113,7 @@ function AddSmartFolderModal({
     }
 
     // eslint-disable-next-line no-control-regex
-    const illegalChars = /[<>:"|?*\x00-\x1f]/g;
+    const illegalChars = /[<>:"|?*\x00-\x1f]/;
     if (illegalChars.test(folderName)) {
       showNotification?.(
         'Folder name contains invalid characters. Please avoid: < > : " | ? *',
@@ -110,11 +122,25 @@ function AddSmartFolderModal({
       return;
     }
 
+    // Block path traversal via folder name (e.g., ".." or "../../etc")
+    const nameParts = folderName.split(/[\\/]/);
+    if (nameParts.some((segment) => segment === '..')) {
+      showNotification?.('Folder name cannot contain path traversal segments (..)', 'error');
+      return;
+    }
+
     const isAbsolutePath = (p) =>
       /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('/') || /^[\\/]{2}[^\\/]/.test(p);
 
     let targetPath = folderPath.trim();
     if (!targetPath) {
+      if (!defaultLocation || typeof defaultLocation !== 'string') {
+        showNotification?.(
+          'Unable to determine folder location. Please browse to select a folder.',
+          'error'
+        );
+        return;
+      }
       let resolvedDefaultLocation = defaultLocation;
       if (!isAbsolutePath(defaultLocation)) {
         try {
@@ -172,6 +198,15 @@ function AddSmartFolderModal({
       const success = await onAdd(newFolder);
       if (success) {
         handleClose();
+      }
+    } catch (err) {
+      logger.error('Failed to add smart folder', { error: err.message });
+      if (isMountedRef.current) {
+        const { message, severity } = mapErrorToNotification({
+          error: err.message,
+          operationType: 'Smart folder creation'
+        });
+        showNotification?.(message, severity);
       }
     } finally {
       if (isMountedRef.current) {

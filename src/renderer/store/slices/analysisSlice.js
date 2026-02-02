@@ -3,6 +3,33 @@ import { FILE_STATES } from '../../../shared/constants';
 import { logger } from '../../../shared/logger';
 import { serializeData } from '../../utils/serialization';
 
+/**
+ * Maximum number of analysis results to retain in the store.
+ * When this limit is exceeded, the oldest entries are trimmed.
+ * Uses a hardcoded default as a safety net in case the import fails
+ * (performanceConstants is a CommonJS module).
+ */
+let MAX_ANALYSIS_RESULTS = 5000;
+try {
+  const { LIMITS } = require('../../../shared/performanceConstants');
+  if (LIMITS && typeof LIMITS.MAX_ANALYSIS_RESULTS === 'number') {
+    MAX_ANALYSIS_RESULTS = LIMITS.MAX_ANALYSIS_RESULTS;
+  }
+} catch {
+  // Use default if import fails
+}
+
+/**
+ * Trim the results array to the maximum allowed size by removing the oldest entries.
+ * Oldest entries are those at the beginning of the array (earliest push order).
+ */
+function enforceResultsLimit(results) {
+  if (results.length > MAX_ANALYSIS_RESULTS) {
+    const excess = results.length - MAX_ANALYSIS_RESULTS;
+    results.splice(0, excess);
+  }
+}
+
 const initialState = {
   isAnalyzing: false,
   currentAnalysisFile: '',
@@ -32,13 +59,21 @@ const analysisSlice = createSlice({
       }
     },
     updateProgress: (state, action) => {
-      state.analysisProgress = {
-        ...state.analysisProgress,
-        ...action.payload,
-        lastActivity: Date.now()
-      };
-      if (action.payload.currentFile) {
-        state.currentAnalysisFile = action.payload.currentFile;
+      const payload = action.payload;
+      const current = state.analysisProgress;
+      // Skip update if nothing meaningful changed (avoid re-render from lastActivity alone)
+      const meaningfulChange = Object.keys(payload).some(
+        (key) => key !== 'lastActivity' && current[key] !== payload[key]
+      );
+      if (meaningfulChange || !current.lastActivity) {
+        state.analysisProgress = {
+          ...current,
+          ...payload,
+          lastActivity: Date.now()
+        };
+      }
+      if (payload.currentFile) {
+        state.currentAnalysisFile = payload.currentFile;
       }
     },
     analysisSuccess: (state, action) => {
@@ -57,6 +92,7 @@ const analysisSlice = createSlice({
         state.results[index] = result;
       } else {
         state.results.push(result);
+        enforceResultsLimit(state.results);
       }
     },
     analysisFailure: (state, action) => {
@@ -74,6 +110,7 @@ const analysisSlice = createSlice({
         state.results[index] = result;
       } else {
         state.results.push(result);
+        enforceResultsLimit(state.results);
       }
     },
     stopAnalysis: (state) => {
@@ -81,7 +118,8 @@ const analysisSlice = createSlice({
       state.currentAnalysisFile = '';
     },
     setAnalysisResults: (state, action) => {
-      state.results = serializeData(action.payload);
+      state.results = action.payload;
+      enforceResultsLimit(state.results);
     },
     setAnalysisStats: (state, action) => {
       state.stats = action.payload;

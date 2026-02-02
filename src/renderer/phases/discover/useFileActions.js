@@ -32,6 +32,10 @@ export function useFileActions({
    */
   const handleFileAction = useCallback(
     async (action, filePath) => {
+      if (!window.electronAPI?.files) {
+        addNotification('File operations unavailable', 'error', 3000, 'file-actions');
+        return;
+      }
       try {
         switch (action) {
           case 'open':

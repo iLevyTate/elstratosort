@@ -20,6 +20,21 @@ export default function ChromaDBStatusManager() {
   const dispatch = useAppDispatch();
   const { showSuccess, showWarning, showInfo } = useNotification();
 
+  // FIX 90: Store notification functions in refs to prevent re-subscriptions
+  // when their identity changes. They're only needed at call time, not subscription time.
+  const showSuccessRef = useRef(showSuccess);
+  const showWarningRef = useRef(showWarning);
+  const showInfoRef = useRef(showInfo);
+  useEffect(() => {
+    showSuccessRef.current = showSuccess;
+  }, [showSuccess]);
+  useEffect(() => {
+    showWarningRef.current = showWarning;
+  }, [showWarning]);
+  useEffect(() => {
+    showInfoRef.current = showInfo;
+  }, [showInfo]);
+
   // Track previous status to detect changes and avoid duplicate notifications
   const previousStatusRef = useRef(null);
   const hasShownInitialRef = useRef(false);
@@ -55,9 +70,9 @@ export default function ChromaDBStatusManager() {
       previousStatusRef.current = 'offline';
       // FIX: Show notification when initial status fetch fails
       // This helps users understand why Knowledge OS may be unavailable
-      showWarning('Could not connect to Knowledge OS service');
+      showWarningRef.current('Could not connect to Knowledge OS service');
     }
-  }, [dispatch, showWarning]);
+  }, [dispatch]);
 
   // Subscribe to status changes
   // FIX Issue 6: Subscribe FIRST, then fetch initial status to prevent race condition
@@ -90,11 +105,11 @@ export default function ChromaDBStatusManager() {
             const prevStatus = previousStatusRef.current;
             if (prevStatus !== null && prevStatus !== chromaStatus && hasShownInitialRef.current) {
               if (chromaStatus === 'online') {
-                showSuccess('Knowledge OS is now available');
+                showSuccessRef.current('Knowledge OS is now available');
               } else if (chromaStatus === 'offline') {
-                showWarning('Knowledge OS is temporarily unavailable');
+                showWarningRef.current('Knowledge OS is temporarily unavailable');
               } else if (chromaStatus === 'initializing') {
-                showInfo('Initializing Knowledge OS...');
+                showInfoRef.current('Initializing Knowledge OS...');
               }
             }
 
@@ -126,7 +141,7 @@ export default function ChromaDBStatusManager() {
         }
       }
     };
-  }, [dispatch, fetchInitialStatus, showSuccess, showWarning, showInfo]);
+  }, [dispatch, fetchInitialStatus]);
 
   // This component doesn't render anything
   return null;

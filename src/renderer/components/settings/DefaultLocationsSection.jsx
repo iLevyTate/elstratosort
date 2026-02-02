@@ -45,7 +45,7 @@ function DefaultLocationsSection({ settings, setSettings }) {
         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
           <Input
             type={redactPaths ? 'password' : 'text'}
-            value={settings.defaultSmartFolderLocation}
+            value={settings.defaultSmartFolderLocation || ''}
             onChange={(e) =>
               setSettings((prev) => ({
                 ...prev,

@@ -26,25 +26,48 @@ const SidePanel = memo(function SidePanel({
   className = ''
 }) {
   const panelRef = useRef(null);
+  const closingTimerRef = useRef(null);
   const titleId = useId();
   const descriptionId = useId();
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
 
   // Handle open/close with animation
+  // Timer is stored in a ref to avoid being canceled by effect cleanup
+  // when setIsClosing(true) triggers a dependency-driven re-run.
   useEffect(() => {
     if (isOpen && !isVisible && !isClosing) {
+      if (closingTimerRef.current) {
+        clearTimeout(closingTimerRef.current);
+        closingTimerRef.current = null;
+      }
       setIsVisible(true);
+    } else if (isOpen && isClosing) {
+      // Re-opened while closing - cancel close animation
+      if (closingTimerRef.current) {
+        clearTimeout(closingTimerRef.current);
+        closingTimerRef.current = null;
+      }
+      setIsClosing(false);
     } else if (!isOpen && isVisible && !isClosing) {
       // Start closing animation
       setIsClosing(true);
-      const timer = setTimeout(() => {
+      closingTimerRef.current = setTimeout(() => {
+        closingTimerRef.current = null;
         setIsVisible(false);
         setIsClosing(false);
       }, ANIMATION.EXIT);
-      return () => clearTimeout(timer);
     }
   }, [isOpen, isVisible, isClosing]);
+
+  // Clean up closing timer on unmount
+  useEffect(() => {
+    return () => {
+      if (closingTimerRef.current) {
+        clearTimeout(closingTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isVisible || !closeOnEsc) return undefined;
