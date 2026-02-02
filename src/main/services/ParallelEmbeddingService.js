@@ -1,11 +1,10 @@
 const os = require('os');
 const { getOllama, getOllamaEmbeddingModel } = require('../ollamaUtils');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { isRetryableError } = require('../utils/ollamaApiRetry');
 const { getInstance: getOllamaService } = require('./OllamaService');
 
-logger.setContext('ParallelEmbeddingService');
-
+const logger = createLogger('ParallelEmbeddingService');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 
 /**
@@ -405,7 +404,8 @@ class ParallelEmbeddingService {
       failed: errors.length,
       duration: `${duration}ms`,
       avgPerItem: `${Math.round(duration / items.length)}ms`,
-      throughput: `${(items.length / (duration / 1000)).toFixed(2)} items/sec`,
+      throughput:
+        duration > 0 ? `${(items.length / (duration / 1000)).toFixed(2)} items/sec` : 'instant',
       modelChangedDuringBatch
     });
 
@@ -418,7 +418,7 @@ class ParallelEmbeddingService {
         failed: errors.length,
         duration,
         avgLatencyMs: Math.round(duration / items.length),
-        throughput: items.length / (duration / 1000),
+        throughput: duration > 0 ? items.length / (duration / 1000) : 0,
         // FIX: Include model info for caller validation
         model: batchModel,
         modelChangedDuringBatch

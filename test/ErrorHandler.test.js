@@ -43,18 +43,21 @@ jest.mock('fs', () => ({
 }));
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
     log: jest.fn()
-  },
-  // sanitizeLogData is used by ErrorHandler.js
-  sanitizeLogData: jest.fn((data) => data)
-}));
+  };
+  return {
+    logger,
+    createLogger: jest.fn(() => logger), // sanitizeLogData is used by ErrorHandler.js
+    sanitizeLogData: jest.fn((data) => data)
+  };
+});
 
 // Mock constants
 jest.mock('../src/shared/constants', () => ({
@@ -206,16 +209,16 @@ describe('ErrorHandler', () => {
   });
 
   describe('determineSeverity', () => {
-    test('returns critical for PERMISSION_DENIED', () => {
+    test('returns error for PERMISSION_DENIED', () => {
       const severity = errorHandler.determineSeverity('PERMISSION_DENIED');
 
-      expect(severity).toBe('critical');
+      expect(severity).toBe('error');
     });
 
-    test('returns critical for UNKNOWN', () => {
+    test('returns error for UNKNOWN', () => {
       const severity = errorHandler.determineSeverity('UNKNOWN');
 
-      expect(severity).toBe('critical');
+      expect(severity).toBe('error');
     });
 
     test('returns error for FILE_NOT_FOUND', () => {
@@ -246,6 +249,96 @@ describe('ErrorHandler', () => {
       const severity = errorHandler.determineSeverity('OTHER_TYPE');
 
       expect(severity).toBe('info');
+    });
+  });
+
+  describe('process gone handlers', () => {
+    beforeEach(async () => {
+      await errorHandler.initialize();
+    });
+
+    test('render-process-gone includes summary and webContents metadata', async () => {
+      const handleCriticalSpy = jest
+        .spyOn(errorHandler, 'handleCriticalError')
+        .mockResolvedValue(undefined);
+
+      const renderHandler = electron.app.on.mock.calls.find(
+        ([eventName]) => eventName === 'render-process-gone'
+      )?.[1];
+
+      const webContents = {
+        id: 42,
+        getURL: jest.fn(() => 'app://main')
+      };
+
+      await renderHandler?.({}, webContents, {
+        type: 'renderer',
+        reason: 'crashed',
+        exitCode: 1,
+        serviceName: 'renderer',
+        name: 'render-process'
+      });
+
+      expect(handleCriticalSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Renderer Process Crashed'),
+        expect.objectContaining({
+          details: expect.objectContaining({
+            type: 'renderer',
+            reason: 'crashed',
+            exitCode: 1
+          }),
+          webContentsId: 42,
+          url: 'app://main'
+        })
+      );
+
+      handleCriticalSpy.mockRestore();
+    });
+
+    test('child-process-gone GPU uses warning log and skips critical handling', async () => {
+      const handleCriticalSpy = jest
+        .spyOn(errorHandler, 'handleCriticalError')
+        .mockResolvedValue(undefined);
+
+      const childHandler = electron.app.on.mock.calls.find(
+        ([eventName]) => eventName === 'child-process-gone'
+      )?.[1];
+
+      await childHandler?.({}, { type: 'GPU', reason: 'crashed' });
+
+      const { logger } = require('../src/shared/logger');
+      expect(logger.log).toHaveBeenCalledWith(
+        'warning',
+        expect.stringContaining('GPU Process Exited'),
+        expect.any(Object)
+      );
+      expect(handleCriticalSpy).not.toHaveBeenCalled();
+
+      handleCriticalSpy.mockRestore();
+    });
+  });
+
+  describe('handleCriticalError', () => {
+    beforeEach(async () => {
+      await errorHandler.initialize();
+    });
+
+    test('relaunches app when user selects restart', async () => {
+      electron.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
+
+      await errorHandler.handleCriticalError('Critical failure', new Error('boom'));
+
+      expect(electron.app.relaunch).toHaveBeenCalled();
+      expect(electron.app.quit).toHaveBeenCalled();
+    });
+
+    test('quits app when user selects quit', async () => {
+      electron.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
+
+      await errorHandler.handleCriticalError('Critical failure', { type: 'renderer' });
+
+      expect(electron.app.relaunch).not.toHaveBeenCalled();
+      expect(electron.app.quit).toHaveBeenCalled();
     });
   });
 
@@ -375,45 +468,48 @@ describe('ErrorHandler', () => {
   describe('cleanupLogs', () => {
     beforeEach(async () => {
       await errorHandler.initialize();
+      // Reset the async mocks for each test
+      mockFsPromises.readdir.mockReset();
+      mockFsPromises.stat.mockReset();
+      mockFsPromises.unlink.mockReset().mockResolvedValue(undefined);
     });
 
     test('deletes old log files', async () => {
       const oldDate = new Date();
       oldDate.setDate(oldDate.getDate() - 10);
 
-      mockFsSync.readdirSync.mockReturnValue(['stratosort-old.log', 'stratosort-new.log']);
-      mockFsSync.statSync
-        .mockReturnValueOnce({ mtime: oldDate })
-        .mockReturnValueOnce({ mtime: new Date() });
+      // PERF: Updated to use async fs.promises API
+      mockFsPromises.readdir.mockResolvedValue(['stratosort-old.log', 'stratosort-new.log']);
+      mockFsPromises.stat
+        .mockResolvedValueOnce({ mtime: oldDate })
+        .mockResolvedValueOnce({ mtime: new Date() });
 
       await errorHandler.cleanupLogs(7);
 
-      expect(mockFsSync.unlinkSync).toHaveBeenCalledTimes(1);
+      expect(mockFsPromises.unlink).toHaveBeenCalledTimes(1);
     });
 
     test('keeps recent log files', async () => {
-      mockFsSync.readdirSync.mockReturnValue(['stratosort-new.log']);
-      mockFsSync.statSync.mockReturnValue({ mtime: new Date() });
+      mockFsPromises.readdir.mockResolvedValue(['stratosort-new.log']);
+      mockFsPromises.stat.mockResolvedValue({ mtime: new Date() });
 
       await errorHandler.cleanupLogs(7);
 
-      expect(mockFsSync.unlinkSync).not.toHaveBeenCalled();
+      expect(mockFsPromises.unlink).not.toHaveBeenCalled();
     });
 
     test('only processes stratosort log files', async () => {
-      mockFsSync.readdirSync.mockReturnValue(['other-file.log', 'stratosort-test.log']);
-      mockFsSync.statSync.mockReturnValue({ mtime: new Date(0) });
+      mockFsPromises.readdir.mockResolvedValue(['other-file.log', 'stratosort-test.log']);
+      mockFsPromises.stat.mockResolvedValue({ mtime: new Date(0) });
 
       await errorHandler.cleanupLogs(7);
 
-      // Should only check the stratosort file
-      expect(mockFsSync.statSync).toHaveBeenCalledTimes(1);
+      // Should only stat the stratosort file (async version)
+      expect(mockFsPromises.stat).toHaveBeenCalledTimes(1);
     });
 
     test('handles cleanup errors gracefully', async () => {
-      mockFsSync.readdirSync.mockImplementation(() => {
-        throw new Error('Read failed');
-      });
+      mockFsPromises.readdir.mockRejectedValue(new Error('Read failed'));
 
       await errorHandler.cleanupLogs();
 

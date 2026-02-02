@@ -36,11 +36,12 @@ jest.mock('../src/shared/config/ConfigurationManager', () => {
 });
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     warn: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 describe('Config Index (Convenience Methods)', () => {
   beforeEach(() => {

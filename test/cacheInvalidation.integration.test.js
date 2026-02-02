@@ -13,22 +13,16 @@ const {
 } = require('../src/shared/cacheInvalidation');
 
 // Mock the logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     debug: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
     setContext: jest.fn()
-  },
-  createLogger: jest.fn(() => ({
-    debug: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    setContext: jest.fn()
-  }))
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 describe('CacheInvalidationBus Integration Tests', () => {
   let bus;

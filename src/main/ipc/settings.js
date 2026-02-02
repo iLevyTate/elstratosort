@@ -179,13 +179,14 @@ function validateImportedSettings(settings, logger) {
       if (!LENIENT_URL_PATTERN.test(rawHost)) {
         throw new Error('Invalid ollamaHost: URL format is invalid');
       }
+      let parsed;
       try {
-        const parsed = new URL(candidate);
-        if (parsed.username || parsed.password) {
-          throw new Error('Invalid ollamaHost: URLs with credentials are not allowed');
-        }
+        parsed = new URL(candidate);
       } catch (urlError) {
         throw new Error(`Invalid ollamaHost: ${urlError.message || 'URL is malformed'}`);
+      }
+      if (parsed.username || parsed.password) {
+        throw new Error('Invalid ollamaHost: URLs with credentials are not allowed');
       }
     }
     normalized.ollamaHost = normalizeOllamaHostForValidation(normalized.ollamaHost);
@@ -365,14 +366,9 @@ function validateImportedSettings(settings, logger) {
         );
         throw new Error('Invalid ollamaHost: potentially unsafe URL pattern detected');
       }
+      let parsed;
       try {
-        const parsed = new URL(trimmed);
-        if (parsed.username || parsed.password) {
-          logger.warn(
-            `[SETTINGS-IMPORT] Blocking URL with credentials: ${sanitizeUrlForLogging(trimmed)}`
-          );
-          throw new Error('Invalid ollamaHost: URLs with credentials are not allowed');
-        }
+        parsed = new URL(trimmed);
       } catch (urlError) {
         logger.warn(
           `[SETTINGS-IMPORT] Rejecting malformed URL: ${sanitizeUrlForLogging(trimmed)}`,
@@ -381,6 +377,12 @@ function validateImportedSettings(settings, logger) {
           }
         );
         throw new Error('Invalid ollamaHost: URL is malformed and cannot be parsed');
+      }
+      if (parsed.username || parsed.password) {
+        logger.warn(
+          `[SETTINGS-IMPORT] Blocking URL with credentials: ${sanitizeUrlForLogging(trimmed)}`
+        );
+        throw new Error('Invalid ollamaHost: URLs with credentials are not allowed');
       }
     }
   }
@@ -523,6 +525,46 @@ function registerSettingsIpc(servicesOrParams) {
     logger
   };
 
+  /**
+   * SECURITY: IPC-layer defense-in-depth validation for backup paths.
+   * Ensures the resolved path is within the settings backup directory before
+   * any service method is called.  The service layer also validates, but
+   * checking at the IPC boundary prevents a compromised renderer from even
+   * reaching service code with an out-of-bounds path.
+   * @param {string} backupPath - The path supplied by the renderer
+   * @returns {string|null} null when valid; an error message otherwise
+   */
+  function validateBackupPathWithinDir(backupPath) {
+    if (!backupPath || typeof backupPath !== 'string') {
+      return 'Invalid backup path: must be a non-empty string';
+    }
+    const backupDir = settingsService.backupDir;
+    if (!backupDir) {
+      // If we cannot determine the backup directory, reject for safety
+      return 'Cannot determine backup directory';
+    }
+    let normalizedPath = path.normalize(path.resolve(backupPath));
+    let normalizedBackupDir = path.normalize(path.resolve(backupDir));
+    if (process.platform === 'win32') {
+      normalizedPath = normalizedPath.toLowerCase();
+      normalizedBackupDir = normalizedBackupDir.toLowerCase();
+    }
+    if (
+      !normalizedPath.startsWith(normalizedBackupDir + path.sep) &&
+      normalizedPath !== normalizedBackupDir
+    ) {
+      logger.warn(
+        '[SETTINGS] Blocked backup path outside backup directory (potential path traversal)',
+        {
+          backupPath,
+          backupDir
+        }
+      );
+      return 'Invalid backup path: path is outside the backup directory';
+    }
+    return null;
+  }
+
   safeHandle(
     ipcMain,
     IPC_CHANNELS.SETTINGS.SAVE,
@@ -622,30 +664,33 @@ function registerSettingsIpc(servicesOrParams) {
     withErrorLogging(logger, async (event, importPath) => {
       void event;
       try {
-        // If no path provided, show open dialog
-        let filePath = importPath;
-        if (!filePath) {
-          const result = await dialog.showOpenDialog({
-            title: 'Import Settings',
-            filters: [
-              { name: 'JSON Files', extensions: ['json'] },
-              { name: 'All Files', extensions: ['*'] }
-            ],
-            properties: ['openFile']
-          });
-
-          if (result.canceled) {
-            return canceledResponse();
-          }
-
-          // FIX MED-9: Add bounds check before accessing filePaths[0]
-          if (!result.filePaths || result.filePaths.length === 0) {
-            return canceledResponse();
-          }
-          filePath = result.filePaths[0];
+        // SECURITY: Ignore importPath from renderer - always use dialog
+        // This prevents path traversal attacks from compromised renderer
+        // (matches the pattern used by the EXPORT handler)
+        if (importPath) {
+          logger.warn(
+            '[SETTINGS] Import path provided via IPC is ignored for security. Using dialog instead.'
+          );
         }
 
-        // Removed insecure direct path handling block
+        const result = await dialog.showOpenDialog({
+          title: 'Import Settings',
+          filters: [
+            { name: 'JSON Files', extensions: ['json'] },
+            { name: 'All Files', extensions: ['*'] }
+          ],
+          properties: ['openFile']
+        });
+
+        if (result.canceled) {
+          return canceledResponse();
+        }
+
+        // FIX MED-9: Add bounds check before accessing filePaths[0]
+        if (!result.filePaths || result.filePaths.length === 0) {
+          return canceledResponse();
+        }
+        const filePath = result.filePaths[0];
 
         // SECURITY FIX: Check file size before reading to prevent DoS
         const MAX_IMPORT_SIZE = 1 * 1024 * 1024; // 1MB limit for settings files
@@ -750,6 +795,12 @@ function registerSettingsIpc(servicesOrParams) {
       ? withValidation(logger, backupPathSchema, async (event, backupPath) => {
           void event;
           try {
+            // SECURITY: Validate backup path is within backup directory (defense-in-depth)
+            const pathError = validateBackupPathWithinDir(backupPath);
+            if (pathError) {
+              return errorResponse(pathError);
+            }
+
             const result = await settingsService.restoreFromBackup(backupPath);
 
             if (result.success) {
@@ -781,9 +832,10 @@ function registerSettingsIpc(servicesOrParams) {
       : withErrorLogging(logger, async (event, backupPath) => {
           void event;
           try {
-            // Fallback manual validation when Zod not available
-            if (!backupPath || typeof backupPath !== 'string') {
-              return errorResponse('Invalid backup path: must be a non-empty string');
+            // SECURITY: Validate backup path is within backup directory (defense-in-depth)
+            const pathError = validateBackupPathWithinDir(backupPath);
+            if (pathError) {
+              return errorResponse(pathError);
             }
 
             const result = await settingsService.restoreFromBackup(backupPath);
@@ -824,6 +876,12 @@ function registerSettingsIpc(servicesOrParams) {
       ? withValidation(logger, backupPathSchema, async (event, backupPath) => {
           void event;
           try {
+            // SECURITY: Validate backup path is within backup directory (defense-in-depth)
+            const pathError = validateBackupPathWithinDir(backupPath);
+            if (pathError) {
+              return errorResponse(pathError);
+            }
+
             const result = await settingsService.deleteBackup(backupPath);
             if (result.success) {
               logger.info('[SETTINGS] Deleted backup:', backupPath);
@@ -838,9 +896,10 @@ function registerSettingsIpc(servicesOrParams) {
       : withErrorLogging(logger, async (event, backupPath) => {
           void event;
           try {
-            // Fallback manual validation when Zod not available
-            if (!backupPath || typeof backupPath !== 'string') {
-              return errorResponse('Invalid backup path: must be a non-empty string');
+            // SECURITY: Validate backup path is within backup directory (defense-in-depth)
+            const pathError = validateBackupPathWithinDir(backupPath);
+            if (pathError) {
+              return errorResponse(pathError);
             }
 
             const result = await settingsService.deleteBackup(backupPath);

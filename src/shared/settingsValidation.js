@@ -61,8 +61,11 @@ const isSafeWindowsAbsoluteFallback = (value) => {
   if (URL_SCHEME_PATTERN.test(value)) return false;
   if (WINDOWS_DRIVE_ONLY_PATTERN.test(value)) return false;
   if (TRAVERSAL_SEGMENT_PATTERN.test(value)) return false;
+  // FIX 88: Strip drive letter prefix before testing for invalid chars.
+  // The colon in "C:" was matching the invalid-char regex, rejecting all Windows paths.
+  const pathAfterDrive = value.replace(/^[a-zA-Z]:/, '');
   // eslint-disable-next-line no-control-regex
-  if (/[<>:"|?*\x00-\x1f]/.test(value)) return false;
+  if (/[<>:"|?*\x00-\x1f]/.test(pathAfterDrive)) return false;
   return true;
 };
 
@@ -148,6 +151,34 @@ const VALIDATION_RULES = {
   },
   autoChunkOnAnalysis: {
     type: 'boolean',
+    required: false
+  },
+  graphExpansionEnabled: {
+    type: 'boolean',
+    required: false
+  },
+  graphExpansionWeight: {
+    type: 'number',
+    min: 0,
+    max: 1,
+    required: false
+  },
+  graphExpansionMaxNeighbors: {
+    type: 'number',
+    min: 10,
+    max: 500,
+    integer: true,
+    required: false
+  },
+  chunkContextEnabled: {
+    type: 'boolean',
+    required: false
+  },
+  chunkContextMaxNeighbors: {
+    type: 'number',
+    min: 0,
+    max: 3,
+    integer: true,
     required: false
   },
   backgroundMode: {
@@ -372,6 +403,17 @@ const VALIDATION_RULES = {
   },
   // Deprecated settings (kept for backward compatibility)
   smartFolderWatchEnabled: {
+    type: 'boolean',
+    required: false
+  },
+
+  // Learning/Feedback ChromaDB Sync Settings
+  // See ARCHITECTURE.md for details on dual-write behavior
+  enableChromaLearningSync: {
+    type: 'boolean',
+    required: false
+  },
+  enableChromaLearningDryRun: {
     type: 'boolean',
     required: false
   }

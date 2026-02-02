@@ -2,10 +2,9 @@ import React, { useEffect, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { setActiveModal } from '../store/slices/uiSlice';
 import AiDependenciesModal from './AiDependenciesModal';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 
-logger.setContext('AiDependenciesModalManager');
-
+const logger = createLogger('AiDependenciesModalManager');
 const MODAL_ID = 'ai-deps';
 
 function parseIsoToMs(value) {

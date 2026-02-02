@@ -307,6 +307,9 @@ class OfflineQueue extends EventEmitter {
         if (this._sortRequired) {
           this.queue.sort((a, b) => a.priority - b.priority);
           this._sortRequired = false;
+          // FIX 77: Rebuild operationMap immediately after sort so that any
+          // enqueue() calls from processor callbacks see correct indices.
+          this._rebuildOperationMap();
         }
 
         // FIX: Process in batches with crash-safe removal

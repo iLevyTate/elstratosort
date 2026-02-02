@@ -51,11 +51,12 @@ async function acquireBatchLockOnce(batchId, timeout = BATCH_LOCK_ACQUIRE_TIMEOU
 
   try {
     await Promise.race([current, timeoutPromise]);
-    clearTimeout(timeoutId);
   } catch {
     // Mutex timeout - release our slot and return false
     release();
     return false;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 
   try {
@@ -82,21 +83,30 @@ async function acquireBatchLockOnce(batchId, timeout = BATCH_LOCK_ACQUIRE_TIMEOU
 
     // Wait for lock to be released using promise-based approach (no polling)
     return new Promise((resolve) => {
+      let settled = false;
       let timeoutId;
       const waiter = {
         batchId,
-        resolve,
+        settled: false,
+        resolve: (value) => {
+          if (settled) return; // Prevent double-resolve
+          settled = true;
+          waiter.settled = true;
+          if (timeoutId) clearTimeout(timeoutId);
+          resolve(value);
+        },
         clearTimeout: () => clearTimeout(timeoutId)
       };
 
       batchLockWaiters.push(waiter);
 
       timeoutId = setTimeout(() => {
+        if (settled) return;
         const index = batchLockWaiters.indexOf(waiter);
         if (index !== -1) {
           batchLockWaiters.splice(index, 1);
-          resolve(false);
         }
+        waiter.resolve(false);
       }, timeout);
 
       waiter.timeoutId = timeoutId;
@@ -129,15 +139,19 @@ function releaseBatchLock(batchId) {
   if (batchOperationLock && batchOperationLock.batchId === batchId) {
     batchOperationLock = null;
 
-    if (batchLockWaiters.length > 0) {
+    // Find the first waiter that hasn't already timed out
+    while (batchLockWaiters.length > 0) {
       const waiter = batchLockWaiters.shift();
       if (waiter.clearTimeout) {
         waiter.clearTimeout();
       } else if (waiter.timeoutId) {
         clearTimeout(waiter.timeoutId);
       }
+      // Skip waiters that already timed out (settled by timeout handler)
+      if (waiter.settled) continue;
       batchOperationLock = { batchId: waiter.batchId, acquiredAt: Date.now() };
       waiter.resolve(true);
+      break;
     }
   }
 }

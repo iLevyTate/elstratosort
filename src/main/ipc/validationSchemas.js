@@ -108,6 +108,18 @@ if (!z) {
     if (typeof data !== 'object' || data === null) {
       return { error: 'Search query must be an object' };
     }
+    if (data.query !== undefined && typeof data.query !== 'string') {
+      return { error: 'Search query.query must be a string' };
+    }
+    if (
+      data.limit !== undefined &&
+      (typeof data.limit !== 'number' || data.limit < 1 || data.limit > 1000)
+    ) {
+      return { error: 'Search query limit must be a number between 1 and 1000' };
+    }
+    if (data.offset !== undefined && (typeof data.offset !== 'number' || data.offset < 0)) {
+      return { error: 'Search query offset must be a non-negative number' };
+    }
     return { data };
   });
 
@@ -115,11 +127,39 @@ if (!z) {
     if (typeof data !== 'object' || data === null) {
       return { error: 'Pagination must be an object' };
     }
-    if (data.limit !== undefined && (typeof data.limit !== 'number' || data.limit < 1)) {
-      return { error: 'Limit must be a positive number' };
+    if (
+      data.limit !== undefined &&
+      (typeof data.limit !== 'number' || data.limit < 1 || data.limit > 1000)
+    ) {
+      return { error: 'Limit must be a number between 1 and 1000' };
     }
     if (data.offset !== undefined && (typeof data.offset !== 'number' || data.offset < 0)) {
       return { error: 'Offset must be a non-negative number' };
+    }
+    return { data };
+  });
+
+  const fallbackBatchOperationSchema = createFallbackValidator('batchOperation', (data) => {
+    if (typeof data !== 'object' || data === null) {
+      return { error: 'Batch operation must be an object' };
+    }
+    if (!Array.isArray(data.operations) || data.operations.length === 0) {
+      return { error: 'Batch operation requires a non-empty operations array' };
+    }
+    if (data.operations.length > 1000) {
+      return { error: 'Batch size exceeds maximum of 1000' };
+    }
+    for (let i = 0; i < data.operations.length; i++) {
+      const op = data.operations[i];
+      if (!op || typeof op !== 'object') {
+        return { error: `Operation at index ${i} must be an object` };
+      }
+      if (typeof op.source !== 'string' || op.source.length === 0) {
+        return { error: `Operation at index ${i} requires a non-empty source string` };
+      }
+      if (typeof op.destination !== 'string' || op.destination.length === 0) {
+        return { error: `Operation at index ${i} requires a non-empty destination string` };
+      }
     }
     return { data };
   });
@@ -135,13 +175,14 @@ if (!z) {
       settings: fallbackSettingsSchema,
       smartFolder: fallbackSmartFolderSchema,
       searchQuery: fallbackSearchQuerySchema,
-      pagination: fallbackPaginationSchema
+      pagination: fallbackPaginationSchema,
+      batchOrganize: fallbackBatchOperationSchema
     },
     zodLoadError,
     filePathSchema: fallbackFilePathSchema,
     settingsSchema: fallbackSettingsSchema,
     smartFolderSchema: fallbackSmartFolderSchema,
-    batchOperationSchema: null, // Complex schema - skip in fallback
+    batchOperationSchema: fallbackBatchOperationSchema,
     searchQuerySchema: fallbackSearchQuerySchema,
     paginationSchema: fallbackPaginationSchema,
     _usingFallback: true
@@ -580,7 +621,12 @@ if (!z) {
     mode: z.enum(['hybrid', 'vector', 'bm25']).optional().default('hybrid'),
     minScore: z.number().min(0).max(1).optional(),
     chunkWeight: z.number().min(0).max(1).optional(),
-    chunkTopK: z.number().int().min(1).max(2000).optional()
+    chunkTopK: z.number().int().min(1).max(2000).optional(),
+    graphExpansion: z.boolean().optional(),
+    graphExpansionWeight: z.number().min(0).max(1).optional(),
+    graphExpansionMaxNeighbors: z.number().int().min(1).max(500).optional(),
+    chunkContext: z.boolean().optional(),
+    chunkContextMaxNeighbors: z.number().int().min(0).max(3).optional()
   });
 
   /**
@@ -648,6 +694,11 @@ if (!z) {
     minWeight: z.number().int().min(1).max(20).optional().default(2),
     maxEdges: z.number().int().min(1).max(2000).optional().default(500)
   });
+
+  /**
+   * Knowledge relationship index stats parameters
+   */
+  const relationshipStatsSchema = z.object({}).optional().default({});
 
   /**
    * Chat query parameters
@@ -764,6 +815,7 @@ if (!z) {
     getFileMetadata: getFileMetadataSchema,
     findDuplicates: findDuplicatesSchema,
     relationshipEdges: relationshipEdgesSchema,
+    relationshipStats: relationshipStatsSchema,
 
     // Chat
     chatQuery: chatQuerySchema,

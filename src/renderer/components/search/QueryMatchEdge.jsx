@@ -41,6 +41,7 @@ const QueryMatchEdge = memo(
     const matchDetails = useMemo(() => data?.matchDetails || {}, [data?.matchDetails]);
     // Fix: Depend on matchDetails object to ensure updates when parent changes
     const sources = useMemo(() => matchDetails.sources || [], [matchDetails]);
+    const tooltipsEnabled = data?.showEdgeTooltips !== false;
 
     // Build match reason list for tooltip
     const buildMatchReasons = useCallback(() => {
@@ -126,62 +127,68 @@ const QueryMatchEdge = memo(
     return (
       <>
         {/* Invisible wider path for easier hovering */}
-        <path
-          d={edgePath}
-          fill="none"
-          stroke="transparent"
-          strokeWidth={20}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-          style={{ cursor: 'pointer' }}
-        />
+        {tooltipsEnabled && (
+          <path
+            d={edgePath}
+            fill="none"
+            stroke="transparent"
+            strokeWidth={20}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+            style={{ cursor: 'pointer' }}
+          />
+        )}
 
         {/* Visible edge */}
         <BaseEdge id={id} path={edgePath} style={edgeStyle} markerEnd={markerEnd} />
 
         {/* Edge label and tooltip */}
-        <BaseEdgeTooltip
-          isHovered={isHovered}
-          labelX={labelX}
-          labelY={labelY}
-          badgeText={`${scorePercent}%`}
-          badgeColorClass={isHovered ? 'bg-indigo-500 text-white' : 'bg-indigo-100 text-indigo-700'}
-          title="Why this matched"
-          headerColorClass="text-indigo-600"
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-        >
-          {/* Match score */}
-          <div className="flex items-center gap-2">
-            <span className="text-system-gray-500">Relevance:</span>
-            <span className="font-medium text-indigo-600">{scorePercent}%</span>
-            <div className="flex-1 h-1.5 bg-system-gray-200 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-indigo-500 rounded-full"
-                style={{ width: `${scorePercent}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Match reasons */}
-          <div className="space-y-1">
-            {reasons.map((reason) => (
-              <div key={`${reason.type}:${reason.text}`} className="flex items-start gap-1.5">
-                <span className="text-system-gray-400 mt-0.5">•</span>
-                <span className={typeColors[reason.type] || 'text-system-gray-500'}>
-                  {reason.text}
-                </span>
+        {tooltipsEnabled && (
+          <BaseEdgeTooltip
+            isHovered={isHovered}
+            labelX={labelX}
+            labelY={labelY}
+            badgeText={`${scorePercent}%`}
+            badgeColorClass={
+              isHovered ? 'bg-indigo-500 text-white' : 'bg-indigo-100 text-indigo-700'
+            }
+            title="Why this matched"
+            headerColorClass="text-indigo-600"
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+          >
+            {/* Match score */}
+            <div className="flex items-center gap-2">
+              <span className="text-system-gray-500">Relevance:</span>
+              <span className="font-medium text-indigo-600">{scorePercent}%</span>
+              <div className="flex-1 h-1.5 bg-system-gray-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-indigo-500 rounded-full"
+                  style={{ width: `${scorePercent}%` }}
+                />
               </div>
-            ))}
-          </div>
-
-          {/* Source indicator */}
-          {sources.length > 0 && (
-            <div className="text-system-gray-400 text-[10px] pt-1 border-t border-system-gray-200">
-              Match sources: {sources.join(' + ')}
             </div>
-          )}
-        </BaseEdgeTooltip>
+
+            {/* Match reasons */}
+            <div className="space-y-1">
+              {reasons.map((reason) => (
+                <div key={`${reason.type}:${reason.text}`} className="flex items-start gap-1.5">
+                  <span className="text-system-gray-400 mt-0.5">•</span>
+                  <span className={typeColors[reason.type] || 'text-system-gray-500'}>
+                    {reason.text}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Source indicator */}
+            {sources.length > 0 && (
+              <div className="text-system-gray-400 text-[10px] pt-1 border-t border-system-gray-200">
+                Match sources: {sources.join(' + ')}
+              </div>
+            )}
+          </BaseEdgeTooltip>
+        )}
       </>
     );
   }
@@ -199,6 +206,7 @@ QueryMatchEdge.propTypes = {
   targetPosition: PropTypes.oneOf(['top', 'right', 'bottom', 'left']),
   data: PropTypes.shape({
     score: PropTypes.number,
+    showEdgeTooltips: PropTypes.bool,
     matchDetails: PropTypes.shape({
       matchedTerms: PropTypes.arrayOf(PropTypes.string),
       matchedFields: PropTypes.arrayOf(PropTypes.string),

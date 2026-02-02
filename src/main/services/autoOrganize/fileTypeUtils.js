@@ -82,7 +82,7 @@ function getFileTypeCategory(extension) {
     return 'Files';
   }
 
-  const ext = extension.toLowerCase().replace('.', '');
+  const ext = extension.toLowerCase().replace(/^\./, '');
 
   for (const [category, extensions] of Object.entries(FILE_TYPE_CATEGORIES)) {
     if (extensions.includes(ext)) {

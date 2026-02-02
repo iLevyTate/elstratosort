@@ -10,10 +10,6 @@
  * @module analysis/textNormalization
  */
 
-const { logger } = require('../../shared/logger');
-
-logger.setContext('TextNormalization');
-
 /**
  * Clean text content by removing null bytes and normalizing whitespace
  *

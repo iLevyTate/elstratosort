@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { RefreshCw, Download, Upload, Trash2, RotateCcw, Clock } from 'lucide-react';
 import Button from '../ui/Button';
 import IconButton from '../ui/IconButton';
+import Card from '../ui/Card';
 import StateMessage from '../ui/StateMessage';
-import { logger } from '../../../shared/logger';
+import { createLogger } from '../../../shared/logger';
 import { Text } from '../ui/Typography';
 
 /**
@@ -19,8 +20,7 @@ function SettingsBackupSection({ addNotification }) {
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
-  logger.setContext('SettingsBackupSection');
-
+  const logger = useMemo(() => createLogger('SettingsBackupSection'), []);
   const loadBackups = useCallback(async () => {
     if (!window?.electronAPI?.settings?.listBackups) return;
     setIsLoading(true);
@@ -37,7 +37,7 @@ function SettingsBackupSection({ addNotification }) {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [logger]);
 
   useEffect(() => {
     loadBackups();
@@ -152,14 +152,17 @@ function SettingsBackupSection({ addNotification }) {
   };
 
   return (
-    <div className="space-y-4">
+    <Card variant="default" className="space-y-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <label className="block text-sm font-medium text-system-gray-700 mb-2">
-            Settings Backup & Restore
-          </label>
-          <Text variant="tiny" className="text-system-gray-500">
-            Create backups of your settings or export/import to share across devices.
+          <Text
+            variant="tiny"
+            className="font-semibold uppercase tracking-wide text-system-gray-500"
+          >
+            Settings backup &amp; restore
+          </Text>
+          <Text variant="small" className="text-system-gray-600">
+            Create backups or export/import settings across devices.
           </Text>
         </div>
         <IconButton
@@ -220,9 +223,9 @@ function SettingsBackupSection({ addNotification }) {
                 className="flex items-center justify-between gap-2 p-2 bg-white rounded border border-system-gray-100"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-system-gray-700 truncate">
+                  <Text variant="small" className="font-medium text-system-gray-700 truncate">
                     {backup.name || 'Backup'}
-                  </div>
+                  </Text>
                   <Text variant="tiny" className="text-system-gray-500">
                     {formatDate(backup.timestamp || backup.created)}
                   </Text>
@@ -266,7 +269,7 @@ function SettingsBackupSection({ addNotification }) {
           contentClassName="max-w-sm"
         />
       )}
-    </div>
+    </Card>
   );
 }
 

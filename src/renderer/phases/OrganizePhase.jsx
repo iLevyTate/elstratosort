@@ -1,12 +1,20 @@
 import React, { useMemo, useCallback, useEffect, useRef } from 'react';
 import { PHASES } from '../../shared/constants';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useNotification } from '../contexts/NotificationContext';
 import { useAppSelector } from '../store/hooks';
-import { Button, Card, StateMessage } from '../components/ui';
+import { Button, Card, SidePanel, StateMessage, StatusBadge } from '../components/ui';
 import { Heading, Text } from '../components/ui/Typography';
 import { ErrorBoundaryCore } from '../components/ErrorBoundary';
-import { FolderOpen, BarChart3, CheckCircle2, Inbox, Sparkles, AlertTriangle } from 'lucide-react';
+import {
+  FolderOpen,
+  BarChart3,
+  CheckCircle2,
+  Inbox,
+  Sparkles,
+  AlertTriangle,
+  FileText
+} from 'lucide-react';
 import { ActionBar, Inline, Stack } from '../components/layout';
 import {
   StatusOverview,
@@ -31,14 +39,21 @@ import {
 import { useOrganization } from './organize/useOrganization';
 import { setFileStates as setFileStatesAction } from '../store/slices/filesSlice';
 import { updateAnalysisResult } from '../store/slices/analysisSlice';
+import { formatDisplayPath } from '../utils/pathDisplay';
 
-logger.setContext('OrganizePhase');
-
+const logger = createLogger('OrganizePhase');
 function OrganizePhase() {
   const { addNotification } = useNotification();
   const { executeAction } = useUndoRedo();
   const [viewingFileDetails, setViewingFileDetails] = React.useState(null);
   const redactPaths = useAppSelector((state) => Boolean(state?.system?.redactPaths));
+  const detailHeaderPath = useMemo(() => {
+    const rawPath = viewingFileDetails?.path || viewingFileDetails?.analysis?.path || '';
+    const displayPath = rawPath
+      ? formatDisplayPath(rawPath, { redact: Boolean(redactPaths), segments: 2 })
+      : '';
+    return { rawPath, displayPath };
+  }, [viewingFileDetails, redactPaths]);
 
   const [showFoldersModal, setShowFoldersModal] = React.useState(false);
   const [showStatusModal, setShowStatusModal] = React.useState(false);
@@ -121,6 +136,15 @@ function OrganizePhase() {
     )
   });
 
+  // Reset index-based state when the file list changes to prevent index mismatches
+  const prevUnprocessedLengthRef = useRef(baseUnprocessedFiles.length);
+  useEffect(() => {
+    if (baseUnprocessedFiles.length !== prevUnprocessedLengthRef.current) {
+      prevUnprocessedLengthRef.current = baseUnprocessedFiles.length;
+      setEditingFiles({});
+    }
+  }, [baseUnprocessedFiles.length, setEditingFiles]);
+
   const { selectedFiles, setSelectedFiles, toggleFileSelection, selectAllFiles } = useFileSelection(
     baseUnprocessedFiles.length
   );
@@ -181,7 +205,7 @@ function OrganizePhase() {
         });
         results.forEach((result) => {
           if (result.success && result.path) {
-            markFilesAsProcessed([{ path: result.path, originalPath: result.originalPath }]);
+            markFilesAsProcessed([result.originalPath || result.path]);
           }
         });
       }
@@ -278,7 +302,7 @@ function OrganizePhase() {
   }, [selectedFiles.size, approveSelectedFiles, handleOrganizeFiles]);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-6 lg:gap-8 pb-6">
+    <div className="flex flex-col flex-1 min-h-0 gap-relaxed lg:gap-spacious pb-6">
       {/* Header */}
       <Stack className="text-center flex-shrink-0" gap="compact">
         <Heading as="h1" variant="display">
@@ -289,8 +313,8 @@ function OrganizePhase() {
           ready.
         </Text>
         {isAnalysisRunning && (
-          <div className="flex items-center justify-center gap-2 mt-2">
-            <div className="flex items-center border border-stratosort-blue/30 bg-stratosort-blue/5 text-sm text-stratosort-blue gap-2 rounded-lg px-3 py-1.5">
+          <div className="flex items-center justify-center gap-compact mt-2">
+            <div className="flex items-center border border-stratosort-blue/30 bg-stratosort-blue/5 text-sm text-stratosort-blue gap-compact rounded-lg px-3 py-1.5">
               <span className="loading-spinner h-4 w-4 border-t-transparent" />
               Analysis continuing in background: {analysisProgressFromDiscover.current}/
               {analysisProgressFromDiscover.total} files
@@ -300,7 +324,7 @@ function OrganizePhase() {
       </Stack>
 
       {/* Toolbar */}
-      <Inline className="justify-between" gap="cozy">
+      <Inline className="justify-between pt-2" gap="cozy">
         <Inline
           className="flex-shrink-0"
           role="toolbar"
@@ -312,7 +336,6 @@ function OrganizePhase() {
               variant="secondary"
               size="sm"
               onClick={() => setShowFoldersModal(true)}
-              className="gap-2"
               aria-label={`View ${safeSmartFolders.length} smart folders`}
             >
               <FolderOpen className="w-4 h-4" aria-hidden="true" />
@@ -323,7 +346,6 @@ function OrganizePhase() {
             variant="secondary"
             size="sm"
             onClick={() => setShowStatusModal(true)}
-            className="gap-2"
             aria-label={`View file status: ${unprocessedFiles.length} ready, ${processedFiles.length} done, ${failedCount} failed`}
           >
             <BarChart3 className="w-4 h-4" aria-hidden="true" />
@@ -340,7 +362,7 @@ function OrganizePhase() {
               variant="secondary"
               size="sm"
               onClick={() => setShowHistoryModal(true)}
-              className="gap-2 text-stratosort-success border-stratosort-success/20 bg-stratosort-success/5 hover:bg-stratosort-success/10 hover:border-stratosort-success/40"
+              className="text-stratosort-success border-stratosort-success/20 bg-stratosort-success/5 hover:bg-stratosort-success/10 hover:border-stratosort-success/40"
               aria-label={`View ${processedFiles.length} organized files history`}
             >
               <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
@@ -374,7 +396,7 @@ function OrganizePhase() {
 
         {/* Files Ready - Main Focus Area */}
         <Card className="flex-1 min-h-0 flex flex-col overflow-hidden p-0">
-          <div className="flex items-center justify-between p-4 border-b border-border-soft/70 bg-white/50 flex-shrink-0">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-border-soft/70 bg-white/50 flex-shrink-0">
             <div className="flex items-center gap-3">
               <Heading as="h2" variant="h5">
                 Files Ready for Organization
@@ -401,7 +423,7 @@ function OrganizePhase() {
 
           <div className="flex-1 min-h-0 bg-system-gray-50/30 overflow-hidden">
             {unprocessedFiles.length === 0 ? (
-              <div className="h-full flex items-center justify-center p-8">
+              <div className="h-full flex items-center justify-center p-6">
                 <StateMessage
                   icon={processedFiles.length > 0 ? CheckCircle2 : Inbox}
                   tone={processedFiles.length > 0 ? 'success' : 'neutral'}
@@ -426,7 +448,7 @@ function OrganizePhase() {
                 />
               </div>
             ) : (
-              <div className="flex-1 min-h-0 p-4">
+              <div className="flex-1 min-h-0 p-6">
                 <ErrorBoundaryCore variant="simple" contextName="File Grid">
                   <VirtualizedFileGrid
                     files={unprocessedFiles}
@@ -562,27 +584,45 @@ function OrganizePhase() {
         </Button>
       </ActionBar>
 
-      {/* Analysis Details Modal */}
-      <Modal
+      {/* Analysis Details Panel */}
+      <SidePanel
         isOpen={!!viewingFileDetails}
         onClose={() => setViewingFileDetails(null)}
         title="File Analysis Details"
-        size="md"
-        footer={
-          <Inline className="justify-end" gap="default" wrap={false}>
-            <Button onClick={() => setViewingFileDetails(null)} variant="secondary" size="sm">
-              Close
-            </Button>
-          </Inline>
-        }
+        description="Review metadata, rationale, and extracted text."
+        width={520}
       >
         {viewingFileDetails && viewingFileDetails.analysis && (
           <Stack gap="default">
-            <div className="bg-system-gray-50 p-3 rounded-lg border border-border-soft">
-              <Text variant="small" className="font-medium text-system-gray-900 break-all">
-                {viewingFileDetails.name}
-              </Text>
-            </div>
+            <Card
+              variant="static"
+              className="bg-gradient-to-br from-white to-system-gray-50/80 border-border-soft/70"
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-stratosort-blue/10 text-stratosort-blue flex items-center justify-center shrink-0">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <Text variant="small" className="font-semibold text-system-gray-900 break-words">
+                    {viewingFileDetails.name}
+                  </Text>
+                  {detailHeaderPath.displayPath && (
+                    <Text
+                      variant="tiny"
+                      className="text-system-gray-500 break-all mt-1"
+                      title={redactPaths ? undefined : detailHeaderPath.rawPath}
+                    >
+                      {detailHeaderPath.displayPath}
+                    </Text>
+                  )}
+                </div>
+                {viewingFileDetails.analysis?.category && (
+                  <StatusBadge variant="info" size="sm" className="shrink-0">
+                    {viewingFileDetails.analysis.category}
+                  </StatusBadge>
+                )}
+              </div>
+            </Card>
             <AnalysisDetails
               analysis={viewingFileDetails.analysis}
               filePath={viewingFileDetails.path}
@@ -590,7 +630,7 @@ function OrganizePhase() {
             />
           </Stack>
         )}
-      </Modal>
+      </SidePanel>
 
       {/* Smart Folders Modal */}
       <Modal

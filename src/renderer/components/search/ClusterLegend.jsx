@@ -8,6 +8,7 @@
 import React, { memo } from 'react';
 import PropTypes from 'prop-types';
 import { Layers, FileText, HelpCircle, Check, Search } from 'lucide-react';
+import { Button } from '../ui';
 import { CONFIDENCE_COLORS, getConfidenceColor } from '../../utils/confidenceColors';
 
 const CATEGORY_COLORS = {
@@ -23,6 +24,7 @@ const ClusterLegend = memo(
   ({
     className = '',
     compact = false,
+    showHeader = true,
     activeFilters = { types: ['cluster', 'file'], confidence: ['high', 'medium', 'low'] },
     onToggleFilter
   }) => {
@@ -33,24 +35,47 @@ const ClusterLegend = memo(
     const toggleConfidence = (conf) => onToggleFilter?.('confidence', conf);
 
     if (compact) {
-      // Compact inline legend (non-interactive for now, or minimal)
+      // Compact layout: single column, minimal noise
       return (
-        <div className={`flex items-center gap-3 text-[10px] text-system-gray-500 ${className}`}>
-          <div className="flex items-center gap-1">
-            <span
-              className={`w-2 h-2 rounded-full ${CONFIDENCE_COLORS.high.bg.replace('100', '500')}`}
-            />
-            <span>High</span>
+        <div className={`flex flex-col gap-2 text-[11px] text-system-gray-600 ${className}`}>
+          <div className="flex flex-wrap gap-2 text-[10px]">
+            <span className="px-2 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+              Cluster
+            </span>
+            <span className="px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+              File
+            </span>
+            <span className="px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+              Query
+            </span>
           </div>
-          <div className="flex items-center gap-1">
-            <span
-              className={`w-2 h-2 rounded-full ${CONFIDENCE_COLORS.medium.bg.replace('100', '500')}`}
-            />
-            <span>Medium</span>
+          <div className="flex items-center gap-3 text-[10px]">
+            <div className="flex items-center gap-1">
+              <span
+                className={`w-2 h-2 rounded-full ${CONFIDENCE_COLORS.high.bg.replace('100', '500')}`}
+              />
+              <span>High</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span
+                className={`w-2 h-2 rounded-full ${CONFIDENCE_COLORS.medium.bg.replace('100', '500')}`}
+              />
+              <span>Med</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-system-gray-400" />
+              <span>Low</span>
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <span className={`w-2 h-2 rounded-full bg-system-gray-400`} />
-            <span>Low</span>
+          <div className="flex items-center gap-3 text-[10px]">
+            <div className="flex items-center gap-1">
+              <span className="w-6 h-0.5 bg-blue-500 rounded-full" />
+              <span>Shared tags</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="w-6 h-0.5 border-t border-dashed border-slate-400" />
+              <span>Similarity</span>
+            </div>
           </div>
         </div>
       );
@@ -58,14 +83,16 @@ const ClusterLegend = memo(
 
     return (
       <div
-        className={`bg-white/95 backdrop-blur-sm border border-system-gray-200 rounded-lg p-3 shadow-sm ${className}`}
+        className={`bg-white/95 backdrop-blur-sm border border-system-gray-200 rounded-lg p-3 shadow-sm text-left ${className}`}
       >
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-system-gray-700">
-            <HelpCircle className="w-3.5 h-3.5" />
-            <span>Legend & Filters</span>
+        {showHeader && (
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-system-gray-700">
+              <HelpCircle className="w-3.5 h-3.5" />
+              <span>Legend & Filters</span>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="space-y-3">
           {/* Node types */}
@@ -75,11 +102,13 @@ const ClusterLegend = memo(
               <span className="text-[9px] text-system-gray-400 font-normal">Click to filter</span>
             </div>
 
-            <button
+            <Button
               onClick={() => toggleType('cluster')}
               aria-label="Toggle cluster nodes visibility"
               aria-pressed={isTypeActive('cluster')}
-              className={`w-full flex items-center justify-between gap-2 text-[11px] p-1 rounded transition-colors ${
+              variant="ghost"
+              size="sm"
+              className={`w-full justify-start text-left p-1 text-[11px] rounded-md h-auto ${
                 isTypeActive('cluster')
                   ? 'hover:bg-amber-50'
                   : 'opacity-50 grayscale hover:opacity-75'
@@ -92,15 +121,17 @@ const ClusterLegend = memo(
                 <span className="text-system-gray-600">Cluster</span>
               </div>
               {isTypeActive('cluster') && (
-                <Check className="w-3 h-3 text-amber-600" aria-hidden="true" />
+                <Check className="w-3 h-3 text-amber-600 ml-auto" aria-hidden="true" />
               )}
-            </button>
+            </Button>
 
-            <button
+            <Button
               onClick={() => toggleType('file')}
               aria-label="Toggle file nodes visibility"
               aria-pressed={isTypeActive('file')}
-              className={`w-full flex items-center justify-between gap-2 text-[11px] p-1 rounded transition-colors ${
+              variant="ghost"
+              size="sm"
+              className={`w-full justify-start text-left p-1 text-[11px] rounded-md h-auto ${
                 isTypeActive('file') ? 'hover:bg-blue-50' : 'opacity-50 grayscale hover:opacity-75'
               }`}
             >
@@ -111,15 +142,17 @@ const ClusterLegend = memo(
                 <span className="text-system-gray-600">File</span>
               </div>
               {isTypeActive('file') && (
-                <Check className="w-3 h-3 text-stratosort-blue" aria-hidden="true" />
+                <Check className="w-3 h-3 text-stratosort-blue ml-auto" aria-hidden="true" />
               )}
-            </button>
+            </Button>
 
-            <button
+            <Button
               onClick={() => toggleType('query')}
               aria-label="Toggle query node visibility"
               aria-pressed={isTypeActive('query')}
-              className={`w-full flex items-center justify-between gap-2 text-[11px] p-1 rounded transition-colors ${
+              variant="ghost"
+              size="sm"
+              className={`w-full justify-start text-left p-1 text-[11px] rounded-md h-auto ${
                 isTypeActive('query')
                   ? 'hover:bg-indigo-50'
                   : 'opacity-50 grayscale hover:opacity-75'
@@ -132,9 +165,9 @@ const ClusterLegend = memo(
                 <span className="text-system-gray-600">Query</span>
               </div>
               {isTypeActive('query') && (
-                <Check className="w-3 h-3 text-indigo-600" aria-hidden="true" />
+                <Check className="w-3 h-3 text-indigo-600 ml-auto" aria-hidden="true" />
               )}
-            </button>
+            </Button>
           </div>
 
           {/* Connection Logic (New) */}
@@ -183,11 +216,13 @@ const ClusterLegend = memo(
               Cluster Confidence
             </div>
 
-            <button
+            <Button
               onClick={() => toggleConfidence('high')}
               aria-label="Toggle high confidence clusters"
               aria-pressed={isConfidenceActive('high')}
-              className={`w-full flex items-center justify-between gap-2 text-[11px] p-1 rounded transition-colors ${
+              variant="ghost"
+              size="sm"
+              className={`w-full justify-start text-left p-1 text-[11px] rounded-md h-auto ${
                 isConfidenceActive('high')
                   ? 'hover:bg-emerald-50'
                   : 'opacity-50 grayscale hover:opacity-75'
@@ -203,15 +238,17 @@ const ClusterLegend = memo(
                 <span className="text-system-gray-500">{CONFIDENCE_COLORS.high.desc}</span>
               </div>
               {isConfidenceActive('high') && (
-                <Check className="w-3 h-3 text-emerald-600" aria-hidden="true" />
+                <Check className="w-3 h-3 text-emerald-600 ml-auto" aria-hidden="true" />
               )}
-            </button>
+            </Button>
 
-            <button
+            <Button
               onClick={() => toggleConfidence('medium')}
               aria-label="Toggle medium confidence clusters"
               aria-pressed={isConfidenceActive('medium')}
-              className={`w-full flex items-center justify-between gap-2 text-[11px] p-1 rounded transition-colors ${
+              variant="ghost"
+              size="sm"
+              className={`w-full justify-start text-left p-1 text-[11px] rounded-md h-auto ${
                 isConfidenceActive('medium')
                   ? 'hover:bg-blue-50'
                   : 'opacity-50 grayscale hover:opacity-75'
@@ -227,15 +264,17 @@ const ClusterLegend = memo(
                 <span className="text-system-gray-500">{CONFIDENCE_COLORS.medium.desc}</span>
               </div>
               {isConfidenceActive('medium') && (
-                <Check className="w-3 h-3 text-blue-600" aria-hidden="true" />
+                <Check className="w-3 h-3 text-blue-600 ml-auto" aria-hidden="true" />
               )}
-            </button>
+            </Button>
 
-            <button
+            <Button
               onClick={() => toggleConfidence('low')}
               aria-label="Toggle low confidence clusters"
               aria-pressed={isConfidenceActive('low')}
-              className={`w-full flex items-center justify-between gap-2 text-[11px] p-1 rounded transition-colors ${
+              variant="ghost"
+              size="sm"
+              className={`w-full justify-start text-left p-1 text-[11px] rounded-md h-auto ${
                 isConfidenceActive('low')
                   ? 'hover:bg-system-gray-50'
                   : 'opacity-50 grayscale hover:opacity-75'
@@ -251,9 +290,9 @@ const ClusterLegend = memo(
                 <span className="text-system-gray-500">{CONFIDENCE_COLORS.low.desc}</span>
               </div>
               {isConfidenceActive('low') && (
-                <Check className="w-3 h-3 text-system-gray-500" aria-hidden="true" />
+                <Check className="w-3 h-3 text-system-gray-500 ml-auto" aria-hidden="true" />
               )}
-            </button>
+            </Button>
           </div>
 
           {/* Interactions (Static) */}
@@ -278,6 +317,7 @@ ClusterLegend.displayName = 'ClusterLegend';
 ClusterLegend.propTypes = {
   className: PropTypes.string,
   compact: PropTypes.bool,
+  showHeader: PropTypes.bool,
   activeFilters: PropTypes.shape({
     types: PropTypes.arrayOf(PropTypes.string),
     confidence: PropTypes.arrayOf(PropTypes.string)

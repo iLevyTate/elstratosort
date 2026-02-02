@@ -218,12 +218,23 @@ function withErrorLogging(logger, fn, options = {}) {
 function withValidation(logger, schema, handler, options = {}) {
   const { context = 'IPC' } = options;
 
-  if (!z || !schema) {
-    // If zod not available or no schema, just apply error logging
-    if (schema && !z) {
-      warnMissingZod(context);
-    }
+  if (!schema) {
     return withErrorLogging(logger, handler, options);
+  }
+
+  if (schema && !z) {
+    // SECURITY FIX: Fail-closed — reject requests when schema validation is required
+    // but Zod is unavailable, rather than passing unvalidated data through.
+    warnMissingZod(context);
+    return withErrorLogging(
+      logger,
+      async () =>
+        createErrorResponse(
+          { message: 'Input validation unavailable', name: 'ValidationUnavailableError' },
+          { detail: 'Zod library is required for this handler but could not be loaded' }
+        ),
+      options
+    );
   }
 
   return withErrorLogging(
@@ -469,6 +480,15 @@ function createHandler({
 
   if (schema && !z) {
     warnMissingZod(context);
+    // SECURITY FIX: Fail-closed — if a schema was explicitly requested but Zod is
+    // unavailable, reject all requests rather than silently passing unvalidated data.
+    wrappedHandler = async () => {
+      logger?.error?.(`[${context}] Blocking request: Zod validation required but not available`);
+      return createErrorResponse(
+        { message: 'Input validation unavailable', name: 'ValidationUnavailableError' },
+        { detail: 'Zod library is required for this handler but could not be loaded' }
+      );
+    };
   }
 
   // Add normalization without schema (raw payload passthrough)
@@ -565,14 +585,14 @@ function safeOn(ipcMain, channel, listener) {
  * Safe wrapper for webContents.send() that validates event payloads.
  * Use this instead of webContents.send() directly to ensure type safety.
  *
- * Validation is non-blocking: invalid payloads are logged but still sent
- * to avoid breaking existing functionality during migration.
+ * Validation is **blocking by default** (strict mode): invalid payloads are logged and NOT sent.
+ * Use `{ strict: false }` to log-but-send during migration.
  *
  * @param {Object} webContents - Electron webContents instance
  * @param {string} channel - IPC channel name
  * @param {*} data - Payload to send
  * @param {Object} [options] - Options
- * @param {boolean} [options.strict=false] - If true, don't send on validation failure
+ * @param {boolean} [options.strict=true] - If true (default), don't send on validation failure
  * @returns {boolean} Whether the send was attempted (false only in strict mode on failure)
  *
  * @example
@@ -584,7 +604,7 @@ function safeOn(ipcMain, channel, listener) {
  * safeSend(win.webContents, 'notification', data, { strict: true });
  */
 function safeSend(webContents, channel, data, options = {}) {
-  const { strict = false } = options;
+  const { strict = true } = options;
 
   if (!webContents || typeof webContents.send !== 'function') {
     logger.debug(`[IPC Event] Cannot send '${channel}': invalid webContents`);

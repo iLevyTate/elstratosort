@@ -36,6 +36,7 @@ jest.mock('reactflow', () => ({
   Background: () => <div data-testid="rf-background" />,
   Controls: () => <div data-testid="rf-controls" />,
   MiniMap: () => <div data-testid="rf-minimap" />,
+  Panel: ({ children }) => <div data-testid="rf-panel">{children}</div>,
   Handle: () => <div data-testid="rf-handle" />,
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
   useNodesState: () => [[], jest.fn(), jest.fn()],
@@ -95,7 +96,7 @@ jest.mock('lucide-react', () => ({
 }));
 
 // Mock Modal component
-jest.mock('../../src/renderer/components/Modal', () => ({
+jest.mock('../../src/renderer/components/ui/Modal', () => ({
   __esModule: true,
   default: ({ children, isOpen, onClose, title }) =>
     isOpen ? (
@@ -117,30 +118,57 @@ jest.mock('../../src/renderer/components/Modal', () => ({
     ) : null
 }));
 
-// Mock UI components
-jest.mock('../../src/renderer/components/ui', () => ({
-  Button: ({ children, onClick, disabled, className, ...props }) => (
-    <button onClick={onClick} disabled={disabled} className={className} {...props}>
-      {children}
-    </button>
-  ),
-  Input: ({ value, onChange, placeholder, className, ...props }) => (
-    <input
-      value={value}
-      onChange={onChange}
-      placeholder={placeholder}
-      className={className}
-      {...props}
-    />
-  ),
-  StateMessage: ({ title, description, children, ...props }) => (
-    <div data-testid="state-message" {...props}>
-      {title ? <div>{title}</div> : null}
-      {description ? <div>{description}</div> : null}
-      {children}
-    </div>
-  )
-}));
+// Mock UI components (partial) to keep dependent exports available
+jest.mock('../../src/renderer/components/ui', () => {
+  const actual = jest.requireActual('../../src/renderer/components/ui');
+  return {
+    __esModule: true,
+    ...actual,
+    Button: ({ children, onClick, disabled, className, leftIcon, rightIcon, ...props }) => (
+      <button onClick={onClick} disabled={disabled} className={className} {...props}>
+        {leftIcon ? <span data-testid="button-left-icon">{leftIcon}</span> : null}
+        {children}
+        {rightIcon ? <span data-testid="button-right-icon">{rightIcon}</span> : null}
+      </button>
+    ),
+    IconButton: ({ children, onClick, disabled, className, icon, ...props }) => (
+      <button onClick={onClick} disabled={disabled} className={className} {...props}>
+        {icon ? <span data-testid="icon-button-icon">{icon}</span> : null}
+        {children}
+      </button>
+    ),
+    Input: ({ value, onChange, placeholder, className, ...props }) => (
+      <input
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className={className}
+        {...props}
+      />
+    ),
+    Select: ({ value, onChange, className, children, ...props }) => (
+      <select value={value} onChange={onChange} className={className} {...props}>
+        {children}
+      </select>
+    ),
+    StateMessage: ({ title, description, children, ...props }) => (
+      <div data-testid="state-message" {...props}>
+        {title ? <div>{title}</div> : null}
+        {description ? <div>{description}</div> : null}
+        {children}
+      </div>
+    ),
+    Textarea: ({ value, onChange, placeholder, className, ...props }) => (
+      <textarea
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className={className}
+        {...props}
+      />
+    )
+  };
+});
 
 // Mock sub-components
 jest.mock('../../src/renderer/components/search/ClusterNode', () => ({
@@ -210,22 +238,16 @@ jest.mock('../../src/shared/featureFlags', () => ({
   }
 }));
 
-jest.mock('../../src/shared/logger', () => ({
-  logger: {
+jest.mock('../../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  },
-  createLogger: jest.fn(() => ({
-    setContext: jest.fn(),
-    info: jest.fn(),
-    debug: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn()
-  }))
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock renderer utilities
 jest.mock('../../src/renderer/utils/pathUtils', () => ({

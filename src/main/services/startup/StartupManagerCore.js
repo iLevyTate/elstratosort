@@ -7,7 +7,7 @@
  * @module services/startup/StartupManagerCore
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { container } = require('../ServiceContainer');
 const { hasPythonModuleAsync } = require('../../utils/asyncSpawnUtils');
 const { withTimeout, delay } = require('../../../shared/promiseUtils');
@@ -19,8 +19,7 @@ const { startOllama, isOllamaRunning, checkOllamaHealth } = require('./ollamaSer
 const { createHealthMonitor } = require('./healthMonitoring');
 const { shutdown, shutdownProcess } = require('./shutdownHandler');
 
-logger.setContext('StartupManager');
-
+const logger = createLogger('StartupManager');
 /**
  * StartupManager - Application startup orchestration
  *

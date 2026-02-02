@@ -7,6 +7,10 @@
  * @module shared/vectorMath
  */
 
+const { createLogger } = require('./logger');
+
+const logger = createLogger('vectorMath');
+
 /**
  * Calculate cosine similarity between two vectors
  * Uses loop unrolling (4x) for better CPU cache performance
@@ -130,9 +134,58 @@ function validateEmbeddingVector(vector) {
   return { valid: true };
 }
 
+// Track dimension mismatch warnings to avoid log spam (warn once per dimension pair)
+// FIX: Cap size to prevent unbounded memory growth in long-running processes
+const _warnedDimPairs = new Set();
+const _MAX_WARNED_DIM_PAIRS = 100;
+function _warnDimMismatch(actual, expected) {
+  const key = `${actual}->${expected}`;
+  if (_warnedDimPairs.has(key)) return;
+  if (_warnedDimPairs.size >= _MAX_WARNED_DIM_PAIRS) _warnedDimPairs.clear();
+  _warnedDimPairs.add(key);
+  logger.warn(
+    `[vectorMath] Vector dimension mismatch: ${actual} vs ${expected}. Search quality may be degraded. Consider rebuilding embeddings.`
+  );
+}
+
+/**
+ * Pad or truncate a vector to match the expected dimension.
+ * - If vector is shorter than expectedDim, pads with zeros
+ * - If vector is longer than expectedDim, truncates to expectedDim
+ * - Returns null if vector is empty/invalid or expectedDim is invalid
+ *
+ * FIX: Extracted from ChatService and SearchService to eliminate duplication.
+ *
+ * @param {number[]} vector - The embedding vector to adjust
+ * @param {number|null|undefined} expectedDim - Target dimension (null/undefined/invalid returns vector as-is)
+ * @returns {number[]|null} Adjusted vector, original vector if no adjustment needed, or null if invalid
+ */
+function padOrTruncateVector(vector, expectedDim) {
+  if (!Array.isArray(vector) || vector.length === 0) {
+    return null;
+  }
+  // If expectedDim is not a valid positive integer, return vector unchanged
+  if (!Number.isInteger(expectedDim) || expectedDim <= 0) {
+    return vector;
+  }
+  // Already correct dimension
+  if (vector.length === expectedDim) {
+    return vector;
+  }
+  // Pad with zeros if too short
+  if (vector.length < expectedDim) {
+    _warnDimMismatch(vector.length, expectedDim);
+    return vector.concat(new Array(expectedDim - vector.length).fill(0));
+  }
+  // Truncate if too long
+  _warnDimMismatch(vector.length, expectedDim);
+  return vector.slice(0, expectedDim);
+}
+
 module.exports = {
   cosineSimilarity,
   squaredEuclideanDistance,
   validateEmbeddingDimensions,
-  validateEmbeddingVector
+  validateEmbeddingVector,
+  padOrTruncateVector
 };

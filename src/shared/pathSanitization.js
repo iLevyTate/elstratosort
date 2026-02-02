@@ -70,7 +70,19 @@ function sanitizePath(filePath) {
   // This helps prevent homograph attacks and ensures consistent encoding
   let normalized = sanitized.normalize('NFC');
 
-  // 3. Handle path length limits
+  // 3. Normalize the path first (resolves .., ., etc.)
+  // This must happen BEFORE truncation so that ".." segments are resolved
+  // and truncation cannot create a path traversal vector.
+  normalized = path.normalize(normalized);
+
+  // 4. Check for path traversal attempts AFTER normalization
+  // Only treat ".." as traversal when it's an actual path segment.
+  const normalizedParts = normalized.split(path.sep).filter((part) => part.length > 0);
+  if (normalizedParts.some((part) => part === '..')) {
+    throw new Error('Invalid path: path traversal detected');
+  }
+
+  // 5. Handle path length limits AFTER normalization and traversal check
   const platform = os.platform();
   const maxLength = MAX_PATH_LENGTHS[platform] || MAX_PATH_LENGTHS.linux;
   if (normalized.length > maxLength) {
@@ -79,20 +91,15 @@ function sanitizePath(filePath) {
     const ext = path.extname(normalized);
     const truncateLength = maxLength - ext.length;
     if (truncateLength > 0) {
-      normalized = normalized.substring(0, truncateLength) + ext;
+      // FIX (MED-5): Use Array.from for code-point-aware truncation.
+      // String.substring operates on UTF-16 code units and can split
+      // surrogate pairs (emoji, CJK supplementary characters).
+      const chars = Array.from(normalized);
+      normalized = chars.slice(0, truncateLength).join('') + ext;
     } else {
-      normalized = normalized.substring(0, maxLength);
+      const chars = Array.from(normalized);
+      normalized = chars.slice(0, maxLength).join('');
     }
-  }
-
-  // 4. Normalize the path first (resolves .., ., etc.)
-  normalized = path.normalize(normalized);
-
-  // 5. Check for path traversal attempts AFTER normalization
-  // Only treat ".." as traversal when it's an actual path segment.
-  const normalizedParts = normalized.split(path.sep).filter((part) => part.length > 0);
-  if (normalizedParts.some((part) => part === '..')) {
-    throw new Error('Invalid path: path traversal detected');
   }
 
   // 6. Validate path depth to prevent deep nesting attacks
@@ -667,8 +674,9 @@ function normalizePathForIndex(filePath) {
   // First apply standard normalization (resolve . and ..)
   let normalized = path.normalize(filePath);
 
-  // On Windows, lowercase for case-insensitive comparison
-  if (os.platform() === 'win32') {
+  // On case-insensitive filesystems (Windows, macOS default), lowercase for consistent comparison
+  const platform = os.platform();
+  if (platform === 'win32' || platform === 'darwin') {
     normalized = normalized.toLowerCase();
   }
 

@@ -1,11 +1,10 @@
 const fs = require('fs').promises;
 const path = require('path');
-const { logger } = require('../shared/logger');
+const { createLogger } = require('../shared/logger');
 const { isPermissionError } = require('../shared/errorClassifier');
 const { TIMEOUTS } = require('../shared/performanceConstants');
 
-logger.setContext('FolderScanner');
-
+const logger = createLogger('FolderScanner');
 const DEFAULT_IGNORE_PATTERNS = [
   '.DS_Store',
   'Thumbs.db',

@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
 import PropTypes from 'prop-types';
 import { Download } from 'lucide-react';
+import { Text } from '../ui/Typography';
 
 /**
  * Reusable drag-and-drop zone UI.
@@ -23,15 +24,17 @@ const DragAndDropZone = memo(function DragAndDropZone({ isDragging, dragProps, c
           ? 'border-stratosort-blue bg-stratosort-blue/5'
           : 'border-system-gray-300 hover:border-system-gray-400 hover:bg-system-gray-50/50'
       } ${className || 'p-8'}`}
+      {...dragProps}
       role="button"
       tabIndex={0}
       onKeyDown={handleKeyDown}
-      {...dragProps}
     >
       <div className="mb-4" aria-hidden="true">
         <Download className="w-8 h-8 text-system-gray-400" />
       </div>
-      <div className="text-sm text-system-gray-600">Drop files or folders here</div>
+      <Text variant="small" className="text-system-gray-600">
+        Drop files or folders here
+      </Text>
     </div>
   );
 });

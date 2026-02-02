@@ -21,11 +21,6 @@ const { getCorrelationId } = require('./correlationId');
  * @returns {string|object}
  */
 function sanitizeLogData(data) {
-  // FIX CRIT-22: Always sanitize paths, even in development
-  // if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
-  //   return data;
-  // }
-
   // Strings: redact common absolute path patterns
   if (typeof data === 'string') {
     let sanitized = data.replace(
@@ -40,6 +35,16 @@ function sanitizeLogData(data) {
   }
 
   if (typeof data === 'object' && data !== null) {
+    // FIX: Error objects have non-enumerable properties — convert to plain object
+    // so message, stack, and code are preserved in log output
+    if (data instanceof Error) {
+      return sanitizeLogData({
+        name: data.name,
+        message: data.message,
+        stack: data.stack,
+        ...(data.code ? { code: data.code } : {})
+      });
+    }
     const sanitized = Array.isArray(data) ? [] : {};
     for (const [key, value] of Object.entries(data)) {
       // Special handling for common path-ish keys
@@ -243,12 +248,20 @@ class Logger {
 
     let formattedMessage = `${timestamp} ${levelName}${contextStr}${correlationStr}: ${message}`;
 
-    if (data && Object.keys(data).length > 0) {
-      try {
-        // Fixed: Use safe stringify to handle circular references
-        formattedMessage += `\n  Data: ${this.safeStringify(data)}`;
-      } catch (error) {
-        formattedMessage += `\n  Data: [Error stringifying data: ${error.message}]`;
+    if (data != null) {
+      // FIX: Error objects have non-enumerable properties (message, stack),
+      // so Object.keys(error) returns []. Convert to plain object first.
+      const displayData =
+        data instanceof Error
+          ? { name: data.name, message: data.message, stack: data.stack, code: data.code }
+          : data;
+      if (Object.keys(displayData).length > 0) {
+        try {
+          // Fixed: Use safe stringify to handle circular references
+          formattedMessage += `\n  Data: ${this.safeStringify(displayData)}`;
+        } catch (error) {
+          formattedMessage += `\n  Data: [Error stringifying data: ${error.message}]`;
+        }
       }
     }
 
@@ -566,8 +579,7 @@ function createLogger(context) {
  * @returns {Logger} The singleton logger with context set
  */
 function getLogger(context) {
-  logger.setContext(context);
-  return logger;
+  return createLogger(context);
 }
 
 // Export both the class and singleton

@@ -11,15 +11,16 @@ jest.mock('electron', () => ({
 }));
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock fs
 const mockFs = {
@@ -56,7 +57,8 @@ jest.mock('crypto', () => ({
       digest: jest.fn().mockReturnValue(`hash_fallback_${global.__hashCounter++}`)
     };
   }),
-  randomUUID: jest.fn().mockReturnValue('12345678-1234-1234-1234-123456789012')
+  randomUUID: jest.fn().mockReturnValue('12345678-1234-1234-1234-123456789012'),
+  randomBytes: jest.fn().mockReturnValue({ toString: () => 'deadbeef' })
 }));
 
 // Mock constants

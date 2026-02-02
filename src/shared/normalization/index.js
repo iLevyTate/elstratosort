@@ -91,6 +91,7 @@ function normalizeEmbeddingMetadata(meta = {}) {
     summary: normalizeText(meta.summary, { maxLength: 1000 }),
     tags: normalizeKeywords(meta.tags, { max: 15 }),
     keywords: normalizeKeywords(meta.keywords, { max: 15 }),
+    keyEntities: normalizeKeywords(meta.keyEntities, { max: 20 }),
     type: normalizeText(meta.type, { maxLength: 100 }),
     model: normalizeText(meta.model, { maxLength: 100 }),
     fileExtension: normalizeText(meta.fileExtension, { maxLength: 20 }),

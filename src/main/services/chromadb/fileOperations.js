@@ -7,7 +7,7 @@
  * @module services/chromadb/fileOperations
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { buildLogMeta } = require('../../../shared/loggingStandards');
 const { withRetry } = require('../../../shared/errorHandlingUtils');
 const { prepareFileMetadata, sanitizeMetadata } = require('../../../shared/pathSanitization');
@@ -17,8 +17,7 @@ const { validateEmbeddingVector } = require('../../../shared/vectorMath');
 const { OperationType } = require('../../utils/OfflineQueue');
 const { traceChromaDbUpdate } = require('../../../shared/pathTraceLogger');
 
-logger.setContext('ChromaDB:FileOps');
-
+const logger = createLogger('ChromaDB:FileOps');
 /**
  * Direct upsert file without circuit breaker (used by queue flush)
  *

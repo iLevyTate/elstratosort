@@ -13,18 +13,17 @@
 
 const lunr = require('lunr');
 const fs = require('fs').promises;
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { THRESHOLDS, TIMEOUTS, SEARCH } = require('../../shared/performanceConstants');
 const { normalizePathForIndex } = require('../../shared/pathSanitization');
-const { validateEmbeddingDimensions } = require('../../shared/vectorMath');
+const { validateEmbeddingDimensions, padOrTruncateVector } = require('../../shared/vectorMath');
 const { getSemanticFileId } = require('../../shared/fileIdUtils');
 
 // Optional services for enhanced query processing
 const { getInstance: getQueryProcessor } = require('./QueryProcessor');
 const { getInstance: getReRanker } = require('./ReRankerService');
 
-logger.setContext('SearchService');
-
+const logger = createLogger('SearchService');
 /**
  * Minimum score threshold for results (filters low-quality matches)
  * Uses MIN_SIMILARITY_SCORE from performanceConstants
@@ -50,10 +49,24 @@ const DEFAULT_OPTIONS = {
   chunkWeight: 0.5,
   // Query processing options
   expandSynonyms: true, // Expand query with WordNet synonyms
-  correctSpelling: false, // DISABLED - causes false corrections on common words (are->api, that->tax)
+  // Spell correction enabled by default with strict length checks (min 4 chars)
+  correctSpelling: true,
   // Re-ranking options
   rerank: true, // Enable LLM re-ranking of top results
-  rerankTopN: 10 // Number of top results to re-rank
+  rerankTopN: 10, // Number of top results to re-rank
+  // Contextual chunk expansion
+  chunkContext: SEARCH.CHUNK_CONTEXT_ENABLED,
+  chunkContextMaxNeighbors: SEARCH.CHUNK_CONTEXT_MAX_NEIGHBORS,
+  chunkContextMaxFiles: SEARCH.CHUNK_CONTEXT_MAX_FILES,
+  chunkContextMaxChars: SEARCH.CHUNK_CONTEXT_MAX_CHARS,
+  // Graph expansion options (local relationship index)
+  graphExpansion: SEARCH.GRAPH_EXPANSION_ENABLED,
+  graphExpansionWeight: SEARCH.GRAPH_EXPANSION_WEIGHT,
+  graphExpansionMaxSeeds: SEARCH.GRAPH_EXPANSION_MAX_SEEDS,
+  graphExpansionMaxEdges: SEARCH.GRAPH_EXPANSION_MAX_EDGES,
+  graphExpansionMaxNeighbors: SEARCH.GRAPH_EXPANSION_MAX_NEIGHBORS,
+  graphExpansionMinWeight: SEARCH.GRAPH_EXPANSION_MIN_WEIGHT,
+  graphExpansionDecay: SEARCH.GRAPH_EXPANSION_DECAY
 };
 
 class SearchService {
@@ -67,6 +80,7 @@ class SearchService {
    * @param {Object} [dependencies.queryProcessor] - Optional QueryProcessor for spell correction/synonyms
    * @param {Object} [dependencies.reRankerService] - Optional ReRankerService for LLM re-ranking
    * @param {Object} [dependencies.ollamaService] - Optional OllamaService for re-ranking
+   * @param {Object} [dependencies.relationshipIndexService] - Optional RelationshipIndexService for graph expansion
    */
   constructor({
     chromaDbService,
@@ -74,7 +88,8 @@ class SearchService {
     parallelEmbeddingService,
     queryProcessor,
     reRankerService,
-    ollamaService
+    ollamaService,
+    relationshipIndexService
   } = {}) {
     // Validate required dependencies
     if (!chromaDbService) {
@@ -95,6 +110,7 @@ class SearchService {
     this.queryProcessor = queryProcessor || null;
     this.reRanker = reRankerService || null;
     this.ollamaService = ollamaService || null;
+    this.relationshipIndex = relationshipIndexService || null;
 
     // Lazy initialize optional services
     this._queryProcessorInitialized = false;
@@ -114,6 +130,12 @@ class SearchService {
 
     // Lock to prevent concurrent index builds (race condition fix)
     this._indexBuildPromise = null;
+
+    // FIX: Debounce timer for invalidateAndRebuild to prevent index thrashing
+    // during batch operations (e.g., multi-file move/rename/delete)
+    this._rebuildDebounceTimer = null;
+    this._rebuildDebounceResolvers = [];
+    this._REBUILD_DEBOUNCE_MS = 500;
 
     // Maximum cache size in bytes (50MB) to prevent unbounded growth
     this._maxCacheSize = 50 * 1024 * 1024;
@@ -254,6 +276,36 @@ class SearchService {
         return { success: true, indexed: 0 };
       }
 
+      const normalizeList = (value) => {
+        if (!value) return [];
+        if (Array.isArray(value)) {
+          return value.map((item) => String(item).trim()).filter(Boolean);
+        }
+        if (typeof value === 'string') {
+          const trimmed = value.trim();
+          if (!trimmed) return [];
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+              return parsed.map((item) => String(item).trim()).filter(Boolean);
+            }
+          } catch {
+            // Ignore JSON parse errors.
+          }
+          return trimmed
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean);
+        }
+        return [];
+      };
+
+      // Release old index and document map before building new ones to avoid
+      // holding both old and new data structures in memory simultaneously.
+      // This prevents doubling memory usage during rebuilds.
+      this.bm25Index = null;
+      this.documentMap = new Map();
+
       // Build index into local variables first so a build failure doesn't leave partial state behind.
       const nextDocumentMap = new Map();
       const self = this;
@@ -272,6 +324,7 @@ class SearchService {
         this.field('project', { boost: 1.4 });
         this.field('purpose', { boost: 1.2 });
         this.field('documentType', { boost: 1.2 });
+        this.field('keyEntities', { boost: 1.2 });
         this.field('documentDate', { boost: 0.8 });
         this.field('reasoning', { boost: 0.6 });
         this.field('extractedText', { boost: 2.5 });
@@ -297,17 +350,21 @@ class SearchService {
           }
           seenIds.add(canonicalId);
 
+          const normalizedTags = normalizeList(analysis.tags);
+          const normalizedKeyEntities = normalizeList(analysis.keyEntities);
+
           const indexDoc = {
             id: canonicalId,
             fileName: currentName,
             subject: analysis.subject || '',
             summary: analysis.summary || '',
-            tags: (analysis.tags || []).join(' '),
+            tags: normalizedTags.join(' '),
             category: analysis.category || '',
             entity: analysis.entity || '',
             project: analysis.project || '',
             purpose: analysis.purpose || '',
             documentType: analysis.documentType || analysis.type || '',
+            keyEntities: normalizedKeyEntities.join(' '),
             documentDate: analysis.documentDate || analysis.date || '',
             reasoning: analysis.reasoning || '',
             confidence: analysis.confidence || 0,
@@ -325,7 +382,7 @@ class SearchService {
             type: doc.mimeType || 'document',
             subject: analysis.subject,
             summary: analysis.summary,
-            tags: analysis.tags || [],
+            tags: normalizedTags,
             category: analysis.category,
             entity: analysis.entity || null,
             project: analysis.project || null,
@@ -334,7 +391,7 @@ class SearchService {
             documentDate: analysis.documentDate || analysis.date || null,
             reasoning: analysis.reasoning || null,
             confidence: analysis.confidence,
-            keyEntities: analysis.keyEntities || [],
+            keyEntities: normalizedKeyEntities,
             dates: analysis.dates || []
           });
         }
@@ -350,6 +407,11 @@ class SearchService {
       // Cache serialized index for faster subsequent loads (with size limit)
       // Lunr indexes support JSON serialization
       try {
+        // Release old serialized caches before creating new ones to avoid
+        // holding both old and new serialized strings in memory simultaneously.
+        this._serializedIndex = null;
+        this._serializedDocMap = null;
+
         const serializedIndex = JSON.stringify(this.bm25Index);
         const serializedDocMap = JSON.stringify(Array.from(this.documentMap.entries()));
         const totalSize =
@@ -403,6 +465,12 @@ class SearchService {
 
     try {
       const startTime = Date.now();
+
+      // Release old references before assigning new ones to avoid
+      // holding both old and new data structures in memory simultaneously.
+      this.bm25Index = null;
+      this.documentMap = new Map();
+
       this.bm25Index = lunr.Index.load(JSON.parse(this._serializedIndex));
       this.documentMap = new Map(JSON.parse(this._serializedDocMap));
       this.indexBuiltAt = Date.now();
@@ -429,14 +497,9 @@ class SearchService {
     return text.length > maxLength ? text.slice(0, maxLength) : text;
   }
 
+  // FIX: Use shared padOrTruncateVector from vectorMath.js to eliminate duplication
   _padOrTruncateVector(vector, expectedDim) {
-    if (!Array.isArray(vector) || vector.length === 0) return null;
-    if (!Number.isInteger(expectedDim) || expectedDim <= 0) return vector;
-    if (vector.length === expectedDim) return vector;
-    if (vector.length < expectedDim) {
-      return vector.concat(new Array(expectedDim - vector.length).fill(0));
-    }
-    return vector.slice(0, expectedDim);
+    return padOrTruncateVector(vector, expectedDim);
   }
 
   /**
@@ -471,14 +534,16 @@ class SearchService {
 
         // FIX C-1: Throw descriptive error instead of returning null
         // This allows UI to display actionable message to user
-        throw new Error(errorMsg);
+        const err = new Error(errorMsg);
+        err.isDimensionMismatch = true;
+        throw err;
       }
 
       return vector;
     } catch (e) {
       // FIX C-1: Re-throw dimension mismatch errors so UI can display actionable message
       // Other errors (like ChromaDB unavailable) can fail safely to null
-      if (e.message && e.message.includes('Embedding model changed')) {
+      if (e.isDimensionMismatch) {
         throw e; // Propagate to UI with clear message
       }
       // If dimension check fails for other reasons, log and fail safe
@@ -675,7 +740,13 @@ class SearchService {
    * @param {number} topKChunks
    * @returns {Promise<Array>}
    */
-  async chunkSearch(query, topKFiles = 20, topKChunks = 80) {
+  async chunkSearch(query, topKFiles = 20, topKChunks = 80, options = {}) {
+    const {
+      chunkContext = DEFAULT_OPTIONS.chunkContext,
+      chunkContextMaxNeighbors = DEFAULT_OPTIONS.chunkContextMaxNeighbors,
+      chunkContextMaxFiles = DEFAULT_OPTIONS.chunkContextMaxFiles,
+      chunkContextMaxChars = DEFAULT_OPTIONS.chunkContextMaxChars
+    } = options;
     try {
       // Inspect chunk collection availability and count
       try {
@@ -745,13 +816,257 @@ class SearchService {
         }
       }
 
-      return Array.from(byFile.values())
+      const results = Array.from(byFile.values())
         .sort((a, b) => (b.score || 0) - (a.score || 0))
         .slice(0, topKFiles);
+
+      if (chunkContext && chunkContextMaxNeighbors > 0 && results.length > 0) {
+        await this._attachChunkContext(results, {
+          chunkContextMaxNeighbors,
+          chunkContextMaxFiles,
+          chunkContextMaxChars
+        });
+      }
+
+      return results;
     } catch (error) {
       logger.error('[SearchService] Chunk search failed:', error);
       return [];
     }
+  }
+
+  async _attachChunkContext(results, options = {}) {
+    const {
+      chunkContextMaxNeighbors = DEFAULT_OPTIONS.chunkContextMaxNeighbors,
+      chunkContextMaxFiles = DEFAULT_OPTIONS.chunkContextMaxFiles,
+      chunkContextMaxChars = DEFAULT_OPTIONS.chunkContextMaxChars
+    } = options;
+
+    const chunkCollection = this.chromaDb?.fileChunkCollection;
+    if (!chunkCollection) return;
+
+    const candidates = results
+      .filter((r) => Number.isInteger(r?.matchDetails?.chunkIndex))
+      .slice(0, chunkContextMaxFiles);
+
+    if (candidates.length === 0) return;
+
+    const chunkMaps = new Map();
+    const loadChunkMap = async (fileId) => {
+      if (chunkMaps.has(fileId)) return chunkMaps.get(fileId);
+      try {
+        const response = await chunkCollection.get({
+          where: { fileId },
+          include: ['metadatas', 'documents']
+        });
+        const ids = response?.ids || [];
+        const metadatas = response?.metadatas || [];
+        const documents = response?.documents || [];
+        const map = new Map();
+        for (let i = 0; i < ids.length; i += 1) {
+          const meta = metadatas[i] || {};
+          const index = Number.isInteger(meta.chunkIndex) ? meta.chunkIndex : null;
+          if (index == null) continue;
+          const doc = documents[i] || meta.snippet || '';
+          if (typeof doc === 'string' && doc.trim().length > 0) {
+            map.set(index, doc);
+          }
+        }
+        chunkMaps.set(fileId, map);
+        return map;
+      } catch (error) {
+        logger.debug('[SearchService] Failed to load chunk context map', {
+          fileId,
+          error: error.message
+        });
+        const empty = new Map();
+        chunkMaps.set(fileId, empty);
+        return empty;
+      }
+    };
+
+    for (const result of candidates) {
+      const fileId = result?.id;
+      const chunkIndex = result?.matchDetails?.chunkIndex;
+      if (!fileId || !Number.isInteger(chunkIndex)) continue;
+
+      const map = await loadChunkMap(fileId);
+      if (!map || map.size === 0) continue;
+
+      const snippets = [];
+      for (
+        let offset = -chunkContextMaxNeighbors;
+        offset <= chunkContextMaxNeighbors;
+        offset += 1
+      ) {
+        const neighborIndex = chunkIndex + offset;
+        const text = map.get(neighborIndex);
+        if (typeof text === 'string' && text.trim().length > 0) {
+          snippets.push(text.trim());
+        }
+      }
+
+      if (snippets.length === 0) continue;
+
+      const combined = this._truncateText(snippets.join('\n'), chunkContextMaxChars);
+      result.matchDetails = {
+        ...result.matchDetails,
+        contextSnippet: combined,
+        contextSnippetLength: combined.length
+      };
+    }
+  }
+
+  async _applyGraphExpansion(results = [], options = {}) {
+    const {
+      graphExpansion = DEFAULT_OPTIONS.graphExpansion,
+      graphExpansionWeight = DEFAULT_OPTIONS.graphExpansionWeight,
+      graphExpansionMaxSeeds = DEFAULT_OPTIONS.graphExpansionMaxSeeds,
+      graphExpansionMaxEdges = DEFAULT_OPTIONS.graphExpansionMaxEdges,
+      graphExpansionMaxNeighbors = DEFAULT_OPTIONS.graphExpansionMaxNeighbors,
+      graphExpansionMinWeight = DEFAULT_OPTIONS.graphExpansionMinWeight,
+      graphExpansionDecay = DEFAULT_OPTIONS.graphExpansionDecay
+    } = options;
+
+    const enabled =
+      Boolean(graphExpansion) &&
+      Number.isFinite(graphExpansionWeight) &&
+      graphExpansionWeight > 0 &&
+      this.relationshipIndex;
+
+    if (!enabled) {
+      return { results, meta: { enabled: false, reason: 'disabled' } };
+    }
+
+    const seedResults = (results || []).filter((r) => r?.id).slice(0, graphExpansionMaxSeeds);
+    if (seedResults.length === 0) {
+      return { results, meta: { enabled: false, reason: 'no-seeds' } };
+    }
+
+    const seedScores = new Map(seedResults.map((r) => [r.id, r.score || 0]));
+    const seedIds = Array.from(seedScores.keys());
+    const seedSet = new Set(seedIds);
+
+    let edgeResponse;
+    try {
+      edgeResponse = await this.relationshipIndex.getNeighborEdges(seedIds, {
+        minWeight: graphExpansionMinWeight,
+        maxEdges: graphExpansionMaxEdges,
+        maxNeighbors: graphExpansionMaxNeighbors
+      });
+    } catch (error) {
+      logger.debug('[SearchService] Graph expansion failed:', error?.message || error);
+      return { results, meta: { enabled: false, reason: 'error' } };
+    }
+
+    const edges = Array.isArray(edgeResponse?.edges) ? edgeResponse.edges : [];
+    if (edges.length === 0) {
+      return {
+        results,
+        meta: { enabled: true, edgeCount: 0, neighborCount: 0, addedCount: 0 }
+      };
+    }
+
+    const maxWeight = Math.max(
+      SEARCH.MIN_EPSILON,
+      ...edges.map((edge) => (typeof edge.weight === 'number' ? edge.weight : 0))
+    );
+
+    const neighborScores = new Map();
+    const neighborDetails = new Map();
+
+    for (const edge of edges) {
+      const sourceIsSeed = seedSet.has(edge.source);
+      const targetIsSeed = seedSet.has(edge.target);
+      if (!sourceIsSeed && !targetIsSeed) continue;
+      if (sourceIsSeed && targetIsSeed) continue;
+
+      const seedId = sourceIsSeed ? edge.source : edge.target;
+      const neighborId = sourceIsSeed ? edge.target : edge.source;
+      if (!neighborId) continue;
+
+      const seedScore = seedScores.get(seedId) || 0;
+      const weight = typeof edge.weight === 'number' ? edge.weight : 0;
+      const weightNorm = Math.min(1, weight / maxWeight);
+      const graphScore = seedScore * weightNorm * graphExpansionDecay;
+      if (graphScore <= 0) continue;
+
+      const existingScore = neighborScores.get(neighborId) || 0;
+      if (graphScore > existingScore) {
+        neighborScores.set(neighborId, graphScore);
+      }
+
+      const connections = neighborDetails.get(neighborId) || [];
+      if (connections.length < 3) {
+        connections.push({
+          seedId,
+          weight,
+          concepts: Array.isArray(edge.concepts) ? edge.concepts.slice(0, 5) : []
+        });
+      }
+      neighborDetails.set(neighborId, connections);
+    }
+
+    const neighborEntries = Array.from(neighborScores.entries())
+      .map(([id, score]) => ({ id, score }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, graphExpansionMaxNeighbors);
+
+    const combined = new Map(
+      results.map((result) => [result.id, { ...result, graphScore: result.graphScore || 0 }])
+    );
+
+    neighborEntries.forEach((entry) => {
+      const existing = combined.get(entry.id) || {
+        id: entry.id,
+        score: 0,
+        metadata: this.documentMap.get(entry.id) || {},
+        sources: [],
+        matchDetails: { sources: [] }
+      };
+
+      const sources = new Set([
+        ...(existing.sources || []),
+        ...(existing.matchDetails?.sources || []),
+        'graph'
+      ]);
+
+      const graphContribution = entry.score;
+      const baseScore = existing.score || 0;
+      const updatedScore = baseScore + graphExpansionWeight * graphContribution;
+
+      combined.set(entry.id, {
+        ...existing,
+        score: updatedScore,
+        sources: Array.from(sources),
+        graphScore: Math.max(existing.graphScore || 0, graphContribution),
+        matchDetails: {
+          ...existing.matchDetails,
+          graph: {
+            score: graphContribution,
+            decay: graphExpansionDecay,
+            connections: neighborDetails.get(entry.id) || []
+          },
+          sources: Array.from(sources)
+        }
+      });
+    });
+
+    const expandedResults = Array.from(combined.values()).sort(
+      (a, b) => (b.score || 0) - (a.score || 0)
+    );
+    return {
+      results: expandedResults,
+      meta: {
+        enabled: true,
+        seedCount: seedIds.length,
+        edgeCount: edges.length,
+        neighborCount: neighborEntries.length,
+        addedCount: neighborEntries.filter((e) => !seedSet.has(e.id)).length,
+        weight: graphExpansionWeight,
+        decay: graphExpansionDecay
+      }
+    };
   }
 
   /**
@@ -784,9 +1099,14 @@ class SearchService {
   _normalizeScores(results) {
     if (!results || results.length === 0) return results;
 
-    const scores = results.map((r) => r.score || 0);
-    const minScore = Math.min(...scores);
-    const maxScore = Math.max(...scores);
+    // Use loop instead of Math.min/max spread to avoid RangeError on large arrays
+    let minScore = Infinity;
+    let maxScore = -Infinity;
+    for (let i = 0; i < results.length; i++) {
+      const s = results[i].score || 0;
+      if (s < minScore) minScore = s;
+      if (s > maxScore) maxScore = s;
+    }
     const range = maxScore - minScore;
 
     // If all scores are the same, return with score 1.0
@@ -806,6 +1126,12 @@ class SearchService {
    *
    * RRF formula: score(d) = sum(1 / (k + rank_i(d)))
    * Enhanced with optional weighted score blending for better ranking
+   *
+   * NOTE: This method is currently unused internally - hybrid search uses weighted sum fusion.
+   * Kept for API consumers who may want RRF-style fusion.
+   *
+   * FIX MEDIUM-8: If calling with pre-normalized results, pass { normalizeScores: false }
+   * to avoid double normalization and score distortion.
    *
    * @param {Array<Array>} resultSets - Arrays of ranked results
    * @param {number} k - RRF constant (default: 60)
@@ -867,8 +1193,11 @@ class SearchService {
     }
 
     // Normalize RRF scores to [0, 1]
-    const rrfValues = Array.from(rrfScores.values());
-    const maxRrf = Math.max(...rrfValues, SEARCH.MIN_EPSILON);
+    // Use loop instead of Math.max(...spread) to avoid stack overflow on large result sets
+    let maxRrf = SEARCH.MIN_EPSILON;
+    for (const val of rrfScores.values()) {
+      if (val > maxRrf) maxRrf = val;
+    }
 
     // Sort by RRF score
     const fusedResults = Array.from(rrfScores.entries())
@@ -913,12 +1242,17 @@ class SearchService {
     let timeoutId = null;
 
     try {
+      const searchPromise = this.vectorSearch(query, topK).then((results) => {
+        // Clear timeout immediately when search completes to prevent leak
+        if (timeoutId) clearTimeout(timeoutId);
+        return { results, timedOut: false };
+      });
+
+      // Absorb rejection if timeout wins the race to prevent unhandled rejection
+      searchPromise.catch(() => {});
+
       const result = await Promise.race([
-        this.vectorSearch(query, topK).then((results) => {
-          // Clear timeout immediately when search completes to prevent leak
-          if (timeoutId) clearTimeout(timeoutId);
-          return { results, timedOut: false };
-        }),
+        searchPromise,
         new Promise((resolve) => {
           timeoutId = setTimeout(() => resolve({ results: [], timedOut: true }), timeout);
         })
@@ -984,24 +1318,29 @@ class SearchService {
     const validResults = [];
     const ghostIds = [];
 
-    for (const result of results) {
+    // FIX (M-6): Check file existence in parallel instead of sequential awaits.
+    // 20 results previously required 20 serial filesystem round-trips.
+    const checks = results.map(async (result) => {
       const filePath = result.metadata?.path;
-
-      if (!filePath) {
-        // No path - can't validate, include anyway
-        validResults.push(result);
-        continue;
-      }
-
+      if (!filePath) return { result, exists: true }; // No path - can't validate, include anyway
       try {
         await fs.access(filePath);
-        validResults.push(result);
+        return { result, exists: true };
       } catch {
-        // File doesn't exist - ghost entry
+        return { result, exists: false };
+      }
+    });
+
+    const settled = await Promise.all(checks);
+
+    for (const { result, exists } of settled) {
+      if (exists) {
+        validResults.push(result);
+      } else {
         ghostIds.push(result.id);
         logger.debug('[SearchService] Ghost entry found in results:', {
           id: result.id,
-          path: filePath
+          path: result.metadata?.path
         });
       }
     }
@@ -1051,12 +1390,25 @@ class SearchService {
       minScore = DEFAULT_OPTIONS.minScore,
       chunkWeight = DEFAULT_OPTIONS.chunkWeight,
       chunkTopK,
+      // Contextual chunk expansion
+      chunkContext = DEFAULT_OPTIONS.chunkContext,
+      chunkContextMaxNeighbors = DEFAULT_OPTIONS.chunkContextMaxNeighbors,
+      chunkContextMaxFiles = DEFAULT_OPTIONS.chunkContextMaxFiles,
+      chunkContextMaxChars = DEFAULT_OPTIONS.chunkContextMaxChars,
       // Query processing options
       expandSynonyms = DEFAULT_OPTIONS.expandSynonyms,
       correctSpelling = DEFAULT_OPTIONS.correctSpelling,
       // Re-ranking options
       rerank = DEFAULT_OPTIONS.rerank,
-      rerankTopN = DEFAULT_OPTIONS.rerankTopN
+      rerankTopN = DEFAULT_OPTIONS.rerankTopN,
+      // Graph expansion options
+      graphExpansion = DEFAULT_OPTIONS.graphExpansion,
+      graphExpansionWeight = DEFAULT_OPTIONS.graphExpansionWeight,
+      graphExpansionMaxSeeds = DEFAULT_OPTIONS.graphExpansionMaxSeeds,
+      graphExpansionMaxEdges = DEFAULT_OPTIONS.graphExpansionMaxEdges,
+      graphExpansionMaxNeighbors = DEFAULT_OPTIONS.graphExpansionMaxNeighbors,
+      graphExpansionMinWeight = DEFAULT_OPTIONS.graphExpansionMinWeight,
+      graphExpansionDecay = DEFAULT_OPTIONS.graphExpansionDecay
     } = options;
     const safeChunkWeight = Number.isFinite(chunkWeight)
       ? chunkWeight
@@ -1077,23 +1429,36 @@ class SearchService {
     let queryMeta = null;
     const queryProcessor = this._getQueryProcessor();
 
-    if (queryProcessor && (expandSynonyms || correctSpelling)) {
+    if (queryProcessor) {
       try {
-        const processed = await queryProcessor.processQuery(query, {
-          expandSynonyms,
-          correctSpelling,
-          maxSynonymsPerWord: 3
-        });
-        processedQuery = processed.expanded || query;
-        queryMeta = {
-          original: processed.original,
-          expanded: processed.expanded,
-          corrections: processed.corrections,
-          synonymsAdded: processed.synonymsAdded?.length || 0
-        };
+        // Extract filters (years) to boost relevance
+        const filters = queryProcessor.extractFilters(query);
+        const boostedYear = filters.year ? `${filters.year} ${filters.year}` : '';
+        if (filters.year) {
+          logger.debug('[SearchService] Detected year filter:', filters.year);
+        }
 
-        if (processed.corrections?.length > 0) {
-          logger.debug('[SearchService] Query corrections applied:', processed.corrections);
+        if (expandSynonyms || correctSpelling) {
+          const processed = await queryProcessor.processQuery(query, {
+            expandSynonyms,
+            correctSpelling,
+            maxSynonymsPerWord: 3
+          });
+          // If we added a year boost, append it to the processed expansion
+          const baseExpanded = processed.expanded || query;
+          processedQuery = filters.year ? `${baseExpanded} ${boostedYear}` : baseExpanded;
+
+          queryMeta = {
+            original: processed.original,
+            expanded: processed.expanded,
+            corrections: processed.corrections,
+            synonymsAdded: processed.synonymsAdded?.length || 0,
+            filters
+          };
+
+          if (processed.corrections?.length > 0) {
+            logger.debug('[SearchService] Query corrections applied:', processed.corrections);
+          }
         }
       } catch (procErr) {
         logger.debug('[SearchService] Query processing failed, using original:', procErr.message);
@@ -1154,7 +1519,12 @@ class SearchService {
       );
       const chunkResults =
         safeChunkWeight > 0 && resolvedChunkTopK > 0
-          ? await this.chunkSearch(normalizedQuery, topK * 2, resolvedChunkTopK)
+          ? await this.chunkSearch(normalizedQuery, topK * 2, resolvedChunkTopK, {
+              chunkContext,
+              chunkContextMaxNeighbors,
+              chunkContextMaxFiles,
+              chunkContextMaxChars
+            })
           : [];
 
       // If vector search timed out, use BM25-only with degraded mode indicator
@@ -1280,7 +1650,7 @@ class SearchService {
       normalizedVector.forEach((r) => upsert(r, 'vector'));
       normalizedChunks.forEach((r) => upsert(r, 'chunk'));
 
-      const fusedResults = Array.from(combined.values())
+      let fusedResults = Array.from(combined.values())
         .map((item) => {
           const semantic = item.vectorScore ?? 0;
           const chunk = item.chunkScore ?? 0;
@@ -1310,6 +1680,18 @@ class SearchService {
           };
         })
         .sort((a, b) => (b.score || 0) - (a.score || 0));
+
+      const graphExpansionResult = await this._applyGraphExpansion(fusedResults, {
+        graphExpansion,
+        graphExpansionWeight,
+        graphExpansionMaxSeeds,
+        graphExpansionMaxEdges,
+        graphExpansionMaxNeighbors,
+        graphExpansionMinWeight,
+        graphExpansionDecay
+      });
+
+      fusedResults = graphExpansionResult.results;
 
       // Apply minimum score filter to fused results
       let filteredResults = this._filterByScore(fusedResults.slice(0, topK), minScore);
@@ -1424,6 +1806,7 @@ class SearchService {
           filteredCount: filteredResults.length,
           minScoreApplied: minScore,
           weights: { vector: alpha, bm25: beta, chunk: gamma },
+          graphExpansion: graphExpansionResult.meta,
           reranked,
           queryExpanded: processedQuery !== query,
           // Signal fallback when vector search effectively unavailable
@@ -1544,23 +1927,44 @@ class SearchService {
     this.invalidateIndex({ reason, oldPath, newPath });
 
     if (immediate) {
-      try {
-        logger.info('[SearchService] Triggering immediate BM25 rebuild', { reason });
-        const result = await this.buildBM25Index();
-        return {
-          success: result.success,
-          rebuilt: true,
-          indexed: result.indexed,
-          error: result.error
-        };
-      } catch (error) {
-        logger.warn('[SearchService] Immediate rebuild failed', { error: error.message });
-        return {
-          success: false,
-          rebuilt: false,
-          error: error.message
-        };
-      }
+      // FIX: Debounce rapid rebuild requests to prevent index thrashing
+      // during batch operations (e.g., moving 50 files triggers 50 invalidations).
+      // Callers get a promise that resolves once the coalesced rebuild completes.
+      return new Promise((resolve) => {
+        this._rebuildDebounceResolvers.push(resolve);
+
+        if (this._rebuildDebounceTimer) {
+          clearTimeout(this._rebuildDebounceTimer);
+        }
+
+        this._rebuildDebounceTimer = setTimeout(async () => {
+          this._rebuildDebounceTimer = null;
+          const resolvers = this._rebuildDebounceResolvers.splice(0);
+
+          try {
+            logger.info('[SearchService] Triggering debounced BM25 rebuild', {
+              reason,
+              coalescedRequests: resolvers.length
+            });
+            const result = await this.buildBM25Index();
+            const response = {
+              success: result.success,
+              rebuilt: true,
+              indexed: result.indexed,
+              error: result.error
+            };
+            for (const r of resolvers) r(response);
+          } catch (error) {
+            logger.warn('[SearchService] Debounced rebuild failed', { error: error.message });
+            const response = {
+              success: false,
+              rebuilt: false,
+              error: error.message
+            };
+            for (const r of resolvers) r(response);
+          }
+        }, this._REBUILD_DEBOUNCE_MS);
+      });
     }
 
     // If not immediate, just return success (index will rebuild on next search)
@@ -2348,6 +2752,18 @@ class SearchService {
    */
   cleanup() {
     logger.info('[SearchService] Cleaning up...');
+
+    // Clear rebuild debounce timer and resolve pending promises
+    if (this._rebuildDebounceTimer) {
+      clearTimeout(this._rebuildDebounceTimer);
+      this._rebuildDebounceTimer = null;
+    }
+    if (this._rebuildDebounceResolvers && this._rebuildDebounceResolvers.length > 0) {
+      const pendingResolvers = this._rebuildDebounceResolvers.splice(0);
+      for (const r of pendingResolvers) {
+        r({ success: false, rebuilt: false, error: 'Service shutting down' });
+      }
+    }
 
     // Clear index and cache
     this.bm25Index = null;

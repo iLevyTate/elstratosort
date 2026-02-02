@@ -7,7 +7,7 @@
  * @module services/ClusteringService
  */
 
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const {
   cosineSimilarity,
   squaredEuclideanDistance,
@@ -16,8 +16,7 @@ const {
 const { getOllamaModel } = require('../ollamaUtils');
 const { AI_DEFAULTS } = require('../../shared/constants');
 
-logger.setContext('ClusteringService');
-
+const logger = createLogger('ClusteringService');
 /**
  * Default clustering options
  */
@@ -102,9 +101,17 @@ class ClusteringService {
         return [];
       }
 
+      const MAX_CLUSTERING_EMBEDDINGS = 10000;
       const result = await fileCollection.get({
-        include: ['embeddings', 'metadatas']
+        include: ['embeddings', 'metadatas'],
+        limit: MAX_CLUSTERING_EMBEDDINGS
       });
+
+      if (result.ids && result.ids.length >= MAX_CLUSTERING_EMBEDDINGS) {
+        logger.warn(
+          `[ClusteringService] Clustering limited to ${MAX_CLUSTERING_EMBEDDINGS} embeddings. Some files may be excluded from cluster analysis.`
+        );
+      }
 
       const files = [];
       const ids = result.ids || [];
@@ -764,18 +771,63 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
    * @returns {Array} Clusters with labels, metadata, and member info
    */
   getClustersForGraph() {
-    return this.clusters.map((c) => ({
-      id: `cluster:${c.id}`,
-      clusterId: c.id,
-      label: c.label || this.clusterLabels.get(c.id) || `Cluster ${c.id + 1}`,
-      memberCount: c.members.length,
-      memberIds: c.members.map((m) => m.id),
-      // Rich metadata for meaningful display
-      confidence: c.labelConfidence || 'low',
-      reason: c.labelReason || '',
-      dominantCategory: c.dominantCategory || null,
-      commonTags: c.commonTags || []
-    }));
+    const parseDateCandidateMs = (value) => {
+      if (!value) return null;
+      const ms = Date.parse(String(value));
+      return Number.isFinite(ms) ? ms : null;
+    };
+
+    const getMemberTimestampMs = (member) => {
+      const meta = member?.metadata || {};
+      // Prefer an actual document date if present, otherwise fall back to recency.
+      return (
+        parseDateCandidateMs(meta.documentDate) ??
+        parseDateCandidateMs(meta.date) ??
+        parseDateCandidateMs(meta.updatedAt) ??
+        null
+      );
+    };
+
+    return this.clusters.map((c) => {
+      const memberIds = c.members.map((m) => m.id);
+
+      // Derive a time range from member metadata when available.
+      const memberTimestamps = c.members
+        .map((m) => getMemberTimestampMs(m))
+        .filter((ms) => Number.isFinite(ms));
+      const timeRange =
+        memberTimestamps.length > 0
+          ? (() => {
+              // Avoid spread operator to prevent stack overflow for large clusters
+              let startMs = memberTimestamps[0];
+              let endMs = memberTimestamps[0];
+              for (let t = 1; t < memberTimestamps.length; t++) {
+                if (memberTimestamps[t] < startMs) startMs = memberTimestamps[t];
+                if (memberTimestamps[t] > endMs) endMs = memberTimestamps[t];
+              }
+              return {
+                start: new Date(startMs).toISOString(),
+                end: new Date(endMs).toISOString(),
+                startMs,
+                endMs
+              };
+            })()
+          : null;
+
+      return {
+        id: `cluster:${c.id}`,
+        clusterId: c.id,
+        label: c.label || this.clusterLabels.get(c.id) || `Cluster ${c.id + 1}`,
+        memberCount: c.members.length,
+        memberIds,
+        // Rich metadata for meaningful display
+        confidence: c.labelConfidence || 'low',
+        reason: c.labelReason || '',
+        dominantCategory: c.dominantCategory || null,
+        commonTags: c.commonTags || [],
+        timeRange
+      };
+    });
   }
 
   /**
@@ -827,25 +879,149 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
   }
 
   /**
+   * Select a representative subset of members to avoid heavy computations.
+   * Uses similarity to the cluster's own centroid to pick the most central items.
+   *
+   * @private
+   * @param {Array} members - Cluster members with embeddings
+   * @param {Array<number>} centroid - Cluster centroid embedding
+   * @param {number} maxCandidates - Max candidates to return
+   * @returns {Array} Representative member subset
+   */
+  _selectBridgeCandidates(members, centroid, maxCandidates) {
+    if (!Array.isArray(members) || members.length === 0) return [];
+    if (!Array.isArray(centroid) || centroid.length === 0) return [];
+
+    if (members.length <= maxCandidates) {
+      return members;
+    }
+
+    const scored = [];
+    for (const member of members) {
+      const vector = member?.embedding;
+      if (!Array.isArray(vector) || vector.length !== centroid.length) continue;
+      const sim = cosineSimilarity(vector, centroid);
+      scored.push({ member, sim });
+    }
+
+    scored.sort((a, b) => b.sim - a.sim);
+    return scored.slice(0, maxCandidates).map((entry) => entry.member);
+  }
+
+  /**
+   * Build bridge file samples between two clusters.
+   * Picks top files from each cluster that are most similar to the other cluster's centroid.
+   *
+   * @private
+   * @param {Object} clusterA
+   * @param {Object} clusterB
+   * @param {Array<number>} centroidA
+   * @param {Array<number>} centroidB
+   * @param {Object} options
+   * @returns {Array<{id:string,name?:string,path?:string,similarity:number,clusterId:string}>}
+   */
+  _buildBridgeFilesForEdge(clusterA, clusterB, centroidA, centroidB, options) {
+    const {
+      maxBridgeFilesPerCluster = 3,
+      maxCandidatesPerCluster = 50,
+      minBridgeSimilarity = 0.55
+    } = options || {};
+
+    if (!clusterA || !clusterB) return [];
+    if (!Array.isArray(centroidA) || !Array.isArray(centroidB)) return [];
+
+    const candidatesA = this._selectBridgeCandidates(
+      clusterA.members,
+      centroidA,
+      maxCandidatesPerCluster
+    );
+    const candidatesB = this._selectBridgeCandidates(
+      clusterB.members,
+      centroidB,
+      maxCandidatesPerCluster
+    );
+
+    const pickTop = (candidates, otherCentroid, clusterId) => {
+      const scored = [];
+      for (const member of candidates) {
+        const vector = member?.embedding;
+        if (!Array.isArray(vector) || vector.length !== otherCentroid.length) continue;
+        const sim = cosineSimilarity(vector, otherCentroid);
+        if (sim < minBridgeSimilarity) continue;
+        const meta = member?.metadata || {};
+        scored.push({
+          id: member.id,
+          name: meta.name || meta.path || member.id,
+          path: meta.path || null,
+          similarity: Math.round(sim * 100) / 100,
+          clusterId: `cluster:${clusterId}`
+        });
+      }
+      scored.sort((a, b) => b.similarity - a.similarity);
+      return scored.slice(0, maxBridgeFilesPerCluster);
+    };
+
+    const topA = pickTop(candidatesA, centroidB, clusterA.id);
+    const topB = pickTop(candidatesB, centroidA, clusterB.id);
+
+    return [...topA, ...topB];
+  }
+
+  /**
    * Find cross-cluster edges based on centroid similarity
    *
    * @param {number} threshold - Similarity threshold (0-1)
+   * @param {Object} options - Options
    * @returns {Array} Cross-cluster edges
    */
-  findCrossClusterEdges(threshold = 0.6) {
+  findCrossClusterEdges(threshold = 0.6, options = {}) {
+    const {
+      includeBridgeFiles = true,
+      maxBridgeFilesPerCluster = 3,
+      maxCandidatesPerCluster = 50,
+      minBridgeSimilarity = Math.max(0.5, threshold - 0.1)
+    } = options;
     const edges = [];
 
+    // Build a set of cluster IDs that actually exist (some may have been filtered)
+    const existingClusterIds = new Set(this.clusters.map((c) => c.id));
+
     for (let i = 0; i < this.centroids.length; i++) {
+      // Skip centroids whose clusters were filtered out (below minClusterSize)
+      if (!existingClusterIds.has(i)) continue;
+
       for (let j = i + 1; j < this.centroids.length; j++) {
+        if (!existingClusterIds.has(j)) continue;
+
         const similarity = cosineSimilarity(this.centroids[i], this.centroids[j]);
 
         if (similarity >= threshold) {
-          edges.push({
+          const edge = {
             source: `cluster:${i}`,
             target: `cluster:${j}`,
             similarity,
             type: 'cross_cluster'
-          });
+          };
+
+          if (includeBridgeFiles) {
+            const clusterA = this.clusters.find((c) => c.id === i);
+            const clusterB = this.clusters.find((c) => c.id === j);
+            const bridgeFiles = this._buildBridgeFilesForEdge(
+              clusterA,
+              clusterB,
+              this.centroids[i],
+              this.centroids[j],
+              {
+                maxBridgeFilesPerCluster,
+                maxCandidatesPerCluster,
+                minBridgeSimilarity
+              }
+            );
+            edge.bridgeFiles = bridgeFiles;
+            edge.count = bridgeFiles.length;
+          }
+
+          edges.push(edge);
         }
       }
     }

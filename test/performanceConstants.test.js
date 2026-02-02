@@ -24,7 +24,7 @@ describe('performanceConstants', () => {
     });
 
     test('defines file operation timeouts', () => {
-      expect(constants.TIMEOUTS.FILE_READ).toBe(5000);
+      expect(constants.TIMEOUTS.FILE_READ).toBe(15000);
       expect(constants.TIMEOUTS.FILE_WRITE).toBe(10000);
       expect(constants.TIMEOUTS.FILE_COPY).toBe(30000);
     });
@@ -114,19 +114,6 @@ describe('performanceConstants', () => {
     test('defines startup polling intervals', () => {
       expect(constants.POLLING.STARTUP_POLL_INITIAL).toBe(50);
       expect(constants.POLLING.STARTUP_POLL_SLOW).toBe(200);
-    });
-  });
-
-  describe('FILE_SIZE', () => {
-    test('defines file size limits', () => {
-      expect(constants.FILE_SIZE.MAX_INLINE_TEXT).toBe(1024 * 1024);
-      expect(constants.FILE_SIZE.MAX_DOCUMENT_SIZE).toBe(50 * 1024 * 1024);
-      expect(constants.FILE_SIZE.MAX_IMAGE_SIZE).toBe(20 * 1024 * 1024);
-    });
-
-    test('defines streaming thresholds', () => {
-      expect(constants.FILE_SIZE.LARGE_FILE_THRESHOLD).toBe(10 * 1024 * 1024);
-      expect(constants.FILE_SIZE.STREAM_THRESHOLD).toBe(5 * 1024 * 1024);
     });
   });
 

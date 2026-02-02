@@ -22,15 +22,16 @@ jest.mock('../src/shared/constants', () => ({
 }));
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 import uiReducer, {
   setPhase,
@@ -304,7 +305,8 @@ describe('uiSlice', () => {
       const result = uiReducer(state, goBack());
 
       expect(result.currentPhase).toBe('welcome');
-      expect(result.previousPhase).toBe('setup');
+      // goBack is single-step: once used, it clears previousPhase to prevent ping-pong
+      expect(result.previousPhase).toBeNull();
     });
 
     test('goes to welcome if no previous phase', () => {

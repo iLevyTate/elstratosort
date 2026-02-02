@@ -8,12 +8,11 @@
  */
 
 const { screen } = require('electron');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { bringWindowToForeground, isWindows } = require('./platformBehavior');
 const { WINDOW } = require('../../shared/performanceConstants');
 
-logger.setContext('WindowState');
-
+const logger = createLogger('WindowState');
 /**
  * Window states for the state machine
  */

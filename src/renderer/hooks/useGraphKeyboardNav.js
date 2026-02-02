@@ -60,7 +60,8 @@ export function useGraphKeyboardNav({
   onSelectNode,
   onOpenFile,
   reactFlowInstance,
-  enabled = true
+  enabled = true,
+  containerRef = null
 }) {
   const lastNavigationTime = useRef(0);
   const DEBOUNCE_MS = 100;
@@ -101,6 +102,9 @@ export function useGraphKeyboardNav({
       }
 
       const currentIndex = nodes.findIndex((n) => n.id === selectedNodeId);
+      if (currentIndex === -1) {
+        return nodes[0]?.id || null;
+      }
 
       // Handle list navigation (up/down)
       if (direction === 'next') {
@@ -151,6 +155,15 @@ export function useGraphKeyboardNav({
         target.isContentEditable
       ) {
         return;
+      }
+
+      if (containerRef?.current) {
+        const activeElement = document.activeElement;
+        const isBodyFocused =
+          activeElement === document.body || activeElement === document.documentElement;
+        if (!isBodyFocused && activeElement && !containerRef.current.contains(activeElement)) {
+          return;
+        }
       }
 
       // Tab navigation for panels
@@ -223,7 +236,16 @@ export function useGraphKeyboardNav({
         navigateToNode(nodes[nodes.length - 1].id);
       }
     },
-    [enabled, nodes, selectedNodeId, getNextNode, navigateToNode, onSelectNode, onOpenFile]
+    [
+      enabled,
+      nodes,
+      selectedNodeId,
+      getNextNode,
+      navigateToNode,
+      onSelectNode,
+      onOpenFile,
+      containerRef
+    ]
   );
 
   // Attach keyboard listener

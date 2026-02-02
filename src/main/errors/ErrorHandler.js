@@ -7,7 +7,7 @@ const { app, dialog, BrowserWindow } = require('electron');
 const fs = require('fs').promises;
 const path = require('path');
 const { ERROR_TYPES } = require('../../shared/constants');
-const { logger, sanitizeLogData } = require('../../shared/logger');
+const { createLogger, sanitizeLogData } = require('../../shared/logger');
 const { parseJsonLines } = require('../../shared/safeJsonOps');
 const { safeSend } = require('../ipc/ipcWrappers');
 const {
@@ -16,8 +16,7 @@ const {
   isNetworkError
 } = require('../../shared/errorClassifier');
 
-logger.setContext('ErrorHandler');
-
+const logger = createLogger('ErrorHandler');
 /**
  * Extract a compact, user-friendly summary of Electron "process gone" details.
  * @param {any} details
@@ -97,6 +96,10 @@ class ErrorHandler {
   }
 
   setupGlobalHandlers() {
+    // FIX: Guard against duplicate listener registration if initialize() is called twice
+    if (this._globalHandlersRegistered) return;
+    this._globalHandlersRegistered = true;
+
     // NOTE: process.on('uncaughtException') and process.on('unhandledRejection')
     // are handled by lifecycle.js with proper cleanup. Do NOT register them here
     // to avoid duplicate handlers which cause:
@@ -240,7 +243,10 @@ class ErrorHandler {
     switch (errorType) {
       case ERROR_TYPES.PERMISSION_DENIED:
       case ERROR_TYPES.UNKNOWN:
-        return 'critical';
+        // FIX: Downgraded from 'critical' to 'high' (mapped to 'error').
+        // 'critical' triggers handleCriticalError which shows a restart/quit dialog.
+        // Permission denied and unknown errors are recoverable and should not force an app quit.
+        return 'error';
       case ERROR_TYPES.FILE_NOT_FOUND:
       case ERROR_TYPES.AI_UNAVAILABLE:
         return 'error';
@@ -262,20 +268,39 @@ class ErrorHandler {
       ...normalized
     });
 
-    // Show error dialog
-    const response = await dialog.showMessageBox({
-      type: 'error',
-      title: 'Critical Error',
-      message: 'Stratosort encountered a critical error',
-      detail: `${message}\n\nWould you like to restart the application?`,
-      buttons: ['Restart', 'Quit'],
-      defaultId: 0
-    });
+    // Show error dialog with a hard timeout so we don't hang the main process
+    // in cases where UI is unresponsive (e.g., renderer crash/freeze).
+    const DIALOG_TIMEOUT_MS = 8000;
+    let timeoutId;
+    try {
+      const response = await Promise.race([
+        dialog.showMessageBox({
+          type: 'error',
+          title: 'Critical Error',
+          message: 'Stratosort encountered a critical error',
+          detail: `${message}\n\nWould you like to restart the application?`,
+          buttons: ['Restart', 'Quit'],
+          defaultId: 0
+        }),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error(`Critical error dialog timed out after ${DIALOG_TIMEOUT_MS}ms`)),
+            DIALOG_TIMEOUT_MS
+          );
+        })
+      ]);
 
-    if (response.response === 0) {
-      app.relaunch();
+      if (response?.response === 0) {
+        app.relaunch();
+      }
+    } catch (dialogError) {
+      logger.error('[CRITICAL ERROR] Failed to show critical error dialog:', {
+        error: dialogError?.message || String(dialogError)
+      });
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      app.quit();
     }
-    app.quit();
   }
 
   /**
@@ -326,11 +351,12 @@ class ErrorHandler {
    */
   async getRecentErrors(count = 50) {
     try {
+      if (!this.currentLogFile) return [];
       const logContent = await fs.readFile(this.currentLogFile, 'utf-8');
       const entries = parseJsonLines(logContent);
       const errors = entries
-        .slice(-count)
-        .filter((entry) => ['ERROR', 'CRITICAL'].includes(entry.level));
+        .filter((entry) => ['ERROR', 'CRITICAL'].includes(entry.level))
+        .slice(-count);
 
       return errors;
     } catch (error) {
@@ -341,26 +367,36 @@ class ErrorHandler {
 
   /**
    * Clean up old log files
+   * PERF: Uses async file operations to avoid blocking the event loop
    */
   async cleanupLogs(daysToKeep = 7) {
     try {
-      // FIX: Use sync operations to avoid async issues during startup
-      const fsSync = require('fs');
-      const files = fsSync.readdirSync(this.logPath);
+      if (!this.logPath) return;
+      const files = await fs.readdir(this.logPath);
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 
-      for (const file of files) {
-        if (file.startsWith('stratosort-') && file.endsWith('.log')) {
+      // Process files in parallel for better performance
+      const cleanupPromises = files
+        .filter((file) => file.startsWith('stratosort-') && file.endsWith('.log'))
+        .map(async (file) => {
           const filePath = path.join(this.logPath, file);
-          const stats = fsSync.statSync(filePath);
-
-          if (stats.mtime < cutoffDate) {
-            fsSync.unlinkSync(filePath);
-            await this.log('info', `Cleaned up old log file: ${file}`);
+          try {
+            const stats = await fs.stat(filePath);
+            if (stats.mtime < cutoffDate) {
+              await fs.unlink(filePath);
+              await this.log('info', `Cleaned up old log file: ${file}`);
+            }
+          } catch (fileError) {
+            // Log individual file errors but don't fail the entire cleanup
+            logger.debug('Failed to cleanup individual log file:', {
+              file,
+              error: fileError.message
+            });
           }
-        }
-      }
+        });
+
+      await Promise.all(cleanupPromises);
     } catch (error) {
       logger.error('Failed to cleanup logs:', { error: error.message });
     }

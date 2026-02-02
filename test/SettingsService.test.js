@@ -47,15 +47,16 @@ jest.mock('fs', () => ({
 }));
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock settings validation
 jest.mock('../src/shared/settingsValidation', () => ({
@@ -64,13 +65,37 @@ jest.mock('../src/shared/settingsValidation', () => ({
 }));
 
 // Mock default settings
-jest.mock('../src/shared/defaultSettings', () => ({
-  DEFAULT_SETTINGS: {
+jest.mock('../src/shared/defaultSettings', () => {
+  const DEFAULTS = {
     autoOrganize: false,
     confidenceThreshold: 0.75,
     notifications: true
-  }
-}));
+  };
+  return {
+    DEFAULT_SETTINGS: DEFAULTS,
+    mergeWithDefaults: (overrides) => {
+      if (!overrides || typeof overrides !== 'object') return { ...DEFAULTS };
+      const merged = { ...DEFAULTS };
+      for (const [key, value] of Object.entries(overrides)) {
+        if (value === undefined) continue;
+        if (value === null && key in DEFAULTS) {
+          merged[key] = value;
+          continue;
+        }
+        const defaultValue = DEFAULTS[key];
+        if (
+          defaultValue !== undefined &&
+          defaultValue !== null &&
+          typeof value !== typeof defaultValue
+        ) {
+          continue;
+        }
+        merged[key] = value;
+      }
+      return merged;
+    }
+  };
+});
 
 // Mock atomic file operations
 jest.mock('../src/shared/atomicFileOperations', () => ({
@@ -427,10 +452,12 @@ describe('SettingsService', () => {
     const validBackupPath = '/tmp/test-app/settings-backups/backup.json';
 
     test('restores settings from backup', async () => {
+      // FIX: Backups now require a valid SHA256 hash for integrity verification
       mockFs.readFile.mockResolvedValueOnce(
         JSON.stringify({
           timestamp: '2024-01-01T00:00:00Z',
-          settings: { language: 'en', autoOrganize: true }
+          settings: { language: 'en', autoOrganize: true },
+          hash: '7eb30b516d7c368d6b67eb27238b2807799fe67c42127a766e3c3365ff6afdad'
         })
       );
 
@@ -541,12 +568,12 @@ describe('SettingsService', () => {
     });
   });
 
-  describe('getService singleton', () => {
+  describe('getInstance singleton', () => {
     test('returns singleton instance', () => {
-      const { getService } = require('../src/main/services/SettingsService');
+      const { getInstance } = require('../src/main/services/SettingsService');
 
-      const instance1 = getService();
-      const instance2 = getService();
+      const instance1 = getInstance();
+      const instance2 = getInstance();
 
       expect(instance1).toBe(instance2);
     });

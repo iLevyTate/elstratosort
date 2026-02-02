@@ -2,14 +2,13 @@ const path = require('path');
 const { getOllamaModel, loadOllamaConfig, getOllama } = require('../ollamaUtils');
 const { buildOllamaOptions } = require('../services/PerformanceService');
 const { globalDeduplicator } = require('../utils/llmOptimization');
-// const { enrichFileTextForEmbedding } = require('./semanticExtensionMap');
 const { generateWithRetry } = require('../utils/ollamaApiRetry');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
 const { attemptJsonRepairWithOllama } = require('../utils/ollamaJsonRepair');
 const { AI_DEFAULTS } = require('../../shared/constants');
 const { withAbortableTimeout } = require('../../shared/promiseUtils');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { chunkTextForAnalysis } = require('./documentExtractors');
 const { normalizeForModel } = require('./textNormalization');
 const FolderMatchingService = require('../services/FolderMatchingService');
@@ -17,8 +16,7 @@ const { getInstance: getAnalysisCache } = require('../services/AnalysisCacheServ
 // FIX HIGH-1: Move import to top of file (was at line 117, but used at line 88)
 const { ANALYSIS_SCHEMA_PROMPT } = require('../../shared/analysisSchema');
 
-logger.setContext('DocumentLLM');
-
+const logger = createLogger('DocumentLLM');
 const AppConfig = {
   ai: {
     textAnalysis: {
@@ -48,6 +46,7 @@ const DOCUMENT_ANALYSIS_TOOL = {
         purpose: { type: ['string', 'null'] },
         summary: { type: ['string', 'null'] },
         keywords: { type: 'array', items: { type: 'string' } },
+        keyEntities: { type: 'array', items: { type: 'string' } },
         confidence: { type: 'number' },
         suggestedName: { type: ['string', 'null'] },
         reasoning: { type: ['string', 'null'] }
@@ -149,6 +148,7 @@ ${fileDateContext}${folderCategoriesStr}${namingContextStr}
 FILENAME CONTEXT: The original filename is "${originalFileName}". Use this as a HINT for the document's purpose, but verify against the actual content.
 
 Your response MUST be a valid JSON object matching this schema exactly.
+Always include "keyEntities" as an array (use [] if none are found).
 Output ONLY raw JSON. Do NOT include markdown, code fences, or any extra text:
 ${JSON.stringify(ANALYSIS_SCHEMA_PROMPT, null, 2)}
 

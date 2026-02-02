@@ -4,15 +4,16 @@
  */
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock errorHandlingUtils
 jest.mock('../src/shared/errorHandlingUtils', () => ({
@@ -76,7 +77,8 @@ describe('Undo/Redo IPC Handlers', () => {
     mockUndoRedoService = {
       undo: jest.fn(),
       redo: jest.fn(),
-      getHistory: jest.fn(),
+      getActionHistory: jest.fn(),
+      getFullState: jest.fn(),
       clearHistory: jest.fn(),
       canUndo: jest.fn(),
       canRedo: jest.fn()
@@ -100,6 +102,7 @@ describe('Undo/Redo IPC Handlers', () => {
           UNDO: 'undo-redo:undo',
           REDO: 'undo-redo:redo',
           GET_HISTORY: 'undo-redo:get-history',
+          GET_STATE: 'undo-redo:get-state',
           CLEAR_HISTORY: 'undo-redo:clear-history',
           CAN_UNDO: 'undo-redo:can-undo',
           CAN_REDO: 'undo-redo:can-redo'
@@ -114,10 +117,11 @@ describe('Undo/Redo IPC Handlers', () => {
     test('registers all handlers', () => {
       setupHandlers();
 
-      expect(mockIpcMain.handle).toHaveBeenCalledTimes(6);
+      expect(mockIpcMain.handle).toHaveBeenCalledTimes(7);
       expect(handlers['undo-redo:undo']).toBeDefined();
       expect(handlers['undo-redo:redo']).toBeDefined();
       expect(handlers['undo-redo:get-history']).toBeDefined();
+      expect(handlers['undo-redo:get-state']).toBeDefined();
       expect(handlers['undo-redo:clear-history']).toBeDefined();
       expect(handlers['undo-redo:can-undo']).toBeDefined();
       expect(handlers['undo-redo:can-redo']).toBeDefined();
@@ -205,13 +209,13 @@ describe('Undo/Redo IPC Handlers', () => {
         { id: 1, type: 'move' },
         { id: 2, type: 'copy' }
       ];
-      mockUndoRedoService.getHistory.mockResolvedValue(history);
+      mockUndoRedoService.getActionHistory.mockResolvedValue(history);
 
       const handler = handlers['undo-redo:get-history'];
       const result = await handler({}, 50);
 
       expect(result).toEqual(history);
-      expect(mockUndoRedoService.getHistory).toHaveBeenCalledWith(50);
+      expect(mockUndoRedoService.getActionHistory).toHaveBeenCalledWith(50);
     });
 
     test('returns empty array when service unavailable', async () => {
@@ -225,12 +229,62 @@ describe('Undo/Redo IPC Handlers', () => {
 
     test('returns empty array on error', async () => {
       setupHandlers();
-      mockUndoRedoService.getHistory.mockRejectedValue(new Error('DB error'));
+      mockUndoRedoService.getActionHistory.mockRejectedValue(new Error('DB error'));
 
       const handler = handlers['undo-redo:get-history'];
       const result = await handler({});
 
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('getState handler', () => {
+    test('returns full undo/redo state', async () => {
+      setupHandlers();
+      const state = {
+        stack: [{ id: '1', type: 'move', description: 'Move file' }],
+        pointer: 0,
+        canUndo: true,
+        canRedo: false
+      };
+      mockUndoRedoService.getFullState.mockReturnValue(state);
+
+      const handler = handlers['undo-redo:get-state'];
+      const result = await handler({});
+
+      expect(result).toEqual(state);
+      expect(mockUndoRedoService.getFullState).toHaveBeenCalled();
+    });
+
+    test('returns empty state when service unavailable', async () => {
+      setupHandlers(false);
+
+      const handler = handlers['undo-redo:get-state'];
+      const result = await handler({});
+
+      expect(result).toEqual({
+        stack: [],
+        pointer: -1,
+        canUndo: false,
+        canRedo: false
+      });
+    });
+
+    test('returns empty state on error', async () => {
+      setupHandlers();
+      mockUndoRedoService.getFullState.mockImplementation(() => {
+        throw new Error('State error');
+      });
+
+      const handler = handlers['undo-redo:get-state'];
+      const result = await handler({});
+
+      expect(result).toEqual({
+        stack: [],
+        pointer: -1,
+        canUndo: false,
+        canRedo: false
+      });
     });
   });
 

@@ -18,30 +18,14 @@ const FloatingSearchContext = createContext(null);
 
 // Session storage key to track if widget was auto-shown this session
 const WIDGET_AUTO_SHOWN_KEY = 'floatingSearchWidgetAutoShown';
-// Local storage key to persist modal open state
-const MODAL_OPEN_STATE_KEY = 'unifiedSearchModalOpen';
 
 export function FloatingSearchProvider({ children }) {
   const [isWidgetOpen, setIsWidgetOpen] = useState(false);
-  // Initialize from localStorage to restore state after restart
-  const [isModalOpen, setIsModalOpen] = useState(() => {
-    try {
-      return localStorage.getItem(MODAL_OPEN_STATE_KEY) === 'true';
-    } catch {
-      return false;
-    }
-  });
+  // Do not persist modal open state across restarts.
+  // Persisting causes the full-screen modal to auto-open and lock scroll unexpectedly.
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalInitialTab, setModalInitialTab] = useState('search');
   const autoShowChecked = useRef(false);
-
-  // Persist modal state changes
-  useEffect(() => {
-    try {
-      localStorage.setItem(MODAL_OPEN_STATE_KEY, String(isModalOpen));
-    } catch {
-      // Ignore storage errors
-    }
-  }, [isModalOpen]);
 
   const openWidget = useCallback(() => {
     setIsWidgetOpen(true);
@@ -175,7 +159,11 @@ export function FloatingSearchProvider({ children }) {
         onOpenSearch={() => openSearchModal('search')}
       />
       {/* FIX: Wrap search modal in error boundary to prevent crash on unhandled errors */}
-      <SearchErrorBoundary onClose={closeSearchModal} onError={handleSearchError}>
+      <SearchErrorBoundary
+        key={isModalOpen ? 'search-modal-open' : 'search-modal-closed'}
+        onClose={closeSearchModal}
+        onError={handleSearchError}
+      >
         <UnifiedSearchModal
           isOpen={isModalOpen}
           onClose={closeSearchModal}

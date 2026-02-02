@@ -21,12 +21,11 @@ try {
   wordnetDbPath = null;
 }
 const { distance } = require('fastest-levenshtein');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { LRUCache } = require('../../shared/LRUCache');
 const { getInstance: getCacheInvalidationBus } = require('../../shared/cacheInvalidation');
 
-logger.setContext('QueryProcessor');
-
+const logger = createLogger('QueryProcessor');
 /**
  * QueryProcessor handles spell correction, synonym expansion, and query normalization
  */
@@ -363,6 +362,27 @@ class QueryProcessor {
   }
 
   /**
+   * Extract potential filters from query (e.g. years)
+   *
+   * @param {string} query - Search query
+   * @returns {Object} Extracted filters
+   */
+  extractFilters(query) {
+    const filters = {};
+    if (!query) return filters;
+
+    // Extract years (1900-2099)
+    // Matches 4 digits bounded by word boundaries
+    const yearMatch = query.match(/\b(19|20)\d{2}\b/g);
+    if (yearMatch) {
+      // Use the last mentioned year as the primary filter intent
+      filters.year = yearMatch[yearMatch.length - 1];
+    }
+
+    return filters;
+  }
+
+  /**
    * Process a search query with spell correction and synonym expansion
    *
    * @param {string} query - Raw user query
@@ -468,10 +488,10 @@ class QueryProcessor {
       return word;
     }
 
-    // Rule 3: Short words (< 6 chars) are too risky to correct
+    // Rule 3: Short words (< 5 chars) are too risky to correct
     // They're usually valid abbreviations, acronyms, or common words
     // This prevents "are" -> "api", "that" -> "tax", "like" -> "file"
-    if (word.length < 6) {
+    if (word.length < 5) {
       return word;
     }
 

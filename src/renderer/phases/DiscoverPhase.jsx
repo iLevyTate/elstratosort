@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { AlertTriangle, X, Sparkles, RefreshCw, Network, FolderOpen, Settings } from 'lucide-react';
 import { PHASES } from '../../shared/constants';
 import { TIMEOUTS } from '../../shared/performanceConstants';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useNotification } from '../contexts/NotificationContext';
 import { useFloatingSearch } from '../contexts/FloatingSearchContext';
 import { useConfirmDialog, useDragAndDrop, useSettingsSubscription } from '../hooks';
@@ -34,8 +34,7 @@ const normalizeForComparison = (path) => {
   return isWindowsPath(path) ? normalized.toLowerCase() : normalized;
 };
 
-logger.setContext('DiscoverPhase');
-
+const logger = createLogger('DiscoverPhase');
 function DiscoverPhase() {
   const {
     selectedFiles,
@@ -240,21 +239,9 @@ function DiscoverPhase() {
     }
   }, [addNotification, dismissEmbeddingPrompt]);
 
-  const phaseData = {
-    selectedFiles,
-    analysisResults,
-    isAnalyzing,
-    analysisProgress,
-    currentAnalysisFile,
-    fileStates,
-    namingConvention: {
-      convention: namingConvention,
-      dateFormat,
-      caseConvention,
-      separator
-    },
-    totalAnalysisFailure
-  };
+  // Stable ref for useFileActions -- only organizedFiles is accessed from phaseData
+  // and it's never set in this context, so use a stable empty object
+  const stablePhaseData = useRef({}).current;
 
   const extendedActions = useMemo(
     () => ({
@@ -309,7 +296,7 @@ function DiscoverPhase() {
     setFileStates,
     addNotification,
     showConfirm,
-    phaseData
+    phaseData: stablePhaseData
   });
 
   const handleFileDrop = useCallback(
@@ -379,33 +366,41 @@ function DiscoverPhase() {
   useEffect(() => {
     if (!isAnalyzing) return;
 
-    const lastActivity = analysisProgress?.lastActivity || Date.now();
-    const timeSinceActivity = Date.now() - lastActivity;
-    const current = analysisProgress?.current || 0;
-    const total = analysisProgress?.total || 0;
+    const checkStalled = () => {
+      const lastActivity = analysisProgress?.lastActivity || Date.now();
+      const timeSinceActivity = Date.now() - lastActivity;
+      const current = analysisProgress?.current || 0;
+      const total = analysisProgress?.total || 0;
 
-    if (current === 0 && total > 0 && timeSinceActivity > TIMEOUTS.STUCK_ANALYSIS_CHECK) {
-      addNotification('Analysis paused. Restarting...', 'info', 3000, 'analysis-stalled');
-      resetAnalysisState('Analysis stalled with no progress after 2 minutes');
-      return;
-    }
+      if (current === 0 && total > 0 && timeSinceActivity > TIMEOUTS.STUCK_ANALYSIS_CHECK) {
+        addNotification('Analysis paused. Restarting...', 'info', 3000, 'analysis-stalled');
+        resetAnalysisState('Analysis stalled with no progress after 2 minutes');
+        return;
+      }
 
-    if (timeSinceActivity > TIMEOUTS.ANALYSIS_LOCK) {
-      addNotification('Analysis timed out. Ready to retry.', 'info', 3000, 'analysis-auto-reset');
-      resetAnalysisState('Stuck analysis state after 5 minutes of inactivity');
-    }
+      if (timeSinceActivity > TIMEOUTS.ANALYSIS_LOCK) {
+        addNotification('Analysis timed out. Ready to retry.', 'info', 3000, 'analysis-auto-reset');
+        resetAnalysisState('Stuck analysis state after 5 minutes of inactivity');
+      }
+    };
+
+    // Check immediately on dependency change
+    checkStalled();
+
+    // Also check periodically in case dependencies stop updating (the exact stall scenario)
+    const intervalId = setInterval(checkStalled, 30000);
+    return () => clearInterval(intervalId);
   }, [isAnalyzing, analysisProgress, addNotification, resetAnalysisState]);
 
-  const getFileStateDisplay = useCallback(
-    (filePath, hasAnalysis) => {
-      const state = fileStates[filePath]?.state || 'pending';
-      return getFileStateDisplayInfo(state, hasAnalysis);
-    },
-    [fileStates]
-  );
+  const fileStatesRef = useRef(fileStates);
+  fileStatesRef.current = fileStates;
+  const getFileStateDisplay = useCallback((filePath, hasAnalysis) => {
+    const state = fileStatesRef.current[filePath]?.state || 'pending';
+    return getFileStateDisplayInfo(state, hasAnalysis);
+  }, []);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-6 lg:gap-8 pb-6">
+    <div className="flex flex-col flex-1 min-h-0 gap-relaxed lg:gap-spacious pb-6">
       {/* Header Section */}
       <Stack className="text-center flex-shrink-0" gap="compact">
         <Heading as="h1" variant="display">
@@ -417,26 +412,20 @@ function DiscoverPhase() {
       </Stack>
 
       {/* Toolbar */}
-      <Inline className="justify-between" gap="cozy" wrap={false}>
+      <Inline className="justify-between pt-2" gap="cozy" wrap={false}>
         <Inline gap="compact">{/* Left side toolbar items if any */}</Inline>
         <Inline gap="relaxed" wrap>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setShowNamingSettings(true)}
-            className="text-sm"
-          >
-            <Settings className="w-4 h-4 mr-2" />
+          <Button variant="secondary" size="sm" onClick={() => setShowNamingSettings(true)}>
+            <Settings className="w-4 h-4" />
             Naming Strategy
           </Button>
           <Button
             variant="secondary"
             size="sm"
             onClick={() => openSearchModal('search')}
-            className="text-sm"
             title="Open Knowledge OS (semantic graph + RAG)"
           >
-            <Network className="w-4 h-4 mr-2" />
+            <Network className="w-4 h-4" />
             Knowledge OS
           </Button>
         </Inline>
@@ -447,7 +436,7 @@ function DiscoverPhase() {
         <Card className="flex-shrink-0">
           <Inline className="justify-between mb-6" gap="cozy" wrap>
             <Inline gap="cozy">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-compact">
                 <FolderOpen className="w-5 h-5 text-stratosort-blue" />
                 <Heading as="h3" variant="h5">
                   Select Content
@@ -582,7 +571,7 @@ function DiscoverPhase() {
         {/* Bottom Section - Results (or skeleton while analyzing) */}
         {(visibleAnalysisResults.length > 0 || (isAnalyzing && unorganizedSelectedCount > 0)) && (
           <Card className="flex-1 min-h-[400px] flex flex-col overflow-hidden p-0">
-            <div className="border-b border-border-soft/70 bg-white/50 p-4 flex justify-between items-center">
+            <div className="border-b border-border-soft/70 bg-white/50 px-6 py-4 flex justify-between items-center">
               <Heading as="h3" variant="h5">
                 Analysis Results
               </Heading>
@@ -598,7 +587,7 @@ function DiscoverPhase() {
                   getFileStateDisplay={getFileStateDisplay}
                 />
               ) : (
-                <div className="p-4">
+                <div className="p-6">
                   <FileListSkeleton count={Math.min(selectedFiles.length, 5)} />
                 </div>
               )}
@@ -613,7 +602,7 @@ function DiscoverPhase() {
           variant="hero"
           className="flex-shrink-0 border-stratosort-blue/30 bg-gradient-to-r from-stratosort-blue/5 to-stratosort-indigo/5"
         >
-          <div className="flex items-start gap-4">
+          <div className="flex items-start gap-default">
             <div className="p-2 bg-stratosort-blue/10 rounded-lg shrink-0">
               <Sparkles className="w-5 h-5 text-stratosort-blue" />
             </div>
@@ -625,7 +614,7 @@ function DiscoverPhase() {
                 Knowledge OS uses a semantic index (file embeddings) to power the search graph and
                 RAG responses. Your analysis history is present, but the index is currently empty.
               </Text>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-compact">
                 <Button
                   onClick={handleRebuildEmbeddings}
                   variant="primary"
@@ -634,12 +623,12 @@ function DiscoverPhase() {
                 >
                   {isRebuildingEmbeddings ? (
                     <>
-                      <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                      <RefreshCw className="w-4 h-4 animate-spin" />
                       Building...
                     </>
                   ) : (
                     <>
-                      <Sparkles className="w-4 h-4 mr-2" />
+                      <Sparkles className="w-4 h-4" />
                       Build Embeddings
                     </>
                   )}
@@ -655,7 +644,7 @@ function DiscoverPhase() {
                   variant="secondary"
                   size="sm"
                 >
-                  <Network className="w-4 h-4 mr-2" />
+                  <Network className="w-4 h-4" />
                   Open Knowledge OS
                 </Button>
               </div>
@@ -673,7 +662,7 @@ function DiscoverPhase() {
       {/* Analysis Failure Recovery Banner */}
       {totalAnalysisFailure && (
         <Card variant="warning" className="flex-shrink-0">
-          <div className="flex items-start gap-4">
+          <div className="flex items-start gap-default">
             <AlertTriangle className="w-6 h-6 text-stratosort-warning flex-shrink-0" />
             <div className="flex-1">
               <Heading as="h4" variant="h6" className="text-stratosort-warning mb-2">

@@ -7,6 +7,8 @@
  */
 
 const { logger } = require('../../../shared/logger');
+const { withTimeout } = require('../../../shared/promiseUtils');
+const { TIMEOUTS } = require('../../../shared/performanceConstants');
 
 /**
  * Process items in parallel with semaphore-based concurrency control
@@ -51,9 +53,27 @@ async function processItemsInParallel({
           model: item.model,
           updatedAt: item.updatedAt
         }));
-        await chromaDbService[batchMethod](formattedItems);
+        const result = await withTimeout(
+          chromaDbService[batchMethod](formattedItems),
+          TIMEOUTS.BATCH_EMBEDDING_MAX || 5 * 60 * 1000,
+          `Batch ${type} upsert`
+        );
+        // FIX CRITICAL: Check batch operation result for data loss prevention
+        // If the service returns success: false (e.g. dimension mismatch), we must treat it as a failure
+        // so items go to the failed queue instead of being silently dropped.
+        if (result && result.success === false) {
+          throw new Error(result.error || 'Batch folder upsert failed');
+        }
       } else {
-        await chromaDbService[batchMethod](items);
+        const result = await withTimeout(
+          chromaDbService[batchMethod](items),
+          TIMEOUTS.BATCH_EMBEDDING_MAX || 5 * 60 * 1000,
+          `Batch ${type} upsert`
+        );
+        // FIX CRITICAL: Check batch operation result for data loss prevention
+        if (result && result.success === false) {
+          throw new Error(result.error || 'Batch file upsert failed');
+        }
       }
 
       // All items processed successfully
@@ -99,22 +119,25 @@ async function processItemsInParallel({
     return new Promise((resolve) => waitQueue.push(resolve));
   };
 
-  // FIX HIGH #9: Improved semaphore release with defensive bounds checking
-  // JavaScript's single-threaded model makes this atomic, but we add extra safety
-  const releaseSlot = () => {
-    // Decrement first, ensuring we don't go below 0
-    if (activeCount > 0) {
-      activeCount--;
-    }
-    // Only process waitQueue if we have room AND there are waiters
-    // This double-check prevents any edge case where activeCount could exceed limit
-    if (waitQueue.length > 0 && activeCount < concurrency) {
+  // FIX HIGH #9: Improved semaphore release with drain function
+  // Using a while-loop drain ensures only one synchronous pass schedules tasks,
+  // so two concurrent releaseSlot calls cannot both over-schedule.
+  const drainQueue = () => {
+    while (waitQueue.length > 0 && activeCount < concurrency) {
       activeCount++;
       const next = waitQueue.shift();
       // Use setImmediate to ensure the next task starts in a new microtask
       // This prevents deep call stacks when many items complete rapidly
       setImmediate(next);
     }
+  };
+
+  const releaseSlot = () => {
+    // Decrement first, ensuring we don't go below 0
+    if (activeCount > 0) {
+      activeCount--;
+    }
+    drainQueue();
   };
 
   const processItem = async (item) => {
@@ -138,13 +161,23 @@ async function processItemsInParallel({
               updatedAt: item.updatedAt
             };
 
-      await chromaDbService[singleMethod](payload);
+      const result = await withTimeout(
+        chromaDbService[singleMethod](payload),
+        TIMEOUTS.EMBEDDING_REQUEST || 30000,
+        `Upsert ${type}`
+      );
 
+      // FIX CRITICAL: Check operation result for data loss prevention
+      if (result && result.success === false) {
+        throw new Error(result.error || `Upsert ${type} failed`);
+      }
+
+      const completed = ++processedCount;
       onProgress({
         phase: 'processing',
         total: totalBatchSize,
-        completed: ++processedCount,
-        percent: totalBatchSize > 0 ? Math.round((processedCount / totalBatchSize) * 100) : 0,
+        completed,
+        percent: totalBatchSize > 0 ? Math.round((completed / totalBatchSize) * 100) : 0,
         itemType: type,
         currentItem: item.id
       });

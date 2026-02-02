@@ -1,8 +1,8 @@
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { createOllamaRateLimiter } = require('../../shared/RateLimiter');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 
-logger.setContext('OllamaService');
+const logger = createLogger('OllamaService');
 const { Ollama } = require('ollama'); // MEDIUM PRIORITY FIX (MED-10): Import Ollama for temporary instances
 
 // Use shared rate limiter: 5 requests per second max
@@ -450,6 +450,9 @@ class OllamaService {
   async testConnection(hostUrl) {
     // FIX: Use shared constant instead of hardcoded value
     const CONNECTION_TEST_TIMEOUT = TIMEOUTS.API_REQUEST; // 10 second timeout
+    // FIX Bug 19: Track timeout ID so it can be cleared after Promise.race resolves,
+    // preventing the timer from lingering when the list() call wins the race.
+    let timeoutId;
     try {
       const testHost = hostUrl || getOllamaHost();
 
@@ -460,10 +463,14 @@ class OllamaService {
       // FIX: Add timeout protection to prevent hanging on unresponsive servers
       const response = await Promise.race([
         testOllama.list(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Connection test timeout')), CONNECTION_TEST_TIMEOUT)
-        )
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error('Connection test timeout')),
+            CONNECTION_TEST_TIMEOUT
+          );
+        })
       ]);
+      clearTimeout(timeoutId);
       const modelCount = response?.models?.length || 0;
 
       logger.info(`[OllamaService] Connection test successful for ${testHost}`);
@@ -477,6 +484,7 @@ class OllamaService {
         modelCount
       };
     } catch (error) {
+      clearTimeout(timeoutId);
       logger.error('[OllamaService] Connection test failed:', error);
       return {
         success: false,
@@ -496,15 +504,18 @@ class OllamaService {
   async getModels() {
     // FIX: Use shared constant instead of hardcoded value
     const GET_MODELS_TIMEOUT = TIMEOUTS.MODEL_LIST; // 15 second timeout
+    // FIX Bug 19: Track timeout ID so it can be cleared after Promise.race resolves
+    let timeoutId;
     try {
       const ollama = getOllama();
       // FIX: Add timeout protection to prevent hanging on unresponsive servers
       const response = await Promise.race([
         ollama.list(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Get models timeout')), GET_MODELS_TIMEOUT)
-        )
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('Get models timeout')), GET_MODELS_TIMEOUT);
+        })
       ]);
+      clearTimeout(timeoutId);
       const models = response?.models || [];
 
       // Use shared categorization utility (handles sorting)
@@ -526,6 +537,7 @@ class OllamaService {
         }
       };
     } catch (error) {
+      clearTimeout(timeoutId);
       logger.error('[OllamaService] Failed to get models:', error);
       return {
         success: false,
@@ -1080,6 +1092,13 @@ module.exports = {
   getClient: defaultInstance.getClient.bind(defaultInstance),
   shutdown: defaultInstance.shutdown.bind(defaultInstance),
   onModelChange: defaultInstance.onModelChange.bind(defaultInstance),
+  // FIX: These prototype methods were missing from the explicit bind list.
+  // The ...defaultInstance spread only copies own enumerable properties,
+  // not prototype methods, so they must be bound explicitly.
+  updateConfigWithDowngradeInfo:
+    defaultInstance.updateConfigWithDowngradeInfo.bind(defaultInstance),
+  updateConfigWithCallbackStatus:
+    defaultInstance.updateConfigWithCallbackStatus.bind(defaultInstance),
   // Factory functions for DI
   OllamaService,
   getInstance,

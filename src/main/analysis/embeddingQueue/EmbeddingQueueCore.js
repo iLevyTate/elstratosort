@@ -8,7 +8,7 @@
 
 const path = require('path');
 const { app } = require('electron');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { container, ServiceIds } = require('../../services/ServiceContainer');
 const { get: getConfig } = require('../../../shared/config/index');
 const { normalizePathForIndex } = require('../../../shared/pathSanitization');
@@ -27,8 +27,7 @@ const { createFailedItemHandler } = require('./failedItemHandler');
 const { processItemsInParallel } = require('./parallelProcessor');
 const { createProgressTracker } = require('./progress');
 
-logger.setContext('EmbeddingQueue');
-
+const logger = createLogger('EmbeddingQueue');
 class EmbeddingQueue {
   constructor() {
     this.queue = [];
@@ -71,6 +70,12 @@ class EmbeddingQueue {
     // Track pending operations for graceful shutdown
     this._pendingPersistence = null;
     this._pendingFlush = null;
+
+    // Shutdown guard — reject new enqueues after shutdown begins
+    this._isShuttingDown = false;
+
+    // Track all outstanding persistence promises (including from remove/update ops)
+    this._outstandingPersistence = new Set();
 
     // Mutex for flush operation to prevent double-flush race conditions
     this._flushMutex = Promise.resolve();
@@ -190,7 +195,10 @@ class EmbeddingQueue {
         failedItemsPath,
         (data) => {
           if (data && typeof data === 'object') {
-            const entries = Array.isArray(data) ? data : Object.entries(data);
+            // Handle both object format { id: itemData } and array format [{ id, item, ... }]
+            const entries = Array.isArray(data)
+              ? data.map((item) => [item?.id || item?.item?.id, item]).filter(([id]) => id)
+              : Object.entries(data);
             for (const [id, itemData] of entries) {
               if (id && itemData && itemData.item) {
                 this._failedItemHandler.failedItems.set(id, itemData);
@@ -234,6 +242,11 @@ class EmbeddingQueue {
    * Add an item to the embedding queue
    */
   async enqueue(item) {
+    if (this._isShuttingDown) {
+      logger.warn('[EmbeddingQueue] Rejecting enqueue — shutdown in progress', { id: item?.id });
+      return { success: false, reason: 'shutting_down' };
+    }
+
     if (!item || !item.id || !item.vector) {
       logger.warn('[EmbeddingQueue] Invalid item ignored', { id: item?.id });
       return { success: false, reason: 'invalid_item' };
@@ -320,12 +333,17 @@ class EmbeddingQueue {
 
     this.queue.push(item);
 
-    // Persist asynchronously
-    this._pendingPersistence = this.persistQueue()
-      .catch((err) => logger.warn('[EmbeddingQueue] Failed to persist queue:', err.message))
-      .finally(() => {
-        this._pendingPersistence = null;
-      });
+    // Debounced persist: coalesce rapid enqueue() calls into a single disk write
+    if (!this._persistDebounceTimer) {
+      this._persistDebounceTimer = setTimeout(() => {
+        this._persistDebounceTimer = null;
+        this._pendingPersistence = this.persistQueue()
+          .catch((err) => logger.warn('[EmbeddingQueue] Failed to persist queue:', err.message))
+          .finally(() => {
+            this._pendingPersistence = null;
+          });
+      }, 500);
+    }
 
     if (this.queue.length >= this.BATCH_SIZE) {
       this._pendingFlush = this.flush()
@@ -459,7 +477,7 @@ class EmbeddingQueue {
         // The void operator was causing folder processing counts to be lost
         if (folderItems.length > 0) {
           // Note: processedCount is used as input via startProcessedCount
-          await processItemsInParallel({
+          processedCount = await processItemsInParallel({
             items: folderItems,
             type: 'folder',
             chromaDbService,
@@ -472,8 +490,10 @@ class EmbeddingQueue {
           });
         }
 
-        // Remove processed items from queue
-        this.queue.splice(0, batchSize);
+        // Remove processed items from queue by ID to avoid data loss if
+        // removeByFilePath() modified the queue during concurrent processing
+        const processedIds = new Set(batch.map((item) => item.id));
+        this.queue = this.queue.filter((item) => !processedIds.has(item.id));
 
         const flushDuration = Date.now() - flushStartTime;
         const successCount = batch.length - failedItemIds.size;
@@ -481,6 +501,7 @@ class EmbeddingQueue {
         logger.info('[EmbeddingQueue] Successfully flushed batch', {
           success: successCount,
           failed: failedItemIds.size,
+          processed: processedCount,
           remaining: this.queue.length,
           duration: `${flushDuration}ms`
         });
@@ -490,6 +511,7 @@ class EmbeddingQueue {
           total: batch.length,
           completed: successCount,
           failed: failedItemIds.size,
+          processed: processedCount,
           percent: 100,
           queueRemaining: this.queue.length,
           duration: flushDuration
@@ -595,25 +617,32 @@ class EmbeddingQueue {
       `file:${normalizedPath}`,
       `image:${normalizedPath}`
     ]);
-    const initialLength = this.queue.length;
+    let removedCount = 0;
 
-    // Remove from main queue
-    this.queue = this.queue.filter((item) => !fileIds.has(item.id));
+    // Remove from main queue using in-place splice to avoid replacing the array
+    // reference while flush() holds a stale batchSize from the same array
+    for (let i = this.queue.length - 1; i >= 0; i--) {
+      if (fileIds.has(this.queue[i].id)) {
+        this.queue.splice(i, 1);
+        removedCount++;
+      }
+    }
 
     // Remove from failed items
     fileIds.forEach((id) => this._failedItemHandler.failedItems.delete(id));
-
-    const removedCount = initialLength - this.queue.length;
 
     if (removedCount > 0) {
       logger.debug('[EmbeddingQueue] Removed pending items for deleted file', {
         filePath,
         removedCount
       });
-      // Persist the updated queue
-      this.persistQueue().catch((err) =>
-        logger.warn('[EmbeddingQueue] Failed to persist after removal:', err.message)
-      );
+      // Persist the updated queue — track the promise for shutdown coordination
+      const p = this.persistQueue()
+        .catch((err) =>
+          logger.warn('[EmbeddingQueue] Failed to persist after removal:', err.message)
+        )
+        .finally(() => this._outstandingPersistence.delete(p));
+      this._outstandingPersistence.add(p);
     }
 
     return removedCount;
@@ -633,10 +662,16 @@ class EmbeddingQueue {
         return [`file:${p}`, `image:${p}`, `file:${normalized}`, `image:${normalized}`];
       })
     );
-    const initialLength = this.queue.length;
+    let removedCount = 0;
 
-    // Remove from main queue
-    this.queue = this.queue.filter((item) => !fileIds.has(item.id));
+    // Remove from main queue using in-place splice to avoid replacing the array
+    // reference while flush() holds a stale batchSize from the same array
+    for (let i = this.queue.length - 1; i >= 0; i--) {
+      if (fileIds.has(this.queue[i].id)) {
+        this.queue.splice(i, 1);
+        removedCount++;
+      }
+    }
 
     // Remove from failed items
     for (const fileId of fileIds) {
@@ -645,17 +680,18 @@ class EmbeddingQueue {
       }
     }
 
-    const removedCount = initialLength - this.queue.length;
-
     if (removedCount > 0) {
       logger.debug('[EmbeddingQueue] Removed pending items for deleted files', {
         fileCount: filePaths.length,
         removedCount
       });
-      // Persist the updated queue
-      this.persistQueue().catch((err) =>
-        logger.warn('[EmbeddingQueue] Failed to persist after batch removal:', err.message)
-      );
+      // Persist the updated queue — track the promise for shutdown coordination
+      const p = this.persistQueue()
+        .catch((err) =>
+          logger.warn('[EmbeddingQueue] Failed to persist after batch removal:', err.message)
+        )
+        .finally(() => this._outstandingPersistence.delete(p));
+      this._outstandingPersistence.add(p);
     }
 
     return removedCount;
@@ -746,20 +782,25 @@ class EmbeddingQueue {
     }
 
     if (queueUpdated > 0) {
-      this.persistQueue().catch((err) =>
-        logger.warn('[EmbeddingQueue] Failed to persist after path update:', err.message)
-      );
+      const p = this.persistQueue()
+        .catch((err) =>
+          logger.warn('[EmbeddingQueue] Failed to persist after path update:', err.message)
+        )
+        .finally(() => this._outstandingPersistence.delete(p));
+      this._outstandingPersistence.add(p);
     }
 
     if (failedUpdated) {
-      this._failedItemHandler
+      const p = this._failedItemHandler
         .persistAll()
         .catch((err) =>
           logger.warn(
             '[EmbeddingQueue] Failed to persist failed items after path update:',
             err.message
           )
-        );
+        )
+        .finally(() => this._outstandingPersistence.delete(p));
+      this._outstandingPersistence.add(p);
     }
 
     return queueUpdated;
@@ -784,20 +825,25 @@ class EmbeddingQueue {
     }
 
     if (totalQueueUpdated > 0) {
-      this.persistQueue().catch((err) =>
-        logger.warn('[EmbeddingQueue] Failed to persist after batch path update:', err.message)
-      );
+      const p = this.persistQueue()
+        .catch((err) =>
+          logger.warn('[EmbeddingQueue] Failed to persist after batch path update:', err.message)
+        )
+        .finally(() => this._outstandingPersistence.delete(p));
+      this._outstandingPersistence.add(p);
     }
 
     if (anyFailedUpdated) {
-      this._failedItemHandler
+      const p = this._failedItemHandler
         .persistAll()
         .catch((err) =>
           logger.warn(
             '[EmbeddingQueue] Failed to persist failed items after batch path update:',
             err.message
           )
-        );
+        )
+        .finally(() => this._outstandingPersistence.delete(p));
+      this._outstandingPersistence.add(p);
     }
 
     return totalQueueUpdated;
@@ -879,27 +925,39 @@ class EmbeddingQueue {
       this.flushTimer = null;
     }
 
-    // CRITICAL FIX: Check if flush is in progress and wait with proper timeout handling
-    if (this.isFlushing) {
+    // Await the existing flush promise instead of busy-wait polling.
+    // This is both more efficient and avoids hogging the event loop.
+    if (this.isFlushing && this._pendingFlush) {
       logger.info('[EmbeddingQueue] Waiting for current flush to complete...');
       const maxWait = 30000;
-      const startTime = Date.now();
-      while (this.isFlushing && Date.now() - startTime < maxWait) {
-        await new Promise((resolve) => setTimeout(resolve, TIMEOUTS.DELAY_BATCH));
-      }
-
-      // CRITICAL FIX: If still flushing after timeout, log warning and skip additional flush
-      // This prevents deadlock when original flush is stuck
-      if (this.isFlushing) {
+      try {
+        await Promise.race([
+          this._pendingFlush,
+          new Promise((_, reject) => {
+            const t = setTimeout(() => {
+              const err = new Error('Force flush timeout waiting for current flush');
+              err.code = 'FORCE_FLUSH_TIMEOUT';
+              reject(err);
+            }, maxWait);
+            if (t.unref) t.unref();
+          })
+        ]);
+      } catch (err) {
+        if (err.code === 'FORCE_FLUSH_TIMEOUT') {
+          logger.warn(
+            '[EmbeddingQueue] Force flush timeout - current flush still in progress after 30s. Proceeding with persistence only.',
+            { queueLength: this.queue.length }
+          );
+          await this.persistQueue();
+          await this._failedItemHandler.persistAll();
+          logger.info('[EmbeddingQueue] Force flush completed (persistence only due to timeout)');
+          return;
+        }
+        // Other errors from the flush itself are non-fatal here
         logger.warn(
-          '[EmbeddingQueue] Force flush timeout - current flush still in progress after 30s. Proceeding with persistence only.',
-          { queueLength: this.queue.length }
+          '[EmbeddingQueue] Pending flush resolved with error during forceFlush:',
+          err.message
         );
-        // Don't try to call flush() again as it would cause deadlock
-        await this.persistQueue();
-        await this._failedItemHandler.persistAll();
-        logger.info('[EmbeddingQueue] Force flush completed (persistence only due to timeout)');
-        return;
       }
     }
 
@@ -923,6 +981,15 @@ class EmbeddingQueue {
    */
   async shutdown() {
     logger.info('[EmbeddingQueue] Shutting down...');
+
+    // Set shutdown flag first — prevents new enqueues from being accepted
+    this._isShuttingDown = true;
+
+    // FIX: Clear debounce timer used by enqueue() persistence coalescing
+    if (this._persistDebounceTimer) {
+      clearTimeout(this._persistDebounceTimer);
+      this._persistDebounceTimer = null;
+    }
 
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
@@ -950,6 +1017,18 @@ class EmbeddingQueue {
         await this._pendingFlush;
       } catch (err) {
         logger.warn('[EmbeddingQueue] Pending flush failed during shutdown:', err.message);
+      }
+    }
+
+    // Drain all outstanding persistence promises from remove/update operations
+    if (this._outstandingPersistence.size > 0) {
+      logger.info('[EmbeddingQueue] Waiting for outstanding persistence operations', {
+        count: this._outstandingPersistence.size
+      });
+      try {
+        await Promise.allSettled([...this._outstandingPersistence]);
+      } catch (err) {
+        logger.warn('[EmbeddingQueue] Error draining outstanding persistence:', err.message);
       }
     }
 

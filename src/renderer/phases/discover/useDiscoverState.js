@@ -23,11 +23,10 @@ import {
   resetAnalysisState as resetAnalysisStateAction
 } from '../../store/slices/analysisSlice';
 import { setPhase } from '../../store/slices/uiSlice';
-import { logger } from '../../../shared/logger';
+import { createLogger } from '../../../shared/logger';
 import { serializeData } from '../../utils/serialization';
 
-logger.setContext('DiscoverPhase:State');
-
+const logger = createLogger('DiscoverPhase:State');
 /**
  * Custom hook for discover phase Redux state management
  * @returns {Object} State values, setters, and actions

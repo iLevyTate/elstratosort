@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect } from 'react';
+import React, { memo, useCallback, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 import Select from '../ui/Select';
 import Input from '../ui/Input';
@@ -36,7 +36,13 @@ const NamingSettings = memo(function NamingSettings({
     [setSeparator]
   );
 
+  // Skip saving on initial mount to avoid overwriting stored settings with prop defaults
+  const isFirstRender = useRef(true);
   useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
     if (typeof window === 'undefined' || !window.electronAPI?.settings?.save) return;
     window.electronAPI.settings
       .save({

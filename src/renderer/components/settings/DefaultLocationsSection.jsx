@@ -4,13 +4,17 @@ import { useSelector } from 'react-redux';
 import { FolderOpen } from 'lucide-react';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
+import Card from '../ui/Card';
 import SettingRow from './SettingRow';
+import { Text } from '../ui/Typography';
+import { selectRedactPaths } from '../../store/selectors';
 
 /**
  * Default locations section for smart folder configuration
  */
 function DefaultLocationsSection({ settings, setSettings }) {
-  const redactPaths = useSelector((state) => Boolean(state?.system?.redactPaths));
+  // PERF: Use memoized selector instead of inline Boolean coercion
+  const redactPaths = useSelector(selectRedactPaths);
 
   const handleBrowse = useCallback(async () => {
     const res = await window.electronAPI.files.selectDirectory();
@@ -23,23 +27,32 @@ function DefaultLocationsSection({ settings, setSettings }) {
   }, [setSettings]);
 
   return (
-    <div className="space-y-6">
+    <Card variant="default" className="space-y-5">
+      <div>
+        <Text variant="tiny" className="font-semibold uppercase tracking-wide text-system-gray-500">
+          Default locations
+        </Text>
+        <Text variant="small" className="text-system-gray-600">
+          Choose where StratoSort creates new smart folders by default.
+        </Text>
+      </div>
+
       <SettingRow
         layout="col"
         label="Default Smart Folder Location"
         description="Where new smart folders will be created by default."
       >
-        <div className="flex flex-col sm:flex-row gap-3 max-w-2xl">
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
           <Input
             type={redactPaths ? 'password' : 'text'}
-            value={settings.defaultSmartFolderLocation}
+            value={settings.defaultSmartFolderLocation || ''}
             onChange={(e) =>
               setSettings((prev) => ({
                 ...prev,
                 defaultSmartFolderLocation: e.target.value
               }))
             }
-            className="flex-1"
+            className="w-full"
             placeholder="Documents"
           />
           <Button
@@ -50,13 +63,13 @@ function DefaultLocationsSection({ settings, setSettings }) {
             aria-label="Browse for default folder"
             leftIcon={<FolderOpen className="w-4 h-4" />}
             size="md"
-            className="shrink-0"
+            className="w-full sm:w-auto justify-center"
           >
             Browse
           </Button>
         </div>
       </SettingRow>
-    </div>
+    </Card>
   );
 }
 

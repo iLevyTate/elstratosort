@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { TrendingUp, ClipboardList, Download, Folder, RefreshCw, FileText } from 'lucide-react';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useNotification } from '../contexts/NotificationContext';
 import Modal, { ConfirmModal } from './ui/Modal';
 import Button from './ui/Button';
@@ -10,8 +10,7 @@ import { Heading, Text } from './ui/Typography';
 import { StatusBadge, StateMessage } from './ui';
 import { Inline, Stack } from './layout';
 
-logger.setContext('AnalysisHistoryModal');
-
+const logger = createLogger('AnalysisHistoryModal');
 function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
   const { addNotification } = useNotification();
   const [historyData, setHistoryData] = useState([]);
@@ -43,41 +42,49 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
       }
     };
 
-    window.electronAPI.analysisHistory
-      .getStatistics()
-      .then((stats) => {
-        if (isMountedRef.current) {
-          setAnalysisStats(stats);
-        }
-      })
-      .catch((error) => {
-        if (isMountedRef.current) {
-          logger.warn('Failed to load statistics', { error: error?.message });
-        }
-      })
-      .finally(markLoaded);
+    const statsPromise = window.electronAPI?.analysisHistory?.getStatistics?.();
+    if (statsPromise && typeof statsPromise.then === 'function') {
+      statsPromise
+        .then((stats) => {
+          if (isMountedRef.current) {
+            setAnalysisStats(stats);
+          }
+        })
+        .catch((error) => {
+          if (isMountedRef.current) {
+            logger.warn('Failed to load statistics', { error: error?.message });
+          }
+        })
+        .finally(markLoaded);
+    } else {
+      markLoaded();
+    }
 
-    window.electronAPI.analysisHistory
-      .get({ all: true })
-      .then((history) => {
-        if (!isMountedRef.current) return;
-        if (Array.isArray(history)) {
-          setHistoryData(history);
-        } else {
-          logger.warn('History data is not an array, falling back to empty array', {
-            historyType: typeof history,
-            history
-          });
-          setHistoryData([]);
-        }
-      })
-      .catch((error) => {
-        if (isMountedRef.current) {
-          addNotification('Failed to load analysis history', 'error');
-          logger.warn('Failed to load history', { error: error?.message });
-        }
-      })
-      .finally(markLoaded);
+    const historyPromise = window.electronAPI?.analysisHistory?.get?.({ all: true });
+    if (historyPromise && typeof historyPromise.then === 'function') {
+      historyPromise
+        .then((history) => {
+          if (!isMountedRef.current) return;
+          if (Array.isArray(history)) {
+            setHistoryData(history);
+          } else {
+            logger.warn('History data is not an array, falling back to empty array', {
+              historyType: typeof history,
+              history
+            });
+            setHistoryData([]);
+          }
+        })
+        .catch((error) => {
+          if (isMountedRef.current) {
+            addNotification('Failed to load analysis history', 'error');
+            logger.warn('Failed to load history', { error: error?.message });
+          }
+        })
+        .finally(markLoaded);
+    } else {
+      markLoaded();
+    }
   }, [addNotification, setAnalysisStats]);
 
   useEffect(() => {
@@ -92,7 +99,7 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
     if (isExporting) return;
     setIsExporting(true);
     try {
-      const exportResponse = await window.electronAPI.analysisHistory.export(format);
+      const exportResponse = await window.electronAPI?.analysisHistory?.export?.(format);
       if (!exportResponse || exportResponse.success === false)
         throw new Error(exportResponse?.error || 'Export failed');
       const blob = new Blob(
@@ -123,11 +130,13 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
     }
   };
 
+  const isClearingRef = useRef(false);
   const doClearHistory = useCallback(async () => {
-    if (isClearing) return;
+    if (isClearingRef.current) return;
+    isClearingRef.current = true;
     setIsClearing(true);
     try {
-      const result = await window.electronAPI.analysisHistory.clear();
+      const result = await window.electronAPI?.analysisHistory?.clear?.();
       if (result?.success === false) {
         throw new Error(result?.error || 'Failed to clear history');
       }
@@ -136,11 +145,12 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
     } catch {
       addNotification('Failed to clear analysis history', 'error');
     } finally {
+      isClearingRef.current = false;
       if (isMountedRef.current) {
         setIsClearing(false);
       }
     }
-  }, [isClearing, loadAnalysisData, addNotification]);
+  }, [loadAnalysisData, addNotification]);
 
   const handleClearClick = useCallback(() => {
     setShowClearConfirm(true);
@@ -180,30 +190,34 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
       <Modal isOpen onClose={onClose} title="Analysis History & Statistics" size="lg">
         <Stack gap="default">
           {/* Tabs */}
-          <div className="flex border-b border-system-gray-200">
-            <button
+          <Inline gap="compact" className="border-b border-system-gray-200 pb-2">
+            <Button
               onClick={() => setSelectedTab('statistics')}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+              variant="ghost"
+              size="sm"
+              leftIcon={<TrendingUp className="w-4 h-4" />}
+              className={
                 selectedTab === 'statistics'
-                  ? 'border-stratosort-blue text-stratosort-blue'
-                  : 'border-transparent text-system-gray-500 hover:text-system-gray-700'
-              }`}
+                  ? 'text-stratosort-blue bg-stratosort-blue/10 border-stratosort-blue/20'
+                  : 'text-system-gray-600'
+              }
             >
-              <TrendingUp className="w-4 h-4" />
-              <span>Statistics</span>
-            </button>
-            <button
+              Statistics
+            </Button>
+            <Button
               onClick={() => setSelectedTab('history')}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+              variant="ghost"
+              size="sm"
+              leftIcon={<ClipboardList className="w-4 h-4" />}
+              className={
                 selectedTab === 'history'
-                  ? 'border-stratosort-blue text-stratosort-blue'
-                  : 'border-transparent text-system-gray-500 hover:text-system-gray-700'
-              }`}
+                  ? 'text-stratosort-blue bg-stratosort-blue/10 border-stratosort-blue/20'
+                  : 'text-system-gray-600'
+              }
             >
-              <ClipboardList className="w-4 h-4" />
-              <span>History</span>
-            </button>
-          </div>
+              History
+            </Button>
+          </Inline>
 
           {/* Content */}
           <div className="min-h-[300px]">
@@ -342,7 +356,11 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
                                   >
                                     {entry.fileName || 'Unknown File'}
                                   </Text>
-                                  <div className="flex items-center gap-2 mt-1 text-sm text-system-gray-500 flex-wrap">
+                                  <Text
+                                    as="div"
+                                    variant="small"
+                                    className="flex items-center gap-2 mt-1 text-system-gray-500 flex-wrap"
+                                  >
                                     <Text
                                       as="span"
                                       variant="tiny"
@@ -359,16 +377,16 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
                                         ? new Date(entry.timestamp).toLocaleDateString()
                                         : 'Unknown Date'}
                                     </Text>
-                                  </div>
+                                  </Text>
                                 </div>
-                                {(entry?.analysis?.confidence || entry?.confidence) && (
+                                {(entry?.analysis?.confidence ?? entry?.confidence) != null && (
                                   <StatusBadge
                                     variant={getConfidenceVariant(
-                                      entry?.analysis?.confidence || entry?.confidence
+                                      entry?.analysis?.confidence ?? entry?.confidence
                                     )}
                                     className="shrink-0"
                                   >
-                                    {entry?.analysis?.confidence || entry?.confidence}% Match
+                                    {entry?.analysis?.confidence ?? entry?.confidence}% Match
                                   </StatusBadge>
                                 )}
                               </div>

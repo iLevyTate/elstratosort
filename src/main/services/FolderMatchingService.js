@@ -1,8 +1,8 @@
 const crypto = require('crypto');
 const { getOllama, getOllamaEmbeddingModel } = require('../ollamaUtils');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('FolderMatchingService');
+const logger = createLogger('FolderMatchingService');
 const EmbeddingCache = require('./EmbeddingCache');
 const { getInstance: getParallelEmbeddingService } = require('./ParallelEmbeddingService');
 const { get: getConfig } = require('../../shared/config/index');
@@ -57,8 +57,13 @@ function getEmbeddingDimension(modelName) {
   }
 
   // Check partial match (model names often include version suffixes)
+  // Sort by key length descending so more specific names match first (e.g. "nomic-embed-text" before "gte")
+  // Exclude "default" from partial matching to prevent false positives
   const normalizedName = modelName.toLowerCase();
-  for (const [key, dimension] of Object.entries(EMBEDDING_DIMENSIONS)) {
+  const partialEntries = Object.entries(EMBEDDING_DIMENSIONS)
+    .filter(([key]) => key !== 'default')
+    .sort(([a], [b]) => b.length - a.length);
+  for (const [key, dimension] of partialEntries) {
     if (normalizedName.includes(key.toLowerCase())) {
       return dimension;
     }
@@ -110,6 +115,8 @@ class FolderMatchingService {
     this.ollama = null;
     this.modelName = '';
     this._upsertedFolderIds = new Set();
+    // FIX: Maximum size for upsertedFolderIds to prevent unbounded memory growth
+    this._maxUpsertedFolderIds = 10000;
 
     // Initialize embedding cache - use injected or create new
     this.embeddingCache = options.embeddingCache || new EmbeddingCache(cacheOptions);
@@ -286,15 +293,32 @@ class FolderMatchingService {
       })
       .catch((error) => {
         logger.error('[FolderMatchingService] Initialization failed:', error.message);
+        // Clear _initPromise on failure so future calls can retry
+        this._initPromise = null;
         rejectInit(error);
       })
       .finally(() => {
         this._initializing = false;
-        // Keep _initPromise as resolved promise for future callers
-        // Don't clear it - concurrent callers need to await the same promise
       });
 
     return this._initPromise;
+  }
+
+  /**
+   * Track a folder ID as upserted, with bounded size to prevent memory leaks.
+   * When the Set exceeds the maximum size, clears it entirely since the purpose
+   * is deduplication within a session, and a reset just means a few redundant upserts.
+   * @param {string} folderId - The folder ID to track
+   * @private
+   */
+  _trackUpsertedFolder(folderId) {
+    if (this._upsertedFolderIds.size >= this._maxUpsertedFolderIds) {
+      logger.info('[FolderMatchingService] Clearing upserted folder ID cache (reached max size)', {
+        maxSize: this._maxUpsertedFolderIds
+      });
+      this._upsertedFolderIds.clear();
+    }
+    this._upsertedFolderIds.add(folderId);
   }
 
   async embedText(text) {
@@ -370,20 +394,37 @@ class FolderMatchingService {
       const expectedDim = getEmbeddingDimension(model);
       const actualDim = vector.length;
 
-      // Warn on dimension mismatch - this indicates model config may be wrong
-      if (actualDim !== expectedDim && actualDim > 0) {
-        logger.warn('[FolderMatchingService] Embedding dimension mismatch detected', {
-          model,
-          expected: expectedDim,
-          actual: actualDim,
-          action: actualDim < expectedDim ? 'padding' : 'truncating'
-        });
-      }
+      // Only normalize dimensions when model is in our known lookup table
+      // (meaning we're confident about the expected dimension).
+      // If the expected dimension came from the fallback default, trust the
+      // actual model output to avoid silently destroying vector data.
+      const modelIsKnown =
+        EMBEDDING_DIMENSIONS[model] ||
+        Object.keys(EMBEDDING_DIMENSIONS).some(
+          (key) => key !== 'default' && model.toLowerCase().includes(key.toLowerCase())
+        );
 
-      if (actualDim < expectedDim) {
-        vector = vector.concat(new Array(expectedDim - actualDim).fill(0));
-      } else if (actualDim > expectedDim) {
-        vector = vector.slice(0, expectedDim);
+      if (actualDim !== expectedDim && actualDim > 0) {
+        if (modelIsKnown) {
+          logger.warn('[FolderMatchingService] Embedding dimension mismatch for known model', {
+            model,
+            expected: expectedDim,
+            actual: actualDim,
+            action: actualDim < expectedDim ? 'padding' : 'truncating'
+          });
+          if (actualDim < expectedDim) {
+            vector = vector.concat(new Array(expectedDim - actualDim).fill(0));
+          } else if (actualDim > expectedDim) {
+            vector = vector.slice(0, expectedDim);
+          }
+        } else {
+          logger.info('[FolderMatchingService] Unknown model dimension, using actual', {
+            model,
+            lookupDefault: expectedDim,
+            actual: actualDim
+          });
+          // Trust the actual dimension from the model response
+        }
       }
 
       const result = { vector, model };
@@ -494,7 +535,7 @@ class FolderMatchingService {
         id: folderId,
         name: folder.name
       });
-      this._upsertedFolderIds.add(folderId);
+      this._trackUpsertedFolder(folderId);
 
       return payload;
     } catch (error) {
@@ -595,7 +636,7 @@ class FolderMatchingService {
             model: cachedResult.model,
             updatedAt: new Date().toISOString()
           });
-          this._upsertedFolderIds.add(folderId);
+          this._trackUpsertedFolder(folderId);
         } else {
           uncachedFolders.push(folder);
         }
@@ -648,8 +689,10 @@ class FolderMatchingService {
               continue;
             }
 
-            // Cache the embedding for future use
-            const folderText = [folder.name, folder.description].filter(Boolean).join(' - ');
+            // FIX Bug 20: Use enrichFolderTextForEmbedding for cache key consistency.
+            // Previously this used a plain join which produced a different key than the
+            // enriched text used in cache get(), causing permanent cache misses.
+            const folderText = enrichFolderTextForEmbedding(folder.name, folder.description);
             this.embeddingCache.set(folderText, result.model, result.vector);
 
             payloads.push({
@@ -661,7 +704,7 @@ class FolderMatchingService {
               model: result.model,
               updatedAt: new Date().toISOString()
             });
-            this._upsertedFolderIds.add(result.id);
+            this._trackUpsertedFolder(result.id);
           }
         }
 
@@ -800,15 +843,16 @@ class FolderMatchingService {
       // Validate dimensions if we have a known model
       const expectedDim = getEmbeddingDimension(model);
       if (!validateEmbeddingDimensions(vector, expectedDim)) {
-        logger.warn('[FolderMatchingService] Vector dimension mismatch in upsert', {
+        logger.error('[FolderMatchingService] Vector dimension mismatch in upsert, rejecting', {
           id: fileId,
           model,
           expected: expectedDim,
           actual: vector?.length
         });
-        // Proceed anyway as it might be a custom model not in our list,
-        // but log warning. Or fail? ClusteringService fails on validation.
-        // SearchService fails. We should probably fail or at least be very loud.
+        throw new Error(
+          `Embedding dimension mismatch: expected ${expectedDim}, got ${vector?.length}. ` +
+            `Model "${model}" may have changed. Please rebuild your embedding index.`
+        );
       }
 
       await this.chromaDbService.upsertFile({

@@ -25,6 +25,20 @@ describe('defaultSettings', () => {
     });
   });
 
+  describe('Graph retrieval settings', () => {
+    test('has graph expansion defaults', () => {
+      expect(DEFAULT_SETTINGS.graphExpansionEnabled).toBe(true);
+      expect(DEFAULT_SETTINGS.graphExpansionWeight).toBeGreaterThanOrEqual(0);
+      expect(DEFAULT_SETTINGS.graphExpansionWeight).toBeLessThanOrEqual(1);
+      expect(DEFAULT_SETTINGS.graphExpansionMaxNeighbors).toBeGreaterThan(0);
+    });
+
+    test('has chunk context defaults', () => {
+      expect(DEFAULT_SETTINGS.chunkContextEnabled).toBe(true);
+      expect(DEFAULT_SETTINGS.chunkContextMaxNeighbors).toBeGreaterThanOrEqual(0);
+    });
+  });
+
   describe('Behavior settings', () => {
     test('has defaultSmartFolderLocation', () => {
       expect(DEFAULT_SETTINGS.defaultSmartFolderLocation).toBe('Documents');
@@ -133,7 +147,10 @@ describe('defaultSettings', () => {
         'maxBatchSize',
         'retryAttempts',
         'workflowRestoreMaxAge',
-        'saveDebounceMs'
+        'saveDebounceMs',
+        'graphExpansionWeight',
+        'graphExpansionMaxNeighbors',
+        'chunkContextMaxNeighbors'
       ];
 
       numericKeys.forEach((key) => {

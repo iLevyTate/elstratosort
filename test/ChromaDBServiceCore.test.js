@@ -11,15 +11,16 @@ jest.mock('electron', () => ({
 }));
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock config
 jest.mock('../src/shared/config/index', () => ({
@@ -129,6 +130,7 @@ const mockQueryCache = {
   get: jest.fn().mockReturnValue(null),
   set: jest.fn(),
   clear: jest.fn(),
+  dispose: jest.fn(),
   invalidateForFile: jest.fn(),
   invalidateForFolder: jest.fn(),
   getStats: jest.fn().mockReturnValue({ hits: 0, misses: 0, size: 0 })
@@ -245,7 +247,10 @@ describe('ChromaDBServiceCore', () => {
       expect(
         service._isChromaNotFoundError({ message: 'Requested resource could not be found' })
       ).toBe(true);
-      expect(service._isChromaNotFoundError({ message: 'not found' })).toBe(true);
+      expect(service._isChromaNotFoundError({ message: 'collection files not found' })).toBe(true);
+      expect(service._isChromaNotFoundError({ message: 'tenant default not found' })).toBe(true);
+      expect(service._isChromaNotFoundError({ message: 'database default not found' })).toBe(true);
+      expect(service._isChromaNotFoundError({ message: 'not found' })).toBe(false);
       expect(service._isChromaNotFoundError({ message: 'other' })).toBe(false);
     });
   });
@@ -273,12 +278,24 @@ describe('ChromaDBServiceCore', () => {
     });
   });
 
+  describe('getCollectionDimension', () => {
+    test('reads learningPatterns dimension from the correct collection', async () => {
+      service.learningPatternCollection = {
+        peek: jest.fn().mockResolvedValue({ embeddings: [[0.1, 0.2, 0.3, 0.4]] })
+      };
+
+      const dim = await service.getCollectionDimension('learningPatterns');
+      expect(dim).toBe(4);
+      expect(service._collectionDimensions.learningPatterns).toBe(4);
+    });
+  });
+
   describe('_executeWithNotFoundRecovery', () => {
     test('reinitializes once and retries on not-found error', async () => {
       const forceSpy = jest.spyOn(service, '_forceReinitialize').mockResolvedValue(undefined);
       const fn = jest
         .fn()
-        .mockRejectedValueOnce(new Error('not found'))
+        .mockRejectedValueOnce(new Error('collection files not found'))
         .mockResolvedValueOnce('ok');
 
       const res = await service._executeWithNotFoundRecovery('op', fn);
@@ -289,7 +306,7 @@ describe('ChromaDBServiceCore', () => {
 
     test('throws after max not-found retries', async () => {
       jest.spyOn(service, '_forceReinitialize').mockResolvedValue(undefined);
-      const fn = jest.fn().mockRejectedValue(new Error('not found'));
+      const fn = jest.fn().mockRejectedValue(new Error('collection files not found'));
       await expect(service._executeWithNotFoundRecovery('op', fn)).rejects.toThrow('failed after');
     });
   });
@@ -1044,7 +1061,7 @@ describe('ChromaDBServiceCore', () => {
       expect(service.client).toBeNull();
       expect(mockCircuitBreaker.cleanup).toHaveBeenCalled();
       expect(mockOfflineQueue.cleanup).toHaveBeenCalled();
-      expect(mockQueryCache.clear).toHaveBeenCalled();
+      expect(mockQueryCache.dispose).toHaveBeenCalled();
     });
 
     test('removes all listeners from CircuitBreaker and OfflineQueue', async () => {

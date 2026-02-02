@@ -1,7 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const { Logger, LOG_LEVELS } = require('../shared/logger');
-// Import IPC_CHANNELS from shared constants to avoid duplication
-const { IPC_CHANNELS } = require('../shared/constants');
 const { IpcRateLimiter } = require('./ipcRateLimiter');
 const { createIpcSanitizer } = require('./ipcSanitizer');
 const { createIpcValidator } = require('./ipcValidator');
@@ -13,6 +11,207 @@ const {
   ALLOWED_RECEIVE_CHANNELS: SECURITY_RECEIVE_CHANNELS,
   ALLOWED_SEND_CHANNELS: SECURITY_SEND_CHANNELS
 } = require('../shared/securityConfig');
+
+// === START GENERATED IPC_CHANNELS ===
+// Auto-generated from src/shared/constants.js
+// Run 'npm run generate:channels' to update
+const IPC_CHANNELS = {
+  // FILES
+  FILES: {
+    SELECT: 'files:select',
+    SELECT_DIRECTORY: 'files:select-directory',
+    GET_DOCUMENTS_PATH: 'files:get-documents-path',
+    CREATE_FOLDER_DIRECT: 'files:create-folder-direct',
+    GET_FILE_STATS: 'files:get-stats',
+    GET_FILES_IN_DIRECTORY: 'files:get-in-directory',
+    PERFORM_OPERATION: 'files:perform-operation',
+    DELETE_FILE: 'files:delete',
+    OPEN_FILE: 'files:open',
+    REVEAL_FILE: 'files:reveal',
+    COPY_FILE: 'files:copy',
+    OPEN_FOLDER: 'files:open-folder',
+    DELETE_FOLDER: 'files:delete-folder',
+    CLEANUP_ANALYSIS: 'files:cleanup-analysis'
+  },
+
+  // SMART_FOLDERS
+  SMART_FOLDERS: {
+    GET: 'smart-folders:get',
+    SAVE: 'smart-folders:save',
+    UPDATE_CUSTOM: 'smart-folders:update-custom',
+    GET_CUSTOM: 'smart-folders:get-custom',
+    SCAN_STRUCTURE: 'smart-folders:scan-structure',
+    ADD: 'smart-folders:add',
+    EDIT: 'smart-folders:edit',
+    DELETE: 'smart-folders:delete',
+    MATCH: 'smart-folders:match',
+    RESET_TO_DEFAULTS: 'smart-folders:reset-defaults',
+    GENERATE_DESCRIPTION: 'smart-folders:generate-description',
+    WATCHER_START: 'smart-folders:watcher-start',
+    WATCHER_STOP: 'smart-folders:watcher-stop',
+    WATCHER_STATUS: 'smart-folders:watcher-status',
+    WATCHER_SCAN: 'smart-folders:watcher-scan'
+  },
+
+  // ANALYSIS
+  ANALYSIS: {
+    ANALYZE_DOCUMENT: 'analysis:analyze-document',
+    ANALYZE_IMAGE: 'analysis:analyze-image',
+    EXTRACT_IMAGE_TEXT: 'analysis:extract-image-text'
+  },
+
+  // SETTINGS
+  SETTINGS: {
+    GET: 'settings:get',
+    SAVE: 'settings:save',
+    GET_CONFIGURABLE_LIMITS: 'settings:get-limits',
+    GET_LOGS_INFO: 'settings:get-logs-info',
+    OPEN_LOGS_FOLDER: 'settings:open-logs-folder',
+    EXPORT: 'settings:export',
+    IMPORT: 'settings:import',
+    CREATE_BACKUP: 'settings:create-backup',
+    LIST_BACKUPS: 'settings:list-backups',
+    RESTORE_BACKUP: 'settings:restore-backup',
+    DELETE_BACKUP: 'settings:delete-backup'
+  },
+
+  // OLLAMA
+  OLLAMA: {
+    GET_MODELS: 'ollama:get-models',
+    TEST_CONNECTION: 'ollama:test-connection',
+    PULL_MODELS: 'ollama:pull-models',
+    DELETE_MODEL: 'ollama:delete-model'
+  },
+
+  // UNDO_REDO
+  UNDO_REDO: {
+    UNDO: 'undo-redo:undo',
+    REDO: 'undo-redo:redo',
+    GET_HISTORY: 'undo-redo:get-history',
+    GET_STATE: 'undo-redo:get-state',
+    CLEAR_HISTORY: 'undo-redo:clear',
+    CAN_UNDO: 'undo-redo:can-undo',
+    CAN_REDO: 'undo-redo:can-redo',
+    STATE_CHANGED: 'undo-redo:state-changed'
+  },
+
+  // ANALYSIS_HISTORY
+  ANALYSIS_HISTORY: {
+    GET: 'analysis-history:get',
+    SEARCH: 'analysis-history:search',
+    GET_STATISTICS: 'analysis-history:get-statistics',
+    GET_FILE_HISTORY: 'analysis-history:get-file-history',
+    CLEAR: 'analysis-history:clear',
+    EXPORT: 'analysis-history:export'
+  },
+
+  // EMBEDDINGS
+  EMBEDDINGS: {
+    REBUILD_FOLDERS: 'embeddings:rebuild-folders',
+    REBUILD_FILES: 'embeddings:rebuild-files',
+    FULL_REBUILD: 'embeddings:full-rebuild',
+    REANALYZE_ALL: 'embeddings:reanalyze-all',
+    CLEAR_STORE: 'embeddings:clear-store',
+    GET_STATS: 'embeddings:get-stats',
+    SEARCH: 'embeddings:search',
+    SCORE_FILES: 'embeddings:score-files',
+    FIND_SIMILAR: 'embeddings:find-similar',
+    REBUILD_BM25_INDEX: 'embeddings:rebuild-bm25',
+    GET_SEARCH_STATUS: 'embeddings:get-search-status',
+    DIAGNOSE_SEARCH: 'embeddings:diagnose-search',
+    FIND_MULTI_HOP: 'embeddings:find-multi-hop',
+    COMPUTE_CLUSTERS: 'embeddings:compute-clusters',
+    GET_CLUSTERS: 'embeddings:get-clusters',
+    GET_CLUSTER_MEMBERS: 'embeddings:get-cluster-members',
+    GET_SIMILARITY_EDGES: 'embeddings:get-similarity-edges',
+    GET_FILE_METADATA: 'embeddings:get-file-metadata',
+    FIND_DUPLICATES: 'embeddings:find-duplicates',
+    CLEAR_CLUSTERS: 'embeddings:clear-clusters'
+  },
+
+  // SYSTEM
+  SYSTEM: {
+    GET_METRICS: 'system:get-metrics',
+    GET_APPLICATION_STATISTICS: 'system:get-app-stats',
+    APPLY_UPDATE: 'system:apply-update',
+    GET_CONFIG: 'system:get-config',
+    GET_CONFIG_VALUE: 'system:get-config-value',
+    RENDERER_ERROR_REPORT: 'renderer-error-report',
+    GET_RECOMMENDED_CONCURRENCY: 'system:get-recommended-concurrency'
+  },
+
+  // WINDOW
+  WINDOW: {
+    MINIMIZE: 'window:minimize',
+    MAXIMIZE: 'window:maximize',
+    UNMAXIMIZE: 'window:unmaximize',
+    TOGGLE_MAXIMIZE: 'window:toggle-maximize',
+    IS_MAXIMIZED: 'window:is-maximized',
+    CLOSE: 'window:close'
+  },
+
+  // SUGGESTIONS
+  SUGGESTIONS: {
+    GET_FILE_SUGGESTIONS: 'suggestions:get-file',
+    GET_BATCH_SUGGESTIONS: 'suggestions:get-batch',
+    RECORD_FEEDBACK: 'suggestions:record-feedback',
+    GET_STRATEGIES: 'suggestions:get-strategies',
+    APPLY_STRATEGY: 'suggestions:apply-strategy',
+    GET_USER_PATTERNS: 'suggestions:get-user-patterns',
+    CLEAR_PATTERNS: 'suggestions:clear-patterns',
+    ANALYZE_FOLDER_STRUCTURE: 'suggestions:analyze-folder-structure',
+    SUGGEST_NEW_FOLDER: 'suggestions:suggest-new-folder',
+    ADD_FEEDBACK_MEMORY: 'suggestions:add-feedback-memory',
+    GET_FEEDBACK_MEMORY: 'suggestions:get-feedback-memory',
+    UPDATE_FEEDBACK_MEMORY: 'suggestions:update-feedback-memory',
+    DELETE_FEEDBACK_MEMORY: 'suggestions:delete-feedback-memory'
+  },
+
+  // ORGANIZE
+  ORGANIZE: {
+    AUTO: 'organize:auto',
+    BATCH: 'organize:batch',
+    PROCESS_NEW: 'organize:process-new',
+    GET_STATS: 'organize:get-stats',
+    UPDATE_THRESHOLDS: 'organize:update-thresholds',
+    CLUSTER_BATCH: 'organize:cluster-batch',
+    IDENTIFY_OUTLIERS: 'organize:identify-outliers',
+    GET_CLUSTER_SUGGESTIONS: 'organize:get-cluster-suggestions'
+  },
+
+  // CHROMADB
+  CHROMADB: {
+    GET_STATUS: 'chromadb:get-status',
+    GET_CIRCUIT_STATS: 'chromadb:get-circuit-stats',
+    GET_QUEUE_STATS: 'chromadb:get-queue-stats',
+    FORCE_RECOVERY: 'chromadb:force-recovery',
+    HEALTH_CHECK: 'chromadb:health-check',
+    STATUS_CHANGED: 'chromadb:status-changed'
+  },
+
+  // DEPENDENCIES
+  DEPENDENCIES: {
+    GET_STATUS: 'dependencies:get-status',
+    INSTALL_OLLAMA: 'dependencies:install-ollama',
+    INSTALL_CHROMADB: 'dependencies:install-chromadb',
+    UPDATE_OLLAMA: 'dependencies:update-ollama',
+    UPDATE_CHROMADB: 'dependencies:update-chromadb',
+    SERVICE_STATUS_CHANGED: 'dependencies:service-status-changed'
+  },
+
+  // CHAT
+  CHAT: {
+    QUERY: 'chat:query',
+    RESET_SESSION: 'chat:reset-session'
+  },
+
+  // KNOWLEDGE
+  KNOWLEDGE: {
+    GET_RELATIONSHIP_EDGES: 'knowledge:get-relationship-edges',
+    GET_RELATIONSHIP_STATS: 'knowledge:get-relationship-stats'
+  }
+};
+// === END GENERATED IPC_CHANNELS ===
 
 const preloadLogger = new Logger();
 preloadLogger.setContext('Preload');
@@ -116,6 +315,7 @@ const THROTTLED_CHANNELS = new Map([
 class SecureIPCManager {
   constructor() {
     this.activeListeners = new Map();
+    this._listenerCounter = 0;
     this.rateLimiter = new IpcRateLimiter({
       maxRequestsPerSecond: PERF_LIMITS.MAX_IPC_REQUESTS_PER_SECOND,
       perfLimits: PERF_LIMITS
@@ -147,9 +347,31 @@ class SecureIPCManager {
       channel === IPC_CHANNELS.SUGGESTIONS.GET_BATCH_SUGGESTIONS ||
       channel === IPC_CHANNELS.SUGGESTIONS.GET_FILE_SUGGESTIONS ||
       channel === IPC_CHANNELS.FILES.PERFORM_OPERATION ||
-      channel === IPC_CHANNELS.ORGANIZE.BATCH
+      channel === IPC_CHANNELS.ORGANIZE.BATCH ||
+      channel === IPC_CHANNELS.SMART_FOLDERS.ADD ||
+      channel === IPC_CHANNELS.SMART_FOLDERS.GENERATE_DESCRIPTION ||
+      channel === IPC_CHANNELS.SMART_FOLDERS.MATCH
     ) {
-      timeout = TIMEOUTS.AI_ANALYSIS_LONG || 120000;
+      timeout = TIMEOUTS.AI_ANALYSIS_LONG || 180000;
+    }
+    // Embedding search/scoring operations involve embedding generation through the semaphore
+    if (
+      channel === IPC_CHANNELS.EMBEDDINGS.SEARCH ||
+      channel === IPC_CHANNELS.EMBEDDINGS.FIND_SIMILAR ||
+      channel === IPC_CHANNELS.EMBEDDINGS.SCORE_FILES ||
+      channel === IPC_CHANNELS.EMBEDDINGS.FIND_MULTI_HOP ||
+      channel === IPC_CHANNELS.EMBEDDINGS.COMPUTE_CLUSTERS
+    ) {
+      timeout = TIMEOUTS.AI_ANALYSIS_LONG || 180000;
+    }
+    // Embedding rebuild/reanalyze operations are long-running batch jobs
+    if (
+      channel === IPC_CHANNELS.EMBEDDINGS.REBUILD_FILES ||
+      channel === IPC_CHANNELS.EMBEDDINGS.REBUILD_FOLDERS ||
+      channel === IPC_CHANNELS.EMBEDDINGS.FULL_REBUILD ||
+      channel === IPC_CHANNELS.EMBEDDINGS.REANALYZE_ALL
+    ) {
+      timeout = TIMEOUTS.AI_ANALYSIS_BATCH || 300000;
     }
     return timeout;
   }
@@ -160,6 +382,8 @@ class SecureIPCManager {
 
     try {
       const invokePromise = ipcRenderer.invoke(channel, ...sanitizedArgs);
+      // Attach a no-op catch to prevent unhandled rejection if timeout wins the race
+      invokePromise.catch(() => {});
       const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
           if (!completed) {
@@ -345,7 +569,10 @@ class SecureIPCManager {
     ipcRenderer.on(channel, wrappedCallback);
 
     // Track listener for cleanup
-    const listenerKey = `${channel}_${Date.now()}`;
+    // FIX: Use timestamp (not counter) in key so auditStaleListeners() can
+    // correctly determine listener age. Counter-based keys were always parsed
+    // as epoch-ms ~0, causing ALL listeners to be removed after 10 minutes.
+    const listenerKey = `${channel}_${++this._listenerCounter}_${Date.now()}`;
     this.activeListeners.set(listenerKey, {
       channel,
       callback: wrappedCallback
@@ -436,14 +663,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createFolder: (fullPath) =>
       secureIPC.safeInvoke(IPC_CHANNELS.FILES.CREATE_FOLDER_DIRECT, fullPath),
     normalizePath: (p) => {
+      const original = p;
       try {
         if (typeof p !== 'string') return p;
         // CRITICAL FIX: Do NOT convert backslashes to forward slashes
         // This causes HTML encoding issues when paths go through IPC sanitization
         // Let the main process handle path normalization with Node.js path module
 
+        // Preserve UNC path prefix (\\server\share) before collapsing duplicates
+        let uncPrefix = '';
+        if (p.startsWith('\\\\')) {
+          uncPrefix = '\\\\';
+          p = p.slice(2);
+        }
+
         // Only remove duplicate slashes (keeping backslash or forward slash as-is)
-        let normalized = p.replace(/([\\/])+/g, '$1');
+        let normalized = uncPrefix + p.replace(/([\\/])+/g, '$1');
 
         // Remove trailing slash unless it's the root (check both separator types)
         if (normalized.length > 3 && (normalized.endsWith('/') || normalized.endsWith('\\'))) {
@@ -454,7 +689,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         }
         return normalized;
       } catch {
-        return p;
+        return original;
       }
     },
     getStats: async (filePath) => {
@@ -528,11 +763,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
           throw new Error('Invalid file path');
         }
 
+        // SECURITY FIX: Block UNC paths (\\server\share) to prevent NTLM hash relay attacks.
+        // Accessing a UNC path on Windows triggers automatic NTLM authentication,
+        // which can be exploited to steal credential hashes.
+        if (filePath.startsWith('\\\\') || filePath.startsWith('//')) {
+          throw new Error(
+            'Invalid file path: network (UNC) paths are not allowed for security reasons'
+          );
+        }
+
         // Require absolute filesystem path to avoid CWD-relative resolution
-        const isAbsolute =
-          /^[a-zA-Z]:[\\/]/.test(filePath) ||
-          filePath.startsWith('\\\\') ||
-          filePath.startsWith('/');
+        const isAbsolute = /^[a-zA-Z]:[\\/]/.test(filePath) || filePath.startsWith('/');
         if (!isAbsolute) {
           throw new Error('Invalid file path: must be an absolute path');
         }
@@ -548,7 +789,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
           ext = filePath.slice(lastDot + 1).toLowerCase();
         }
 
-        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'tiff'];
+        const imageExts = [
+          'jpg',
+          'jpeg',
+          'png',
+          'gif',
+          'bmp',
+          'webp',
+          'svg',
+          'tiff',
+          'ico',
+          'heic'
+        ];
         const audioExts = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'aiff'];
 
         if (imageExts.includes(ext)) {
@@ -692,7 +944,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         fileIds,
         minWeight: options.minWeight,
         maxEdges: options.maxEdges
-      })
+      }),
+    getRelationshipStats: () => secureIPC.safeInvoke(IPC_CHANNELS.KNOWLEDGE.GET_RELATIONSHIP_STATS)
   },
 
   // Organization Suggestions
@@ -772,6 +1025,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     undo: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.UNDO),
     redo: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.REDO),
     getHistory: (limit) => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.GET_HISTORY, limit),
+    getState: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.GET_STATE),
     clear: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.CLEAR_HISTORY),
     canUndo: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.CAN_UNDO),
     canRedo: () => secureIPC.safeInvoke(IPC_CHANNELS.UNDO_REDO.CAN_REDO),

@@ -4,15 +4,16 @@
  */
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock electron
 jest.mock('electron', () => ({
@@ -317,7 +318,7 @@ describe('AutoOrganize File Processor', () => {
     });
 
     test('records undo action', async () => {
-      await processNewFile(
+      const result = await processNewFile(
         '/path/to/file.pdf',
         [],
         {
@@ -329,7 +330,9 @@ describe('AutoOrganize File Processor', () => {
         mockUndoRedo
       );
 
-      expect(mockUndoRedo.recordAction).toHaveBeenCalledWith(
+      // processNewFile returns the undoAction in the result for the caller
+      // to record AFTER the file move succeeds (prevents phantom undo entries)
+      expect(result.undoAction).toEqual(
         expect.objectContaining({
           type: 'FILE_MOVE',
           data: expect.objectContaining({

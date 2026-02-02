@@ -5,15 +5,16 @@
  */
 
 // Mock logger before requiring the service
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock ollamaUtils
 jest.mock('../src/main/ollamaUtils', () => ({
@@ -130,7 +131,8 @@ describe('ClusteringService', () => {
 
       expect(mockChromaDb.initialize).toHaveBeenCalled();
       expect(mockChromaDb.fileCollection.get).toHaveBeenCalledWith({
-        include: ['embeddings', 'metadatas']
+        include: ['embeddings', 'metadatas'],
+        limit: 10000
       });
       expect(files).toHaveLength(5);
       expect(files[0]).toHaveProperty('id', 'file1');

@@ -610,6 +610,68 @@
     padding: revert;
   }
 
+  /* Generic native select styling - prevents black flash on any select element */
+  select {
+    /* Force light color scheme to prevent dark flash on Windows/Electron */
+    color-scheme: light;
+    /* Ensure solid background on all states */
+    background-color: white;
+    color: var(--color-system-gray-800);
+  }
+  select:focus {
+    background-color: white;
+    color: var(--color-system-gray-800);
+  }
+  select option {
+    background-color: white;
+    color: var(--color-system-gray-800);
+  }
+
+  /* Custom select trigger button - prevents black flash on click */
+  .select-trigger {
+    @apply bg-white text-system-gray-800;
+    /* Prevent any black flash by forcing solid background */
+    background-color: white !important;
+    color: var(--color-system-gray-800) !important;
+  }
+  .select-trigger:focus {
+    @apply bg-white;
+    outline: none;
+  }
+  .select-trigger:active {
+    @apply bg-white;
+    /* Prevent any color flash during click */
+    background-color: white !important;
+  }
+  .select-trigger:disabled {
+    @apply bg-system-gray-50 text-system-gray-400 cursor-not-allowed;
+    background-color: var(--color-system-gray-50) !important;
+  }
+
+  /* Dropdown menu animation - smooth entrance */
+  .animate-dropdown-enter {
+    animation: dropdownEnter 150ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    transform-origin: top center;
+    will-change: transform, opacity;
+  }
+
+  @keyframes dropdownEnter {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-dropdown-enter {
+      animation-duration: 1ms !important;
+    }
+  }
+
   /* Compact toast design - smaller, more aesthetic */
   .toast-compact {
     @apply px-3.5 py-2.5 rounded-xl shadow-lg translate-x-full;
@@ -1073,11 +1135,21 @@
 
   /* Modal entrance/backdrop animations */
   .animate-modal-backdrop {
-    animation: modalBackdropFadeIn 160ms ease-out;
+    animation: modalBackdropFadeIn 180ms ease-out forwards;
   }
 
   .animate-modal-enter {
-    animation: modalPanelIn 180ms ease-out;
+    animation: modalPanelIn 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    will-change: transform, opacity;
+  }
+
+  /* Modal exit animations */
+  .animate-modal-backdrop-exit {
+    animation: modalBackdropFadeOut 150ms ease-in forwards;
+  }
+
+  .animate-modal-exit {
+    animation: modalPanelOut 150ms ease-in forwards;
     will-change: transform, opacity;
   }
 
@@ -1087,6 +1159,15 @@
     }
     to {
       opacity: 1;
+    }
+  }
+
+  @keyframes modalBackdropFadeOut {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
     }
   }
 
@@ -1101,9 +1182,106 @@
     }
   }
 
+  @keyframes modalPanelOut {
+    from {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translate3d(0, 8px, 0) scale(0.98);
+    }
+  }
+
+  /* Side panel slide animations */
+  .animate-sidepanel-enter-right {
+    animation: sidePanelSlideInRight 250ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    will-change: transform, opacity;
+  }
+
+  .animate-sidepanel-exit-right {
+    animation: sidePanelSlideOutRight 200ms ease-in forwards;
+    will-change: transform, opacity;
+  }
+
+  .animate-sidepanel-enter-left {
+    animation: sidePanelSlideInLeft 250ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    will-change: transform, opacity;
+  }
+
+  .animate-sidepanel-exit-left {
+    animation: sidePanelSlideOutLeft 200ms ease-in forwards;
+    will-change: transform, opacity;
+  }
+
+  @keyframes sidePanelSlideInRight {
+    from {
+      opacity: 0;
+      transform: translate3d(24px, 0, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes sidePanelSlideOutRight {
+    from {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+    to {
+      opacity: 0;
+      transform: translate3d(24px, 0, 0);
+    }
+  }
+
+  @keyframes sidePanelSlideInLeft {
+    from {
+      opacity: 0;
+      transform: translate3d(-24px, 0, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes sidePanelSlideOutLeft {
+    from {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+    to {
+      opacity: 0;
+      transform: translate3d(-24px, 0, 0);
+    }
+  }
+
+  /* Skeleton fade-in animation for smoother loading appearance */
+  .animate-skeleton-enter {
+    animation: skeletonFadeIn 200ms ease-out forwards;
+  }
+
+  @keyframes skeletonFadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .animate-modal-backdrop,
-    .animate-modal-enter {
+    .animate-modal-enter,
+    .animate-modal-backdrop-exit,
+    .animate-modal-exit,
+    .animate-sidepanel-enter-right,
+    .animate-sidepanel-exit-right,
+    .animate-sidepanel-enter-left,
+    .animate-sidepanel-exit-left,
+    .animate-skeleton-enter {
       animation-duration: 1ms !important;
       animation-iteration-count: 1 !important;
     }
@@ -1160,6 +1338,78 @@
   /* Standardized focus ring utility */
   .focus-ring {
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stratosort-blue/80 focus-visible:ring-offset-2;
+  }
+
+  /* Gap utilities for layout components (Inline/Stack) */
+  .gap-compact {
+    gap: var(--spacing-compact);
+  }
+
+  .gap-cozy {
+    gap: var(--spacing-cozy);
+  }
+
+  .gap-default {
+    gap: var(--spacing-default);
+  }
+
+  .gap-relaxed {
+    gap: var(--spacing-relaxed);
+  }
+
+  .gap-spacious {
+    gap: var(--spacing-spacious);
+  }
+
+  /* Flex gap fallback for environments without flex gap support */
+  .no-flex-gap .gap-compact > * + * {
+    margin-left: var(--spacing-compact);
+  }
+
+  .no-flex-gap .gap-cozy > * + * {
+    margin-left: var(--spacing-cozy);
+  }
+
+  .no-flex-gap .gap-default > * + * {
+    margin-left: var(--spacing-default);
+  }
+
+  .no-flex-gap .gap-relaxed > * + * {
+    margin-left: var(--spacing-relaxed);
+  }
+
+  .no-flex-gap .gap-spacious > * + * {
+    margin-left: var(--spacing-spacious);
+  }
+
+  .no-flex-gap .flex-col.gap-compact > * + *,
+  .no-flex-gap .flex-col-reverse.gap-compact > * + * {
+    margin-left: 0;
+    margin-top: var(--spacing-compact);
+  }
+
+  .no-flex-gap .flex-col.gap-cozy > * + *,
+  .no-flex-gap .flex-col-reverse.gap-cozy > * + * {
+    margin-left: 0;
+    margin-top: var(--spacing-cozy);
+  }
+
+  .no-flex-gap .flex-col.gap-default > * + *,
+  .no-flex-gap .flex-col-reverse.gap-default > * + * {
+    margin-left: 0;
+    margin-top: var(--spacing-default);
+  }
+
+  .no-flex-gap .flex-col.gap-relaxed > * + *,
+  .no-flex-gap .flex-col-reverse.gap-relaxed > * + * {
+    margin-left: 0;
+    margin-top: var(--spacing-relaxed);
+  }
+
+  .no-flex-gap .flex-col.gap-spacious > * + *,
+  .no-flex-gap .flex-col-reverse.gap-spacious > * + * {
+    margin-left: 0;
+    margin-top: var(--spacing-spacious);
   }
 
   .layout-stack {
@@ -1282,6 +1532,16 @@
   }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: var(--scrollbar-thumb-hover);
+  }
+
+  /* Windows: restore native scroll chaining and behavior */
+  .platform-win32 .modern-scrollbar,
+  .platform-win32 .custom-scrollbar,
+  .platform-win32 .panel-scroll,
+  .platform-win32 .flex-scroll-child,
+  .platform-win32 .panel-responsive-content {
+    scroll-behavior: auto;
+    overscroll-behavior: auto;
   }
 
   /* Hide scrollbar but keep functionality */

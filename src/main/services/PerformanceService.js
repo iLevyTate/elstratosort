@@ -2,10 +2,9 @@ const os = require('os');
 const { spawn } = require('child_process');
 const { getNvidiaSmiCommand, isMacOS } = require('../../shared/platformUtils');
 const { GPU_TUNING, OLLAMA } = require('../../shared/performanceConstants');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('PerformanceService');
-
+const logger = createLogger('PerformanceService');
 /**
  * PerformanceService
  * - Detects system capabilities (CPU threads, GPU availability)
@@ -201,29 +200,30 @@ async function detectAppleGpu() {
 async function detectGpu() {
   logger.debug('[PerformanceService] Detecting GPU...');
 
-  // Try vendors in order of Ollama optimization level
-  const nvidia = await detectNvidiaGpu();
-  if (nvidia) {
-    logger.info('[PerformanceService] NVIDIA GPU detected', nvidia);
-    return nvidia;
-  }
+  // Run all GPU detections in parallel to avoid sequential timeout stacking
+  const [nvidia, apple, amd, intel] = await Promise.allSettled([
+    detectNvidiaGpu(),
+    detectAppleGpu(),
+    detectAmdGpu(),
+    detectIntelGpu()
+  ]);
 
-  const apple = await detectAppleGpu();
-  if (apple) {
-    logger.info('[PerformanceService] Apple Silicon GPU detected', apple);
-    return apple;
+  // Return first successful detection in priority order
+  if (nvidia.status === 'fulfilled' && nvidia.value) {
+    logger.info('[PerformanceService] NVIDIA GPU detected', nvidia.value);
+    return nvidia.value;
   }
-
-  const amd = await detectAmdGpu();
-  if (amd) {
-    logger.info('[PerformanceService] AMD GPU detected', amd);
-    return amd;
+  if (apple.status === 'fulfilled' && apple.value) {
+    logger.info('[PerformanceService] Apple Silicon GPU detected', apple.value);
+    return apple.value;
   }
-
-  const intel = await detectIntelGpu();
-  if (intel) {
-    logger.info('[PerformanceService] Intel GPU detected', intel);
-    return intel;
+  if (amd.status === 'fulfilled' && amd.value) {
+    logger.info('[PerformanceService] AMD GPU detected', amd.value);
+    return amd.value;
+  }
+  if (intel.status === 'fulfilled' && intel.value) {
+    logger.info('[PerformanceService] Intel GPU detected', intel.value);
+    return intel.value;
   }
 
   logger.debug('[PerformanceService] No GPU detected, using CPU-only mode');
@@ -243,9 +243,9 @@ async function detectSystemCapabilities() {
   cachedCapabilities = {
     cpuThreads,
     hasGpu: gpu !== null,
-    gpuVendor: gpu?.vendor || null,
-    gpuName: gpu?.gpuName || null,
-    gpuMemoryMB: gpu?.gpuMemoryMB || null,
+    gpuVendor: gpu?.vendor ?? null,
+    gpuName: gpu?.gpuName ?? null,
+    gpuMemoryMB: gpu?.gpuMemoryMB ?? null,
     // Legacy compatibility
     hasNvidiaGpu: gpu?.vendor === 'nvidia'
   };
@@ -402,8 +402,7 @@ async function getRecommendedEnvSettings() {
   if (caps.hasGpu) {
     recommendations.OLLAMA_NUM_GPU = '-1'; // Auto-detect all GPU layers
 
-    // Batch size based on VRAM
-    const vram = caps.gpuMemoryMB || 0;
+    // Batch size based on VRAM (reuse outer vram variable)
 
     if (vram >= GPU_TUNING.VERY_HIGH_MEMORY_THRESHOLD) {
       // 16GB+
@@ -477,6 +476,8 @@ function getRecommendedEmbeddingModels() {
 async function getRecommendedConcurrency() {
   const caps = await detectSystemCapabilities();
   const vram = caps.gpuMemoryMB || 0;
+  const totalMemGB = os.totalmem() / 1024 / 1024 / 1024;
+  const cpuThreads = caps.cpuThreads || 4;
 
   // Base recommendation on VRAM
   // - Vision analysis: ~4GB per instance
@@ -507,12 +508,31 @@ async function getRecommendedConcurrency() {
     reason = 'Limited VRAM (<12GB): sequential processing prevents exhaustion';
   }
 
+  // Additional safety caps so we don't overwhelm smaller systems even if VRAM is high.
+  // CPU: avoid running more concurrent analyses than the machine can realistically schedule.
+  // Using ~4 threads per analysis keeps the UI responsive and reduces context switching overhead.
+  const cpuCap = Math.max(1, Math.floor(cpuThreads / 4));
+  if (maxConcurrent > cpuCap) {
+    maxConcurrent = cpuCap;
+    reason = `${reason} (capped by CPU threads)`;
+  }
+
+  // RAM: if total system RAM is low, keep concurrency conservative to prevent paging/OS pressure.
+  if (totalMemGB > 0 && totalMemGB < 12) {
+    if (maxConcurrent > 1) {
+      maxConcurrent = 1;
+      reason = `${reason} (capped by system RAM <12GB)`;
+    }
+  }
+
   return {
     maxConcurrent,
     reason,
     vramMB: vram,
     hasGpu: caps.hasGpu,
-    gpuName: caps.gpuName
+    gpuName: caps.gpuName,
+    cpuThreads,
+    totalMemGB: Math.round(totalMemGB * 10) / 10
   };
 }
 

@@ -9,11 +9,10 @@
 
 const { get: getConfig } = require('../../../shared/config/index');
 const { CACHE } = require('../../../shared/performanceConstants');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { getInstance: getCacheInvalidationBus } = require('../../../shared/cacheInvalidation');
 
-logger.setContext('AnalysisHistory-Cache');
-
+const logger = createLogger('AnalysisHistory-Cache');
 /**
  * Create a new cache store with default structure
  * @returns {Object} Cache store object
@@ -149,8 +148,8 @@ function updateIncrementalStatsOnAdd(cache, entry) {
     return; // Will be calculated on next getStatistics call
   }
 
-  cache.incrementalStats.totalConfidence += entry.analysis.confidence || 0;
-  cache.incrementalStats.totalProcessingTime += entry.processing.processingTimeMs || 0;
+  cache.incrementalStats.totalConfidence += entry?.analysis?.confidence || 0;
+  cache.incrementalStats.totalProcessingTime += entry?.processing?.processingTimeMs || 0;
   cache.incrementalStats.entryCount++;
 }
 
@@ -164,8 +163,8 @@ function updateIncrementalStatsOnRemove(cache, entry) {
     return;
   }
 
-  cache.incrementalStats.totalConfidence -= entry.analysis.confidence || 0;
-  cache.incrementalStats.totalProcessingTime -= entry.processing.processingTimeMs || 0;
+  cache.incrementalStats.totalConfidence -= entry?.analysis?.confidence || 0;
+  cache.incrementalStats.totalProcessingTime -= entry?.processing?.processingTimeMs || 0;
   cache.incrementalStats.entryCount--;
 
   // Ensure we don't go negative due to floating point errors
@@ -188,8 +187,8 @@ function recalculateIncrementalStats(cache, analysisHistory, state) {
   let totalProcessingTime = 0;
 
   for (const entry of entries) {
-    totalConfidence += entry.analysis.confidence || 0;
-    totalProcessingTime += entry.processing.processingTimeMs || 0;
+    totalConfidence += entry?.analysis?.confidence || 0;
+    totalProcessingTime += entry?.processing?.processingTimeMs || 0;
   }
 
   cache.incrementalStats = {
@@ -306,11 +305,12 @@ function _invalidateSearchResultsForPath(cache, filePath) {
 function _removeEntryEmbeddingForPath(cache, filePath) {
   if (!filePath || !cache.entryEmbeddings) return;
 
-  // Entry embeddings are keyed by entry ID which may include the path
-  for (const [entryId] of cache.entryEmbeddings) {
-    if (entryId.includes(filePath)) {
-      cache.entryEmbeddings.delete(entryId);
-    }
+  // Entry embedding cache keys are formatted as "${entryId}:${model}" and don't contain
+  // file paths directly. Since we can't efficiently map file paths to entry IDs from
+  // the cache alone, clear all entry embeddings on deletion. File deletions are
+  // infrequent enough that the re-computation cost is acceptable.
+  if (cache.entryEmbeddings.size > 0) {
+    cache.entryEmbeddings.clear();
   }
 }
 

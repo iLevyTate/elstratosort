@@ -32,15 +32,16 @@ jest.mock('fs', () => ({
 }));
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock ipcWrappers
 jest.mock('../src/main/ipc/ipcWrappers', () => ({
@@ -158,6 +159,13 @@ describe('Settings IPC Handlers', () => {
       });
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
+
+      // Mock dialog to return a file path (handler uses dialog, not the provided path)
+      const { dialog } = require('electron');
+      dialog.showOpenDialog.mockResolvedValue({
+        canceled: false,
+        filePaths: ['/path/to/settings.json']
+      });
 
       // Mock fs.stat and readFile
       fs.stat.mockResolvedValue({ size: 100 });

@@ -2,6 +2,7 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import { Monitor, Smartphone, MessageSquare, AlertTriangle } from 'lucide-react';
 import Switch from '../ui/Switch';
+import Card from '../ui/Card';
 import SettingRow from './SettingRow';
 import { Text, Heading } from '../ui/Typography';
 
@@ -20,7 +21,16 @@ function NotificationSettingsSection({ settings, setSettings }) {
   const notificationMode = settings.notificationMode || 'both';
 
   return (
-    <div className="space-y-6">
+    <Card variant="default" className="space-y-5">
+      <div>
+        <Text variant="tiny" className="font-semibold uppercase tracking-wide text-system-gray-500">
+          Notifications
+        </Text>
+        <Text variant="small" className="text-system-gray-600">
+          Control where notifications appear and which events trigger them.
+        </Text>
+      </div>
+
       {/* Master notifications toggle */}
       <SettingRow
         label="Enable Notifications"
@@ -34,13 +44,13 @@ function NotificationSettingsSection({ settings, setSettings }) {
 
       {/* Notification mode selection */}
       {settings.notifications !== false && (
-        <div className="ml-0 pl-4 border-l-2 border-system-gray-100 space-y-6">
+        <div className="rounded-lg border border-system-gray-100 bg-system-gray-50 p-4 space-y-6">
           <SettingRow
             layout="col"
             label="Display Mode"
             description="Choose where notifications should appear."
           >
-            <div className="grid gap-3">
+            <div className="grid gap-4">
               <label
                 className={`
                 flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors
@@ -118,7 +128,7 @@ function NotificationSettingsSection({ settings, setSettings }) {
             </div>
           </SettingRow>
 
-          <div className="pt-4 border-t border-system-gray-100">
+          <div className="pt-4 border-t border-system-gray-200/70">
             <Heading as="h4" variant="h6" className="mb-4">
               Notification Events
             </Heading>
@@ -156,7 +166,7 @@ function NotificationSettingsSection({ settings, setSettings }) {
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 

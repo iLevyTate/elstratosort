@@ -1,7 +1,6 @@
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('SystemAnalytics');
-
+const logger = createLogger('SystemAnalytics');
 const systemAnalytics = {
   startTime: Date.now(),
   processedFiles: 0,

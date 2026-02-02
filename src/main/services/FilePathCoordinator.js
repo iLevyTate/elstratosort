@@ -122,13 +122,6 @@ class FilePathCoordinator extends EventEmitter {
     // PATH-TRACE: Log coordinator start
     traceCoordinatorStart(oldPath, newPath, options.type || PathChangeType.MOVE);
 
-    this._pendingOperations.set(operationId, {
-      oldPath,
-      newPath,
-      startTime,
-      type: options.type || PathChangeType.MOVE
-    });
-
     const errors = [];
     const updated = {
       chromaDb: false,
@@ -139,6 +132,13 @@ class FilePathCoordinator extends EventEmitter {
     };
 
     try {
+      // FIX: Move inside try block so finally always cleans up the entry
+      this._pendingOperations.set(operationId, {
+        oldPath,
+        newPath,
+        startTime,
+        type: options.type || PathChangeType.MOVE
+      });
       // 1. Update ChromaDB metadata (embeddings)
       if (!options.skipChromaDb && this._chromaDbService) {
         try {
@@ -605,7 +605,6 @@ class FilePathCoordinator extends EventEmitter {
    * @private
    */
   async _updateChromaDbPath(oldPath, newPath) {
-    // const normalizedOld = normalizePathForIndex(oldPath);
     const normalizedNew = normalizePathForIndex(newPath);
     const newMeta = {
       path: newPath,
@@ -853,22 +852,13 @@ class FilePathCoordinator extends EventEmitter {
    * @private
    */
   async _updateProcessingStatePath(oldPath, newPath) {
-    // ProcessingStateService tracks jobs by file path
-    // If a job exists for oldPath, update it to newPath
-    const jobs = this._processingStateService.state?.analysis?.jobs;
-    if (!jobs || typeof jobs !== 'object') {
-      throw new Error('ProcessingState jobs map unavailable');
+    // FIX (C-4): Use ProcessingStateService's public moveJob() method instead of
+    // directly mutating state.analysis.jobs, which bypassed the _writeLock mutex
+    // and created TOCTOU race conditions with concurrent markAnalysis* calls.
+    if (typeof this._processingStateService.moveJob !== 'function') {
+      throw new Error('ProcessingState moveJob not available');
     }
-    const job = jobs[oldPath];
-    if (job) {
-      // Move the job to the new path key
-      jobs[newPath] = {
-        ...job,
-        movedFrom: oldPath
-      };
-      delete jobs[oldPath];
-      await this._processingStateService.saveState();
-    }
+    await this._processingStateService.moveJob(oldPath, newPath);
   }
 
   /**

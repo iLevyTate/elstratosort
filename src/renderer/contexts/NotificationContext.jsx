@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { useDispatch } from 'react-redux';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { ToastContainer, useToast } from '../components/Toast';
 import {
   addNotification as addSystemNotification,
@@ -9,8 +9,7 @@ import {
   clearNotifications
 } from '../store/slices/systemSlice';
 
-logger.setContext('NotificationContext');
-
+const logger = createLogger('NotificationContext');
 const NotificationContext = createContext(null);
 
 export function NotificationProvider({ children }) {
@@ -70,35 +69,8 @@ export function NotificationProvider({ children }) {
     dispatch(clearNotifications());
   }, [clearAllToasts, dispatch]);
 
-  // Bridge main-process errors into our styled UI (toast/modal), avoiding OS dialogs
-  useEffect(() => {
-    const api = window?.electronAPI?.events;
-    // FIX: Return empty cleanup function for consistent return
-    if (!api || typeof api.onAppError !== 'function') return () => {};
-
-    const cleanup = api.onAppError((payload) => {
-      try {
-        const { message, type } = payload || {};
-        if (!message) return;
-        // FIX: Add null checks before calling notification functions
-        if (type === 'error' && typeof showError === 'function') {
-          showError(message, 5000);
-        } else if (type === 'warning' && typeof showWarning === 'function') {
-          showWarning(message, 4000);
-        } else if (typeof showInfo === 'function') {
-          showInfo(message, 3000);
-        }
-      } catch (e) {
-        logger.error('Failed to display app:error', {
-          error: e.message,
-          stack: e.stack
-        });
-      }
-    });
-
-    // FIX: Ensure cleanup is a function before returning
-    return typeof cleanup === 'function' ? cleanup : () => {};
-  }, [showError, showWarning, showInfo]);
+  // NOTE: onAppError is handled by ipcMiddleware (dispatches addNotification to Redux
+  // and emits 'app:notification' custom event). No duplicate listener needed here.
 
   // Listen for notifications via custom event (dispatched by ipcMiddleware)
   // This avoids duplicate IPC listeners - the middleware handles IPC and emits this event
@@ -155,10 +127,24 @@ export function NotificationProvider({ children }) {
     return () => window.removeEventListener('app:notification', handleNotification);
   }, [showSuccess, showError, showWarning, showInfo]);
 
-  // Memoize the context value to prevent unnecessary re-renders
+  // FIX H15: Memoize the context value WITHOUT toasts in the dependency array.
+  // All consumers only use action functions (addNotification, showSuccess, etc.)
+  // and never read `notifications` directly. The ToastContainer receives `toasts`
+  // as a direct prop below, so toast rendering is unaffected. By excluding `toasts`
+  // from the context value and its dependencies, we prevent all 12+ consumers from
+  // re-rendering every time a toast is added or removed.
+  const toastsRef = useRef(toasts);
+  toastsRef.current = toasts;
+
   const contextValue = useMemo(
     () => ({
-      notifications: toasts,
+      // Expose toasts via getter backed by ref so the context value object
+      // does not change when toasts change. Components that truly need the
+      // live toast list should read from ToastContainer (rendered below) or
+      // subscribe to Redux notification state instead.
+      get notifications() {
+        return toastsRef.current;
+      },
       addNotification,
       removeNotification,
       clearAllNotifications: handleClearAll,
@@ -168,7 +154,6 @@ export function NotificationProvider({ children }) {
       showInfo
     }),
     [
-      toasts,
       addNotification,
       removeNotification,
       handleClearAll,

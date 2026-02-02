@@ -295,6 +295,32 @@ function getSemanticKeywordsForFile(extension) {
 }
 
 /**
+ * Check if text contains a concept at a word boundary.
+ * Prevents substring false positives: "drawer" should NOT match "raw",
+ * "engagement" should NOT match "game", "arcade" should NOT match "cad".
+ *
+ * @param {string} textLower - Lowercased text to search in
+ * @param {string} concept - Lowercased concept to find
+ * @returns {boolean} True if concept appears at a word boundary in text
+ */
+function textContainsConcept(textLower, concept) {
+  let searchFrom = 0;
+  while (searchFrom <= textLower.length - concept.length) {
+    const idx = textLower.indexOf(concept, searchFrom);
+    if (idx === -1) return false;
+
+    // Check that the match is at word boundaries (not embedded in a longer word)
+    const before = idx === 0 || !/[a-z0-9]/.test(textLower[idx - 1]);
+    const afterIdx = idx + concept.length;
+    const after = afterIdx >= textLower.length || !/[a-z0-9]/.test(textLower[afterIdx]);
+
+    if (before && after) return true;
+    searchFrom = idx + 1;
+  }
+  return false;
+}
+
+/**
  * Get extensions that match semantic concepts found in text.
  * Analyzes text for semantic concepts and returns associated extensions.
  *
@@ -312,7 +338,7 @@ function getExtensionsForSemanticText(text) {
   const extensions = new Set();
 
   for (const [concept, exts] of Object.entries(SEMANTIC_EXTENSION_MAP)) {
-    if (textLower.includes(concept)) {
+    if (textContainsConcept(textLower, concept)) {
       for (const ext of exts) {
         extensions.add(ext);
       }
@@ -343,7 +369,7 @@ function enrichFolderTextForEmbedding(folderName, folderDescription = '') {
   const matchedConcepts = new Set();
 
   for (const [concept, extensions] of Object.entries(SEMANTIC_EXTENSION_MAP)) {
-    if (combinedText.includes(concept)) {
+    if (textContainsConcept(combinedText, concept)) {
       matchedConcepts.add(concept);
       for (const ext of extensions) {
         matchedExtensions.add(ext);
@@ -410,8 +436,8 @@ function getSemanticExtensionScore(text, extension) {
   let maxScore = 0;
 
   for (const [concept, extensions] of Object.entries(SEMANTIC_EXTENSION_MAP)) {
-    // Check if the concept appears in the text
-    if (textLower.includes(concept)) {
+    // Check if the concept appears in the text (word-boundary aware)
+    if (textContainsConcept(textLower, concept)) {
       // Check if the file extension is associated with this concept
       if (extensions.includes(extLower)) {
         // Longer concept matches are more specific, so score higher
@@ -427,6 +453,7 @@ function getSemanticExtensionScore(text, extension) {
 module.exports = {
   SEMANTIC_EXTENSION_MAP,
   EXTENSION_TO_CONCEPTS,
+  textContainsConcept,
   getSemanticConceptsForExtension,
   getSemanticKeywordsForFile,
   getExtensionsForSemanticText,

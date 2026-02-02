@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
 import { PHASES } from '../../shared/constants';
 import { TIMEOUTS } from '../../shared/performanceConstants';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { setSmartFolders as setSmartFoldersAction } from '../store/slices/filesSlice';
 import { setPhase } from '../store/slices/uiSlice';
@@ -17,8 +17,7 @@ import { Plus, ChevronDown, ChevronUp, RotateCcw, Folder } from 'lucide-react';
 import { filesIpc, settingsIpc, smartFoldersIpc } from '../services/ipc';
 import { normalizePathValue } from '../utils/pathNormalization';
 
-logger.setContext('SetupPhase');
-
+const logger = createLogger('SetupPhase');
 const normalizePathWithFallback = (value, fallback = 'Documents') => {
   const normalized = normalizePathValue(value);
   return normalized || fallback;
@@ -54,8 +53,10 @@ function SetupPhase() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [viewMode, setViewMode] = useState('compact'); // 'compact' or 'expanded'
+  const [isListScrollable, setIsListScrollable] = useState(false);
   const isMountedRef = useRef(true);
   const notifyRef = useRef({});
+  const listContainerRef = useRef(null);
 
   // Use ref to avoid re-adding listener on every editingFolder change
   const editingFolderRef = useRef(editingFolder);
@@ -235,7 +236,7 @@ function SetupPhase() {
   };
 
   const handleSaveEdit = async () => {
-    if (!editingFolder.name.trim()) {
+    if (!editingFolder?.name?.trim()) {
       showWarning('Folder name cannot be empty');
       return;
     }
@@ -381,8 +382,38 @@ function SetupPhase() {
 
   const isCompactMode = viewMode === 'compact';
 
+  const updateListOverflow = useCallback(() => {
+    const container = listContainerRef.current;
+    if (!container) return;
+    // Avoid sub-pixel rounding triggering a scrollbar when content fits.
+    const overflow = Math.ceil(container.scrollHeight) - Math.ceil(container.clientHeight);
+    const hasOverflow = overflow > 2;
+    setIsListScrollable((prev) => (prev !== hasOverflow ? hasOverflow : prev));
+  }, []);
+
+  useLayoutEffect(() => {
+    updateListOverflow();
+  }, [updateListOverflow, smartFolders, viewMode, expandedFolders, editingFolder, contentVisible]);
+
+  useEffect(() => {
+    const container = listContainerRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+
+    let frameId;
+    const observer = new ResizeObserver(() => {
+      if (frameId) cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(updateListOverflow);
+    });
+
+    observer.observe(container);
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      observer.disconnect();
+    };
+  }, [updateListOverflow, smartFolders.length]);
+
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-6 lg:gap-8 pb-6">
+    <div className="flex flex-col flex-1 min-h-0 gap-relaxed lg:gap-spacious pb-6">
       {/* Header */}
       <Stack className="text-center flex-shrink-0" gap="compact">
         <Heading as="h1" variant="display">
@@ -394,7 +425,7 @@ function SetupPhase() {
       </Stack>
 
       {/* Toolbar */}
-      <Inline className="justify-between" gap="cozy">
+      <Inline className="justify-between pt-2" gap="cozy">
         <Inline gap="compact">
           <Text variant="small" className="font-medium">
             {isLoading
@@ -462,12 +493,12 @@ function SetupPhase() {
                 description="Add at least one destination folder so StratoSort knows where to organize your files."
                 action={
                   <Inline gap="default">
-                    <Button onClick={handleResetToDefaults} variant="secondary">
-                      <RotateCcw className="w-4 h-4 mr-1.5" />
+                    <Button onClick={handleResetToDefaults} variant="secondary" size="sm">
+                      <RotateCcw className="w-4 h-4" />
                       Load Defaults
                     </Button>
-                    <Button onClick={handleOpenAddModal} variant="primary">
-                      <Plus className="w-4 h-4 mr-1.5" />
+                    <Button onClick={handleOpenAddModal} variant="primary" size="sm">
+                      <Plus className="w-4 h-4" />
                       Add Custom Folder
                     </Button>
                   </Inline>
@@ -477,31 +508,38 @@ function SetupPhase() {
             </div>
           ) : (
             <div
-              className={`grid grid-cols-1 ${
-                isCompactMode ? 'md:grid-cols-2 gap-4' : 'md:grid-cols-2 xl:grid-cols-3 gap-6'
+              ref={listContainerRef}
+              className={`h-full pb-4 ${
+                isListScrollable ? 'overflow-y-auto modern-scrollbar' : 'overflow-hidden'
               }`}
             >
-              {smartFolders.map((folder, index) => (
-                <SmartFolderItem
-                  key={folder.id}
-                  folder={folder}
-                  index={index}
-                  editingFolder={editingFolder}
-                  setEditingFolder={setEditingFolder}
-                  isSavingEdit={isSavingEdit}
-                  isDeleting={isDeletingFolder === folder.id}
-                  onSaveEdit={handleSaveEdit}
-                  onCancelEdit={handleCancelEdit}
-                  onEditStart={handleEditFolder}
-                  onDeleteFolder={handleDeleteFolder}
-                  onCreateDirectory={createSingleFolder}
-                  onOpenFolder={handleOpenFolder}
-                  addNotification={addNotification}
-                  compact={isCompactMode}
-                  isExpanded={expandedFolders.has(folder.id)}
-                  onToggleExpand={handleToggleExpand}
-                />
-              ))}
+              <div
+                className={`grid grid-cols-1 gap-4 lg:gap-5 ${
+                  isCompactMode ? 'md:grid-cols-2' : 'md:grid-cols-2 xl:grid-cols-3'
+                }`}
+              >
+                {smartFolders.map((folder, index) => (
+                  <SmartFolderItem
+                    key={folder.id}
+                    folder={folder}
+                    index={index}
+                    editingFolder={editingFolder}
+                    setEditingFolder={setEditingFolder}
+                    isSavingEdit={isSavingEdit}
+                    isDeleting={isDeletingFolder === folder.id}
+                    onSaveEdit={handleSaveEdit}
+                    onCancelEdit={handleCancelEdit}
+                    onEditStart={handleEditFolder}
+                    onDeleteFolder={handleDeleteFolder}
+                    onCreateDirectory={createSingleFolder}
+                    onOpenFolder={handleOpenFolder}
+                    addNotification={addNotification}
+                    compact={isCompactMode}
+                    isExpanded={expandedFolders.has(folder.id)}
+                    onToggleExpand={handleToggleExpand}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </div>

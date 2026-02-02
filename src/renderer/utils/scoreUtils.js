@@ -45,7 +45,10 @@ export function scoreToOpacity(score) {
  */
 export function normalizeConfidence(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
-  // If value > 1, assume it's already on 0-100 scale
+  // Values in [0, 1] are 0-1 scale (multiply by 100)
+  // Values > 1 are assumed to be on 0-100 scale already
+  // This avoids the ambiguity window of [1, 2) where a low 0-100 percentage
+  // (e.g. 1.5%) would be misinterpreted as a 0-1 scale overflow
   const normalized = value > 1 ? value : value * 100;
   return Math.round(Math.min(100, Math.max(0, normalized)));
 }

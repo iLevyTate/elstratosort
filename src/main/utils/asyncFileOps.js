@@ -6,7 +6,7 @@
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { RETRY } = require('../../shared/performanceConstants');
 const { withRetry } = require('../../shared/promiseUtils');
 const {
@@ -16,8 +16,7 @@ const {
 } = require('../errors/FileSystemError');
 const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 
-logger.setContext('AsyncFileOps');
-
+const logger = createLogger('AsyncFileOps');
 /**
  * Check if a file or directory exists asynchronously
  *
@@ -94,7 +93,8 @@ async function safeWriteFile(filePath, data, options = 'utf8') {
     }
 
     // FIX: Use atomic write (temp + rename) to prevent corruption on crash
-    const tempPath = `${filePath}.tmp.${Date.now()}`;
+    // FIX: Add random suffix to prevent collision when concurrent writes target the same file
+    const tempPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
     try {
       await fs.writeFile(tempPath, data, options);
 
@@ -357,7 +357,7 @@ async function safeDelete(targetPath, recursive = false) {
     }
 
     if (stats.isDirectory()) {
-      await fs.rmdir(targetPath, { recursive });
+      await fs.rm(targetPath, { recursive, force: true });
     } else {
       await fs.unlink(targetPath);
     }
@@ -398,7 +398,8 @@ async function readJSON(filePath, defaultValue = null) {
 async function writeJSON(filePath, data, spaces = 2) {
   try {
     const json = JSON.stringify(data, null, spaces);
-    return await safeWriteFile(filePath, json);
+    const result = await safeWriteFile(filePath, json);
+    return result.success;
   } catch (error) {
     logger.error(`Failed to write JSON file ${filePath}:`, error.message);
     return false;

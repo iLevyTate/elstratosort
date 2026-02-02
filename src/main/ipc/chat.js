@@ -45,6 +45,17 @@ function registerChatIpc(servicesOrParams) {
     const ollamaService = safeResolve(ServiceIds.OLLAMA_SERVICE);
     const settingsService = safeResolve(ServiceIds.SETTINGS);
 
+    // FIX 85: Don't cache ChatService when critical deps are null.
+    // If cached with null ollamaService, all chat queries fail for the entire session.
+    if (!ollamaService) {
+      const isRegistered = diContainer?.has?.(ServiceIds.OLLAMA_SERVICE);
+      logger.warn('[Chat] Ollama service not available', {
+        registered: isRegistered,
+        containerAvailable: !!diContainer
+      });
+      return null;
+    }
+
     try {
       chatService = new ChatService({
         searchService,

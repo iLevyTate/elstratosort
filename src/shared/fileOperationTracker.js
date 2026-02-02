@@ -11,10 +11,9 @@
 
 const path = require('path');
 const fs = require('fs').promises;
-const { logger } = require('./logger');
+const { createLogger } = require('./logger');
 
-logger.setContext('FileOperationTracker');
-
+const logger = createLogger('FileOperationTracker');
 /**
  * Default cooldown period in milliseconds.
  * Files operated on within this window will be skipped by watchers.
@@ -341,16 +340,6 @@ class FileOperationTracker {
     this.clear();
     logger.debug('[FILE-OP-TRACKER] Shutdown complete');
   }
-
-  /**
-   * Reset for testing - allows creating fresh instance
-   */
-  // static resetInstance() {
-  //   if (_instance) {
-  //     _instance.shutdown();
-  //     _instance = null;
-  //   }
-  // }
 }
 
 // Use singleton factory to prevent race conditions in getInstance()

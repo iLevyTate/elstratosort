@@ -6,15 +6,16 @@
 import { renderHook, act } from '@testing-library/react';
 
 // Mock dependencies
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 jest.mock('../src/shared/constants', () => ({
   PHASES: { DISCOVER: 'discover', ORGANIZE: 'organize', COMPLETE: 'complete' },
@@ -216,7 +217,14 @@ describe('useAnalysis', () => {
     });
 
     test('prevents concurrent analysis runs', async () => {
-      const { result } = renderHook(() => useAnalysis(createMockOptions({ isAnalyzing: true })));
+      const { result } = renderHook(() =>
+        useAnalysis(
+          createMockOptions({
+            isAnalyzing: true,
+            analysisProgress: { current: 0, total: 1, lastActivity: Date.now() }
+          })
+        )
+      );
       const files = [{ path: '/test.txt', name: 'test.txt' }];
 
       await act(async () => {
@@ -247,7 +255,8 @@ describe('useAnalysis', () => {
       expect(mockSetIsAnalyzing).toHaveBeenCalledWith(false);
       expect(mockSetAnalysisProgress).toHaveBeenCalledWith({
         current: 0,
-        total: 0
+        total: 0,
+        lastActivity: 0
       });
 
       // File name is cleared after a delay
@@ -322,7 +331,8 @@ describe('useAnalysis', () => {
       expect(mockSetAnalysisProgress).toHaveBeenCalledWith({
         current: 0,
         total: 0,
-        currentFile: ''
+        currentFile: '',
+        lastActivity: 0
       });
       expect(mockSetCurrentAnalysisFile).toHaveBeenCalledWith('');
     });

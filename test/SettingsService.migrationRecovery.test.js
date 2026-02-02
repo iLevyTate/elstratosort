@@ -40,15 +40,16 @@ jest.mock('fs', () => ({
   constants: { R_OK: 4, W_OK: 2 }
 }));
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 jest.mock('../src/shared/settingsValidation', () => ({
   validateSettings: jest.fn().mockReturnValue({ valid: true, errors: [], warnings: [] }),
@@ -56,11 +57,18 @@ jest.mock('../src/shared/settingsValidation', () => ({
   getConfigurableLimits: jest.fn(() => ({}))
 }));
 
-jest.mock('../src/shared/defaultSettings', () => ({
-  DEFAULT_SETTINGS: {
+jest.mock('../src/shared/defaultSettings', () => {
+  const DEFAULTS = {
     confidenceThreshold: 0.7
-  }
-}));
+  };
+  return {
+    DEFAULT_SETTINGS: DEFAULTS,
+    mergeWithDefaults: (overrides) => {
+      if (!overrides || typeof overrides !== 'object') return { ...DEFAULTS };
+      return { ...DEFAULTS, ...overrides };
+    }
+  };
+});
 
 jest.mock('../src/shared/atomicFileOperations', () => ({
   backupAndReplace: jest.fn().mockResolvedValue({ success: true })

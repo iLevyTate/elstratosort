@@ -16,11 +16,11 @@ const {
   SUPPORTED_DESIGN_EXTENSIONS
 } = require('../../../shared/constants');
 const { withErrorLogging, safeHandle } = require('../ipcWrappers');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
+const { validateFileOperationPath } = require('../../../shared/pathSanitization');
 const SettingsService = require('../../services/SettingsService');
 
-logger.setContext('IPC:Files:Selection');
-
+const logger = createLogger('IPC:Files:Selection');
 /**
  * Get the last browsed path from settings, falling back to documents folder
  * @returns {Promise<string|undefined>} The default path for file dialogs
@@ -96,43 +96,6 @@ function buildFileFilters() {
     { name: 'Design Files', extensions: designs },
     { name: 'All Files', extensions: ['*'] }
   ];
-}
-
-/**
- * Recursively scan folder for supported files
- */
-// Unused but kept for potential future recursive scanning needs
-// eslint-disable-next-line no-unused-vars
-async function scanFolder(folderPath, supportedExts, log, depth = 0, maxDepth = 3) {
-  if (depth > maxDepth) return [];
-
-  try {
-    const items = await fs.readdir(folderPath, { withFileTypes: true });
-    const foundFiles = [];
-
-    for (const item of items) {
-      const itemPath = path.join(folderPath, item.name);
-
-      if (item.isFile()) {
-        const ext = path.extname(item.name).toLowerCase();
-        if (supportedExts.includes(ext)) {
-          foundFiles.push(itemPath);
-        }
-      } else if (
-        item.isDirectory() &&
-        !item.name.startsWith('.') &&
-        !item.name.startsWith('node_modules')
-      ) {
-        const subFiles = await scanFolder(itemPath, supportedExts, log, depth + 1, maxDepth);
-        foundFiles.push(...subFiles);
-      }
-    }
-
-    return foundFiles;
-  } catch (error) {
-    log.warn(`[FILE-SELECTION] Error scanning folder ${folderPath}:`, error.message);
-    return [];
-  }
 }
 
 /**
@@ -239,7 +202,12 @@ function registerFileSelectionHandlers(servicesOrParams) {
         if (!filePath || typeof filePath !== 'string') {
           return { success: false, error: 'Invalid file path', stats: null };
         }
-        const stats = await fs.stat(filePath);
+        // SECURITY: Validate path before filesystem access
+        const validation = await validateFileOperationPath(filePath);
+        if (!validation.valid) {
+          return { success: false, error: 'Invalid file path', stats: null };
+        }
+        const stats = await fs.stat(validation.normalizedPath);
         return {
           success: true,
           stats: {
@@ -268,12 +236,18 @@ function registerFileSelectionHandlers(servicesOrParams) {
         if (!dirPath || typeof dirPath !== 'string') {
           return { success: false, error: 'Invalid directory path', files: [] };
         }
-        const items = await fs.readdir(dirPath, { withFileTypes: true });
+        // SECURITY: Validate path before filesystem access
+        const dirValidation = await validateFileOperationPath(dirPath);
+        if (!dirValidation.valid) {
+          return { success: false, error: 'Invalid directory path', files: [] };
+        }
+        const validatedDirPath = dirValidation.normalizedPath;
+        const items = await fs.readdir(validatedDirPath, { withFileTypes: true });
         const files = items
           .filter((item) => item.isFile())
           .map((item) => ({
             name: item.name,
-            path: path.join(dirPath, item.name)
+            path: path.join(validatedDirPath, item.name)
           }));
         return { success: true, files };
       } catch (error) {

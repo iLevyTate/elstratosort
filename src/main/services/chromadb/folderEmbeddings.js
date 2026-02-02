@@ -7,13 +7,12 @@
  * @module services/chromadb/folderEmbeddings
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { RETRY } = require('../../../shared/performanceConstants');
 const { withRetry } = require('../../../shared/errorHandlingUtils');
 const { prepareFolderMetadata } = require('../../../shared/pathSanitization');
 
-logger.setContext('ChromaDB:FolderOps');
-
+const logger = createLogger('ChromaDB:FolderOps');
 /**
  * Validate embedding vector for NaN, Infinity, and dimension issues
  * FIX: Prevents corrupted embeddings from being stored in ChromaDB
@@ -279,7 +278,7 @@ async function queryFoldersByEmbedding({ embedding, topK = 5, folderCollection }
         continue;
       }
 
-      const score = Math.max(0, 1 - distance / 2);
+      const score = Number.isFinite(distance) ? Math.max(0, 1 - distance / 2) : 0;
 
       matches.push({
         folderId,
@@ -431,7 +430,7 @@ async function executeQueryFolders({ fileId, topK, fileCollection, folderCollect
         continue;
       }
 
-      const score = Math.max(0, 1 - distance / 2);
+      const score = Number.isFinite(distance) ? Math.max(0, 1 - distance / 2) : 0;
 
       matches.push({
         folderId,
@@ -540,7 +539,7 @@ async function batchQueryFolders({
 
         for (let j = 0; j < count; j++) {
           const distance = distancesArray[j];
-          const score = Math.max(0, 1 - distance / 2);
+          const score = Number.isFinite(distance) ? Math.max(0, 1 - distance / 2) : 0;
 
           matches.push({
             folderId: idsArray[j],

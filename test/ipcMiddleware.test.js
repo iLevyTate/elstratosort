@@ -5,25 +5,36 @@
 
 // Mock dependencies
 jest.mock('../src/renderer/store/slices/analysisSlice', () => ({
-  updateProgress: jest.fn((data) => ({ type: 'analysis/updateProgress', payload: data }))
+  updateProgress: jest.fn((data) => ({ type: 'analysis/updateProgress', payload: data })),
+  stopAnalysis: jest.fn(() => ({ type: 'analysis/stopAnalysis' }))
 }));
 
 jest.mock('../src/renderer/store/slices/systemSlice', () => ({
-  updateMetrics: jest.fn((data) => ({ type: 'system/updateMetrics', payload: data }))
+  updateMetrics: jest.fn((data) => ({ type: 'system/updateMetrics', payload: data })),
+  updateHealth: jest.fn((data) => ({ type: 'system/updateHealth', payload: data })),
+  addNotification: jest.fn((data) => ({ type: 'system/addNotification', payload: data }))
 }));
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/ipcEventSchemas', () => ({
+  hasEventSchema: jest.fn(() => true),
+  validateEventPayload: jest.fn((_, data) => ({ valid: true, data }))
+}));
+
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
     debug: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 describe('ipcMiddleware', () => {
   let ipcMiddleware;
   let cleanupIpcListeners;
+  let markStoreReady;
+  let recoverPersistedCriticalEvents;
   let mockStore;
   let mockDispatch;
   let mockNext;
@@ -31,6 +42,8 @@ describe('ipcMiddleware', () => {
   let mockElectronAPI;
   let mockAddEventListener;
   let mockRemoveEventListener;
+  let storedLocalStorage;
+  let operationProgressHandler;
 
   beforeEach(() => {
     jest.resetModules();
@@ -38,7 +51,10 @@ describe('ipcMiddleware', () => {
     mockCleanupFn = jest.fn();
     mockElectronAPI = {
       events: {
-        onOperationProgress: jest.fn().mockReturnValue(mockCleanupFn),
+        onOperationProgress: jest.fn((handler) => {
+          operationProgressHandler = handler;
+          return mockCleanupFn;
+        }),
         onSystemMetrics: jest.fn().mockReturnValue(mockCleanupFn)
       }
     };
@@ -47,10 +63,31 @@ describe('ipcMiddleware', () => {
     mockRemoveEventListener = jest.fn();
 
     // Set up window mock - assign directly to existing window object
+    storedLocalStorage = (() => {
+      let storage = {};
+      return {
+        getItem: jest.fn((key) => (key in storage ? storage[key] : null)),
+        setItem: jest.fn((key, value) => {
+          storage[key] = String(value);
+        }),
+        removeItem: jest.fn((key) => {
+          delete storage[key];
+        }),
+        clear: jest.fn(() => {
+          storage = {};
+        })
+      };
+    })();
+
     global.window = global.window || {};
     global.window.electronAPI = mockElectronAPI;
     global.window.addEventListener = mockAddEventListener;
     global.window.removeEventListener = mockRemoveEventListener;
+    global.window.localStorage = storedLocalStorage;
+    Object.defineProperty(global, 'localStorage', {
+      value: storedLocalStorage,
+      writable: true
+    });
 
     // Mock module.hot
     global.module = { hot: null };
@@ -59,6 +96,8 @@ describe('ipcMiddleware', () => {
     const ipcModule = require('../src/renderer/store/middleware/ipcMiddleware');
     ipcMiddleware = ipcModule.default;
     cleanupIpcListeners = ipcModule.cleanupIpcListeners;
+    markStoreReady = ipcModule.markStoreReady;
+    recoverPersistedCriticalEvents = ipcModule.recoverPersistedCriticalEvents;
 
     mockDispatch = jest.fn();
     mockStore = {
@@ -126,6 +165,54 @@ describe('ipcMiddleware', () => {
 
       // Should only be called once despite multiple middleware calls
       expect(mockElectronAPI.events.onOperationProgress).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('event queue handling', () => {
+    test('queues early events and flushes on markStoreReady', () => {
+      ipcMiddleware(mockStore);
+
+      operationProgressHandler({ percent: 12, file: 'a.txt' });
+      expect(mockDispatch).not.toHaveBeenCalled();
+
+      markStoreReady();
+
+      expect(mockDispatch).toHaveBeenCalledWith({
+        type: 'analysis/updateProgress',
+        payload: { percent: 12, file: 'a.txt' }
+      });
+    });
+
+    test('persists critical events when queue overflows', () => {
+      jest.useFakeTimers();
+      ipcMiddleware(mockStore);
+
+      for (let i = 0; i < 305; i += 1) {
+        operationProgressHandler({ percent: i });
+      }
+
+      const stored = storedLocalStorage.getItem('ipc_critical_events');
+      expect(stored).not.toBeNull();
+      expect(JSON.parse(stored).length).toBeGreaterThan(0);
+      jest.useRealTimers();
+    });
+
+    test('recovers persisted critical events after store is ready', () => {
+      jest.useFakeTimers();
+      ipcMiddleware(mockStore);
+      storedLocalStorage.setItem(
+        'ipc_critical_events',
+        JSON.stringify([{ actionType: 'updateProgress', data: { percent: 50 } }])
+      );
+
+      markStoreReady();
+      recoverPersistedCriticalEvents();
+
+      expect(storedLocalStorage.removeItem).toHaveBeenCalledWith('ipc_critical_events');
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'system/addNotification' })
+      );
+      jest.useRealTimers();
     });
   });
 

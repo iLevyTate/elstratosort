@@ -54,7 +54,7 @@ function registerAnalysisIpc(servicesOrParams) {
 
     try {
       return await withProcessingState({
-        filePath,
+        filePath: cleanPath,
         processingState: serviceIntegration?.processingState,
         logger,
         logPrefix: LOG_PREFIX,
@@ -69,12 +69,12 @@ function registerAnalysisIpc(servicesOrParams) {
             getFolderNamesString(folderCategories)
           );
 
-          const result = await analyzeDocumentFile(filePath, folderCategories);
+          const result = await analyzeDocumentFile(cleanPath, folderCategories);
           const duration = performance.now() - startTime;
           systemAnalytics.recordProcessingTime(duration);
 
           await recordAnalysisResult({
-            filePath,
+            filePath: cleanPath,
             result,
             processingTime: duration,
             modelType: 'llm',
@@ -88,12 +88,12 @@ function registerAnalysisIpc(servicesOrParams) {
     } catch (error) {
       const errorContext = buildErrorContext({
         operation: 'document-analysis',
-        filePath,
+        filePath: cleanPath,
         error
       });
       logger.error(`${LOG_PREFIX} Document analysis failed with context:`, errorContext);
       systemAnalytics.recordFailure(error);
-      return createAnalysisFallback(filePath, 'documents', error.message);
+      return createAnalysisFallback(cleanPath, 'documents', error.message);
     }
   }
 
@@ -121,7 +121,7 @@ function registerAnalysisIpc(servicesOrParams) {
 
     try {
       return await withProcessingState({
-        filePath,
+        filePath: cleanPath,
         processingState: serviceIntegration?.processingState,
         logger,
         logPrefix: IMAGE_LOG_PREFIX,
@@ -136,11 +136,12 @@ function registerAnalysisIpc(servicesOrParams) {
             getFolderNamesString(folderCategories)
           );
 
-          const result = await analyzeImageFile(filePath, folderCategories);
+          const result = await analyzeImageFile(cleanPath, folderCategories);
           const duration = performance.now() - startTime;
+          systemAnalytics.recordProcessingTime(duration);
 
           await recordAnalysisResult({
-            filePath,
+            filePath: cleanPath,
             result,
             processingTime: duration,
             modelType: 'vision',
@@ -154,11 +155,12 @@ function registerAnalysisIpc(servicesOrParams) {
     } catch (error) {
       const errorContext = buildErrorContext({
         operation: 'image-analysis',
-        filePath,
+        filePath: cleanPath,
         error
       });
       logger.error(`${IMAGE_LOG_PREFIX} Image analysis failed with context:`, errorContext);
-      return createAnalysisFallback(filePath, 'images', error.message);
+      systemAnalytics.recordFailure(error);
+      return createAnalysisFallback(cleanPath, 'images', error.message);
     }
   }
 
@@ -170,8 +172,13 @@ function registerAnalysisIpc(servicesOrParams) {
   safeHandle(ipcMain, IPC_CHANNELS.ANALYSIS.ANALYZE_IMAGE, analyzeImageHandler);
 
   async function runOcr(filePath) {
+    // FIX: Validate file path (same as document/image analysis handlers)
+    const cleanPath = safeFilePath(filePath);
+    if (!cleanPath) {
+      throw new Error('Invalid file path provided');
+    }
     const start = performance.now();
-    const ocrResult = await recognizeIfAvailable(tesseract, filePath, {
+    const ocrResult = await recognizeIfAvailable(tesseract, cleanPath, {
       lang: 'eng',
       oem: 1,
       psm: 3

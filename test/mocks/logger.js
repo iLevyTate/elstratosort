@@ -25,5 +25,6 @@ const logger = createLoggerMock();
 
 module.exports = {
   logger,
+  createLogger: jest.fn(() => logger),
   createLoggerMock
 };

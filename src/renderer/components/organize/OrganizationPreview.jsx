@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { Folder, CheckCircle, XCircle } from 'lucide-react';
 import { Card, Button } from '../ui';
-import { Text } from '../ui/Typography';
+import { Heading, Text } from '../ui/Typography';
 import { ErrorBoundaryCore } from '../ErrorBoundary';
+import { normalizeConfidence } from '../../utils/scoreUtils';
 
 function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel }) {
   const [previewTree, setPreviewTree] = useState({});
@@ -28,14 +29,16 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
     files.forEach((file, index) => {
       if (!file) return;
 
-      // FIX: Add bounds check for array access
-      const suggestion =
-        Array.isArray(suggestions) && index < suggestions.length
+      // Look up suggestion by file path (suggestions is a path-keyed object)
+      const suggestion = Array.isArray(suggestions)
+        ? index < suggestions.length
           ? suggestions[index]
-          : suggestions.primary;
+          : undefined
+        : suggestions[file.path] || suggestions[file.name];
       if (!suggestion) return;
 
       const folderPath = suggestion.path || suggestion.folder;
+      if (!folderPath) return; // Skip files with no target folder
       let newName = suggestion.suggestedName || file.name;
 
       // Ensure the original file extension is preserved
@@ -52,7 +55,8 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
           name: suggestion.folder,
           path: folderPath,
           files: [],
-          confidence: 0
+          confidence: 0,
+          fileCount: 0
         };
         folderCount.add(folderPath);
       }
@@ -64,8 +68,11 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
         moved: true // Assuming all files in preview are being moved
       });
 
-      tree[folderPath].confidence =
-        (tree[folderPath].confidence + (suggestion.confidence || 0.5)) / 2;
+      tree[folderPath].fileCount += 1;
+      const count = tree[folderPath].fileCount;
+      const normConf = normalizeConfidence(suggestion.confidence);
+      const safeConf = typeof normConf === 'number' && !isNaN(normConf) ? normConf : 50;
+      tree[folderPath].confidence = (tree[folderPath].confidence * (count - 1) + safeConf) / count;
 
       movedCount++;
       if (newName !== file.name) renamedCount++;
@@ -82,14 +89,14 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
     // Auto-expand folders with high confidence
     const toExpand = new Set();
     Object.entries(tree).forEach(([path, folder]) => {
-      if (folder.confidence > 0.7 || folder.files.length <= 5) {
+      if (folder.confidence > 70 || folder.files.length <= 5) {
         toExpand.add(path);
       }
     });
     setExpandedFolders(toExpand);
 
     return undefined;
-  }, [files, suggestions]);
+  }, [files, suggestions, strategy]);
 
   const normalizeConfidenceFraction = (value) => {
     if (!Number.isFinite(value)) return 0;
@@ -121,14 +128,16 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
           <Card className="flex-1 p-4 bg-stratosort-blue/5 border-stratosort-blue/30 mr-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-medium text-system-gray-900">
+                <Heading as="h3" variant="h6" className="text-system-gray-900">
                   Organization Preview: {strategy.name}
-                </h3>
-                <p className="text-sm text-system-gray-600 mt-1">{strategy.description}</p>
+                </Heading>
+                <Text variant="small" className="text-system-gray-600 mt-1">
+                  {strategy.description}
+                </Text>
               </div>
-              <div className="text-sm text-system-gray-500">
+              <Text as="div" variant="small" className="text-system-gray-500">
                 Pattern: <code className="bg-white px-2 py-1 rounded-md">{strategy.pattern}</code>
-              </div>
+              </Text>
             </div>
           </Card>
         ) : (
@@ -175,7 +184,9 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
 
       {/* Preview Tree */}
       <Card className="p-4">
-        <h4 className="font-medium text-system-gray-900 mb-3">Preview of Organization Structure</h4>
+        <Heading as="h4" variant="h6" className="text-system-gray-900 mb-3">
+          Preview of Organization Structure
+        </Heading>
         <div className="space-y-2 max-h-96 overflow-y-auto">
           {Object.entries(previewTree).map(([folderPath, folder]) => (
             <div key={folderPath} className="border rounded-lg overflow-hidden">
@@ -195,9 +206,9 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
                   </span>
                   <Folder className="w-4 h-4 text-stratosort-accent" />
                   <span className="font-medium">{folder.name}</span>
-                  <span className="text-sm text-system-gray-500">
+                  <Text as="span" variant="small" className="text-system-gray-500">
                     ({folder.files.length} files)
-                  </span>
+                  </Text>
                 </div>
                 <div className="flex items-center gap-2">
                   <Text
@@ -282,7 +293,9 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
 
       {/* Visual Tree Diagram */}
       <Card className="p-4 bg-system-gray-50">
-        <h4 className="font-medium text-system-gray-900 mb-3">Folder Structure Visualization</h4>
+        <Heading as="h4" variant="h6" className="text-system-gray-900 mb-3">
+          Folder Structure Visualization
+        </Heading>
         <div className="font-mono text-sm">
           <div className="text-system-gray-700 flex items-center gap-1">
             <Folder className="w-4 h-4 inline" />
@@ -307,10 +320,14 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
 
       {/* Comparison View */}
       <Card className="p-4">
-        <h4 className="font-medium text-system-gray-900 mb-3">Before & After Comparison</h4>
+        <Heading as="h4" variant="h6" className="text-system-gray-900 mb-3">
+          Before & After Comparison
+        </Heading>
         <div className="grid grid-cols-2 gap-6">
           <div>
-            <h5 className="text-sm font-medium text-system-gray-700 mb-2">Current State</h5>
+            <Heading as="h5" variant="h6" className="text-system-gray-700 mb-2">
+              Current State
+            </Heading>
             <div className="bg-stratosort-danger/5 border border-stratosort-danger/20 rounded-md p-3 text-sm">
               <div className="text-stratosort-danger font-medium mb-2 flex items-center gap-1">
                 <XCircle className="w-4 h-4" />
@@ -325,7 +342,9 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
             </div>
           </div>
           <div>
-            <h5 className="text-sm font-medium text-system-gray-700 mb-2">After Organization</h5>
+            <Heading as="h5" variant="h6" className="text-system-gray-700 mb-2">
+              After Organization
+            </Heading>
             <div className="bg-stratosort-success/5 border border-stratosort-success/20 rounded-md p-3 text-sm">
               <div className="text-stratosort-success font-medium mb-2 flex items-center gap-1">
                 <CheckCircle className="w-4 h-4" />
@@ -344,15 +363,16 @@ function OrganizationPreview({ files, strategy, suggestions, onConfirm, onCancel
 
       {/* Actions */}
       <div className="flex justify-between items-center pt-4 border-t">
-        <div className="text-sm text-system-gray-600">
+        <Text variant="small" className="text-system-gray-600">
           Review the preview above before confirming the organization
-        </div>
+        </Text>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={onCancel}>
+          <Button variant="secondary" size="sm" onClick={onCancel}>
             Cancel
           </Button>
           <Button
             variant="primary"
+            size="sm"
             onClick={onConfirm}
             className="bg-stratosort-blue hover:bg-stratosort-blue/90"
           >
@@ -386,10 +406,7 @@ OrganizationPreview.propTypes = {
   strategy: strategyShape,
   suggestions: PropTypes.oneOfType([
     PropTypes.arrayOf(suggestionShape),
-    PropTypes.shape({
-      primary: suggestionShape,
-      alternatives: PropTypes.arrayOf(suggestionShape)
-    })
+    PropTypes.objectOf(suggestionShape)
   ]),
   onConfirm: PropTypes.func,
   onCancel: PropTypes.func

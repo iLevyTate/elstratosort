@@ -4,15 +4,16 @@
  */
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock crypto
 jest.mock('crypto', () => ({
@@ -126,10 +127,9 @@ describe('LLM Optimization Utilities', () => {
         expect(dedup.pendingRequests.size).toBe(0);
       });
 
-      test('proceeds without eviction when max size reached to prevent duplicates', async () => {
-        // FIX: Implementation was changed to NOT evict entries because eviction
-        // could cause race conditions leading to duplicate LLM calls.
-        // Instead, it logs a warning and proceeds without eviction.
+      test('executes without tracking when at capacity with no stale entries', async () => {
+        // When at capacity and no stale entries to evict, new requests execute
+        // without dedup tracking to prevent unbounded growth.
         const dedup = new LLMRequestDeduplicator(2);
 
         // Create pending promises that don't resolve
@@ -139,11 +139,11 @@ describe('LLM Optimization Utilities', () => {
         dedup.deduplicate('key2', neverResolve);
         dedup.deduplicate('key3', neverResolve);
 
-        // All keys should be kept (no eviction) - natural cleanup via .finally() will free slots
+        // key1 and key2 are tracked, key3 was executed without tracking
         expect(dedup.pendingRequests.has('key1')).toBe(true);
         expect(dedup.pendingRequests.has('key2')).toBe(true);
-        expect(dedup.pendingRequests.has('key3')).toBe(true);
-        expect(dedup.pendingRequests.size).toBe(3);
+        expect(dedup.pendingRequests.has('key3')).toBe(false);
+        expect(dedup.pendingRequests.size).toBe(2);
       });
     });
 

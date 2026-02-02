@@ -1,9 +1,8 @@
 import React from 'react';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { ConfirmModal } from '../components/ui/Modal';
 
-logger.setContext('useConfirmDialog');
-
+const logger = createLogger('useConfirmDialog');
 export function useConfirmDialog() {
   const [confirmState, setConfirmState] = React.useState({
     isOpen: false,
@@ -27,6 +26,9 @@ export function useConfirmDialog() {
       fileName = null
     }) => {
       return new Promise((resolve) => {
+        if (typeof resolverRef.current === 'function') {
+          resolverRef.current(false);
+        }
         resolverRef.current = resolve;
         setConfirmState({
           isOpen: true,

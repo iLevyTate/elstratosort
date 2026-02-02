@@ -1,0 +1,91 @@
+name: Release (Windows)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows installer
+        run: npm run dist:win
+
+      - name: Generate SHA256 checksums
+        run: |
+          $files = Get-ChildItem release/build -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match 'StratoSort-.*|latest\.yml|\.blockmap' }
+          if (-not $files -or $files.Count -eq 0) {
+            throw "No build artifacts found to checksum."
+          }
+          $hashes = $files | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            "$hash *$($_.Name)"
+          }
+          $hashes | Out-File release/build/checksums.sha256 -Encoding ASCII
+
+      - name: Build release notes from CHANGELOG
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $changelog = Get-Content CHANGELOG.md
+          $start = -1
+          $end = $changelog.Length
+          for ($i = 0; $i -lt $changelog.Length; $i++) {
+            if ($changelog[$i] -match "^## \[$version\]") {
+              $start = $i
+              continue
+            }
+            if ($start -ge 0 -and $i -gt $start -and $changelog[$i] -match "^## \[") {
+              $end = $i
+              break
+            }
+          }
+          if ($start -ge 0) {
+            $section = $changelog[$start..($end - 1)]
+          } else {
+            $section = @(
+              "## $tag",
+              "",
+              "Release notes are in CHANGELOG.md."
+            )
+          }
+          $notes = @(
+            "## Release Notes",
+            "",
+            "- Bundled runtimes (Ollama, Python/Chroma, Tesseract) are included in the installer.",
+            "- Models are not bundled; use **Download Base Models** after install.",
+            ""
+          ) + $section
+          $notes | Out-File release/build/release-notes.md -Encoding UTF8
+
+      - name: Publish release artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: false
+          body_path: release/build/release-notes.md
+          fail_on_unmatched_files: true
+          files: |
+            release/build/StratoSort-Setup-*.exe
+            release/build/StratoSort-*-win-*.exe
+            release/build/*.blockmap
+            release/build/latest.yml
+            release/build/checksums.sha256

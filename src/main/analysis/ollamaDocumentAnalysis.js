@@ -9,7 +9,8 @@ const {
   AI_DEFAULTS
 } = require('../../shared/constants');
 const { TRUNCATION, TIMEOUTS } = require('../../shared/performanceConstants');
-const { logger } = require('../../shared/logger');
+const { withTimeout } = require('../../shared/promiseUtils');
+const { createLogger } = require('../../shared/logger');
 const { getOllamaModel, loadOllamaConfig } = require('../ollamaUtils');
 const { AppConfig } = require('./documentLlm');
 
@@ -135,8 +136,7 @@ async function isFileUnchangedForCache(filePath, fileStats) {
 const { FileProcessingError } = require('../errors/AnalysisError');
 
 // Set logger context for this module
-logger.setContext('DocumentAnalysis');
-
+const logger = createLogger('DocumentAnalysis');
 /**
  * Analyzes a document file using AI or fallback methods
  * @param {string} filePath - Path to the document file
@@ -220,7 +220,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
     return {
       purpose: 'Video file',
-      project: fileName.replace(fileExtension, ''),
+      project: path.basename(fileName, fileExtension),
       category: safeCategory,
       date: fileDate,
       keywords: intelligentKeywords,
@@ -269,9 +269,13 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
     if (fileExtension === '.pdf') {
       try {
+        // FIX: Don't double-wrap with withTimeout — extractTextFromPdf already has
+        // a 120s internal timeout, and ocrPdfIfNeeded has a 180s internal timeout.
+        // Wrapping with a 60s outer timeout killed extractions prematurely.
         extractedText = await extractTextFromPdf(filePath, fileName);
+
         if (!extractedText || extractedText.trim().length === 0) {
-          // Try OCR fallback for image-only PDFs
+          // Try OCR fallback for image-only PDFs (has internal 180s timeout)
           const ocrText = await ocrPdfIfNeeded(filePath);
           extractedText = ocrText || '';
         }
@@ -280,7 +284,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
           fileName,
           error: pdfError.message
         });
-        // Attempt OCR fallback before giving up
+        // Attempt OCR fallback before giving up (has internal 180s timeout)
         try {
           const ocrText = await ocrPdfIfNeeded(filePath);
           if (ocrText && ocrText.trim().length > 0) {
@@ -302,9 +306,17 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
       // Read text files directly
       try {
         if (fileExtension === '.doc') {
-          extractedText = await extractTextFromDoc(filePath);
+          extractedText = await withTimeout(
+            extractTextFromDoc(filePath),
+            TIMEOUTS.FILE_READ || 10000,
+            'DOC extraction'
+          );
         } else if (fileExtension === '.csv') {
-          extractedText = await extractTextFromCsv(filePath);
+          extractedText = await withTimeout(
+            extractTextFromCsv(filePath),
+            TIMEOUTS.FILE_READ || 10000,
+            'CSV extraction'
+          );
         } else if (fileExtension === '.xml') {
           const raw = await fs.readFile(filePath, 'utf8');
           extractedText = extractPlainTextFromXml(raw);
@@ -366,7 +378,13 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
       try {
         logExtraction();
-        extractedText = await extractOfficeContent();
+        // FIX: Use AI_ANALYSIS_LONG (120s) instead of AI_ANALYSIS_MEDIUM (60s)
+        // to avoid killing XLSX/PPTX extractions that have 90s internal timeouts.
+        extractedText = await withTimeout(
+          extractOfficeContent(),
+          TIMEOUTS.AI_ANALYSIS_LONG || 120000,
+          `Office extraction for ${fileName}`
+        );
 
         logger.debug(`Extracted characters from office document`, {
           fileName,
@@ -385,7 +403,11 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
         try {
           await new Promise((resolve) => setTimeout(resolve, TIMEOUTS.DELAY_LOCK_RETRY));
           logExtraction();
-          extractedText = await extractOfficeContent();
+          extractedText = await withTimeout(
+            extractOfficeContent(),
+            TIMEOUTS.AI_ANALYSIS_LONG || 120000,
+            `Retry office extraction for ${fileName}`
+          );
           logger.info(`Office extraction recovered after retry`, {
             fileName,
             fileExtension
@@ -441,7 +463,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
           return {
             purpose,
-            project: fileName.replace(fileExtension, ''),
+            project: path.basename(fileName, fileExtension),
             category,
             date: fileDate,
             keywords: intelligentKeywords || [],
@@ -465,9 +487,9 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
       return {
         purpose: archiveInfo.summary || 'Archive file',
-        project: fileName.replace(fileExtension, ''),
+        project: path.basename(fileName, fileExtension),
         category,
-        date: new Date().toISOString().split('T')[0],
+        date: fileDate,
         keywords,
         confidence: 70,
         suggestedName: safeSuggestedName(fileName, fileExtension),
@@ -490,15 +512,8 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
       });
     }
 
-    // If PDF had no extractable text, attempt OCR on a rasterized page
-    // REDUNDANT: OCR is already attempted in the PDF extraction block above.
-    // Removing to prevent double-processing and performance waste.
-    /*
-    if (fileExtension === '.pdf' && (!extractedText || extractedText.trim().length === 0)) {
-      const ocrText = await ocrPdfIfNeeded(filePath);
-      if (ocrText) extractedText = ocrText;
-    }
-    */
+    // FIX MEDIUM-5: Removed dead code block - OCR is already attempted in the PDF extraction block above (lines 271-317)
+    // The redundant OCR fallback was commented out but left in codebase, now fully removed.
 
     if (extractedText && extractedText.trim().length > 0) {
       logger.info(`[CONTENT-ANALYSIS] Processing`, {

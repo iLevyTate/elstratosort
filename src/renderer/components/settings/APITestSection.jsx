@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { CheckCircle, XCircle } from 'lucide-react';
 import Button from '../ui/Button';
+import Card from '../ui/Card';
 import { Text } from '../ui/Typography';
 
 /**
@@ -14,6 +15,21 @@ function APITestSection({ addNotification }) {
   const runAPITests = useCallback(async () => {
     setIsTestingApi(true);
     const results = {};
+
+    if (!window?.electronAPI) {
+      const message = 'Electron API not available';
+      setTestResults({
+        fileOperations: { success: false, message },
+        smartFolders: { success: false, message },
+        analysisHistory: { success: false, message },
+        undoRedo: { success: false, message },
+        systemMonitoring: { success: false, message },
+        ollama: { success: false, message }
+      });
+      setIsTestingApi(false);
+      addNotification('API tests failed: Electron API not available', 'error');
+      return;
+    }
 
     try {
       await window.electronAPI.files.getDocumentsPath();
@@ -63,21 +79,38 @@ function APITestSection({ addNotification }) {
   }, [addNotification]);
 
   return (
-    <div className="p-4 bg-system-gray-50 rounded-lg">
+    <Card variant="default" className="space-y-5">
+      <div>
+        <Text variant="tiny" className="font-semibold uppercase tracking-wide text-system-gray-500">
+          Backend API test
+        </Text>
+        <Text variant="small" className="text-system-gray-600">
+          Run a quick connectivity check against all core services.
+        </Text>
+      </div>
+
       <Button
         onClick={runAPITests}
         disabled={isTestingApi}
         variant="primary"
-        className="text-sm mb-4 w-full"
+        size="sm"
+        className="w-full sm:w-auto"
       >
         {isTestingApi ? 'Testing APIs...' : 'Test All APIs'}
       </Button>
+
       {Object.keys(testResults).length > 0 && (
-        <div className="space-y-3 text-sm">
+        <div className="rounded-lg border border-system-gray-100 bg-system-gray-50 divide-y divide-system-gray-100">
           {Object.entries(testResults).map(([service, result]) => (
-            <div key={service} className="flex justify-between items-center">
-              <span className="capitalize">{service.replace(/([A-Z])/g, ' $1').trim()}:</span>
-              <Text as="span" variant="tiny" className="font-mono flex items-center gap-1">
+            <div key={service} className="flex flex-col sm:flex-row sm:items-center gap-2 p-3">
+              <Text variant="small" className="font-medium text-system-gray-700 capitalize">
+                {service.replace(/([A-Z])/g, ' $1').trim()}
+              </Text>
+              <Text
+                as="span"
+                variant="tiny"
+                className="font-mono flex items-center gap-1 text-system-gray-600"
+              >
                 {result.success ? (
                   <CheckCircle className="w-4 h-4 text-stratosort-success" />
                 ) : (
@@ -89,7 +122,7 @@ function APITestSection({ addNotification }) {
           ))}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 

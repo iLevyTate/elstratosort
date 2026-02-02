@@ -26,10 +26,16 @@ If the automatic setup scripts fail or you prefer manual installation, follow th
 # Ensure Ollama is running
 ollama serve
 
-# Pull models (~2.3GB total download)
-ollama pull qwen3:0.6b           # Text analysis
-ollama pull gemma3:latest        # Vision/image analysis (multimodal)
-ollama pull embeddinggemma       # Embedding model
+# Pull models (choose at least one per type)
+# Defaults used by the app:
+ollama pull llama3.2:latest       # Text analysis (default)
+ollama pull llava:latest          # Vision/image analysis (default)
+ollama pull mxbai-embed-large     # Embedding model (default)
+
+# Optional lightweight alternatives (used by setup:ollama --auto):
+# - Text: qwen3:0.6b, gemma2:2b, phi3:mini
+# - Vision: gemma3:latest, moondream:latest
+# - Embedding: embeddinggemma:latest, nomic-embed-text:latest
 ```
 
 #### 3. Install ChromaDB (Requires Python 3.8+)
@@ -42,7 +48,20 @@ pip install --user chromadb
 pip3 install --user chromadb
 ```
 
-#### 4. Verify Installation
+#### 4. Install Tesseract OCR
+
+```bash
+# Windows (winget)
+winget install Tesseract-OCR.Tesseract
+
+# macOS
+brew install tesseract
+
+# Linux (Debian/Ubuntu)
+sudo apt-get install tesseract-ocr
+```
+
+#### 5. Verify Installation
 
 ```bash
 # Test Ollama
@@ -57,12 +76,23 @@ python -c "import chromadb; print('ChromaDB OK')"
 These commands attempt to auto-detect and install dependencies but may not work on all systems:
 
 ```bash
-npm run setup:deps           # Install both Ollama and ChromaDB
-npm run setup:ollama         # Install Ollama + pull models
-npm run setup:chromadb       # Install ChromaDB Python module
-npm run setup:ollama:check   # Verify Ollama installation
-npm run setup:chromadb:check # Verify ChromaDB installation
+npm run setup:deps            # Install Ollama + ChromaDB + Tesseract
+npm run setup:ollama          # Install Ollama + pull models
+npm run setup:chromadb        # Install ChromaDB Python module
+npm run setup:tesseract       # Install Tesseract OCR (best-effort)
+npm run setup:ollama:check    # Verify Ollama installation
+npm run setup:chromadb:check  # Verify ChromaDB installation
 ```
+
+### Setup Script Flags (Advanced)
+
+These variables affect setup scripts and `postinstall` behavior:
+
+| Variable               | Default | Description                                                         |
+| ---------------------- | ------- | ------------------------------------------------------------------- |
+| `SKIP_APP_DEPS`        | `0`     | Skip `postinstall` native rebuild and all setup scripts             |
+| `SKIP_TESSERACT_SETUP` | `0`     | Skip Tesseract setup (used by setup scripts and background setup)   |
+| `MINIMAL_SETUP`        | `0`     | Skip optional Ollama models during setup (`setup:ollama --minimal`) |
 
 ## Environment Variables
 
@@ -86,6 +116,7 @@ npm run setup:chromadb:check # Verify ChromaDB installation
 | `CHROMA_SERVER_HOST`          | `127.0.0.1`             | ChromaDB server hostname (used if `CHROMA_SERVER_URL` is not set)                      |
 | `CHROMA_SERVER_PORT`          | `8000`                  | ChromaDB server port (used if `CHROMA_SERVER_URL` is not set)                          |
 | `CHROMA_SERVER_COMMAND`       | -                       | Custom command to spawn ChromaDB server (advanced use only)                            |
+| `CHROMA_DATA_DIR`             | -                       | Override local ChromaDB data directory (useful for containers)                         |
 | `STRATOSORT_DISABLE_CHROMADB` | `0`                     | Set to `1` to disable ChromaDB integration entirely                                    |
 
 **External ChromaDB (Docker/Remote)**:
@@ -104,6 +135,18 @@ npm run setup:chromadb:check # Verify ChromaDB installation
 | `STRATOSORT_CHROMA_CACHE_SIZE`   | -        | Alternative to `CHROMA_QUERY_CACHE_SIZE`   |
 | `STRATOSORT_CHROMA_CACHE_TTL_MS` | -        | Alternative to `CHROMA_QUERY_CACHE_TTL_MS` |
 
+### ChromaDB Recovery (Advanced)
+
+| Variable                               | Default | Description                                                                                       |
+| -------------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `STRATOSORT_ALLOW_CHROMADB_AUTO_RESET` | `0`     | Allow auto backup + reset when corruption is suspected and server is healthy (local only; risky). |
+
+### OCR (Tesseract)
+
+| Variable         | Default | Description                                                      |
+| ---------------- | ------- | ---------------------------------------------------------------- |
+| `TESSERACT_PATH` | -       | Override path to the Tesseract binary (skips auto-install logic) |
+
 ### Performance Tuning
 
 | Variable                   | Default | Description                                     |
@@ -111,14 +154,21 @@ npm run setup:chromadb:check # Verify ChromaDB installation
 | `MAX_IMAGE_CACHE`          | `300`   | Maximum cached image analyses (50-1000)         |
 | `AUTO_ORGANIZE_BATCH_SIZE` | `10`    | Files processed per auto-organize batch (1-100) |
 
+### Startup & Health Checks
+
+| Variable                | Default | Description                                      |
+| ----------------------- | ------- | ------------------------------------------------ |
+| `SERVICE_CHECK_TIMEOUT` | `2000`  | Timeout (ms) for preflight service health checks |
+
 ### GPU Configuration
 
-| Variable                        | Default | Description                               |
-| ------------------------------- | ------- | ----------------------------------------- |
-| `STRATOSORT_FORCE_SOFTWARE_GPU` | `0`     | Set to `1` to force software rendering    |
-| `ELECTRON_FORCE_SOFTWARE`       | `0`     | Alternative software rendering flag       |
-| `ANGLE_BACKEND`                 | `d3d11` | ANGLE backend for GPU rendering (Windows) |
-| `STRATOSORT_GL_IMPLEMENTATION`  | -       | Override OpenGL implementation            |
+| Variable                          | Default | Description                               |
+| --------------------------------- | ------- | ----------------------------------------- |
+| `STRATOSORT_FORCE_SOFTWARE_GPU`   | `0`     | Set to `1` to force software rendering    |
+| `ELECTRON_FORCE_SOFTWARE`         | `0`     | Alternative software rendering flag       |
+| `ANGLE_BACKEND`                   | `d3d11` | ANGLE backend for GPU rendering (Windows) |
+| `STRATOSORT_GL_IMPLEMENTATION`    | -       | Override OpenGL implementation            |
+| `STRATOSORT_IGNORE_GPU_BLOCKLIST` | `0`     | Ignore Electron GPU blocklist (advanced)  |
 
 ### Feature Flags
 
@@ -136,12 +186,28 @@ npm run setup:chromadb:check # Verify ChromaDB installation
 | `STRATOSORT_GRAPH_KEYBOARD_NAV`       | `1`     | Keyboard navigation in graph                   |
 | `STRATOSORT_GRAPH_CONTEXT_MENUS`      | `1`     | Right-click context menus on nodes             |
 
+### Logging
+
+| Variable                  | Default | Description                                          |
+| ------------------------- | ------- | ---------------------------------------------------- |
+| `STRATOSORT_CONSOLE_LOGS` | `0`     | Enable console logging in production (`1` to enable) |
+
 ### Development
 
-| Variable         | Default      | Description                                   |
-| ---------------- | ------------ | --------------------------------------------- |
-| `NODE_ENV`       | `production` | Set to `development` for dev mode features    |
-| `REACT_DEVTOOLS` | `false`      | Set to `true` to enable React DevTools in dev |
+| Variable                             | Default      | Description                                   |
+| ------------------------------------ | ------------ | --------------------------------------------- |
+| `NODE_ENV`                           | `production` | Set to `development` for dev mode features    |
+| `REACT_DEVTOOLS`                     | `false`      | Set to `true` to enable React DevTools in dev |
+| `STRATOSORT_SCAN_STRUCTURE_DELAY_MS` | -            | Dev-only delay for folder scan IPC (ms)       |
+
+### Runtime Configuration
+
+| Variable                 | Default | Description                                                      |
+| ------------------------ | ------- | ---------------------------------------------------------------- |
+| `STRATOSORT_RUNTIME_DIR` | -       | Override bundled runtime root (assets/runtime) for local testing |
+
+Bundled runtime metadata and download URLs are stored in `assets/runtime/runtime-manifest.json`. Run
+`npm run setup:runtime` to stage these assets for packaging.
 
 ## Performance Constants
 

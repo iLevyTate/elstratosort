@@ -7,7 +7,7 @@
  */
 
 const path = require('path');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { TIMEOUTS } = require('../../../shared/performanceConstants');
 const { withTimeout } = require('../../../shared/promiseUtils');
 const { sanitizeFile } = require('./fileTypeUtils');
@@ -20,8 +20,7 @@ const { safeSuggestion } = require('./pathUtils');
 // FIX C-5: Import from idUtils to break circular dependency with fileProcessor
 const { generateSecureId } = require('./idUtils');
 
-logger.setContext('AutoOrganize-Batch');
-
+const logger = createLogger('AutoOrganize-Batch');
 // FIX: Named constants for confidence thresholds (previously magic numbers)
 const CONFIDENCE_THRESHOLDS = {
   BASE: 0.75, // Minimum confidence for auto-organization
@@ -344,20 +343,20 @@ async function batchOrganize(
               destination
             });
 
-            // Record feedback with proper error handling
+            // FIX: Push feedback to array for batched await instead of blocking each file
             if (file.suggestion) {
-              try {
-                await withTimeout(
+              pendingFeedback.push(
+                withTimeout(
                   suggestionService.recordFeedback(file, file.suggestion, true),
                   TIMEOUTS.API_REQUEST,
                   'AutoOrganize feedback'
-                );
-              } catch (feedbackError) {
-                logger.warn('[AutoOrganize] Failed to record feedback for file:', {
-                  file: file.path,
-                  error: feedbackError.message
-                });
-              }
+                ).catch((feedbackError) => {
+                  logger.warn('[AutoOrganize] Failed to record feedback for file:', {
+                    file: file.path,
+                    error: feedbackError.message
+                  });
+                })
+              );
             }
           } catch (fileError) {
             const errorDetails = {

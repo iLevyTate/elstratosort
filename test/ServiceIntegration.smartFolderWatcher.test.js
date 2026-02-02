@@ -2,14 +2,15 @@
  * Focused tests for ServiceIntegration SmartFolderWatcher wiring / auto-start logic
  */
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Minimal constructor mocks for services referenced at module load
 jest.mock('../src/main/services/analysisHistory', () =>

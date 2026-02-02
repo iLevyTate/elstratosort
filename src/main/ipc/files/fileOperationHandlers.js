@@ -38,6 +38,7 @@ const {
 } = require('../../services/organization/learningFeedback');
 const { syncEmbeddingForMove } = require('./embeddingSync');
 const { withTimeout } = require('../../../shared/promiseUtils');
+const { crossDeviceMove } = require('../../../shared/atomicFileOperations');
 
 // Alias for backward compatibility
 const operationSchema = schemas?.fileOperation || null;
@@ -292,7 +293,16 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
             PathChangeReason.USER_MOVE
           );
 
-          await fs.rename(moveValidation.source, moveValidation.destination);
+          try {
+            await fs.rename(moveValidation.source, moveValidation.destination);
+          } catch (renameError) {
+            if (renameError.code === 'EXDEV') {
+              // Cross-device move: fall back to copy + delete
+              await crossDeviceMove(moveValidation.source, moveValidation.destination);
+            } else {
+              throw renameError;
+            }
+          }
 
           // PATH-TRACE: Log move complete (fs operation)
           traceMoveComplete(
@@ -442,6 +452,7 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
           }
 
           // Ensure embeddings reflect the final smart folder destination (best effort)
+          // Required to update metadata (smartFolder field) and handle "move out" cleanup
           await syncEmbeddingsBestEffort({
             sourcePath: moveValidation.source,
             destPath: moveValidation.destination,
@@ -919,6 +930,8 @@ function registerFileOperationHandlers(servicesOrParams) {
           });
         }
 
+        // Ensure embeddings reflect the final smart folder destination (best effort)
+        // Required to update metadata (smartFolder field)
         await syncEmbeddingsBestEffort({
           sourcePath: normalizedSource,
           destPath: normalizedDestination,

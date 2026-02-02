@@ -17,15 +17,14 @@
 
 const path = require('path');
 const { app } = require('electron');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { TIMEOUTS, RETRY } = require('../../shared/performanceConstants');
 const { isRetryableError, withOllamaRetry } = require('../utils/ollamaApiRetry');
 const { atomicWriteFile, loadJsonFile, safeUnlink } = require('../../shared/atomicFile');
 const { Semaphore } = require('../../shared/RateLimiter');
 const { CircuitBreaker } = require('../utils/CircuitBreaker');
 
-logger.setContext('OllamaClient');
-
+const logger = createLogger('OllamaClient');
 /**
  * Ollama request types for queue classification
  */
@@ -110,10 +109,10 @@ class OllamaClient {
 
     // Circuit Breaker for fault tolerance
     this.circuitBreaker = new CircuitBreaker('OllamaClient', {
-      failureThreshold: 5,
+      failureThreshold: 10,
       successThreshold: 2,
       timeout: 30000,
-      resetTimeout: 60000
+      resetTimeout: 30000
     });
 
     // Log circuit breaker state changes
@@ -238,6 +237,11 @@ class OllamaClient {
     // Persist offline queue
     if (this.config.persistQueueOnShutdown) {
       await this._persistOfflineQueue();
+    }
+
+    // FIX: Clean up circuit breaker event listeners and timers to prevent memory leaks
+    if (this.circuitBreaker) {
+      this.circuitBreaker.cleanup();
     }
 
     logger.info('[OllamaClient] Shutdown complete', {
@@ -774,7 +778,22 @@ class OllamaClient {
             async () => {
               const { getOllama } = require('../ollamaUtils');
               const ollama = getOllama();
-              return ollama.generate(options);
+              // Add per-request timeout to prevent indefinite hangs (matches embeddings pattern)
+              const requestTimeout = TIMEOUTS.AI_ANALYSIS_LONG || 180000;
+              let timeoutId;
+              const timeoutPromise = new Promise((_, reject) => {
+                timeoutId = setTimeout(() => {
+                  reject(new Error(`Generate request timeout after ${requestTimeout}ms`));
+                }, requestTimeout);
+              });
+              try {
+                const response = await Promise.race([ollama.generate(options), timeoutPromise]);
+                clearTimeout(timeoutId);
+                return response;
+              } catch (raceError) {
+                clearTimeout(timeoutId);
+                throw raceError;
+              }
             },
             { operation: `Generate (${options.model})` }
           )

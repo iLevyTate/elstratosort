@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { normalizeFileUri, extractFileName } from '../utils/pathNormalization';
+import { extractDroppedFiles, isFileDragEvent } from '../utils/dragAndDrop';
 
 // Drag-and-drop is active in the Discover phase. Keep this hook shared.
 export function useDragAndDrop(onFilesDropped) {
@@ -9,11 +10,7 @@ export function useDragAndDrop(onFilesDropped) {
     e.preventDefault();
     e.stopPropagation();
     // Only activate for file drags
-    if (
-      e.dataTransfer?.types?.includes('Files') ||
-      e.dataTransfer?.types?.includes('text/uri-list') ||
-      e.dataTransfer?.types?.includes('text/plain')
-    ) {
+    if (isFileDragEvent(e)) {
       setIsDragging(true);
     }
   }, []);
@@ -28,9 +25,11 @@ export function useDragAndDrop(onFilesDropped) {
   const handleDragOver = useCallback((e) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!isFileDragEvent(e)) return;
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = 'copy';
     }
+    setIsDragging(true);
   }, []);
 
   const handleDrop = useCallback(
@@ -44,38 +43,7 @@ export function useDragAndDrop(onFilesDropped) {
         return;
       }
 
-      const fileList = Array.from(e.dataTransfer.files || []);
-      const itemFiles = Array.from(e.dataTransfer.items || [])
-        .filter((item) => item?.kind === 'file')
-        .map((item) => item.getAsFile?.())
-        .filter(Boolean);
-      const uriListRaw = e.dataTransfer?.getData?.('text/uri-list') || '';
-      const textPlainRaw = e.dataTransfer?.getData?.('text/plain') || '';
-
-      const parsedUris = uriListRaw
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith('#'))
-        .map((line) => normalizeFileUri(line));
-
-      // Some Windows drags provide the absolute path as plain text
-      const parsedPlainText =
-        textPlainRaw && !textPlainRaw.includes('\n')
-          ? [normalizeFileUri(textPlainRaw)]
-          : textPlainRaw
-              .split('\n')
-              .map((line) => line.trim())
-              .filter(Boolean)
-              .map((line) => normalizeFileUri(line));
-
-      const collectedPaths = [
-        ...fileList.map((f) => normalizeFileUri(f.path || f.name)),
-        ...itemFiles.map((f) => normalizeFileUri(f.path || f.name)),
-        ...parsedUris,
-        ...parsedPlainText
-      ].filter(Boolean);
-
-      const uniquePaths = Array.from(new Set(collectedPaths));
+      const { paths: uniquePaths, fileList, itemFiles } = extractDroppedFiles(e.dataTransfer);
 
       if (uniquePaths.length > 0 && onFilesDropped) {
         const fileObjects = uniquePaths.map((pathValue) => ({

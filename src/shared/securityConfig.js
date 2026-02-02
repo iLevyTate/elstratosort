@@ -105,10 +105,72 @@ function getDangerousPaths(platform = PLATFORM) {
   if (platform === 'darwin') {
     paths.push(...DANGEROUS_PATHS.darwin);
   } else if (platform === 'win32') {
-    paths.push(...DANGEROUS_PATHS.windows);
+    // FIX Bug 18: Generate dangerous paths for all detected drive letters,
+    // not just the hardcoded C: drive. Systems commonly have D:, E:, etc.
+    const driveLetters = _getWindowsDriveLetters();
+    const windowsSubPaths = [
+      'Windows',
+      'Program Files',
+      'Program Files (x86)',
+      'ProgramData',
+      'System Volume Information',
+      'Users\\All Users',
+      'Boot',
+      'Recovery'
+    ];
+    for (const drive of driveLetters) {
+      for (const sub of windowsSubPaths) {
+        paths.push(`${drive}\\${sub}`);
+      }
+    }
   }
 
   return paths;
+}
+
+/**
+ * Get available Windows drive letters.
+ * Uses environment variables for the primary and home drives, and always includes C:.
+ * @private
+ * @returns {string[]} Array of drive letter prefixes like ['C:', 'D:']
+ */
+function _getWindowsDriveLetters() {
+  const drives = new Set();
+
+  // Always include C: as a baseline
+  drives.add('C:');
+
+  if (typeof process !== 'undefined' && process.env) {
+    // SYSTEMDRIVE is the OS installation drive (usually C:)
+    const systemDrive = process.env.SYSTEMDRIVE;
+    if (systemDrive) {
+      drives.add(systemDrive.toUpperCase().replace(/\\$/, ''));
+    }
+    // HOMEDRIVE can differ from SYSTEMDRIVE on domain-joined machines
+    const homeDrive = process.env.HOMEDRIVE;
+    if (homeDrive) {
+      drives.add(homeDrive.toUpperCase().replace(/\\$/, ''));
+    }
+  }
+
+  // FIX: Enumerate all mounted drive letters so dangerous paths on D:, E:, etc.
+  // are also blocked. Previous code only covered C: and env-based drives.
+  try {
+    const fs = require('fs');
+    for (let code = 65; code <= 90; code++) {
+      const letter = `${String.fromCharCode(code)}:`;
+      try {
+        fs.accessSync(`${letter}\\`);
+        drives.add(letter);
+      } catch {
+        // Drive not mounted, skip
+      }
+    }
+  } catch {
+    // fs not available (browser context), fall back to env-based detection
+  }
+
+  return Array.from(drives);
 }
 
 /**
@@ -183,9 +245,17 @@ const SETTINGS_VALIDATION = {
     'retryAttempts',
     // Semantic search settings
     'autoChunkOnAnalysis', // Opt-in: generate chunk embeddings during file analysis
+    'graphExpansionEnabled',
+    'graphExpansionWeight',
+    'graphExpansionMaxNeighbors',
+    'chunkContextEnabled',
+    'chunkContextMaxNeighbors',
     // UI limits
     'workflowRestoreMaxAge',
     'saveDebounceMs',
+    // ChromaDB learning sync settings
+    'enableChromaLearningSync',
+    'enableChromaLearningDryRun',
     // Deprecated settings (kept for backward compatibility)
     'smartFolderWatchEnabled'
   ]),

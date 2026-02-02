@@ -24,13 +24,14 @@ jest.mock('../src/shared/folderUtils', () => ({
   getFolderNamesString: jest.fn().mockReturnValue('cat1')
 }));
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     debug: jest.fn(),
     info: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 const mockAnalysisUtils = {
   withProcessingState: jest.fn(),

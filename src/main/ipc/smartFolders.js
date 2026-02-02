@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 const fs = require('fs').promises;
 const { app } = require('electron');
 const { getOllama } = require('../ollamaUtils');
@@ -8,7 +9,6 @@ const { AI_DEFAULTS } = require('../../shared/constants');
 const { enhanceSmartFolderWithLLM } = require('../services/SmartFoldersLLMService');
 const { withErrorLogging, safeHandle } = require('./ipcWrappers');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
-// const { capEmbeddingInput } = require('../utils/embeddingInput');
 const { cosineSimilarity } = require('../../shared/vectorMath');
 const { isNotFoundError } = require('../../shared/errorClassifier');
 const FolderMatchingService = require('../services/FolderMatchingService');
@@ -379,9 +379,18 @@ function registerSmartFoldersIpc(servicesOrParams) {
           };
         }
 
-        // Ensure all folder paths exist as physical directories
+        // FIX: Sanitize and validate all folder paths before saving
         for (const folder of folders) {
           if (folder.path) {
+            try {
+              folder.path = sanitizeFolderPath(folder.path);
+            } catch (sanitizeError) {
+              return {
+                success: false,
+                error: `Invalid folder path "${folder.path}": ${sanitizeError.message}`,
+                errorCode: ERROR_CODES.INVALID_PATH
+              };
+            }
             try {
               const stats = await fs.stat(folder.path);
               if (!stats.isDirectory()) {
@@ -467,9 +476,18 @@ function registerSmartFoldersIpc(servicesOrParams) {
           };
         }
 
-        // Ensure all folder paths exist as physical directories
+        // FIX: Sanitize and validate all folder paths before updating
         for (const folder of folders) {
           if (folder.path) {
+            try {
+              folder.path = sanitizeFolderPath(folder.path);
+            } catch (sanitizeError) {
+              return {
+                success: false,
+                error: `Invalid folder path "${folder.path}": ${sanitizeError.message}`,
+                errorCode: ERROR_CODES.INVALID_PATH
+              };
+            }
             try {
               const stats = await fs.stat(folder.path);
               if (!stats.isDirectory()) {
@@ -902,7 +920,7 @@ Now generate a description for "${folderName}":`;
             customFolders,
             getOllamaModel
           );
-          if (llmAnalysis && !llmEnhancedData.error) llmEnhancedData = llmAnalysis;
+          if (llmAnalysis && !llmAnalysis.error) llmEnhancedData = llmAnalysis;
         } catch (e) {
           logger.warn(
             '[SMART-FOLDERS] LLM enhancement failed, continuing with basic data:',
@@ -911,7 +929,7 @@ Now generate a description for "${folderName}":`;
         }
 
         const newFolder = {
-          id: Date.now().toString(),
+          id: `sf-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
           name: sanitizedName,
           path: normalizedPath,
           description:

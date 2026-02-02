@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useMemo, useRef } from 'react';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { toggleSettings, setPhase } from '../store/slices/uiSlice';
 import { useNotification } from '../contexts/NotificationContext';
@@ -7,8 +7,7 @@ import { useUndoRedo } from '../components/UndoRedoSystem';
 import { PHASES, PHASE_TRANSITIONS, PHASE_METADATA } from '../../shared/constants';
 import { TIMEOUTS } from '../../shared/performanceConstants';
 
-logger.setContext('useKeyboardShortcuts');
-
+const logger = createLogger('useKeyboardShortcuts');
 export function useKeyboardShortcuts() {
   const dispatch = useAppDispatch();
   const currentPhase = useAppSelector((state) => state.ui.currentPhase);
@@ -130,7 +129,11 @@ export function useKeyboardShortcuts() {
             const allowedTransitions = PHASE_TRANSITIONS[phase] || [];
             if (allowedTransitions.includes(previousPhase)) {
               actions.advancePhase(previousPhase);
-              addNotification(`Navigated to ${PHASE_METADATA[previousPhase].title}`, 'info', 2000);
+              addNotification(
+                `Navigated to ${PHASE_METADATA[previousPhase]?.title || previousPhase}`,
+                'info',
+                2000
+              );
             }
           }
         }
@@ -145,7 +148,11 @@ export function useKeyboardShortcuts() {
             const allowedTransitions = PHASE_TRANSITIONS[phase] || [];
             if (allowedTransitions.includes(nextPhase)) {
               actions.advancePhase(nextPhase);
-              addNotification(`Navigated to ${PHASE_METADATA[nextPhase].title}`, 'info', 2000);
+              addNotification(
+                `Navigated to ${PHASE_METADATA[nextPhase]?.title || nextPhase}`,
+                'info',
+                2000
+              );
             }
           }
         }

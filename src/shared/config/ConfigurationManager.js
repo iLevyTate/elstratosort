@@ -244,6 +244,24 @@ class ConfigurationManager {
     }
 
     const parts = path.split('.');
+
+    // Validate against schema if definition exists (coerce types but allow unrecognized paths)
+    if (parts.length === 2) {
+      const [category, propName] = parts;
+      const schemaDef = CONFIG_SCHEMA?.[category]?.[propName];
+      if (schemaDef) {
+        const validation = validateValue(path, value, schemaDef);
+        if (validation.valid) {
+          value = validation.value;
+        } else {
+          // FIX: Don't write invalid values — previously validation failure
+          // was silently ignored and the invalid value was written to config
+          this._validationErrors.push({ path, value, reason: 'validation_failed' });
+          return;
+        }
+      }
+    }
+
     let current = this._config;
 
     for (let i = 0; i < parts.length - 1; i++) {

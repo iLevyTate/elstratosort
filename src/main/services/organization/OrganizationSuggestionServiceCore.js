@@ -31,12 +31,13 @@ const {
 } = require('./strategies');
 
 const { PatternMatcher } = require('./patternMatcher');
-const { FeedbackMemoryStore } = require('./feedbackMemoryStore');
+const { FeedbackMemoryStore, getMetrics: getFeedbackMetrics } = require('./feedbackMemoryStore');
 const {
   buildMemoryEntry,
   applyMemoryRuleAdjustments,
   normalizeText
 } = require('./feedbackMemoryUtils');
+const { getMetrics: getPatternMetrics } = require('./persistence');
 
 const { rankSuggestions, calculateConfidence, generateExplanation } = require('./suggestionRanker');
 
@@ -173,22 +174,44 @@ class OrganizationSuggestionServiceCore {
     this._getClusteringService = getClusteringService || null;
 
     // Configuration
+    const safeConfig = config || {};
     this.config = {
-      semanticMatchThreshold: config.semanticMatchThreshold || 0.4,
-      strategyMatchThreshold: config.strategyMatchThreshold || 0.3,
-      patternSimilarityThreshold: config.patternSimilarityThreshold || 0.5,
-      topKSemanticMatches: config.topKSemanticMatches || 8,
-      hybridLLMThreshold: config.hybridLLMThreshold || 0.55,
-      embeddingFirstMinFileEmbeddings: config.embeddingFirstMinFileEmbeddings || 50,
-      maxFeedbackHistory: config.maxFeedbackHistory || 1000,
-      llmTemperature: config.llmTemperature || 0.7,
-      llmMaxTokens: config.llmMaxTokens || 500,
+      ...safeConfig,
+      semanticMatchThreshold: Number.isFinite(safeConfig.semanticMatchThreshold)
+        ? safeConfig.semanticMatchThreshold
+        : 0.4,
+      strategyMatchThreshold: Number.isFinite(safeConfig.strategyMatchThreshold)
+        ? safeConfig.strategyMatchThreshold
+        : 0.3,
+      patternSimilarityThreshold: Number.isFinite(safeConfig.patternSimilarityThreshold)
+        ? safeConfig.patternSimilarityThreshold
+        : 0.5,
+      topKSemanticMatches: Number.isFinite(safeConfig.topKSemanticMatches)
+        ? safeConfig.topKSemanticMatches
+        : 8,
+      hybridLLMThreshold: Number.isFinite(safeConfig.hybridLLMThreshold)
+        ? safeConfig.hybridLLMThreshold
+        : 0.55,
+      embeddingFirstMinFileEmbeddings: Number.isFinite(safeConfig.embeddingFirstMinFileEmbeddings)
+        ? safeConfig.embeddingFirstMinFileEmbeddings
+        : 50,
+      maxFeedbackHistory: Number.isFinite(safeConfig.maxFeedbackHistory)
+        ? safeConfig.maxFeedbackHistory
+        : 1000,
+      llmTemperature: Number.isFinite(safeConfig.llmTemperature) ? safeConfig.llmTemperature : 0.7,
+      llmMaxTokens: Number.isFinite(safeConfig.llmMaxTokens) ? safeConfig.llmMaxTokens : 500,
       // Cluster-based organization settings
-      useClusterSuggestions: config.useClusterSuggestions !== false, // Enabled by default
-      clusterBoostFactor: config.clusterBoostFactor || 1.3, // Boost for cluster-consistent suggestions
-      minClusterConfidence: config.minClusterConfidence || 0.5,
-      outlierThreshold: config.outlierThreshold || 0.3, // Below this = outlier
-      ...config
+      useClusterSuggestions: safeConfig.useClusterSuggestions !== false, // Enabled by default
+      clusterBoostFactor: Number.isFinite(safeConfig.clusterBoostFactor)
+        ? safeConfig.clusterBoostFactor
+        : 1.3, // Boost for cluster-consistent suggestions
+      minClusterConfidence: Number.isFinite(safeConfig.minClusterConfidence)
+        ? safeConfig.minClusterConfidence
+        : 0.5,
+      outlierThreshold: Number.isFinite(safeConfig.outlierThreshold)
+        ? safeConfig.outlierThreshold
+        : 0.3, // Below this = outlier
+      enableChromaLearningSync: safeConfig.enableChromaLearningSync === true
     };
 
     // Strategy definitions (from extracted module)
@@ -202,15 +225,23 @@ class OrganizationSuggestionServiceCore {
       maxFeedbackHistory: this.config.maxFeedbackHistory
     });
 
-    // Initialize persistence
+    // Initialize persistence with dual-write support
     this.persistence = new PatternPersistence({
       filename: 'user-patterns.json',
-      saveThrottleMs: 5000
+      saveThrottleMs: 5000,
+      chromaDbService: chromaDbService,
+      enableChromaSync: this.config.enableChromaLearningSync,
+      enableChromaDryRun: this.config.enableChromaLearningDryRun === true,
+      chromaPrimary: this.config.chromaLearningPrimary === true
     });
 
     this.feedbackMemoryStore = new FeedbackMemoryStore({
       filename: 'feedback-memory.json',
-      saveThrottleMs: 5000
+      saveThrottleMs: 5000,
+      chromaDbService: chromaDbService,
+      enableChromaSync: this.config.enableChromaLearningSync,
+      enableChromaDryRun: this.config.enableChromaLearningDryRun === true,
+      chromaPrimary: this.config.chromaLearningPrimary === true
     });
 
     // FIX: CRITICAL - Track loading promise to prevent race condition
@@ -332,12 +363,88 @@ class OrganizationSuggestionServiceCore {
 
     const lowCoverage = fileCount < this.config.embeddingFirstMinFileEmbeddings;
 
+    // FIX GAP-5: Include ChromaDB sync metrics for monitoring
+    const learningSyncMetrics = this._getChromaSyncMetrics();
+
     return {
       available: true,
       reason: lowCoverage ? 'partial_embeddings' : 'healthy_embeddings',
       stats,
       embeddingIndex,
-      lowCoverage
+      lowCoverage,
+      enableChromaLearningSync: this.config.enableChromaLearningSync,
+      enableChromaLearningDryRun: this.config.enableChromaLearningDryRun === true,
+      learningSyncMetrics
+    };
+  }
+
+  /**
+   * Get ChromaDB learning sync metrics for monitoring and debugging
+   * FIX GAP-5: Expose sync success/failure counters for production monitoring
+   *
+   * @returns {Object} Combined metrics from feedback and pattern persistence
+   */
+  _getChromaSyncMetrics() {
+    const emptyMetrics = {
+      jsonWrites: 0,
+      jsonReads: 0,
+      chromaWrites: 0,
+      chromaReads: 0,
+      chromaWriteFailures: 0,
+      chromaReadFailures: 0,
+      migrationRuns: 0,
+      lastSyncAt: null,
+      lastError: null
+    };
+
+    let feedbackMetrics = emptyMetrics;
+    let patternMetrics = emptyMetrics;
+
+    try {
+      if (typeof getFeedbackMetrics === 'function') {
+        feedbackMetrics = getFeedbackMetrics();
+      }
+    } catch (err) {
+      logger.debug('[OrganizationSuggestionService] Feedback metrics unavailable', {
+        error: err?.message
+      });
+    }
+
+    try {
+      if (typeof getPatternMetrics === 'function') {
+        patternMetrics = getPatternMetrics();
+      }
+    } catch (err) {
+      logger.debug('[OrganizationSuggestionService] Pattern metrics unavailable', {
+        error: err?.message
+      });
+    }
+
+    return {
+      feedback: {
+        chromaWrites: feedbackMetrics.chromaWrites,
+        chromaWriteFailures: feedbackMetrics.chromaWriteFailures,
+        chromaReads: feedbackMetrics.chromaReads,
+        chromaReadFailures: feedbackMetrics.chromaReadFailures,
+        jsonWrites: feedbackMetrics.jsonWrites,
+        jsonReads: feedbackMetrics.jsonReads,
+        migrationRuns: feedbackMetrics.migrationRuns,
+        lastSyncAt: feedbackMetrics.lastSyncAt,
+        lastError: feedbackMetrics.lastError
+      },
+      patterns: {
+        chromaWrites: patternMetrics.chromaWrites,
+        chromaWriteFailures: patternMetrics.chromaWriteFailures,
+        chromaReads: patternMetrics.chromaReads,
+        chromaReadFailures: patternMetrics.chromaReadFailures,
+        jsonWrites: patternMetrics.jsonWrites,
+        jsonReads: patternMetrics.jsonReads,
+        migrationRuns: patternMetrics.migrationRuns,
+        lastSyncAt: patternMetrics.lastSyncAt,
+        lastError: patternMetrics.lastError
+      },
+      enabled: this.config.enableChromaLearningSync,
+      dryRun: this.config.enableChromaLearningDryRun === true
     };
   }
 
@@ -640,7 +747,8 @@ class OrganizationSuggestionServiceCore {
       // Apply additional cluster boost to top suggestions
       rankedSuggestions = await this.boostClusterConsistentSuggestions(
         normalizedFile,
-        rankedSuggestions
+        rankedSuggestions,
+        smartFolders
       );
 
       // Apply memory-based adjustments (natural-language feedback)
@@ -745,15 +853,15 @@ class OrganizationSuggestionServiceCore {
         async (file) => {
           try {
             return await withTimeout(
-              async () => {
+              (async () => {
                 const suggestion = await this.getSuggestionsForFile(file, smartFolders, {
                   ...options,
                   routingModeOverride: routing.mode,
                   routingReason: routing.reason
                 });
                 return { file, suggestion };
-              },
-              30000, // 30s timeout per file to prevent batch stall
+              })(),
+              60000, // 60s timeout per file - accounts for semaphore queue wait under load
               `Suggestion analysis for ${file.name}`
             );
           } catch (error) {
@@ -931,10 +1039,17 @@ class OrganizationSuggestionServiceCore {
         this.config.topKSemanticMatches
       );
 
-      // Get analysis confidence (0-100 scale, default to 70 if not available)
+      // Get analysis confidence and normalize to 0-1 scale
+      // LLM responses may return confidence as 0-1 (e.g., 0.8) or 0-100 (e.g., 80)
       // Use it to dampen match scores - unreliable analysis shouldn't drive strong matches
-      const analysisConfidence = file.analysis?.confidence ?? 70;
-      const confidenceMultiplier = analysisConfidence / 100;
+      const rawConfidence = file.analysis?.confidence ?? 70;
+      const normalizedConfidence =
+        typeof rawConfidence === 'number'
+          ? rawConfidence > 1
+            ? rawConfidence / 100
+            : rawConfidence
+          : 0.7;
+      const confidenceMultiplier = Math.max(0, Math.min(1, normalizedConfidence));
 
       const suggestions = [];
       for (const match of matches) {
@@ -959,7 +1074,7 @@ class OrganizationSuggestionServiceCore {
           score: weightedScore,
           confidence: weightedScore,
           baseScore: match.score,
-          analysisConfidence,
+          analysisConfidence: normalizedConfidence,
           description: smartFolder.description || match.description,
           method: 'semantic_embedding',
           isSmartFolder: true
@@ -1009,18 +1124,85 @@ class OrganizationSuggestionServiceCore {
    * Record user feedback
    * @returns {Promise<void>}
    */
-  async recordFeedback(file, suggestion, accepted) {
+  async recordFeedback(file, suggestion, accepted, note) {
     // FIX: Ensure patterns are loaded before modifying them
     // This prevents overwriting patterns that haven't been loaded yet
     await this._ensurePatternsLoaded();
 
+    // FIX CRITICAL: Check for successful load to prevent data loss
+    if (!this._patternsLoadedSuccessfully) {
+      throw new Error(
+        'Cannot record feedback: Pattern storage failed to load. Saving now would overwrite with empty state.'
+      );
+    }
+
     this.patternMatcher.recordFeedback(file, suggestion, accepted);
+    if (accepted) {
+      await this._maybeStoreAutoFeedbackReason(file, suggestion, note);
+    }
     if (suggestion?.note || suggestion?.feedbackNote) {
       logger.debug(
         '[OrganizationSuggestionService] Suggestion contains note field; use recordFeedbackNote.'
       );
     }
     return this._savePatterns();
+  }
+
+  async _maybeStoreAutoFeedbackReason(file, suggestion, note) {
+    if (!file || !suggestion || note) return;
+    const folderLabel = suggestion.folder || suggestion.path;
+    if (!folderLabel) return;
+    if (suggestion.method === 'implicit_feedback') return;
+    if (suggestion.source === 'default' || suggestion.source === 'default_fallback') return;
+
+    await this._ensureFeedbackMemoryLoaded();
+    if (!this.feedbackMemoryStore) return;
+
+    const extension = String(file.extension || '')
+      .replace('.', '')
+      .toLowerCase();
+    const category = String(file.analysis?.category || file.category || 'unknown').toLowerCase();
+    const autoKey = `${extension || 'unknown'}:${category}:${folderLabel.toLowerCase()}`;
+
+    const existing = await this.feedbackMemoryStore.list();
+    if (existing.some((entry) => entry?.autoKey === autoKey)) {
+      return;
+    }
+
+    const summary = generateFileSummary(file);
+    const explanation = suggestion.reasoning || generateExplanation(suggestion, file);
+    const baseSummary = summary || file.name || file.path || 'this file';
+    const text = normalizeText(
+      `Files like "${baseSummary}" belong in "${folderLabel}" because ${explanation || 'this matches your organization preferences'}.`
+    );
+    if (!text) return;
+
+    const entry = await this.addFeedbackMemory(text, {
+      source: 'auto_feedback',
+      targetFolder: folderLabel,
+      scope: { type: 'folder', value: folderLabel }
+    });
+    if (!entry) return;
+
+    const rules = [];
+    if (extension) {
+      rules.push({
+        type: 'extension_to_folder',
+        extension,
+        folder: folderLabel,
+        confidence: 0.7
+      });
+    }
+
+    await this.feedbackMemoryStore.update(
+      entry.id,
+      {
+        autoKey,
+        rules,
+        updatedAt: new Date().toISOString()
+      },
+      { skipChromaSync: true }
+    );
   }
 
   async recordFeedbackNote(file, suggestion, accepted, note) {
@@ -1044,7 +1226,7 @@ class OrganizationSuggestionServiceCore {
     // FIX H-2: Wrap feedbackMemoryStore.add in try-catch to handle storage failures
     let stored;
     try {
-      stored = await this.feedbackMemoryStore.add(entry);
+      stored = await this.feedbackMemoryStore.add(entry, { skipChromaSync: true });
     } catch (storeError) {
       logger.error('[OrganizationSuggestionService] Failed to add feedback memory to store:', {
         error: storeError.message
@@ -1066,7 +1248,11 @@ class OrganizationSuggestionServiceCore {
           document: stored.text
         };
         await this.chromaDb.upsertFeedbackMemory(payload);
-        await this.feedbackMemoryStore.update(stored.id, { embeddingModel: model });
+        await this.feedbackMemoryStore.update(
+          stored.id,
+          { embeddingModel: model },
+          { skipChromaSync: true }
+        );
       } catch (error) {
         if (String(error.message).includes('dimension mismatch')) {
           logger.warn('[OrganizationSuggestionService] Resetting feedback memory collection');
@@ -1083,7 +1269,11 @@ class OrganizationSuggestionServiceCore {
               },
               document: stored.text
             });
-            await this.feedbackMemoryStore.update(stored.id, { embeddingModel: model });
+            await this.feedbackMemoryStore.update(
+              stored.id,
+              { embeddingModel: model },
+              { skipChromaSync: true }
+            );
           } catch (retryError) {
             logger.warn('[OrganizationSuggestionService] Retry upsert failed', {
               error: retryError.message
@@ -1124,14 +1314,18 @@ class OrganizationSuggestionServiceCore {
 
     const { rules, targetFolder } = buildMemoryEntry(normalized, metadata) || {};
     const updatedAt = new Date().toISOString();
-    const updated = await this.feedbackMemoryStore.update(id, {
-      text: normalized,
-      rules: rules || [],
-      targetFolder: metadata.targetFolder || targetFolder || existing.targetFolder || null,
-      scope: metadata.scope || existing.scope,
-      source: metadata.source || existing.source,
-      updatedAt
-    });
+    const updated = await this.feedbackMemoryStore.update(
+      id,
+      {
+        text: normalized,
+        rules: rules || [],
+        targetFolder: metadata.targetFolder || targetFolder || existing.targetFolder || null,
+        scope: metadata.scope || existing.scope,
+        source: metadata.source || existing.source,
+        updatedAt
+      },
+      { skipChromaSync: true }
+    );
 
     if (updated && this.chromaDb && this.folderMatcher) {
       try {
@@ -1146,7 +1340,11 @@ class OrganizationSuggestionServiceCore {
           },
           document: updated.text
         });
-        await this.feedbackMemoryStore.update(updated.id, { embeddingModel: model });
+        await this.feedbackMemoryStore.update(
+          updated.id,
+          { embeddingModel: model },
+          { skipChromaSync: true }
+        );
       } catch (error) {
         if (String(error.message).includes('dimension mismatch')) {
           await this.rebuildFeedbackMemoryEmbeddings();
@@ -1166,7 +1364,7 @@ class OrganizationSuggestionServiceCore {
 
   async deleteFeedbackMemory(id) {
     await this._ensureFeedbackMemoryLoaded();
-    const removed = await this.feedbackMemoryStore.remove(id);
+    const removed = await this.feedbackMemoryStore.remove(id, { skipChromaSync: true });
     if (removed && this.chromaDb) {
       try {
         await this.chromaDb.deleteFeedbackMemory(id);
@@ -1302,7 +1500,11 @@ class OrganizationSuggestionServiceCore {
             },
             document: entry.text
           });
-          await this.feedbackMemoryStore.update(entry.id, { embeddingModel: model });
+          await this.feedbackMemoryStore.update(
+            entry.id,
+            { embeddingModel: model },
+            { skipChromaSync: true }
+          );
         } catch (error) {
           logger.warn('[OrganizationSuggestionService] Failed to rebuild memory entry', {
             id: entry.id,
@@ -1748,13 +1950,13 @@ class OrganizationSuggestionServiceCore {
    * @param {Array} suggestions - Current suggestions
    * @returns {Promise<Array>} Boosted suggestions
    */
-  async boostClusterConsistentSuggestions(file, suggestions) {
+  async boostClusterConsistentSuggestions(file, suggestions, smartFolders = []) {
     if (!this.clustering || !this.config.useClusterSuggestions || suggestions.length === 0) {
       return suggestions;
     }
 
     try {
-      const clusterSuggestions = await this.getClusterBasedSuggestions(file, []);
+      const clusterSuggestions = await this.getClusterBasedSuggestions(file, smartFolders);
 
       if (clusterSuggestions.length === 0) {
         return suggestions;

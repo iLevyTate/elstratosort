@@ -8,10 +8,6 @@
  */
 
 import { useCallback } from 'react';
-import { logger } from '../../../shared/logger';
-
-logger.setContext('DiscoverPhase:FileActions');
-
 /**
  * Custom hook for file action operations
  * @param {Object} options - Hook options
@@ -36,6 +32,10 @@ export function useFileActions({
    */
   const handleFileAction = useCallback(
     async (action, filePath) => {
+      if (!window.electronAPI?.files) {
+        addNotification('File operations unavailable', 'error', 3000, 'file-actions');
+        return;
+      }
       try {
         switch (action) {
           case 'open':

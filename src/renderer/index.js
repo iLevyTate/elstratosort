@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { Provider } from 'react-redux';
-import { logger } from '../shared/logger';
+import { createLogger } from '../shared/logger';
 import store from './store';
 import { fetchDocumentsPath, fetchRedactPaths } from './store/slices/systemSlice';
 import { fetchSmartFolders, setOrganizedFiles } from './store/slices/filesSlice';
@@ -18,6 +18,9 @@ store.dispatch(fetchRedactPaths());
 // This overrides potentially stale data from localStorage
 store.dispatch(fetchSmartFolders(true));
 store.dispatch(fetchSettings(true));
+
+// Set logger context for renderer entry point (must be before repairOrganizedHistory)
+const logger = createLogger('Renderer');
 
 const HISTORY_REPAIR_KEY = 'stratosort_history_repair_done';
 
@@ -82,8 +85,33 @@ repairOrganizedHistory();
 // Add platform class to body for OS-specific styling hooks
 applyPlatformClass();
 
-// Set logger context for renderer entry point
-logger.setContext('Renderer');
+// Detect flex gap support and add class for CSS fallback spacing
+function applyFlexGapSupportClass() {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  if (!document.body) {
+    window.addEventListener('DOMContentLoaded', applyFlexGapSupportClass, { once: true });
+    return;
+  }
+
+  const flex = document.createElement('div');
+  flex.style.display = 'flex';
+  flex.style.flexDirection = 'column';
+  flex.style.rowGap = '1px';
+  flex.style.position = 'absolute';
+  flex.style.visibility = 'hidden';
+  flex.appendChild(document.createElement('div'));
+  flex.appendChild(document.createElement('div'));
+  document.body.appendChild(flex);
+
+  const isSupported = flex.scrollHeight === 1;
+  document.body.removeChild(flex);
+
+  root.classList.toggle('no-flex-gap', !isSupported);
+  root.classList.toggle('has-flex-gap', isSupported);
+}
+
+applyFlexGapSupportClass();
 
 // FIX: Use named functions and track handler references for proper HMR cleanup
 // Store handlers in a module-level object for reliable cleanup
@@ -269,6 +297,7 @@ function removeSplashScreen() {
 
   // Add fade-out animation
   initialLoading.style.transition = 'opacity 0.3s ease-out';
+  initialLoading.style.pointerEvents = 'none';
   initialLoading.style.opacity = '0';
 
   // Remove after animation completes

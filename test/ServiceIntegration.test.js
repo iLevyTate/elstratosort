@@ -76,7 +76,7 @@ jest.mock('../src/main/services/EmbeddingCache', () => {
 });
 
 jest.mock('../src/main/services/SettingsService', () => ({
-  getService: jest.fn().mockReturnValue({})
+  getInstance: jest.fn().mockReturnValue({ getAll: jest.fn().mockReturnValue({}) })
 }));
 
 jest.mock('../src/main/services/SmartFolderWatcher', () => {
@@ -88,6 +88,70 @@ jest.mock('../src/main/services/SmartFolderWatcher', () => {
     isRunning: false
   }));
 });
+
+jest.mock('../src/main/services/NotificationService', () => {
+  return jest.fn().mockImplementation(() => ({}));
+});
+
+jest.mock('../src/main/services/ModelManager', () => ({
+  registerWithContainer: jest.fn((container, serviceId) => {
+    container.registerSingleton(serviceId, () => ({}));
+  })
+}));
+
+jest.mock('../src/main/services/AnalysisCacheService', () => ({
+  registerWithContainer: jest.fn((container, serviceId) => {
+    container.registerSingleton(serviceId, () => ({}));
+  })
+}));
+
+jest.mock('../src/main/services/FileAccessPolicy', () => ({
+  registerWithContainer: jest.fn((container, serviceId) => {
+    container.registerSingleton(serviceId, () => ({}));
+  })
+}));
+
+jest.mock('../src/main/services/DependencyManagerService', () => ({
+  registerWithContainer: jest.fn((container, serviceId) => {
+    container.registerSingleton(serviceId, () => ({}));
+  })
+}));
+
+jest.mock('../src/main/services/SearchService', () => ({
+  SearchService: jest.fn().mockImplementation(() => ({}))
+}));
+
+jest.mock('../src/main/services/DownloadWatcher', () => {
+  return jest.fn().mockImplementation(() => ({}));
+});
+
+jest.mock('../src/main/services/RelationshipIndexService', () => {
+  return jest.fn().mockImplementation(() => ({}));
+});
+
+jest.mock('../src/main/services/ClusteringService', () => ({
+  ClusteringService: jest.fn().mockImplementation(() => ({}))
+}));
+
+jest.mock('../src/main/services/FilePathCoordinator', () => ({
+  FilePathCoordinator: jest.fn().mockImplementation(() => ({
+    setServices: jest.fn()
+  }))
+}));
+
+jest.mock('../src/main/services/organization/learningFeedback', () => ({
+  LearningFeedbackService: jest.fn().mockImplementation(() => ({}))
+}));
+
+jest.mock('../src/shared/cacheInvalidation', () => ({
+  getInstance: jest.fn().mockReturnValue({})
+}));
+
+jest.mock('../src/main/analysis/embeddingQueue', () => ({}));
+
+jest.mock('../src/shared/pathSanitization', () => ({
+  getCanonicalFileId: jest.fn((p) => p)
+}));
 
 // Store mockServices outside so we can reset it
 let mockServices = new Map();
@@ -101,6 +165,13 @@ jest.mock('../src/main/services/ServiceContainer', () => {
         return factory(createResolver());
       }
       return { initialize: jest.fn().mockResolvedValue() };
+    },
+    tryResolve: (depId) => {
+      const factory = mockServices.get(depId);
+      if (factory) {
+        return factory(createResolver());
+      }
+      return null;
     }
   });
   return {
@@ -134,8 +205,39 @@ jest.mock('../src/main/services/ServiceContainer', () => {
       OLLAMA_CLIENT: 'ollamaClient',
       OLLAMA_SERVICE: 'ollamaService',
       EMBEDDING_CACHE: 'embeddingCache',
-      PARALLEL_EMBEDDING: 'parallelEmbedding'
-    }
+      PARALLEL_EMBEDDING: 'parallelEmbedding',
+      RELATIONSHIP_INDEX: 'relationshipIndex',
+      CLUSTERING: 'clustering',
+      LEARNING_FEEDBACK: 'learningFeedback',
+      NOTIFICATION_SERVICE: 'notificationService',
+      MODEL_MANAGER: 'modelManager',
+      ANALYSIS_CACHE: 'analysisCache',
+      FILE_ACCESS_POLICY: 'fileAccessPolicy',
+      CACHE_INVALIDATION_BUS: 'cacheInvalidationBus',
+      FILE_PATH_COORDINATOR: 'filePathCoordinator',
+      SMART_FOLDER_WATCHER: 'smartFolderWatcher',
+      DOWNLOAD_WATCHER: 'downloadWatcher',
+      DEPENDENCY_MANAGER: 'dependencyManager',
+      SEARCH_SERVICE: 'searchService'
+    },
+    SHUTDOWN_ORDER: [
+      'relationshipIndex',
+      'learningFeedback',
+      'folderMatching',
+      'clustering',
+      'autoOrganize',
+      'organizationSuggestion',
+      'notificationService',
+      'processingState',
+      'undoRedo',
+      'analysisHistory',
+      'parallelEmbedding',
+      'embeddingCache',
+      'chromaDb',
+      'ollamaService',
+      'ollamaClient',
+      'settings'
+    ]
   };
 });
 
@@ -155,6 +257,30 @@ describe('ServiceIntegration', () => {
     ServiceIntegration = module.ServiceIntegration || module;
     container = module.container;
     ServiceIds = module.ServiceIds;
+
+    // Restore mock implementations after clearAllMocks resets them
+    const createResolver = () => ({
+      resolve: (depId) => {
+        const factory = mockServices.get(depId);
+        if (factory) return factory(createResolver());
+        return { initialize: jest.fn().mockResolvedValue() };
+      },
+      tryResolve: (depId) => {
+        const factory = mockServices.get(depId);
+        if (factory) return factory(createResolver());
+        return null;
+      }
+    });
+    container.registerSingleton.mockImplementation((id, factory) => {
+      mockServices.set(id, factory);
+    });
+    container.resolve.mockImplementation((id) => {
+      const factory = mockServices.get(id);
+      if (factory) return factory(createResolver());
+      return { initialize: jest.fn().mockResolvedValue() };
+    });
+    container.has.mockImplementation((id) => mockServices.has(id));
+    container.shutdown.mockResolvedValue();
   });
 
   describe('constructor', () => {

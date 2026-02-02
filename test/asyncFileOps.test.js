@@ -34,15 +34,16 @@ jest.mock('fs', () => {
   };
 });
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
     debug: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 jest.mock('../src/shared/atomicFileOperations', () => ({
   crossDeviceMove: jest.fn()

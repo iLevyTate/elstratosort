@@ -121,7 +121,7 @@ const CONFIG_SCHEMA = {
       type: 'string',
       default: DEFAULT_AI_MODELS.EMBEDDING,
       envVar: 'OLLAMA_EMBEDDING_MODEL',
-      description: 'Ollama model for generating embeddings (768 dims)',
+      description: 'Ollama model for generating embeddings (1024 dims for mxbai-embed-large)',
       pattern: /^[a-zA-Z0-9][a-zA-Z0-9\-_.:/]*$/
     },
     /** Fallback models list */
@@ -228,7 +228,7 @@ const CONFIG_SCHEMA = {
     /** Embedding vector dimension (model-dependent: 768 for embeddinggemma, 1024 for mxbai-embed-large) */
     embeddingDimension: {
       type: 'number',
-      default: AI_DEFAULTS?.EMBEDDING?.DIMENSIONS ?? 768,
+      default: AI_DEFAULTS?.EMBEDDING?.DIMENSIONS ?? 1024,
       min: 128,
       max: 4096,
       description: 'Embedding vector dimension for current model'

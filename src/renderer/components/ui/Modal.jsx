@@ -1,11 +1,18 @@
-import React, { useEffect, useRef, memo, useState, useCallback } from 'react';
+import React, { useEffect, useRef, memo, useState, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
 import PropTypes from 'prop-types';
 import { X, AlertTriangle, Info, HelpCircle, FileText } from 'lucide-react';
 import IconButton from './IconButton';
 import Button from './Button';
-import { Heading } from './Typography';
+import { Heading, Text } from './Typography';
 import { logger } from '../../../shared/logger';
+import { lockAppScroll, unlockAppScroll } from '../../utils/scrollLock';
+
+// Animation durations in ms
+const ANIMATION = {
+  ENTER: 200,
+  EXIT: 150
+};
 
 const SIZES = {
   sm: 'max-w-md',
@@ -43,10 +50,54 @@ const Modal = memo(function Modal({
 }) {
   const modalRef = useRef(null);
   const previousFocusRef = useRef(null);
+  const focusTimerRef = useRef(null);
+  const closingTimerRef = useRef(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
+  const instanceId = useId();
+  const titleId = `modal-title-${instanceId}`;
+  const descriptionId = `modal-description-${instanceId}`;
+
+  // Handle open/close with animation
+  // Timer is stored in a ref to avoid being canceled by effect cleanup
+  // when setIsClosing(true) triggers a dependency-driven re-run.
+  useEffect(() => {
+    if (isOpen && !isVisible && !isClosing) {
+      if (closingTimerRef.current) {
+        clearTimeout(closingTimerRef.current);
+        closingTimerRef.current = null;
+      }
+      setIsVisible(true);
+    } else if (isOpen && isClosing) {
+      // Re-opened while closing - cancel close animation
+      if (closingTimerRef.current) {
+        clearTimeout(closingTimerRef.current);
+        closingTimerRef.current = null;
+      }
+      setIsClosing(false);
+    } else if (!isOpen && isVisible && !isClosing) {
+      // Start closing animation
+      setIsClosing(true);
+      closingTimerRef.current = setTimeout(() => {
+        closingTimerRef.current = null;
+        setIsVisible(false);
+        setIsClosing(false);
+      }, ANIMATION.EXIT);
+    }
+  }, [isOpen, isVisible, isClosing]);
+
+  // Clean up closing timer on unmount
+  useEffect(() => {
+    return () => {
+      if (closingTimerRef.current) {
+        clearTimeout(closingTimerRef.current);
+      }
+    };
+  }, []);
 
   // Handle ESC key
   useEffect(() => {
-    if (!isOpen || !closeOnEsc) return;
+    if (!isVisible || !closeOnEsc) return;
 
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
@@ -56,18 +107,17 @@ const Modal = memo(function Modal({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, closeOnEsc, onClose]);
+  }, [isVisible, closeOnEsc, onClose]);
 
   // Focus management
   useEffect(() => {
-    if (isOpen) {
+    if (isVisible && !isClosing) {
       previousFocusRef.current = document.activeElement;
-      // Small timeout to ensure render is complete
-      setTimeout(() => {
+      // Small timeout to ensure render is complete - store ref for cleanup
+      focusTimerRef.current = setTimeout(() => {
         if (initialFocusRef?.current) {
           initialFocusRef.current.focus();
         } else if (modalRef.current) {
-          // Find first focusable element or focus the modal itself
           const focusable = modalRef.current.querySelectorAll(
             'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
           );
@@ -78,27 +128,32 @@ const Modal = memo(function Modal({
           }
         }
       }, 50);
-    } else {
-      // Restore focus
+    } else if (!isVisible) {
       if (previousFocusRef.current) {
         previousFocusRef.current.focus();
       }
     }
-  }, [isOpen, initialFocusRef]);
-
-  // Lock body scroll
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
     return () => {
-      document.body.style.overflow = '';
+      if (focusTimerRef.current) {
+        clearTimeout(focusTimerRef.current);
+        focusTimerRef.current = null;
+      }
     };
-  }, [isOpen]);
+  }, [isVisible, isClosing, initialFocusRef]);
 
-  if (!isOpen) return null;
+  // Lock scroll on the actual app scroller (main-content) and body as fallback
+  useEffect(() => {
+    if (!isVisible) return undefined;
+
+    const lockId = `modal-${instanceId}`;
+    lockAppScroll(lockId);
+
+    return () => {
+      unlockAppScroll(lockId);
+    };
+  }, [isVisible, instanceId]);
+
+  if (!isVisible) return null;
 
   const variantStyles = VARIANTS[variant] || VARIANTS.default;
   const sizeClass = SIZES[size] || SIZES.md;
@@ -109,19 +164,22 @@ const Modal = memo(function Modal({
   const overlayPaddingTop = 'calc(var(--app-nav-height) + 1rem)';
   const overlayPaddingBottom = '1.5rem';
 
+  const backdropAnimation = isClosing ? 'animate-modal-backdrop-exit' : 'animate-modal-backdrop';
+  const panelAnimation = isClosing ? 'animate-modal-exit' : 'animate-modal-enter';
+
   const content = (
     <div
       className="fixed inset-0 z-modal flex items-center justify-center p-4 sm:p-6"
       style={{ paddingTop: overlayPaddingTop, paddingBottom: overlayPaddingBottom }}
       role="dialog"
       aria-modal="true"
-      aria-labelledby="modal-title"
-      aria-describedby={description ? 'modal-description' : undefined}
+      aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
     >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-modal-backdrop transition-opacity"
-        onClick={closeOnOverlayClick ? onClose : undefined}
+        className={`absolute inset-0 bg-black/40 backdrop-blur-sm ${backdropAnimation}`}
+        onClick={closeOnOverlayClick && !isClosing ? onClose : undefined}
         aria-hidden="true"
       />
 
@@ -132,7 +190,7 @@ const Modal = memo(function Modal({
           relative w-full ${sizeClass} ${panelMaxHeight} ${
             size === 'full' ? 'h-[calc(100vh-var(--app-nav-height)-1rem)]' : ''
           } bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden
-          animate-modal-enter transform transition-all
+          ${panelAnimation}
         `}
         tabIndex={-1}
       >
@@ -141,13 +199,13 @@ const Modal = memo(function Modal({
           className={`flex items-center justify-between px-6 py-4 ${variantStyles.header} shrink-0`}
         >
           <div>
-            <Heading as="h3" variant="h4" id="modal-title" className={variantStyles.title}>
+            <Heading as="h3" variant="h4" id={titleId} className={variantStyles.title}>
               {title}
             </Heading>
             {description && (
-              <p id="modal-description" className="mt-1 text-sm text-system-gray-500">
+              <Text id={descriptionId} variant="small" className="mt-1 text-system-gray-500">
                 {description}
-              </p>
+              </Text>
             )}
           </div>
           <IconButton

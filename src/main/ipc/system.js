@@ -123,11 +123,20 @@ function registerSystemIpc(servicesOrParams) {
     createHandler({
       logger,
       context,
-      handler: async (_event, path) => {
+      handler: async (_event, configPath) => {
         try {
+          // FIX 86: Validate input and block access to sensitive config keys
+          if (typeof configPath !== 'string' || configPath.length === 0) {
+            return createErrorResponse({ message: 'Config path must be a non-empty string' });
+          }
+          const { SENSITIVE_KEYS } = require('../../shared/config/configSchema');
+          const pathLower = configPath.toLowerCase();
+          if (SENSITIVE_KEYS.some((key) => pathLower.includes(key.toLowerCase()))) {
+            return createErrorResponse({ message: 'Cannot access sensitive configuration values' });
+          }
           const { get: getConfig } = require('../../shared/config/index');
-          const value = getConfig(path);
-          return { success: true, path, value };
+          const value = getConfig(configPath);
+          return { success: true, path: configPath, value };
         } catch (error) {
           logger.error('Failed to get config value:', error);
           return createErrorResponse(error);

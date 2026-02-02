@@ -2,10 +2,9 @@ import React, { useEffect, useId, useState, useCallback, useMemo, memo } from 'r
 import PropTypes from 'prop-types';
 import { ChevronRight } from 'lucide-react';
 import { Heading, Text } from './Typography';
-import { logger } from '../../../shared/logger';
+import { createLogger } from '../../../shared/logger';
 
-logger.setContext('Collapsible');
-
+const logger = createLogger('Collapsible');
 const Collapsible = memo(function Collapsible({
   title,
   children,

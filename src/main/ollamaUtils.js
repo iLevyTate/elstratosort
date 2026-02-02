@@ -1,5 +1,5 @@
 const { Ollama } = require('ollama');
-const { logger } = require('../shared/logger');
+const { createLogger } = require('../shared/logger');
 const { SERVICE_URLS } = require('../shared/configDefaults');
 const { normalizeServiceUrl } = require('../shared/urlUtils');
 // Import deduplicator to clear zombie promises when HTTP agent is destroyed
@@ -14,8 +14,7 @@ function getSettings() {
 }
 
 // Optional: set context for clearer log origins
-logger.setContext('ollama-utils');
-
+const logger = createLogger('ollama-utils');
 let ollamaInstance = null;
 let ollamaHost = SERVICE_URLS.OLLAMA_HOST;
 let ollamaInstanceHost = null; // MEDIUM PRIORITY FIX (MED-13): Track host used to create instance
@@ -192,13 +191,17 @@ async function setOllamaHost(host, shouldSave = true, options = {}) {
 
     // FIX: Validate connection BEFORE committing change (unless skipValidation)
     if (!skipValidation) {
+      let timeoutId;
       try {
         // Create temporary client to test connection
         const testOllama = new Ollama({ host: normalizedHost });
         const testPromise = testOllama.list();
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Connection test timeout')), validationTimeout)
-        );
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error('Connection test timeout')),
+            validationTimeout
+          );
+        });
 
         await Promise.race([testPromise, timeoutPromise]);
         logger.info('[OLLAMA] Connection validated for host:', normalizedHost);
@@ -211,6 +214,9 @@ async function setOllamaHost(host, shouldSave = true, options = {}) {
           error: `Connection test failed: ${validationError.message}`,
           host: normalizedHost
         };
+      } finally {
+        // FIX 80: Clear timeout to prevent timer leak when testPromise wins the race
+        if (timeoutId) clearTimeout(timeoutId);
       }
     }
 

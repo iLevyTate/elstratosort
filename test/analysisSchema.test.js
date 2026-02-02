@@ -11,6 +11,7 @@ describe('Extended Analysis Schema', () => {
     expect(ANALYSIS_SCHEMA_PROMPT).toHaveProperty('purpose');
     expect(ANALYSIS_SCHEMA_PROMPT).toHaveProperty('summary');
     expect(ANALYSIS_SCHEMA_PROMPT).toHaveProperty('keywords');
+    expect(ANALYSIS_SCHEMA_PROMPT).toHaveProperty('keyEntities');
     expect(ANALYSIS_SCHEMA_PROMPT).toHaveProperty('confidence');
     expect(ANALYSIS_SCHEMA_PROMPT).toHaveProperty('suggestedName');
   });
@@ -25,6 +26,7 @@ describe('Extended Analysis Schema', () => {
       purpose: null,
       summary: '',
       keywords: [],
+      keyEntities: [],
       confidence: 0,
       suggestedName: null,
       reasoning: null

@@ -6,15 +6,16 @@
 import { renderHook, act } from '@testing-library/react';
 
 // Mock dependencies
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 jest.mock('../src/shared/constants', () => ({
   ...jest.requireActual('../src/shared/constants')
@@ -386,8 +387,10 @@ describe('useFileHandlers', () => {
       });
 
       // File should have extension set
-      const setFilesCall = mockSetSelectedFiles.mock.calls[0][0];
-      expect(setFilesCall[0].extension).toBe('.pdf');
+      // setSelectedFiles is now called with a functional updater
+      const updater = mockSetSelectedFiles.mock.calls[0][0];
+      const setFilesResult = typeof updater === 'function' ? updater([]) : updater;
+      expect(setFilesResult[0].extension).toBe('.pdf');
     });
 
     test('expands dropped directories and analyzes contained files', async () => {

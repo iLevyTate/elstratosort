@@ -11,15 +11,16 @@ jest.mock('electron', () => ({
 }));
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock fs
 jest.mock('fs', () => ({
@@ -601,6 +602,20 @@ describe('OrganizationSuggestionServiceCore', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(mockPersistence.save).toHaveBeenCalled();
+    });
+
+    test('rejects feedback when patterns failed to load to avoid overwriting disk state', async () => {
+      // Simulate a failed pattern load
+      service._patternsLoaded = true;
+      service._patternsLoadedSuccessfully = false;
+      service._loadingPatterns = null;
+      service._loadPatternsAsync = jest.fn().mockResolvedValue();
+
+      await expect(service.recordFeedback({ name: 'a' }, { folder: 'Docs' }, true)).rejects.toThrow(
+        'Pattern storage failed to load'
+      );
+      expect(service._loadPatternsAsync).toHaveBeenCalled();
+      expect(mockPatternMatcher.recordFeedback).not.toHaveBeenCalled();
     });
   });
 

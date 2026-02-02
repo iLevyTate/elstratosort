@@ -7,7 +7,7 @@
  * @module services/organization/llmSuggester
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { TIMEOUTS } = require('../../../shared/performanceConstants');
 const { withAbortableTimeout } = require('../../../shared/promiseUtils');
 const { AI_DEFAULTS } = require('../../../shared/constants');
@@ -16,8 +16,7 @@ const { buildOllamaOptions } = require('../PerformanceService');
 const { globalDeduplicator } = require('../../utils/llmOptimization');
 const { extractAndParseJSON } = require('../../utils/jsonRepair');
 
-logger.setContext('Organization:LLMSuggester');
-
+const logger = createLogger('Organization:LLMSuggester');
 // Security limits
 const MAX_RESPONSE_SIZE = 1024 * 1024; // 1MB
 
@@ -137,14 +136,19 @@ Return JSON: {
         }
         return true;
       })
-      .map((s) => ({
-        folder: String(s.folder).trim(),
-        score: s.confidence || 0.5,
-        confidence: s.confidence || 0.5,
-        reasoning: s.reasoning,
-        strategy: s.strategy,
-        method: 'llm_creative'
-      }));
+      .map((s) => {
+        const rawConf = typeof s.confidence === 'number' ? s.confidence : 0.5;
+        const normalizedConf = rawConf > 1 ? rawConf / 100 : rawConf;
+        const clampedConf = Math.max(0, Math.min(1, normalizedConf));
+        return {
+          folder: String(s.folder).trim(),
+          score: clampedConf,
+          confidence: clampedConf,
+          reasoning: s.reasoning,
+          strategy: s.strategy,
+          method: 'llm_creative'
+        };
+      });
   } catch (error) {
     logger.warn('[LLMSuggester] LLM suggestions failed:', error.message);
     return [];

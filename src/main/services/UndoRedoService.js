@@ -2,13 +2,12 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { app } = require('electron');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { normalizePathForIndex } = require('../../shared/pathSanitization');
 const { RETRY } = require('../../shared/performanceConstants');
 const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 
-logger.setContext('UndoRedoService');
-
+const logger = createLogger('UndoRedoService');
 const normalizePath = (filePath) => {
   if (typeof filePath !== 'string') return filePath;
   return path.resolve(filePath);
@@ -55,6 +54,9 @@ class UndoRedoService {
     this.currentIndex = -1; // Points to the last executed action
     this.initialized = false;
     this.currentMemoryEstimate = 0; // Track estimated memory usage
+
+    // Promise-based mutex to serialize undo/redo/recordAction operations
+    this._mutex = Promise.resolve();
   }
 
   async ensureParentDirectory(filePath) {
@@ -128,7 +130,15 @@ class UndoRedoService {
    */
   _estimateActionSize(action) {
     // Rough estimate: JSON.stringify length * 2 (for UTF-16 encoding)
-    return JSON.stringify(action).length * 2;
+    // FIX Bug 24: Use try/catch to handle potential circular references in action objects.
+    // Actions may contain service references or error objects with cause chains.
+    try {
+      return JSON.stringify(action).length * 2;
+    } catch {
+      // Fallback: estimate based on the action's top-level keys
+      // This is a rough heuristic but prevents crashes on circular data
+      return 1024;
+    }
   }
 
   /**
@@ -181,7 +191,30 @@ class UndoRedoService {
     }
   }
 
+  /**
+   * Promise-based mutex to serialize async operations that modify shared state.
+   * Prevents race conditions when undo/redo/recordAction are called concurrently.
+   * @private
+   */
+  async _withMutex(fn) {
+    const prev = this._mutex;
+    let resolve;
+    this._mutex = new Promise((r) => {
+      resolve = r;
+    });
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      resolve();
+    }
+  }
+
   async recordAction(actionType, actionData) {
+    return this._withMutex(() => this._doRecordAction(actionType, actionData));
+  }
+
+  async _doRecordAction(actionType, actionData) {
     await this.initialize();
 
     // Fixed: Limit batch operation sizes to prevent memory issues
@@ -193,7 +226,7 @@ class UndoRedoService {
       logger.warn(
         `[UndoRedoService] Batch operation has ${actionData.operations.length} items, limiting to ${this.maxBatchSize}`
       );
-      actionData.operations = actionData.operations.slice(0, this.maxBatchSize);
+      actionData = { ...actionData, operations: actionData.operations.slice(0, this.maxBatchSize) };
     }
 
     const action = {
@@ -305,6 +338,10 @@ class UndoRedoService {
   }
 
   async undo() {
+    return this._withMutex(() => this._doUndo());
+  }
+
+  async _doUndo() {
     await this.initialize();
 
     if (!this.canUndo()) {
@@ -318,6 +355,8 @@ class UndoRedoService {
       delete action._operationResults;
 
       await this.executeReverseAction(action);
+      const operationResults = action._operationResults;
+      delete action._operationResults;
       this.currentIndex--;
       await this.saveActions();
 
@@ -334,10 +373,10 @@ class UndoRedoService {
       };
 
       // Include operation results for batch operations (for UI state updates)
-      if (action._operationResults) {
-        response.results = action._operationResults;
-        response.successCount = action._operationResults.filter((r) => r.success).length;
-        response.failCount = action._operationResults.filter((r) => !r.success).length;
+      if (operationResults) {
+        response.results = operationResults;
+        response.successCount = operationResults.filter((r) => r.success).length;
+        response.failCount = operationResults.filter((r) => !r.success).length;
         // Include original operation data for state reconstruction
         response.operations = action.data?.operations || [];
       }
@@ -352,6 +391,10 @@ class UndoRedoService {
   }
 
   async redo() {
+    return this._withMutex(() => this._doRedo());
+  }
+
+  async _doRedo() {
     await this.initialize();
 
     if (!this.canRedo()) {
@@ -365,6 +408,8 @@ class UndoRedoService {
       delete action._operationResults;
 
       await this.executeForwardAction(action);
+      const operationResults = action._operationResults;
+      delete action._operationResults;
       this.currentIndex++;
       await this.saveActions();
 
@@ -381,10 +426,10 @@ class UndoRedoService {
       };
 
       // Include operation results for batch operations (for UI state updates)
-      if (action._operationResults) {
-        response.results = action._operationResults;
-        response.successCount = action._operationResults.filter((r) => r.success).length;
-        response.failCount = action._operationResults.filter((r) => !r.success).length;
+      if (operationResults) {
+        response.results = operationResults;
+        response.successCount = operationResults.filter((r) => r.success).length;
+        response.failCount = operationResults.filter((r) => !r.success).length;
         // Include original operation data for state reconstruction
         response.operations = action.data?.operations || [];
       }
@@ -974,6 +1019,31 @@ class UndoRedoService {
       timestamp: action.timestamp,
       type: action.type
     }));
+  }
+
+  /**
+   * Get the full undo/redo state for UI synchronization
+   * @returns {Object} Full state including stack and pointer
+   */
+  getFullState() {
+    return {
+      stack: this.actions.map((action) => ({
+        id: action.id,
+        description: action.description,
+        timestamp: action.timestamp,
+        type: action.type,
+        metadata: action.data
+          ? {
+              source: action.data.originalPath,
+              destination: action.data.newPath,
+              operationCount: action.data.operations?.length
+            }
+          : {}
+      })),
+      pointer: this.currentIndex,
+      canUndo: this.canUndo(),
+      canRedo: this.canRedo()
+    };
   }
 
   async clearHistory() {

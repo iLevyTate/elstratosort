@@ -15,10 +15,9 @@
 
 const { buildOllamaOptions } = require('../services/PerformanceService');
 const { generateWithRetry } = require('./ollamaApiRetry');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('OllamaJsonRepair');
-
+const logger = createLogger('OllamaJsonRepair');
 /**
  * Maximum characters to send to LLM for JSON repair
  * Prevents excessive token usage on large malformed responses

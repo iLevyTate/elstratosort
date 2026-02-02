@@ -5,15 +5,16 @@
  */
 
 // Mock logger before requiring the service
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock performance constants
 jest.mock('../src/shared/performanceConstants', () => ({
@@ -77,9 +78,10 @@ describe('ReRankerService', () => {
     jest.resetModules();
     jest.useFakeTimers();
 
-    // Create mock Ollama service with generate method
+    // Create mock Ollama service with analyzeText method
     mockOllamaService = {
-      generate: jest.fn().mockResolvedValue({
+      analyzeText: jest.fn().mockResolvedValue({
+        success: true,
         response: '8'
       })
     };
@@ -165,7 +167,7 @@ describe('ReRankerService', () => {
 
     test('re-ranks candidates by LLM score', async () => {
       // Make doc3 score highest
-      mockOllamaService.generate
+      mockOllamaService.analyzeText
         .mockResolvedValueOnce({ response: '5' }) // doc1: 0.5
         .mockResolvedValueOnce({ response: '3' }) // doc2: 0.3
         .mockResolvedValueOnce({ response: '9' }) // doc3: 0.9
@@ -186,7 +188,7 @@ describe('ReRankerService', () => {
       await service.rerank('vacation', manyResults, { topN: 3 });
 
       // Should only call LLM 3 times (topN = 3)
-      expect(mockOllamaService.generate).toHaveBeenCalledTimes(3);
+      expect(mockOllamaService.analyzeText).toHaveBeenCalledTimes(3);
     });
 
     test('preserves non-reranked results', async () => {
@@ -198,7 +200,7 @@ describe('ReRankerService', () => {
         { id: 'r5', score: 0.5, metadata: { name: 'r5.txt' } }
       ];
 
-      mockOllamaService.generate
+      mockOllamaService.analyzeText
         .mockResolvedValueOnce({ response: '5' })
         .mockResolvedValueOnce({ response: '8' });
 
@@ -226,7 +228,7 @@ describe('ReRankerService', () => {
       await service.rerank('test', manyResults);
 
       // Should call LLM 10 times (default topN)
-      expect(mockOllamaService.generate).toHaveBeenCalledTimes(10);
+      expect(mockOllamaService.analyzeText).toHaveBeenCalledTimes(10);
     });
 
     test('updates statistics after reranking', async () => {
@@ -237,7 +239,7 @@ describe('ReRankerService', () => {
     });
 
     test('handles LLM errors with fallback score', async () => {
-      mockOllamaService.generate
+      mockOllamaService.analyzeText
         .mockResolvedValueOnce({ response: '8' })
         .mockRejectedValueOnce(new Error('LLM unavailable'));
 
@@ -281,11 +283,11 @@ describe('ReRankerService', () => {
 
       // First call
       await service.rerank('vacation', [result], { topN: 1 });
-      expect(mockOllamaService.generate).toHaveBeenCalledTimes(1);
+      expect(mockOllamaService.analyzeText).toHaveBeenCalledTimes(1);
 
       // Second call - should use cache
       await service.rerank('vacation', [result], { topN: 1 });
-      expect(mockOllamaService.generate).toHaveBeenCalledTimes(1); // No new call
+      expect(mockOllamaService.analyzeText).toHaveBeenCalledTimes(1); // No new call
       expect(service.stats.cacheHits).toBe(1);
     });
 
@@ -301,14 +303,14 @@ describe('ReRankerService', () => {
 
       // First call
       await shortTtlService.rerank('vacation', [result], { topN: 1 });
-      expect(mockOllamaService.generate).toHaveBeenCalledTimes(1);
+      expect(mockOllamaService.analyzeText).toHaveBeenCalledTimes(1);
 
       // Advance time past cache TTL
       jest.advanceTimersByTime(2000);
 
       // Second call - cache expired
       await shortTtlService.rerank('vacation', [result], { topN: 1 });
-      expect(mockOllamaService.generate).toHaveBeenCalledTimes(2);
+      expect(mockOllamaService.analyzeText).toHaveBeenCalledTimes(2);
 
       // Cleanup
       await shortTtlService.cleanup();
@@ -376,7 +378,7 @@ describe('ReRankerService', () => {
       ];
 
       // LLM correctly identifies vacation photos as most relevant
-      mockOllamaService.generate
+      mockOllamaService.analyzeText
         .mockResolvedValueOnce({ response: '2' }) // budget: low
         .mockResolvedValueOnce({ response: '10' }) // vacation: perfect match
         .mockResolvedValueOnce({ response: '1' }); // meeting: low

@@ -11,6 +11,7 @@
  * @module analysis/fallbackUtils
  */
 
+const path = require('path');
 // Use shared semantic extension mapping
 const {
   getSemanticExtensionScore,
@@ -593,7 +594,7 @@ function createFallbackAnalysis(params) {
 
   const result = {
     purpose,
-    project: fileName.replace(fileExtension, ''),
+    project: path.basename(fileName, fileExtension),
     category,
     date,
     keywords: intelligentKeywords || [],

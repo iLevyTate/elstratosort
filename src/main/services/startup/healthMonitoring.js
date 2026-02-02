@@ -8,7 +8,7 @@
  */
 
 const axios = require('axios');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { TIMEOUTS } = require('../../../shared/performanceConstants');
 const { getValidatedOllamaHost } = require('../../../shared/configDefaults');
 const { axiosWithRetry } = require('../../utils/ollamaApiRetry');
@@ -18,8 +18,7 @@ const { checkOllamaHealth } = require('./ollamaService');
 const { container, ServiceIds } = require('../ServiceContainer');
 const { withTimeout } = require('../../../shared/promiseUtils');
 
-logger.setContext('StartupManager:Health');
-
+const logger = createLogger('StartupManager:Health');
 // Circuit breaker recovery window - same as global analysis timeout
 const CIRCUIT_BREAKER_RECOVERY_WINDOW = TIMEOUTS.GLOBAL_ANALYSIS;
 

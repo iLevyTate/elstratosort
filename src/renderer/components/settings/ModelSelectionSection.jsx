@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { AlertTriangle, Database, Info, FileText } from 'lucide-react';
 import Select from '../ui/Select';
@@ -36,18 +36,12 @@ function ModelSelectionSection({
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [stats, setStats] = useState(null);
   const [isRebuilding, setIsRebuilding] = useState(false);
-  const didMountRef = useRef(false);
-
   useEffect(() => {
-    if (!didMountRef.current) {
-      didMountRef.current = true;
-      if (window.electronAPI?.embeddings?.getStats) {
-        window.electronAPI.embeddings
-          .getStats()
-          .then((s) => setStats(s))
-          .catch((err) => logger.error('Failed to fetch stats', err));
-      }
-      return;
+    if (window.electronAPI?.embeddings?.getStats) {
+      window.electronAPI.embeddings
+        .getStats()
+        .then((s) => setStats(s))
+        .catch((err) => logger.error('Failed to fetch stats', err));
     }
   }, [settings.embeddingModel]);
 
@@ -99,7 +93,7 @@ function ModelSelectionSection({
   const hasEmbeddingModels = embeddingModelOptions.length > 0;
 
   return (
-    <Card variant="default" className="p-5 space-y-5">
+    <Card variant="default" className="space-y-5">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div>
           <Text
@@ -261,25 +255,27 @@ function ModelSelectionSection({
         <div className="space-y-4">
           <div className="flex items-start gap-3 p-3 bg-stratosort-warning/10 border border-stratosort-warning/20 rounded-lg">
             <AlertTriangle className="w-5 h-5 text-stratosort-warning mt-0.5 flex-shrink-0" />
-            <div className="text-sm text-stratosort-warning">
-              <p className="font-medium mb-1">This will invalidate existing embeddings.</p>
-              <p>
+            <div>
+              <Text variant="small" className="font-medium text-stratosort-warning mb-1">
+                This will invalidate existing embeddings.
+              </Text>
+              <Text variant="small" className="text-stratosort-warning">
                 Switching from <strong>{settings.embeddingModel}</strong> to{' '}
                 <strong>{pendingModel}</strong> changes the vector dimensions. You will need to
                 rebuild the vector database to search existing files.
-              </p>
+              </Text>
             </div>
           </div>
 
           {stats &&
             (stats.files > 0 || stats.chunks > 0 || stats.analysisHistory?.totalFiles > 0) && (
-              <div className="flex items-center gap-2 p-3 bg-system-gray-50 rounded-lg border border-system-gray-100 text-sm text-system-gray-600">
+              <div className="flex items-center gap-2 p-3 bg-system-gray-50 rounded-lg border border-system-gray-100">
                 <FileText className="w-4 h-4" />
-                <span>
+                <Text as="span" variant="small" className="text-system-gray-600">
                   {stats.files || 0} files ({stats.chunks || 0} chunks) currently indexed.
                   {stats.analysisHistory?.totalFiles > 0 &&
                     ` (~${stats.analysisHistory.totalFiles} files in history)`}
-                </span>
+                </Text>
               </div>
             )}
 

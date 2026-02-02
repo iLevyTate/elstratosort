@@ -1,12 +1,11 @@
 const crypto = require('crypto');
 const { LRUCache } = require('../../shared/LRUCache');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { CACHE } = require('../../shared/performanceConstants');
 const { get: getConfig } = require('../../shared/config/index');
 const { getInstance: getCacheInvalidationBus } = require('../../shared/cacheInvalidation');
 
-logger.setContext('EmbeddingCache');
-
+const logger = createLogger('EmbeddingCache');
 /**
  * High-performance LRU cache for embedding vectors with TTL support
  * Dramatically reduces AI API calls by caching previously computed embeddings
@@ -109,8 +108,8 @@ class EmbeddingCache {
    * @returns {string} - Cache key
    */
   generateKey(text, model) {
-    // Normalize text to improve cache hit rate
-    const normalized = text.trim().toLowerCase();
+    // Normalize whitespace only - do NOT lowercase since embedding models are case-sensitive
+    const normalized = text.trim().replace(/\s+/g, ' ');
     return crypto.createHash('sha256').update(`${normalized}:${model}`).digest('hex');
   }
 

@@ -79,8 +79,8 @@ export default function TooltipManager() {
 
       // Prevent native tooltip by clearing title temporarily
       if (target.hasAttribute('title')) {
-        // Add null check before calling .get()
-        if (titleCacheRef.current && !titleCacheRef.current.get(target)) {
+        // FIX 82: Always update cache with current title to prevent stale restoration
+        if (titleCacheRef.current) {
           titleCacheRef.current.set(target, title);
         }
         target.setAttribute('data-title', title);

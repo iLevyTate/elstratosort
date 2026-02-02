@@ -19,16 +19,16 @@
  * @module analysis/semanticFolderMatcher
  */
 
-const { logger } = require('../../shared/logger');
-const { THRESHOLDS } = require('../../shared/performanceConstants');
+const { createLogger } = require('../../shared/logger');
+const { THRESHOLDS, TIMEOUTS } = require('../../shared/performanceConstants');
 const { normalizePathForIndex, getCanonicalFileId } = require('../../shared/pathSanitization');
 const { findContainingSmartFolder } = require('../../shared/folderUtils');
 const { buildEmbeddingSummary } = require('./embeddingSummary');
 const { container, ServiceIds } = require('../services/ServiceContainer');
 const embeddingQueue = require('./embeddingQueue');
+const { withTimeout } = require('../../shared/promiseUtils');
 
-logger.setContext('SemanticFolderMatcher');
-
+const logger = createLogger('SemanticFolderMatcher');
 /**
  * Get or initialize ChromaDB and FolderMatchingService
  * Uses lazy initialization to prevent startup failures
@@ -182,7 +182,11 @@ async function applySemanticFolderMatching(params) {
     }
 
     // Generate embedding
-    const embeddingResult = await matcher.embedText(summaryForEmbedding);
+    const embeddingResult = await withTimeout(
+      matcher.embedText(summaryForEmbedding),
+      TIMEOUTS.EMBEDDING_REQUEST || 30000,
+      'folder matcher embedText'
+    );
     // FIX #2: Also check for empty array to prevent downstream failures
     if (
       !embeddingResult ||
@@ -202,7 +206,11 @@ async function applySemanticFolderMatching(params) {
     const { vector, model } = embeddingResult;
 
     // Match against folders
-    const candidates = await matcher.matchVectorToFolders(vector, 5);
+    const candidates = await withTimeout(
+      matcher.matchVectorToFolders(vector, 5),
+      TIMEOUTS.SEMANTIC_QUERY || 30000,
+      'folder matcher matchVectorToFolders'
+    );
 
     // Generate file ID based on type
     const fileId =
@@ -240,6 +248,7 @@ async function applySemanticFolderMatching(params) {
       keywords: Array.isArray(analysis.keywords) ? analysis.keywords : [],
       date: analysis.documentDate || analysis.date || null,
       suggestedName: analysis.suggestedName,
+      keyEntities: Array.isArray(analysis.keyEntities) ? analysis.keyEntities.slice(0, 20) : [],
       // Common fields for all file types
       entity: analysis.entity || '',
       project: analysis.project || '',

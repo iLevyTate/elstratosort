@@ -95,7 +95,27 @@ SmartStepEdge.propTypes = {
   targetPosition: PropTypes.string,
   style: PropTypes.object,
   markerEnd: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
-  label: PropTypes.node
+  label: PropTypes.node,
+  data: PropTypes.shape({
+    elkSections: PropTypes.arrayOf(
+      PropTypes.shape({
+        startPoint: PropTypes.shape({
+          x: PropTypes.number,
+          y: PropTypes.number
+        }),
+        endPoint: PropTypes.shape({
+          x: PropTypes.number,
+          y: PropTypes.number
+        }),
+        bendPoints: PropTypes.arrayOf(
+          PropTypes.shape({
+            x: PropTypes.number,
+            y: PropTypes.number
+          })
+        )
+      })
+    )
+  })
 };
 
 export default memo(SmartStepEdge);

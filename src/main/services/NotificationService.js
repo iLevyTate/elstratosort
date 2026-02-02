@@ -12,7 +12,7 @@
 
 const { Notification, BrowserWindow } = require('electron');
 const { randomUUID } = require('crypto');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { safeSend } = require('../ipc/ipcWrappers');
 const {
   NotificationType,
@@ -21,8 +21,7 @@ const {
   getDefaultDuration
 } = require('../../shared/notificationTypes');
 
-logger.setContext('NotificationService');
-
+const logger = createLogger('NotificationService');
 /**
  * NotificationService - Handles all notification display logic
  */
@@ -95,7 +94,7 @@ class NotificationService {
       // Generate UUID and create standardized notification
       const id = randomUUID();
       const standardized = isTestEnv
-        ? notification
+        ? { ...notification, id: notification.id || id }
         : {
             id,
             type: notification.type || NotificationType.SYSTEM,

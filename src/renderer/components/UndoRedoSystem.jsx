@@ -1,5 +1,5 @@
 // Undo/Redo System - Implementing Shneiderman's Golden Rule #6: Action Reversal Infrastructure
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import {
   FileText,
@@ -258,6 +258,13 @@ class UndoStack {
     return action;
   }
 
+  revertUndo() {
+    if (this.pointer < this.stack.length - 1) {
+      this.pointer++;
+      this.notifyListeners();
+    }
+  }
+
   revertRedo() {
     if (this.pointer >= 0) {
       this.pointer--;
@@ -329,15 +336,16 @@ export function UndoRedoProvider({ children }) {
   const { showSuccess, showError, showInfo } = useNotification();
 
   const isMountedRef = React.useRef(true);
-  React.useEffect(() => {
-    isMountedRef.current = true;
 
+  // Sync with main process state
+  const syncFromMainProcess = useCallback(async () => {
+    let state = null;
     try {
-      const saved = localStorage.getItem('stratosort_undo_stack');
-      if (saved) {
-        const { stack, pointer } = JSON.parse(saved);
-        if (Array.isArray(stack)) {
-          const rehydratedStack = stack
+      state = await window.electronAPI?.undoRedo?.getState?.();
+      if (state && isMountedRef.current) {
+        // Update our local stack with main process state
+        if (Array.isArray(state.stack) && state.stack.length > 0) {
+          const rehydratedStack = state.stack
             .map((item) => {
               const action = rehydrateAction(item);
               return action ? { ...item, ...action } : null;
@@ -345,18 +353,73 @@ export function UndoRedoProvider({ children }) {
             .filter(Boolean);
 
           if (rehydratedStack.length > 0) {
-            undoStack.load(rehydratedStack, pointer);
+            undoStack.load(rehydratedStack, state.pointer);
+          }
+        } else {
+          undoStack.clear();
+          try {
+            localStorage.removeItem('stratosort_undo_stack');
+          } catch {
+            // ignore
           }
         }
+        setCanUndo(state.canUndo);
+        setCanRedo(state.canRedo);
+        logger.debug('Synced undo/redo state from main process', {
+          stackLength: state.stack?.length,
+          pointer: state.pointer
+        });
       }
     } catch (e) {
-      logger.error('Failed to load undo stack', e);
+      logger.error('Failed to sync undo state from main process', e);
     }
+    return state;
+  }, [undoStack]);
+
+  React.useEffect(() => {
+    isMountedRef.current = true;
+
+    // First, try to sync from main process (source of truth)
+    syncFromMainProcess().then((state) => {
+      // If main process not reachable, fall back to localStorage
+      if (!state && undoStack.getFullStack().length === 0) {
+        try {
+          const saved = localStorage.getItem('stratosort_undo_stack');
+          if (saved) {
+            const { stack, pointer } = JSON.parse(saved);
+            if (Array.isArray(stack)) {
+              const rehydratedStack = stack
+                .map((item) => {
+                  const action = rehydrateAction(item);
+                  return action ? { ...item, ...action } : null;
+                })
+                .filter(Boolean);
+
+              if (rehydratedStack.length > 0) {
+                undoStack.load(rehydratedStack, pointer);
+              }
+            }
+          }
+        } catch (e) {
+          logger.error('Failed to load undo stack from localStorage', e);
+        }
+      }
+    });
+
+    // Listen for state changes from main process
+    const cleanup = window.electronAPI?.undoRedo?.onStateChanged?.((data) => {
+      logger.debug('Undo/redo state changed in main process', data);
+      // Refresh our state from main process
+      syncFromMainProcess();
+    });
 
     return () => {
       isMountedRef.current = false;
+      if (typeof cleanup === 'function') {
+        cleanup();
+      }
     };
-  }, [undoStack]);
+  }, [undoStack, syncFromMainProcess]);
 
   const actionMutexRef = React.useRef(false);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -527,7 +590,7 @@ export function UndoRedoProvider({ children }) {
       await undoAction.undo(undoAction);
       showSuccess(`Undid: ${undoAction.description}`);
     } catch (error) {
-      undoStack.push(undoAction);
+      undoStack.revertUndo();
       showError(`Failed to undo ${undoAction.description}: ${error?.message || String(error)}`);
     } finally {
       actionMutexRef.current = false;
@@ -563,15 +626,22 @@ export function UndoRedoProvider({ children }) {
     }
   }, [undoStack, showInfo, showSuccess, showError]);
 
-  const getActionDescription = (action) => {
+  const getActionDescription = useCallback((action) => {
     const metadata = ACTION_METADATA[action.type];
     if (metadata) {
       return action.description || metadata.description;
     }
     return action.description || 'Unknown action';
-  };
+  }, []);
 
-  const clearHistory = useCallback(() => {
+  const clearHistory = useCallback(async () => {
+    try {
+      // Clear in main process first (source of truth)
+      await window.electronAPI?.undoRedo?.clear?.();
+    } catch (e) {
+      logger.error('Failed to clear history in main process', e);
+    }
+    // Then clear local state
     undoStack.clear();
     localStorage.removeItem('stratosort_undo_stack');
     showInfo('Undo/redo history cleared');
@@ -603,10 +673,25 @@ export function UndoRedoProvider({ children }) {
           const stepsToUndo = currentIndex - targetIndex;
           showInfo(`Jumping back ${stepsToUndo} step${stepsToUndo > 1 ? 's' : ''}...`);
 
+          let completedSteps = 0;
           for (let i = 0; i < stepsToUndo; i++) {
-            const action = undoStack.undo();
-            if (action) {
-              await action.undo(action);
+            try {
+              const action = undoStack.undo();
+              if (action) {
+                await action.undo(action);
+              }
+              completedSteps++;
+            } catch (stepError) {
+              // Pointer was already moved by undo(), restore it to keep stack consistent
+              try {
+                undoStack.redo();
+              } catch {
+                /* ignore restore failure */
+              }
+              showError(
+                `Jump failed at step ${completedSteps + 1}/${stepsToUndo}: ${stepError?.message || String(stepError)}`
+              );
+              return;
             }
           }
           showSuccess(`Jumped back to step ${targetIndex + 1}`);
@@ -614,10 +699,25 @@ export function UndoRedoProvider({ children }) {
           const stepsToRedo = targetIndex - currentIndex;
           showInfo(`Jumping forward ${stepsToRedo} step${stepsToRedo > 1 ? 's' : ''}...`);
 
+          let completedSteps = 0;
           for (let i = 0; i < stepsToRedo; i++) {
-            const action = undoStack.redo();
-            if (action) {
-              await action.redo(action);
+            try {
+              const action = undoStack.redo();
+              if (action) {
+                await action.redo(action);
+              }
+              completedSteps++;
+            } catch (stepError) {
+              // Pointer was already moved by redo(), restore it to keep stack consistent
+              try {
+                undoStack.undo();
+              } catch {
+                /* ignore restore failure */
+              }
+              showError(
+                `Jump failed at step ${completedSteps + 1}/${stepsToRedo}: ${stepError?.message || String(stepError)}`
+              );
+              return;
             }
           }
           showSuccess(`Jumped forward to step ${targetIndex + 1}`);
@@ -632,26 +732,44 @@ export function UndoRedoProvider({ children }) {
     [undoStack, showInfo, showSuccess, showError]
   );
 
-  const contextValue = {
-    executeAction,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-    isExecuting,
-    getHistory: () => undoStack.getHistory(),
-    getFullStack: () => undoStack.getFullStack(),
-    getCurrentIndex: () => undoStack.getCurrentIndex(),
-    fullStack: fullStackState,
-    currentIndex: currentIndexState,
-    jumpToPoint,
-    peek: () => undoStack.peek(),
-    peekRedo: () => undoStack.peekRedo(),
-    getActionDescription,
-    clearHistory,
-    isHistoryVisible,
-    setIsHistoryVisible
-  };
+  const contextValue = useMemo(
+    () => ({
+      executeAction,
+      undo,
+      redo,
+      canUndo,
+      canRedo,
+      isExecuting,
+      getHistory: () => undoStack.getHistory(),
+      getFullStack: () => undoStack.getFullStack(),
+      getCurrentIndex: () => undoStack.getCurrentIndex(),
+      fullStack: fullStackState,
+      currentIndex: currentIndexState,
+      jumpToPoint,
+      peek: () => undoStack.peek(),
+      peekRedo: () => undoStack.peekRedo(),
+      getActionDescription,
+      clearHistory,
+      isHistoryVisible,
+      setIsHistoryVisible
+    }),
+    [
+      executeAction,
+      undo,
+      redo,
+      canUndo,
+      canRedo,
+      isExecuting,
+      undoStack,
+      fullStackState,
+      currentIndexState,
+      jumpToPoint,
+      getActionDescription,
+      clearHistory,
+      isHistoryVisible,
+      setIsHistoryVisible
+    ]
+  );
 
   return (
     <UndoRedoContext.Provider value={contextValue}>

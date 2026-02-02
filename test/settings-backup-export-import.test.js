@@ -5,8 +5,34 @@
 
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 const SettingsService = require('../src/main/services/SettingsService');
 const { DEFAULT_SETTINGS } = require('../src/shared/defaultSettings');
+
+// FIX: Helper to compute backup hash matching SettingsBackupService.stableStringify
+const stableStringify = (value) =>
+  JSON.stringify(
+    value,
+    (key, val) => {
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        return Object.keys(val)
+          .sort()
+          .reduce((acc, k) => {
+            acc[k] = val[k];
+            return acc;
+          }, {});
+      }
+      return val;
+    },
+    2
+  );
+
+function computeBackupHash(backupDataWithoutHash) {
+  return crypto
+    .createHash('sha256')
+    .update(stableStringify(backupDataWithoutHash), 'utf8')
+    .digest('hex');
+}
 
 // Mock electron app
 jest.mock('electron', () => ({
@@ -48,6 +74,14 @@ describe('Settings Backup, Export, and Import', () => {
     jest.spyOn(fs, 'mkdir').mockResolvedValue(undefined);
     jest.spyOn(fs, 'readdir').mockResolvedValue([]);
     jest.spyOn(fs, 'unlink').mockResolvedValue(undefined);
+    jest.spyOn(fs, 'access').mockImplementation(async (filePath) => {
+      if (filePath === mockSettingsPath) {
+        return undefined;
+      }
+      const err = new Error('ENOENT: no such file or directory');
+      err.code = 'ENOENT';
+      throw err;
+    });
 
     settingsService = new SettingsService();
   });
@@ -437,14 +471,21 @@ describe('Settings Backup, Export, and Import', () => {
         };
         const backupPath = path.join(mockBackupDir, 'settings-2024-01-15T10-00-00-000Z.json');
 
+        // FIX: Compute valid hash for backup data (required since hash check enforcement)
+        const backupDataWithoutHash = {
+          timestamp: '2024-01-15T10:00:00.000Z',
+          appVersion: '1.0.0',
+          settings: backupSettings
+        };
+        const validHash = computeBackupHash(backupDataWithoutHash);
+
         // Clear previous mocks and setup new ones
         fs.readFile.mockReset();
         fs.readFile.mockImplementation(async (filePath) => {
           if (filePath === backupPath) {
             return JSON.stringify({
-              timestamp: '2024-01-15T10:00:00.000Z',
-              appVersion: '1.0.0',
-              settings: backupSettings
+              ...backupDataWithoutHash,
+              hash: validHash
             });
           }
           if (filePath === mockSettingsPath) {
@@ -468,12 +509,19 @@ describe('Settings Backup, Export, and Import', () => {
       test('creates new backup before restoring', async () => {
         const backupPath = path.join(mockBackupDir, 'settings-2024-01-15T10-00-00-000Z.json');
 
+        // FIX: Compute valid hash for backup data
+        const backupDataWithoutHash = {
+          timestamp: '2024-01-15T10:00:00.000Z',
+          appVersion: '1.0.0',
+          settings: DEFAULT_SETTINGS
+        };
+        const validHash = computeBackupHash(backupDataWithoutHash);
+
         fs.readFile.mockImplementation(async (filePath) => {
           if (filePath === backupPath) {
             return JSON.stringify({
-              timestamp: '2024-01-15T10:00:00.000Z',
-              appVersion: '1.0.0',
-              settings: DEFAULT_SETTINGS
+              ...backupDataWithoutHash,
+              hash: validHash
             });
           }
           return JSON.stringify(DEFAULT_SETTINGS);
@@ -490,12 +538,19 @@ describe('Settings Backup, Export, and Import', () => {
         const invalidSettings = { ...DEFAULT_SETTINGS, loggingLevel: 'verbose' };
         const backupPath = path.join(mockBackupDir, 'settings-2024-01-15T10-00-00-000Z.json');
 
+        // FIX: Compute valid hash for backup data
+        const backupDataWithoutHash = {
+          timestamp: '2024-01-15T10:00:00.000Z',
+          appVersion: '1.0.0',
+          settings: invalidSettings
+        };
+        const validHash = computeBackupHash(backupDataWithoutHash);
+
         fs.readFile.mockImplementation(async (filePath) => {
           if (filePath === backupPath) {
             return JSON.stringify({
-              timestamp: '2024-01-15T10:00:00.000Z',
-              appVersion: '1.0.0',
-              settings: invalidSettings
+              ...backupDataWithoutHash,
+              hash: validHash
             });
           }
           return JSON.stringify(DEFAULT_SETTINGS);

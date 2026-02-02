@@ -92,7 +92,8 @@ const NAVIGATION_RULES = {
 // FIX: Added forceRefresh parameter to allow cache invalidation
 export const fetchSettings = createAsyncThunk(
   'ui/fetchSettings',
-  async (forceRefresh = false, { getState, rejectWithValue }) => {
+  async (arg, { getState, rejectWithValue }) => {
+    const forceRefresh = arg === true;
     const { ui } = getState();
     // Return cached value if already fetched and not forcing refresh
     if (!forceRefresh && ui.settings) {
@@ -131,7 +132,8 @@ const initialState = {
   isProcessing: false, // Generic processing state for any background operation
   navigationError: null, // Last navigation error for debugging
   // FIX MEDIUM-2: Track operation errors with more detail
-  lastOperationError: null // { operation: string, message: string, timestamp: number }
+  lastOperationError: null, // { operation: string, message: string, timestamp: number }
+  resetCounter: 0 // Incremented on reset to invalidate selector caches
 };
 
 const uiSlice = createSlice({
@@ -215,9 +217,11 @@ const uiSlice = createSlice({
     setActiveModal: (state, action) => {
       state.activeModal = action.payload;
     },
-    resetUi: () => {
+    resetUi: (state) => {
+      const nextResetCounter = (state?.resetCounter || 0) + 1;
       return {
-        ...initialState
+        ...initialState,
+        resetCounter: nextResetCounter
       };
     },
     // Clear navigation error
@@ -227,14 +231,13 @@ const uiSlice = createSlice({
     // Go back to previous phase (if valid)
     goBack: (state) => {
       if (state.previousPhase && isValidPhase(state.previousPhase)) {
-        const temp = state.currentPhase;
         state.currentPhase = state.previousPhase;
-        state.previousPhase = temp;
+        state.previousPhase = null;
         state.navigationError = null;
       } else {
-        // Default to welcome if no previous phase
-        state.previousPhase = state.currentPhase;
-        // FIX: Add null check for PHASES to prevent crash during module initialization
+        // Default to welcome if no previous phase - don't store current as previous
+        // to avoid toggle loop between welcome and the phase the user just left
+        state.previousPhase = null;
         state.currentPhase = PHASES?.WELCOME ?? 'welcome';
       }
     },

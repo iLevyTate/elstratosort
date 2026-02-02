@@ -4,15 +4,16 @@
  */
 
 // Mock dependencies
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 jest.mock('../src/main/services/analysisHistory/cacheManager', () => ({
   updateIncrementalStatsOnRemove: jest.fn(),
@@ -229,7 +230,10 @@ describe('maintenance', () => {
         entries: {
           1: { id: '1', timestamp: oldDate.toISOString() },
           2: { id: '2', timestamp: new Date().toISOString() }
-        }
+        },
+        totalAnalyzed: 2,
+        totalSize: 0,
+        metadata: { totalEntries: 2 }
       };
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - 30);
@@ -286,7 +290,10 @@ describe('maintenance', () => {
       const history = {
         entries: {
           1: { id: '1', timestamp: oldDate.toISOString() }
-        }
+        },
+        totalAnalyzed: 1,
+        totalSize: 0,
+        metadata: { totalEntries: 1 }
       };
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - 30);
@@ -303,7 +310,10 @@ describe('maintenance', () => {
       const history = {
         entries: {
           1: { id: '1', timestamp: oldDate.toISOString() }
-        }
+        },
+        totalAnalyzed: 1,
+        totalSize: 0,
+        metadata: { totalEntries: 1 }
       };
       const cache = {};
       const state = {};
@@ -331,7 +341,10 @@ describe('maintenance', () => {
         entries: {
           1: { id: '1', timestamp: oldDate.toISOString() },
           2: { id: '2', timestamp: oldDate.toISOString() }
-        }
+        },
+        totalAnalyzed: 2,
+        totalSize: 0,
+        metadata: { totalEntries: 2 }
       };
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - 30);

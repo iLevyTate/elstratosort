@@ -111,7 +111,7 @@ async function replaceFileWithRetry(tempPath, filePath, options = {}) {
  */
 async function atomicWriteFile(filePath, data, options = {}) {
   const { pretty = false, maxRetries = 6 } = options;
-  const tempPath = `${filePath}.tmp.${Date.now()}`;
+  const tempPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
 
   try {
     const content = pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data);
@@ -204,6 +204,12 @@ async function loadJsonFile(filePath, options = {}) {
  */
 async function persistData(filePath, data, options = {}) {
   try {
+    // FIX: Guard against primitives (string, number, boolean, null, undefined).
+    // Object.keys() on these returns [] which incorrectly flags them as "empty"
+    // and triggers file deletion instead of persistence.
+    if (data === null || data === undefined || typeof data !== 'object') {
+      throw new TypeError(`persistData expects an Array or Object, got ${typeof data}`);
+    }
     const isEmpty = Array.isArray(data) ? data.length === 0 : Object.keys(data).length === 0;
 
     if (isEmpty) {

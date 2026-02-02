@@ -8,6 +8,9 @@ function buildEmbeddingSummary(analysis, extractedText = '', fileExtension, type
   const documentType = safeAnalysis.documentType || (!isGenericType && rawType ? rawType : '');
   const documentDate = safeAnalysis.documentDate || safeAnalysis.date || '';
   const keywords = Array.isArray(safeAnalysis.keywords) ? safeAnalysis.keywords.join(' ') : '';
+  const keyEntities = Array.isArray(safeAnalysis.keyEntities)
+    ? safeAnalysis.keyEntities.join(' ')
+    : '';
 
   const baseParts = [
     safeAnalysis.summary,
@@ -19,7 +22,8 @@ function buildEmbeddingSummary(analysis, extractedText = '', fileExtension, type
     safeAnalysis.reasoning,
     safeAnalysis.subject,
     safeAnalysis.suggestedName,
-    keywords
+    keywords,
+    keyEntities
   ];
 
   if (type === 'image') {

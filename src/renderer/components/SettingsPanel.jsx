@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo, Suspense, lazy } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Brain,
   ChevronsDown,
@@ -12,7 +13,7 @@ import {
   X,
   Zap
 } from 'lucide-react';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { sanitizeSettings } from '../../shared/settingsValidation';
 import { DEFAULT_SETTINGS } from '../../shared/defaultSettings';
 import { useNotification } from '../contexts/NotificationContext';
@@ -22,10 +23,12 @@ import { toggleSettings, updateSettings } from '../store/slices/uiSlice';
 import { useDebouncedCallback } from '../hooks/usePerformance';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import Card from './ui/Card';
 import Collapsible from './ui/Collapsible';
 import { ModalLoadingOverlay } from './ui/LoadingSkeleton';
 import { Heading, Text } from './ui/Typography';
 import { Stack } from './layout';
+import { lockAppScroll, unlockAppScroll } from '../utils/scrollLock';
 import AutoOrganizeSection from './settings/AutoOrganizeSection';
 import BackgroundModeSection from './settings/BackgroundModeSection';
 import NotificationSettingsSection from './settings/NotificationSettingsSection';
@@ -34,8 +37,10 @@ import ModelSelectionSection from './settings/ModelSelectionSection';
 import ChatPersonaSection from './settings/ChatPersonaSection';
 import ModelManagementSection from './settings/ModelManagementSection';
 import EmbeddingRebuildSection from './settings/EmbeddingRebuildSection';
+import LearningSyncSection from './settings/LearningSyncSection';
 import DefaultLocationsSection from './settings/DefaultLocationsSection';
 import NamingSettingsSection from './settings/NamingSettingsSection';
+import GraphRetrievalSection from './settings/GraphRetrievalSection';
 import ApplicationSection from './settings/ApplicationSection';
 import APITestSection from './settings/APITestSection';
 import SettingsBackupSection from './settings/SettingsBackupSection';
@@ -51,20 +56,21 @@ const SECTION_KEYS = [
   'settings-api'
 ];
 
-logger.setContext('SettingsPanel');
-
+const logger = createLogger('SettingsPanel');
 const isElectronAPIAvailable = () => {
   return getElectronAPI() != null;
 };
 
 const ALLOWED_EMBED_MODELS = [
-  'embeddinggemma',
   'mxbai-embed-large',
   'nomic-embed-text',
+  'embeddinggemma',
   'all-minilm',
   'bge-large'
 ];
-const DEFAULT_EMBED_MODEL = 'embeddinggemma';
+// FIX: Must match DEFAULT_AI_MODELS.EMBEDDING in shared/constants.js to avoid
+// ChromaDB dimension mismatch (mxbai-embed-large=1024d, embeddinggemma=768d)
+const DEFAULT_EMBED_MODEL = 'mxbai-embed-large';
 
 const stableStringify = (value) =>
   JSON.stringify(
@@ -127,7 +133,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   const [showAnalysisHistory, setShowAnalysisHistory] = useState(false);
   const [analysisStats, setAnalysisStats] = useState(null);
   const didAutoHealthCheckRef = useRef(false);
-  const skipAutoSaveRef = useRef(false);
+  const skipAutoSaveRef = useRef(0);
   const cancelAutoSaveRef = useRef(null);
   const settingsRef = useRef(null);
   const uiSettingsRef = useRef(uiSettings);
@@ -195,7 +201,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
         ...DEFAULT_SETTINGS,
         ...(savedSettings || {})
       };
-      skipAutoSaveRef.current = true;
+      skipAutoSaveRef.current += 1;
       applySettingsUpdate(mergedSettings);
       dispatch(updateSettings(mergedSettings));
       updateLastSavedSnapshot(mergedSettings);
@@ -206,7 +212,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
         error: error.message,
         stack: error.stack
       });
-      skipAutoSaveRef.current = true;
+      skipAutoSaveRef.current += 1;
       applySettingsUpdate({ ...DEFAULT_SETTINGS });
       dispatch(updateSettings({ ...DEFAULT_SETTINGS }));
       updateLastSavedSnapshot(DEFAULT_SETTINGS);
@@ -243,7 +249,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       });
       if (response?.ollamaHealth) setOllamaHealth(response.ollamaHealth);
       if (response?.selected) {
-        skipAutoSaveRef.current = true;
+        skipAutoSaveRef.current += 1;
         applySettingsUpdate((prev) => {
           const desiredEmbed = response.selected.embeddingModel || prev.embeddingModel;
           const nextEmbeddingModel = ALLOWED_EMBED_MODELS.includes(desiredEmbed)
@@ -277,6 +283,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     let mounted = true;
     setIsHydrating(true);
 
+    const HYDRATION_TIMEOUT_MS = 10000; // 10 second timeout
+
     const loadSettingsIfMounted = async () => {
       if (mounted) {
         await loadSettings();
@@ -289,11 +297,22 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       }
     };
 
+    // Timeout to ensure hydration doesn't block forever
+    const timeoutId = setTimeout(() => {
+      if (mounted) {
+        logger.warn('Settings hydration timed out after 10s, continuing anyway');
+        setIsHydrating(false);
+      }
+    }, HYDRATION_TIMEOUT_MS);
+
     (async () => {
       try {
         await loadSettingsIfMounted();
         await loadOllamaModelsIfMounted();
+      } catch (error) {
+        logger.error('Settings hydration failed', { error: error.message });
       } finally {
+        clearTimeout(timeoutId);
         if (mounted) {
           setIsHydrating(false);
         }
@@ -302,6 +321,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
 
     return () => {
       mounted = false;
+      clearTimeout(timeoutId);
     };
   }, [isApiAvailable, loadSettings, loadOllamaModels]);
 
@@ -318,7 +338,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       updateLastSavedSnapshot(mergedSettings);
       return;
     }
-    skipAutoSaveRef.current = true;
+    skipAutoSaveRef.current += 1;
     applySettingsUpdate(mergedSettings);
     updateLastSavedSnapshot(mergedSettings);
   }, [applySettingsUpdate, settingsLoaded, uiSettings, updateLastSavedSnapshot]);
@@ -326,7 +346,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   useEffect(() => {
     if (!isApiAvailable) return undefined;
     if (!settingsLoaded) return undefined;
-    if (settings === null) return undefined;
+    if (settingsRef.current === null) return undefined;
     if (didAutoHealthCheckRef.current) return undefined;
     didAutoHealthCheckRef.current = true;
 
@@ -334,7 +354,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
 
     (async () => {
       try {
-        const res = await ollamaIpc.testConnection(settings.ollamaHost);
+        const res = await ollamaIpc.testConnection(settingsRef.current.ollamaHost);
         if (!isMounted) return;
         setOllamaHealth(res?.ollamaHealth || null);
         if (res?.success && isMounted) {
@@ -350,15 +370,15 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     return () => {
       isMounted = false;
     };
-  }, [isApiAvailable, settingsLoaded, settings, loadOllamaModels]);
+  }, [isApiAvailable, settingsLoaded, loadOllamaModels]);
 
   useEffect(() => {
-    const onKeyDown = (e) => {
-      if (e.key === 'Escape') handleToggleSettings();
+    lockAppScroll('settings-panel');
+
+    return () => {
+      unlockAppScroll('settings-panel');
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleToggleSettings]);
+  }, []);
 
   const saveSettings = useCallback(async () => {
     try {
@@ -374,7 +394,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       const normalizedSettings = {
         ...sanitized
       };
-      skipAutoSaveRef.current = true;
+      skipAutoSaveRef.current += 1;
       applySettingsUpdate(normalizedSettings);
       const res = await settingsIpc.save(normalizedSettings);
       if (res?.success === false) {
@@ -442,8 +462,12 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     if (!isApiAvailable || !settingsLoaded || settings === null) {
       return;
     }
-    if (skipAutoSaveRef.current) {
-      skipAutoSaveRef.current = false;
+    if (skipAutoSaveRef.current > 0) {
+      // Reset to 0 (not decrement) because React 18+ batching can merge multiple
+      // programmatic setSettings calls into one render, so only one effect fires
+      // but multiple skip tokens may have been issued. Zeroing ensures auto-save
+      // resumes after the first batched programmatic update completes.
+      skipAutoSaveRef.current = 0;
       return;
     }
     autoSaveSettings();
@@ -548,22 +572,10 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     }
   }, []);
 
-  if (!isApiAvailable) {
-    return (
-      <div className="p-8 text-center">
-        <Text variant="body" className="text-stratosort-danger font-medium">
-          Settings unavailable
-        </Text>
-        <Text variant="small" className="text-system-gray-500 mt-2">
-          Electron API not available. Please restart the application.
-        </Text>
-      </div>
-    );
-  }
-
-  return (
+  const showUnavailable = !isApiAvailable;
+  const content = (
     <div
-      className="settings-modal fixed inset-0 z-modal flex items-center justify-center bg-black/50 p-6"
+      className="settings-modal fixed inset-0 z-modal flex items-center justify-center bg-black/50 p-4 sm:p-6"
       style={{
         paddingTop: 'calc(var(--app-nav-height) + 1rem)',
         paddingBottom: '1.5rem'
@@ -573,208 +585,264 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       }}
       role="presentation"
     >
-      <div className="surface-panel !p-0 w-full max-w-4xl mx-auto max-h-[86vh] flex flex-col overflow-hidden shadow-2xl animate-modal-enter">
-        <div className="settings-modal-header px-6 py-4 border-b border-border-soft/70 bg-white flex-shrink-0 rounded-t-2xl">
-          <div className="flex items-start sm:items-center justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <SettingsIcon className="h-5 w-5 text-stratosort-blue" aria-hidden="true" />
-                <Heading as="h2" variant="h4">
-                  Settings
-                </Heading>
-              </div>
-              <Text variant="tiny" className="text-system-gray-500 mt-1">
-                Configure AI models, performance, default folders, and app behavior.
-              </Text>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <IconButton
-                icon={<ChevronsDown className="w-4 h-4" />}
-                size="md"
-                variant="secondary"
-                onClick={expandAll}
-                aria-label="Expand all settings sections"
-                title="Expand all"
-              />
-              <IconButton
-                icon={<ChevronsUp className="w-4 h-4" />}
-                size="md"
-                variant="secondary"
-                onClick={collapseAll}
-                aria-label="Collapse all settings sections"
-                title="Collapse all"
-              />
-              <IconButton
-                icon={<X className="w-4 h-4" />}
-                size="md"
-                variant="ghost"
-                onClick={handleToggleSettings}
-                aria-label="Close settings"
-                title="Close"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="px-6 py-6 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto modern-scrollbar">
-          <Collapsible
-            title={
-              <div className="flex items-center gap-2">
-                <Brain className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
-                <span>AI Configuration</span>
-              </div>
-            }
-            defaultOpen={false}
-            persistKey="settings-ai"
-          >
-            <Stack gap="default">
-              <OllamaConfigSection
-                settings={settings}
-                setSettings={applySettingsUpdate}
-                ollamaHealth={ollamaHealth}
-                isRefreshingModels={isRefreshingModels}
-                pullProgressText={pullProgressText}
-                showAllModels={showAllModels}
-                setShowAllModels={setShowAllModels}
-                ollamaModelLists={ollamaModelLists}
-                onTestConnection={testOllamaConnection}
-                onRefreshModels={loadOllamaModels}
-              />
-              <ModelSelectionSection
-                settings={settings}
-                setSettings={applySettingsUpdate}
-                textModelOptions={textModelOptions}
-                visionModelOptions={visionModelOptions}
-                embeddingModelOptions={embeddingModelOptions}
-              />
-              <ChatPersonaSection settings={settings} setSettings={applySettingsUpdate} />
-              <ModelManagementSection
-                newModel={newModel}
-                setNewModel={setNewModel}
-                isAddingModel={isAddingModel}
-                onAddModel={addOllamaModel}
-              />
-              <EmbeddingRebuildSection addNotification={addNotification} />
-            </Stack>
-          </Collapsible>
-
-          <Collapsible
-            title={
-              <div className="flex items-center gap-2">
-                <Zap className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
-                <span>Performance</span>
-              </div>
-            }
-            defaultOpen={false}
-            persistKey="settings-performance"
-          >
-            <Stack gap="default">
-              <AutoOrganizeSection settings={settings} setSettings={applySettingsUpdate} />
-              <BackgroundModeSection settings={settings} setSettings={applySettingsUpdate} />
-            </Stack>
-          </Collapsible>
-
-          <Collapsible
-            title={
-              <div className="flex items-center gap-2">
-                <FolderOpen className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
-                <span>Default Locations</span>
-              </div>
-            }
-            defaultOpen={false}
-            persistKey="settings-defaults"
-          >
-            <Stack gap="default">
-              <DefaultLocationsSection settings={settings} setSettings={applySettingsUpdate} />
-              <div className="pt-6 border-t border-system-gray-200">
-                <NamingSettingsSection settings={settings} setSettings={applySettingsUpdate} />
-              </div>
-            </Stack>
-          </Collapsible>
-
-          <Collapsible
-            title={
-              <div className="flex items-center gap-2">
-                <Monitor className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
-                <span>Application</span>
-              </div>
-            }
-            defaultOpen={false}
-            persistKey="settings-app"
-          >
-            <Stack gap="default">
-              <ApplicationSection settings={settings} setSettings={applySettingsUpdate} />
-              <div className="pt-6 border-t border-system-gray-200">
-                <NotificationSettingsSection
-                  settings={settings}
-                  setSettings={applySettingsUpdate}
+      <div className="surface-panel !p-0 w-full max-w-4xl mx-auto max-h-[86vh] flex flex-col overflow-hidden shadow-2xl animate-modal-enter pointer-events-auto">
+        {showUnavailable ? (
+          <>
+            <div className="settings-modal-header px-6 py-4 border-b border-border-soft/70 bg-white flex-shrink-0 rounded-t-2xl">
+              <div className="flex items-start sm:items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <SettingsIcon className="h-5 w-5 text-stratosort-blue" aria-hidden="true" />
+                    <Heading as="h2" variant="h4">
+                      Settings unavailable
+                    </Heading>
+                  </div>
+                  <Text variant="tiny" className="text-system-gray-500 mt-1">
+                    Electron API not available. Please restart the application.
+                  </Text>
+                </div>
+                <IconButton
+                  icon={<X className="w-4 h-4" />}
+                  size="md"
+                  variant="ghost"
+                  onClick={handleToggleSettings}
+                  aria-label="Close settings"
+                  title="Close"
                 />
               </div>
-              <div className="pt-6 border-t border-system-gray-200">
-                <SettingsBackupSection addNotification={addNotification} />
-              </div>
-            </Stack>
-          </Collapsible>
-
-          <Collapsible
-            title={
-              <div className="flex items-center gap-2">
-                <History className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
-                <span>Analysis History</span>
-              </div>
-            }
-            defaultOpen={false}
-            persistKey="settings-history"
-          >
-            <Stack gap="cozy">
-              <Text variant="small" className="text-system-gray-600">
-                View and manage your file analysis history, including past results and statistics.
+            </div>
+            <div className="p-6 text-center">
+              <Text variant="body" className="text-stratosort-danger font-medium">
+                Settings unavailable
               </Text>
+              <Text variant="small" className="text-system-gray-500 mt-2">
+                Electron API not available. Please restart the application.
+              </Text>
+            </div>
+            <div className="px-6 py-4 border-t border-system-gray-100 bg-system-gray-50 flex items-center justify-end gap-cozy flex-shrink-0 rounded-b-2xl">
               <Button
-                onClick={() => setShowAnalysisHistory(true)}
+                onClick={handleToggleSettings}
                 variant="secondary"
-                className="w-fit"
+                size="sm"
+                leftIcon={<X className="w-4 h-4" />}
               >
-                View Analysis History
+                Close
               </Button>
-            </Stack>
-          </Collapsible>
-
-          <Collapsible
-            title={
-              <div className="flex items-center gap-2">
-                <Wrench className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
-                <span>Backend API Test</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="settings-modal-header px-6 py-4 border-b border-border-soft/70 bg-white flex-shrink-0 rounded-t-2xl">
+              <div className="flex items-start sm:items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <SettingsIcon className="h-5 w-5 text-stratosort-blue" aria-hidden="true" />
+                    <Heading as="h2" variant="h4">
+                      Settings
+                    </Heading>
+                  </div>
+                  <Text variant="tiny" className="text-system-gray-500 mt-1">
+                    Configure AI models, performance, default folders, and app behavior.
+                  </Text>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <IconButton
+                    icon={<ChevronsDown className="w-4 h-4" />}
+                    size="md"
+                    variant="secondary"
+                    onClick={expandAll}
+                    aria-label="Expand all settings sections"
+                    title="Expand all"
+                  />
+                  <IconButton
+                    icon={<ChevronsUp className="w-4 h-4" />}
+                    size="md"
+                    variant="secondary"
+                    onClick={collapseAll}
+                    aria-label="Collapse all settings sections"
+                    title="Collapse all"
+                  />
+                  <IconButton
+                    icon={<X className="w-4 h-4" />}
+                    size="md"
+                    variant="ghost"
+                    onClick={handleToggleSettings}
+                    aria-label="Close settings"
+                    title="Close"
+                  />
+                </div>
               </div>
-            }
-            defaultOpen={false}
-            persistKey="settings-api"
-          >
-            <APITestSection addNotification={addNotification} />
-          </Collapsible>
-        </div>
+            </div>
 
-        <div className="px-6 py-4 border-t border-border-soft/70 bg-white flex items-center justify-end gap-3 flex-shrink-0 rounded-b-2xl">
-          <Button
-            onClick={handleToggleSettings}
-            variant="secondary"
-            size="sm"
-            leftIcon={<X className="w-4 h-4" />}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={saveSettings}
-            variant="primary"
-            size="sm"
-            disabled={isSaving}
-            leftIcon={<Save className="w-4 h-4" />}
-          >
-            {isSaving ? 'Saving...' : 'Save Settings'}
-          </Button>
-        </div>
+            <div className="p-6 flex flex-col gap-6 flex-1 min-h-0 overflow-y-auto modern-scrollbar relative">
+              {isHydrating && (
+                <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-10 rounded-b-2xl">
+                  <div className="text-center">
+                    <div className="animate-spin w-10 h-10 border-3 border-stratosort-blue border-t-transparent rounded-full mx-auto mb-3" />
+                    <Text variant="small" className="text-system-gray-600">
+                      Loading settings...
+                    </Text>
+                  </div>
+                </div>
+              )}
+              <Collapsible
+                title={
+                  <div className="flex items-center gap-2">
+                    <Brain className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
+                    <span>AI Configuration</span>
+                  </div>
+                }
+                defaultOpen={false}
+                persistKey="settings-ai"
+              >
+                <Stack gap="spacious">
+                  <OllamaConfigSection
+                    settings={settings}
+                    setSettings={applySettingsUpdate}
+                    ollamaHealth={ollamaHealth}
+                    isRefreshingModels={isRefreshingModels}
+                    pullProgressText={pullProgressText}
+                    showAllModels={showAllModels}
+                    setShowAllModels={setShowAllModels}
+                    ollamaModelLists={ollamaModelLists}
+                    onTestConnection={testOllamaConnection}
+                    onRefreshModels={loadOllamaModels}
+                  />
+                  <ModelSelectionSection
+                    settings={settings}
+                    setSettings={applySettingsUpdate}
+                    textModelOptions={textModelOptions}
+                    visionModelOptions={visionModelOptions}
+                    embeddingModelOptions={embeddingModelOptions}
+                  />
+                  <ChatPersonaSection settings={settings} setSettings={applySettingsUpdate} />
+                  <ModelManagementSection
+                    newModel={newModel}
+                    setNewModel={setNewModel}
+                    isAddingModel={isAddingModel}
+                    onAddModel={addOllamaModel}
+                  />
+                  <EmbeddingRebuildSection addNotification={addNotification} />
+                  <LearningSyncSection settings={settings} setSettings={applySettingsUpdate} />
+                </Stack>
+              </Collapsible>
+
+              <Collapsible
+                title={
+                  <div className="flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
+                    <span>Performance</span>
+                  </div>
+                }
+                defaultOpen={false}
+                persistKey="settings-performance"
+              >
+                <Stack gap="spacious">
+                  <AutoOrganizeSection settings={settings} setSettings={applySettingsUpdate} />
+                  <BackgroundModeSection settings={settings} setSettings={applySettingsUpdate} />
+                  <GraphRetrievalSection settings={settings} setSettings={applySettingsUpdate} />
+                </Stack>
+              </Collapsible>
+
+              <Collapsible
+                title={
+                  <div className="flex items-center gap-2">
+                    <FolderOpen className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
+                    <span>Default Locations</span>
+                  </div>
+                }
+                defaultOpen={false}
+                persistKey="settings-defaults"
+              >
+                <Stack gap="spacious">
+                  <DefaultLocationsSection settings={settings} setSettings={applySettingsUpdate} />
+                  <NamingSettingsSection settings={settings} setSettings={applySettingsUpdate} />
+                </Stack>
+              </Collapsible>
+
+              <Collapsible
+                title={
+                  <div className="flex items-center gap-2">
+                    <Monitor className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
+                    <span>Application</span>
+                  </div>
+                }
+                defaultOpen={false}
+                persistKey="settings-app"
+              >
+                <Stack gap="spacious">
+                  <ApplicationSection settings={settings} setSettings={applySettingsUpdate} />
+                  <NotificationSettingsSection
+                    settings={settings}
+                    setSettings={applySettingsUpdate}
+                  />
+                  <SettingsBackupSection addNotification={addNotification} />
+                </Stack>
+              </Collapsible>
+
+              <Collapsible
+                title={
+                  <div className="flex items-center gap-2">
+                    <History className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
+                    <span>Analysis History</span>
+                  </div>
+                }
+                defaultOpen={false}
+                persistKey="settings-history"
+              >
+                <Card variant="default" className="space-y-3">
+                  <Text variant="small" className="text-system-gray-600">
+                    View and manage your file analysis history, including past results and
+                    statistics.
+                  </Text>
+                  <Button
+                    onClick={() => setShowAnalysisHistory(true)}
+                    variant="secondary"
+                    size="sm"
+                    className="w-fit"
+                  >
+                    View Analysis History
+                  </Button>
+                </Card>
+              </Collapsible>
+
+              <Collapsible
+                title={
+                  <div className="flex items-center gap-2">
+                    <Wrench className="h-4 w-4 text-stratosort-blue" aria-hidden="true" />
+                    <span>Backend API Test</span>
+                  </div>
+                }
+                defaultOpen={false}
+                persistKey="settings-api"
+              >
+                <APITestSection addNotification={addNotification} />
+              </Collapsible>
+            </div>
+
+            <div className="px-6 py-4 border-t border-system-gray-100 bg-system-gray-50 flex items-center justify-end gap-cozy flex-shrink-0 rounded-b-2xl">
+              <Button
+                onClick={handleToggleSettings}
+                variant="secondary"
+                size="sm"
+                leftIcon={<X className="w-4 h-4" />}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={saveSettings}
+                variant="primary"
+                size="sm"
+                disabled={isSaving}
+                leftIcon={<Save className="w-4 h-4" />}
+              >
+                {isSaving ? 'Saving...' : 'Save Settings'}
+              </Button>
+            </div>
+          </>
+        )}
       </div>
-      {showAnalysisHistory && (
+      {!showUnavailable && showAnalysisHistory && (
         <Suspense fallback={<ModalLoadingOverlay message="Loading History..." />}>
           <AnalysisHistoryModal
             onClose={() => setShowAnalysisHistory(false)}
@@ -783,9 +851,14 @@ const SettingsPanel = React.memo(function SettingsPanel() {
           />
         </Suspense>
       )}
-      {isHydrating && <ModalLoadingOverlay message="Loading settings..." />}
     </div>
   );
+
+  if (typeof document === 'undefined') {
+    return content;
+  }
+
+  return createPortal(content, document.body);
 });
 
 export default SettingsPanel;

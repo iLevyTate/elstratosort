@@ -5,14 +5,17 @@ import { FolderOpen, CheckCircle, Clock, FileText } from 'lucide-react';
 import { formatDisplayPath } from '../../utils/pathDisplay';
 import { Heading, Text } from '../ui/Typography';
 import Card from '../ui/Card';
+import { selectRedactPaths } from '../../store/selectors';
 
 function OrganizeProgress({
   isOrganizing,
   batchProgress = { current: 0, total: 0, currentFile: '' },
   preview = []
 }) {
-  const redactPaths = useSelector((state) => Boolean(state?.system?.redactPaths));
+  // PERF: Use memoized selector instead of inline Boolean coercion
+  const redactPaths = useSelector(selectRedactPaths);
   const [startedAt, setStartedAt] = useState(null);
+  const [now, setNow] = useState(Date.now());
   const hasTotals = Number(batchProgress.total) > 0;
   const actualPercent = hasTotals
     ? Math.round((Number(batchProgress.current) / Number(batchProgress.total)) * 100)
@@ -23,10 +26,19 @@ function OrganizeProgress({
     if (!isOrganizing) {
       setStartedAt(null);
       setVisualPercent(0);
+      setNow(Date.now());
       return;
     }
     if (!startedAt) setStartedAt(Date.now());
   }, [isOrganizing, startedAt]);
+
+  useEffect(() => {
+    if (!isOrganizing) return undefined;
+    const intervalId = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => clearInterval(intervalId);
+  }, [isOrganizing]);
 
   useEffect(() => {
     if (!isOrganizing) return undefined;
@@ -53,7 +65,7 @@ function OrganizeProgress({
 
   const etaText = useMemo(() => {
     if (!startedAt || !hasTotals || actualPercent <= 0) return 'Estimating...';
-    const elapsedMs = Date.now() - startedAt;
+    const elapsedMs = now - startedAt;
     const perUnit = elapsedMs / Math.max(1, batchProgress.current);
     const remaining = Math.max(0, batchProgress.total - batchProgress.current);
     const remainingSec = Math.round((perUnit * remaining) / 1000);
@@ -61,7 +73,7 @@ function OrganizeProgress({
     const m = Math.floor(remainingSec / 60);
     const s = remainingSec % 60;
     return `${m}m ${s}s remaining`;
-  }, [startedAt, hasTotals, actualPercent, batchProgress]);
+  }, [startedAt, hasTotals, actualPercent, batchProgress, now]);
 
   if (!isOrganizing) return null;
 
@@ -87,7 +99,11 @@ function OrganizeProgress({
       </div>
 
       <div className="mb-8">
-        <div className="flex justify-between text-sm text-system-gray-600 mb-2 font-medium">
+        <Text
+          as="div"
+          variant="small"
+          className="flex justify-between text-system-gray-600 mb-2 font-medium"
+        >
           <span>
             {hasTotals ? (
               <>
@@ -98,7 +114,7 @@ function OrganizeProgress({
             )}
           </span>
           <span>{Math.round(percentToShow)}%</span>
-        </div>
+        </Text>
 
         <div className="h-3 w-full bg-system-gray-100 rounded-full overflow-hidden mb-3">
           {hasTotals ? (

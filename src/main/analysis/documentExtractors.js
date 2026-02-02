@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const { createReadStream } = require('fs');
 
 const { FileProcessingError } = require('../errors/AnalysisError');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { LIMITS } = require('../../shared/constants');
 // FIX P3-2: Import withTimeout for extraction timeout handling
 const { withTimeout } = require('../../shared/promiseUtils');
@@ -17,6 +17,11 @@ const EXTRACTION_TIMEOUTS = {
   DEFAULT: 60000 // 1 minute default
 };
 
+// FIX CRITICAL: Logger must be declared before use in the XMLParser try-catch below
+// Previously, logger was referenced at line 25 but declared at line 32, causing a
+// ReferenceError (Temporal Dead Zone) when fast-xml-parser was missing.
+const logger = createLogger('DocumentExtractors');
+
 let XMLParser;
 try {
   // Prefer the full parser when available
@@ -28,9 +33,6 @@ try {
 }
 const { parse: parseCsv } = require('csv-parse/sync');
 const { isTesseractAvailable, recognizeIfAvailable } = require('../utils/tesseractUtils');
-
-logger.setContext('DocumentExtractors');
-
 // Streaming thresholds for large file handling
 const STREAM_THRESHOLD = 50 * 1024 * 1024; // 50MB - use streaming for files larger than this
 const MAX_CONTENT_LENGTH = 2 * 1024 * 1024; // 2MB of text max for LLM
@@ -1199,12 +1201,20 @@ function extractPlainTextFromHtml(html) {
 
 // Generic ODF extractor: reads content.xml from ZIP and strips tags
 async function extractTextFromOdfZip(filePath) {
-  const AdmZip = require('adm-zip');
-  const zip = new AdmZip(filePath);
-  const entry = zip.getEntry('content.xml');
-  if (!entry) return '';
-  const xml = entry.getData().toString('utf8');
-  return extractPlainTextFromHtml(xml);
+  await checkFileSize(filePath, filePath);
+  try {
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(filePath);
+    const entry = zip.getEntry('content.xml');
+    if (!entry) return '';
+    const data = entry.getData();
+    if (!data) return '';
+    const xml = data.toString('utf8');
+    return extractPlainTextFromHtml(xml);
+  } catch (error) {
+    logger.error('Failed to extract ODF content:', { filePath, error: error.message });
+    return '';
+  }
 }
 
 async function extractTextFromEpub(filePath) {
@@ -1266,6 +1276,7 @@ async function extractTextFromEml(filePath) {
 }
 
 async function extractTextFromMsg(filePath) {
+  await checkFileSize(filePath, filePath);
   const officeParser = require('officeparser');
   // Best-effort using officeparser; if unavailable, return empty string
   try {
@@ -1279,11 +1290,13 @@ async function extractTextFromMsg(filePath) {
 }
 
 async function extractTextFromKml(filePath) {
+  await checkFileSize(filePath, filePath);
   const xml = await fs.readFile(filePath, 'utf8');
   return extractPlainTextFromHtml(xml);
 }
 
 async function extractTextFromKmz(filePath) {
+  await checkFileSize(filePath, filePath);
   const AdmZip = require('adm-zip');
   const zip = new AdmZip(filePath);
   const kmlEntry =

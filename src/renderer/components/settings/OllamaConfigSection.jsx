@@ -59,7 +59,7 @@ function OllamaConfigSection({
   }, [ollamaHealth, ollamaModelLists]);
 
   return (
-    <Card variant="default" className="p-5 space-y-5">
+    <Card variant="default" className="space-y-5">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div>
           <Text
@@ -98,7 +98,7 @@ function OllamaConfigSection({
         <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
           <Input
             type="text"
-            value={settings.ollamaHost}
+            value={settings.ollamaHost ?? ''}
             onChange={(e) =>
               setSettings((prev) => ({
                 ...prev,

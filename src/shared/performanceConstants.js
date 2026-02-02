@@ -40,7 +40,7 @@ const TIMEOUTS = {
   ANIMATION_MEDIUM: 300,
   ANIMATION_LONG: 500,
   ANIMATION_FADE: 180, // Fade skeleton/overlay animations
-  FILE_READ: 5000,
+  FILE_READ: 15000,
   FILE_WRITE: 10000,
   FILE_COPY: 30000,
   DIRECTORY_SCAN: 60000,
@@ -164,16 +164,6 @@ const POLLING = {
   STARTUP_POLL_FINAL: 1000
 };
 
-const FILE_SIZE = {
-  MAX_INLINE_TEXT: 1024 * 1024,
-  MAX_DOCUMENT_SIZE: 50 * 1024 * 1024,
-  MAX_IMAGE_SIZE: 20 * 1024 * 1024,
-  MAX_UPLOAD_SIZE: 100 * 1024 * 1024,
-  MAX_TEXT_FOR_HASH: 50000,
-  LARGE_FILE_THRESHOLD: 10 * 1024 * 1024,
-  STREAM_THRESHOLD: 5 * 1024 * 1024
-};
-
 const PAGINATION = {
   DEFAULT_PAGE_SIZE: 50,
   MAX_PAGE_SIZE: 1000,
@@ -218,6 +208,19 @@ const SEARCH = {
   // Default topK values by context
   DEFAULT_TOP_K: 30,
   DEFAULT_TOP_K_SIMILAR: 10,
+  // Graph expansion defaults (local relationship index)
+  GRAPH_EXPANSION_ENABLED: true,
+  GRAPH_EXPANSION_WEIGHT: 0.2,
+  GRAPH_EXPANSION_MAX_SEEDS: 15,
+  GRAPH_EXPANSION_MAX_EDGES: 200,
+  GRAPH_EXPANSION_MAX_NEIGHBORS: 120,
+  GRAPH_EXPANSION_MIN_WEIGHT: 2,
+  GRAPH_EXPANSION_DECAY: 0.6,
+  // Contextual chunk expansion
+  CHUNK_CONTEXT_ENABLED: true,
+  CHUNK_CONTEXT_MAX_NEIGHBORS: 1,
+  CHUNK_CONTEXT_MAX_FILES: 8,
+  CHUNK_CONTEXT_MAX_CHARS: 2000,
   // Minimum epsilon for division safety
   MIN_EPSILON: 0.001
 };
@@ -266,7 +269,8 @@ const LIMITS = {
   MAX_OVERLAP_ITERATIONS: 10000,
   MAX_OVERLAPS_REPORT: 100,
   BATCH_ORGANIZE_SIZE: 100, // Maximum files in a single batch organize operation
-  ANALYSIS_QUEUE_SIZE: 500 // Maximum size of analysis queue in SmartFolderWatcher
+  ANALYSIS_QUEUE_SIZE: 500, // Maximum size of analysis queue in SmartFolderWatcher
+  MAX_ANALYSIS_RESULTS: 5000 // Maximum analysis results kept in Redux store to prevent unbounded memory growth
 };
 
 const IMAGE = { MAX_DIMENSION: 1536 };
@@ -289,7 +293,11 @@ const DEBOUNCE = {
   CACHE_BATCH_WAIT: 100,
   CACHE_BATCH_MAX_WAIT: 5000,
   REFRESH_INTERVAL: 60000,
-  ERROR_RETRY_INTERVAL: 5000
+  ERROR_RETRY_INTERVAL: 5000,
+  // FIX LOW-10: Centralized learning/feedback throttling constants
+  LEARNING_DEDUPE_WINDOW: 5000, // Prevent duplicate learning for same file within 5s
+  FEEDBACK_MEMORY_SAVE: 5000, // Throttle feedback memory persistence
+  PERSISTENCE_SAVE: 5000 // Throttle pattern persistence saves
 };
 
 const CONCURRENCY = {
@@ -444,7 +452,6 @@ module.exports = {
   CACHE,
   BATCH,
   POLLING,
-  FILE_SIZE,
   PAGINATION,
   THRESHOLDS,
   SEARCH,

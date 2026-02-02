@@ -4,15 +4,16 @@
  */
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 // Mock fs.promises
 const mockFs = {
@@ -20,7 +21,8 @@ const mockFs = {
   realpath: jest.fn((p) => Promise.resolve(p))
 };
 jest.mock('fs', () => ({
-  promises: mockFs
+  promises: mockFs,
+  existsSync: jest.fn().mockReturnValue(false)
 }));
 
 // Mock asyncSpawnUtils
@@ -64,11 +66,16 @@ describe('chromaSpawnUtils', () => {
       stdout: '',
       stderr: ''
     });
+
+    mockFs.access.mockRejectedValue(new Error('ENOENT'));
   });
 
   describe('resolveChromaCliExecutable', () => {
     test('returns path when local CLI exists', async () => {
-      mockFs.access.mockResolvedValue(undefined);
+      mockFs.access.mockImplementation(async (p) => {
+        if (String(p).includes('node_modules')) return undefined;
+        throw new Error('ENOENT');
+      });
 
       const result = await chromaSpawnUtils.resolveChromaCliExecutable();
 
@@ -86,7 +93,10 @@ describe('chromaSpawnUtils', () => {
 
     test('uses platform-specific binary name', async () => {
       platformUtils.getChromaDbBinCandidates.mockReturnValue(['chroma.cmd']);
-      mockFs.access.mockResolvedValue(undefined);
+      mockFs.access.mockImplementation(async (p) => {
+        if (String(p).includes('node_modules')) return undefined;
+        throw new Error('ENOENT');
+      });
 
       const result = await chromaSpawnUtils.resolveChromaCliExecutable();
 
@@ -97,6 +107,11 @@ describe('chromaSpawnUtils', () => {
   describe('buildChromaSpawnPlan', () => {
     test('uses custom command from environment variable', async () => {
       process.env.CHROMA_SERVER_COMMAND = '/custom/chroma run --port 9000';
+      // Mock fs.access to succeed for the custom command path (security validation)
+      mockFs.access.mockImplementation(async (p) => {
+        if (String(p) === '/custom/chroma') return undefined;
+        throw new Error('ENOENT');
+      });
 
       const result = await chromaSpawnUtils.buildChromaSpawnPlan(defaultConfig);
 
@@ -117,7 +132,10 @@ describe('chromaSpawnUtils', () => {
     });
 
     test('uses local CLI when available', async () => {
-      mockFs.access.mockResolvedValue(undefined);
+      mockFs.access.mockImplementation(async (p) => {
+        if (String(p).includes('node_modules')) return undefined;
+        throw new Error('ENOENT');
+      });
 
       const result = await chromaSpawnUtils.buildChromaSpawnPlan(defaultConfig);
 
@@ -285,7 +303,7 @@ describe('chromaSpawnUtils', () => {
       const result = await chromaSpawnUtils.buildChromaSpawnPlan(defaultConfig);
 
       // Should fall through to other methods
-      expect(result.source).not.toBe('custom-command');
+      expect(result?.source).not.toBe('custom-command');
     });
 
     test('handles command with multiple spaces', async () => {

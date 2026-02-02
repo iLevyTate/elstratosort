@@ -1,10 +1,9 @@
 const { app } = require('electron');
 const fs = require('fs').promises;
 const path = require('path');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('UserDataMigration');
-
+const logger = createLogger('UserDataMigration');
 const LEGACY_USERDATA_FOLDERS = [
   'StratoSort',
   'stratosort',

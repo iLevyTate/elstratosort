@@ -17,10 +17,9 @@
  */
 
 const { EventEmitter } = require('events');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('CircuitBreaker');
-
+const logger = createLogger('CircuitBreaker');
 // Circuit states
 const CircuitState = {
   CLOSED: 'CLOSED',

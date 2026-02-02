@@ -1,6 +1,6 @@
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('SmartFoldersLLMService');
+const logger = createLogger('SmartFoldersLLMService');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
 const { fetchWithRetry } = require('../utils/ollamaApiRetry');
 const { getOllamaHost } = require('../ollamaUtils');

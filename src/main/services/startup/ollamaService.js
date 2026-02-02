@@ -8,15 +8,16 @@
  */
 
 const { spawn } = require('child_process');
+const path = require('path');
 const axios = require('axios');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { axiosWithRetry, checkOllamaHealth } = require('../../utils/ollamaApiRetry');
 const { TIMEOUTS } = require('../../../shared/performanceConstants');
 const { getValidatedOllamaHost } = require('../../../shared/configDefaults');
 const { getRecommendedEnvSettings } = require('../PerformanceService');
+const { findOllamaBinary } = require('../../utils/ollamaDetection');
 
-logger.setContext('StartupManager:Ollama');
-
+const logger = createLogger('StartupManager:Ollama');
 // Note: checkOllamaHealth is imported from shared ollamaApiRetry module
 
 /**
@@ -100,12 +101,18 @@ async function startOllama({ serviceStatus }) {
     loadTimeout: envVars.OLLAMA_LOAD_TIMEOUT
   });
 
+  const binary = await findOllamaBinary();
+  const command = binary?.path || 'ollama';
+  const workingDirectory =
+    binary?.source === 'embedded' ? path.dirname(binary.path) : process.cwd();
+
   let ollamaProcess;
   try {
-    ollamaProcess = spawn('ollama', ['serve'], {
+    ollamaProcess = spawn(command, ['serve'], {
       detached: false,
       stdio: 'pipe',
       windowsHide: true,
+      cwd: workingDirectory,
       env: {
         ...process.env,
         ...envVars

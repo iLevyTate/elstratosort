@@ -1,28 +1,29 @@
 import React, { memo, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { useSelector } from 'react-redux';
-import { FileText, Play } from 'lucide-react';
+import { FileText, ChevronRight, Info } from 'lucide-react';
 import Input from '../ui/Input';
 import Select from '../ui/Select';
 import { StatusBadge } from '../ui';
 import Card from '../ui/Card';
 import { Text } from '../ui/Typography';
-import { Stack } from '../layout';
 import { formatDisplayPath } from '../../utils/pathDisplay';
+import { selectRedactPaths } from '../../store/selectors';
 
 function ReadyFileItem({
   file,
   index,
-  isSelected,
+  isSelected = false,
   onToggleSelected,
   stateDisplay,
-  smartFolders,
-  editing,
+  smartFolders = [],
+  editing = null,
   onEdit,
-  category: categoryProp,
-  onViewDetails
+  category: categoryProp = null,
+  onViewDetails = null
 }) {
-  const redactPaths = useSelector((state) => Boolean(state?.system?.redactPaths));
+  // PERF: Use memoized selector instead of inline Boolean coercion
+  const redactPaths = useSelector(selectRedactPaths);
   const analysis = editing?.analysis || file?.analysis;
   const suggestedName = editing?.suggestedName ?? analysis?.suggestedName;
   const category = categoryProp ?? editing?.category ?? analysis?.category;
@@ -39,6 +40,7 @@ function ReadyFileItem({
       : confidenceValue > 1
         ? Math.round(confidenceValue)
         : Math.round(confidenceValue * 100);
+  const showConfidence = computedConfidence !== null;
   const handleToggle = useCallback(() => onToggleSelected(index), [onToggleSelected, index]);
   const handleEditName = useCallback(
     (e) => onEdit(index, 'suggestedName', e.target.value),
@@ -47,6 +49,10 @@ function ReadyFileItem({
   const handleEditCategory = useCallback(
     (e) => onEdit(index, 'category', e.target.value),
     [onEdit, index]
+  );
+  const handleViewDetails = useCallback(
+    () => onViewDetails && onViewDetails(file),
+    [onViewDetails, file]
   );
 
   const filePath = file.path || '';
@@ -62,141 +68,134 @@ function ReadyFileItem({
   return (
     <Card
       variant={isSelected ? 'interactive' : 'default'}
-      className={`h-full p-4 sm:p-5 relative ${isSelected ? 'ring-2 ring-stratosort-blue/25' : ''}`}
+      className={`h-full relative ${isSelected ? 'ring-2 ring-stratosort-blue/25' : ''}`}
     >
-      <div className="flex flex-col sm:flex-row gap-3 h-full">
-        <div className="pt-1 flex-shrink-0">
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={handleToggle}
-            className="form-checkbox accent-stratosort-blue h-4 w-4 rounded border-border-soft focus:ring-stratosort-blue"
-            aria-label={`Select ${file.name}`}
-          />
-        </div>
-        <div className="flex-1 min-w-0 overflow-visible">
-          <Stack gap="cozy" className="w-full">
-            {/* Header Section */}
-            <div className="flex items-start gap-3 min-w-0">
-              <FileText className="w-5 h-5 text-system-gray-400 flex-shrink-0 mt-0.5" />
+      {/* Header: Checkbox + File Info + Status */}
+      <div className="flex items-start gap-4 p-4 pb-3 border-b border-system-gray-100">
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={handleToggle}
+          className="form-checkbox accent-stratosort-blue h-4 w-4 rounded border-border-soft focus:ring-stratosort-blue mt-1 flex-shrink-0"
+          aria-label={`Select ${file.name}`}
+        />
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5 min-w-0 flex-1">
+              <FileText className="w-4 h-4 text-system-gray-400 flex-shrink-0 mt-0.5" />
               <div className="min-w-0">
                 <Text
                   variant="small"
-                  className="font-medium text-system-gray-900 break-words leading-tight"
+                  className="font-medium text-system-gray-900 break-words leading-snug"
                   title={`${file.name}${displayFilePath ? ` (${displayFilePath})` : ''}`}
                 >
                   {file.name}
                 </Text>
                 <Text variant="tiny" className="text-system-gray-500 mt-0.5">
-                  {[
-                    file.size ? `${Math.round(file.size / 1024)} KB` : 'Pending size',
-                    file.source && file.source !== 'file_selection'
-                      ? file.source.replace('_', ' ')
-                      : null
-                  ]
-                    .filter(Boolean)
-                    .join(' • ')}
+                  {file.size ? `${Math.round(file.size / 1024)} KB` : 'Pending size'}
                 </Text>
               </div>
             </div>
 
-            {/* Analysis Section */}
-            {analysis ? (
-              <>
-                <div className="grid grid-cols-2 gap-3 w-full">
-                  <div className="w-full min-w-0">
-                    <Input
-                      label="Suggested Name"
-                      type="text"
-                      value={suggestedName}
-                      onChange={handleEditName}
-                      className="text-sm w-full"
-                      title={suggestedName}
-                    />
-                  </div>
-                  <div className="w-full min-w-0">
-                    <Select
-                      label="Category"
-                      value={category}
-                      onChange={handleEditCategory}
-                      className="text-sm w-full"
-                    >
-                      {!hasCategoryOption && category && (
-                        <option value={category}>{`Unmapped: ${category}`}</option>
-                      )}
-                      {smartFolders.map((folder) => (
-                        <option key={folder.id} value={folder.name}>
-                          {folder.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-border-soft/70">
-                  <button
-                    type="button"
-                    onClick={() => onViewDetails && onViewDetails(file)}
-                    className="text-system-gray-600 hover:text-system-gray-900 font-medium flex items-center gap-1.5 w-full transition-colors"
-                    aria-label={`View analysis details for ${file.name}`}
-                  >
-                    <Play className="w-3 h-3 fill-current opacity-70" aria-hidden="true" />
-                    <Text as="span" variant="tiny">
-                      View Analysis Details
-                    </Text>
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-end gap-3">
-                  <StatusBadge variant={tone} size="sm" className="shadow-sm whitespace-nowrap">
-                    <span className={stateDisplay.spinning ? 'animate-spin mr-1' : 'mr-1'}>
-                      {stateDisplay.icon}
-                    </span>
-                    <span className="hidden sm:inline">{stateDisplay.label}</span>
-                  </StatusBadge>
-
-                  {computedConfidence !== null && (
-                    <div
-                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border flex-shrink-0 ${
-                        computedConfidence >= 80
-                          ? 'bg-stratosort-success/10 text-stratosort-success border-stratosort-success/20'
-                          : computedConfidence >= 50
-                            ? 'bg-stratosort-warning/10 text-stratosort-warning border-stratosort-warning/20'
-                            : 'bg-system-gray-100 text-system-gray-600 border-system-gray-200'
-                      }`}
-                    >
-                      <div
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          computedConfidence >= 80
-                            ? 'bg-stratosort-success'
-                            : computedConfidence >= 50
-                              ? 'bg-stratosort-warning'
-                              : 'bg-system-gray-400'
-                        }`}
-                      />
-                      {computedConfidence}%
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="flex flex-col gap-2">
-                <Text variant="small" className="text-system-red-600 mt-2">
-                  Analysis failed - will be skipped
-                </Text>
-                <div className="flex justify-end">
-                  <StatusBadge variant={tone} size="sm" className="shadow-sm whitespace-nowrap">
-                    <span className={stateDisplay.spinning ? 'animate-spin mr-1' : 'mr-1'}>
-                      {stateDisplay.icon}
-                    </span>
-                    <span className="hidden sm:inline">{stateDisplay.label}</span>
-                  </StatusBadge>
-                </div>
-              </div>
-            )}
-          </Stack>
+            {/* Status Badge - Top Right */}
+            <StatusBadge variant={tone} size="sm" className="flex-shrink-0">
+              <span className={stateDisplay.spinning ? 'animate-spin mr-1' : 'mr-1'}>
+                {stateDisplay.icon}
+              </span>
+              {stateDisplay.label}
+            </StatusBadge>
+          </div>
         </div>
       </div>
+
+      {/* Body: Form Fields */}
+      {analysis ? (
+        <div className="p-4 space-y-4">
+          <Input
+            label="Suggested Name"
+            type="text"
+            value={suggestedName}
+            onChange={handleEditName}
+            className="text-sm w-full"
+            title={suggestedName}
+          />
+
+          <Select
+            label="Category"
+            value={category}
+            onChange={handleEditCategory}
+            className="text-sm w-full"
+          >
+            {!hasCategoryOption && category && (
+              <option value={category}>{`Unmapped: ${category}`}</option>
+            )}
+            {smartFolders.map((folder) => (
+              <option key={folder.id} value={folder.name}>
+                {folder.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+      ) : (
+        <div className="p-4">
+          <Text variant="small" className="text-system-red-600">
+            Analysis failed - will be skipped
+          </Text>
+        </div>
+      )}
+
+      {/* Footer: Confidence + Actions */}
+      {analysis && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-system-gray-50/50 border-t border-system-gray-100 rounded-b-xl">
+          {/* Confidence */}
+          {showConfidence ? (
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                <div
+                  className={`w-2 h-2 rounded-full ${
+                    computedConfidence >= 80
+                      ? 'bg-stratosort-success'
+                      : computedConfidence >= 50
+                        ? 'bg-stratosort-warning'
+                        : 'bg-system-gray-400'
+                  }`}
+                />
+                <Text variant="tiny" className="font-medium text-system-gray-600">
+                  {computedConfidence}% confidence
+                </Text>
+              </div>
+              {/* Mini progress bar */}
+              <div className="w-16 h-1.5 bg-system-gray-200 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    computedConfidence >= 80
+                      ? 'bg-stratosort-success'
+                      : computedConfidence >= 50
+                        ? 'bg-stratosort-warning'
+                        : 'bg-system-gray-400'
+                  }`}
+                  style={{ width: `${computedConfidence}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <div />
+          )}
+
+          {/* View Details Link */}
+          <button
+            type="button"
+            onClick={handleViewDetails}
+            className="flex items-center gap-1.5 text-xs font-medium text-system-gray-500 hover:text-stratosort-blue transition-colors"
+            aria-label={`View analysis details for ${file.name}`}
+          >
+            <Info className="w-3.5 h-3.5" />
+            Details
+            <ChevronRight className="w-3 h-3" />
+          </button>
+        </div>
+      )}
     </Card>
   );
 }
@@ -212,14 +211,6 @@ ReadyFileItem.propTypes = {
   onEdit: PropTypes.func.isRequired,
   category: PropTypes.string,
   onViewDetails: PropTypes.func
-};
-
-ReadyFileItem.defaultProps = {
-  isSelected: false,
-  smartFolders: [],
-  editing: null,
-  category: null,
-  onViewDetails: null
 };
 
 function areReadyFileItemPropsEqual(prev, next) {

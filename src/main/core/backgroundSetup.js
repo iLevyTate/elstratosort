@@ -18,16 +18,15 @@ const path = require('path');
 const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 // FIX: Import safeSend for validated IPC event sending
 const { safeSend } = require('../ipc/ipcWrappers');
 const { getInstance: getDependencyManager } = require('../services/DependencyManagerService');
 const { getStartupManager } = require('../services/startup');
 const { getOllama } = require('../ollamaUtils');
-const { getService: getSettingsService } = require('../services/SettingsService');
+const { getInstance: getSettingsService } = require('../services/SettingsService');
 
-logger.setContext('BackgroundSetup');
-
+const logger = createLogger('BackgroundSetup');
 const execFileAsync = promisify(execFile);
 const COMMAND_TIMEOUT_MS = 5000;
 
@@ -123,11 +122,29 @@ async function installTesseractIfMissing() {
     }
   } else {
     if (await commandExists('apt-get')) {
-      const updated = await runCommand('sudo', ['apt-get', 'update']);
-      if (updated === 0) {
-        status = await runCommand('sudo', ['apt-get', 'install', '-y', 'tesseract-ocr']);
+      // FIX (H-3): Check for interactive TTY before running sudo.
+      // In an Electron app with stdio:'inherit', sudo hangs waiting for a
+      // password prompt if no TTY is available (e.g., launched from desktop).
+      const hasTTY = process.stdin && process.stdin.isTTY;
+      if (hasTTY) {
+        const updated = await runCommand('sudo', ['apt-get', 'update']);
+        if (updated === 0) {
+          status = await runCommand('sudo', ['apt-get', 'install', '-y', 'tesseract-ocr']);
+        } else {
+          status = updated;
+        }
       } else {
-        status = updated;
+        // No TTY — try without sudo (works if user has passwordless apt access or is root)
+        const updated = await runCommand('apt-get', ['update']);
+        if (updated === 0) {
+          status = await runCommand('apt-get', ['install', '-y', 'tesseract-ocr']);
+        } else {
+          logger.warn(
+            '[BACKGROUND] Cannot install tesseract: no interactive terminal for sudo. ' +
+              'Install manually with: sudo apt-get install tesseract-ocr'
+          );
+          status = updated;
+        }
       }
     }
   }
@@ -141,11 +158,13 @@ async function installTesseractIfMissing() {
     logger.info('[BACKGROUND] Tesseract installation complete');
   } else {
     emitDependencyProgress({
-      message: 'Tesseract install failed or skipped. OCR will use tesseract.js.',
+      message: 'Tesseract install failed or skipped. Falling back to bundled tesseract.js.',
       dependency: 'tesseract',
-      stage: 'error'
+      stage: 'fallback'
     });
     logger.warn('[BACKGROUND] Tesseract install failed or skipped');
+    // Signal downstream to prefer JS fallback where supported
+    process.env.USE_TESSERACT_JS = '1';
   }
 }
 

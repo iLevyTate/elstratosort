@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 import {
   CheckCircle,
@@ -12,8 +12,8 @@ import {
   Eye
 } from 'lucide-react';
 import { useNotification } from '../../contexts/NotificationContext';
-import { Card, Button, IconButton, StateMessage } from '../ui';
-import { Text } from '../ui/Typography';
+import { Card, Button, IconButton, StateMessage, Textarea } from '../ui';
+import { Heading, Text } from '../ui/Typography';
 
 function BatchOrganizationSuggestions({
   batchSuggestions,
@@ -28,6 +28,14 @@ function BatchOrganizationSuggestions({
   const [showPreview, setShowPreview] = useState(false);
   const [memoryNote, setMemoryNote] = useState('');
   const [savingMemory, setSavingMemory] = useState(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // FIX: Memoize toggleGroup to prevent unnecessary re-renders
   const toggleGroup = useCallback((groupIndex) => {
@@ -75,27 +83,35 @@ function BatchOrganizationSuggestions({
     setSavingMemory(true);
     try {
       await window.electronAPI.suggestions.addFeedbackMemory(trimmed);
-      setMemoryNote('');
-      addNotification('Memory saved', 'success');
-      if (onMemorySaved) {
-        onMemorySaved();
+      if (isMountedRef.current) {
+        setMemoryNote('');
+        addNotification('Memory saved', 'success');
+        if (onMemorySaved) {
+          onMemorySaved();
+        }
       }
     } catch {
-      addNotification('Failed to save memory', 'warning');
+      if (isMountedRef.current) {
+        addNotification('Failed to save memory', 'warning');
+      }
     } finally {
-      setSavingMemory(false);
+      if (isMountedRef.current) {
+        setSavingMemory(false);
+      }
     }
   };
 
   return (
     <div className="flex flex-col gap-6">
       <Card className="p-4 sm:p-6 border-system-gray-200 bg-system-gray-50">
-        <h3 className="font-medium text-system-gray-900 mb-2">Batch Feedback Note</h3>
-        <textarea
+        <Heading as="h3" variant="h6" className="text-system-gray-900 mb-2">
+          Batch Feedback Note
+        </Heading>
+        <Textarea
           value={memoryNote}
           onChange={(event) => setMemoryNote(event.target.value)}
           placeholder='e.g., "All 3D files go to 3D Prints"'
-          className="w-full rounded-md border border-system-gray-200 bg-white p-2 text-sm text-system-gray-800 focus:outline-none focus:ring-2 focus:ring-stratosort-blue/30"
+          className="w-full text-sm"
           rows={2}
         />
         <div className="mt-2">
@@ -116,7 +132,9 @@ function BatchOrganizationSuggestions({
       {/* Pattern Analysis */}
       {patterns && (
         <Card className="p-4 bg-stratosort-blue/5 border-stratosort-blue/20">
-          <h3 className="font-medium text-system-gray-900 mb-3">Pattern Analysis</h3>
+          <Heading as="h3" variant="h6" className="text-system-gray-900 mb-3">
+            Pattern Analysis
+          </Heading>
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-[var(--spacing-cozy)] text-sm">
             {patterns.hasCommonProject && (
               <div>
@@ -160,7 +178,9 @@ function BatchOrganizationSuggestions({
       {/* Recommendations */}
       {recommendations && recommendations.length > 0 && (
         <Card className="p-4 sm:p-6 border-stratosort-success/20 bg-stratosort-success/10">
-          <h3 className="font-medium text-system-gray-900 mb-3">Recommendations</h3>
+          <Heading as="h3" variant="h6" className="text-system-gray-900 mb-3">
+            Recommendations
+          </Heading>
           <div className="flex flex-col gap-6">
             {/* FIX: Use stable identifier instead of array index as key */}
             {recommendations.map((rec) => (
@@ -175,7 +195,9 @@ function BatchOrganizationSuggestions({
                   )}
                 </div>
                 <div className="flex-1">
-                  <div className="font-medium text-sm">{rec.description}</div>
+                  <Text as="div" variant="small" className="font-medium text-system-gray-900">
+                    {rec.description}
+                  </Text>
                   <Text variant="tiny" className="text-system-gray-600 mt-1">
                     {rec.suggestion}
                   </Text>
@@ -203,8 +225,10 @@ function BatchOrganizationSuggestions({
       {suggestedStrategy && (
         <Card className="p-4 sm:p-6 border-stratosort-blue/50 bg-stratosort-blue/5">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-medium text-system-gray-900">Suggested Organization Strategy</h3>
-            <span className="text-sm text-stratosort-blue">
+            <Heading as="h3" variant="h6" className="text-system-gray-900">
+              Suggested Organization Strategy
+            </Heading>
+            <Text as="span" variant="small" className="text-stratosort-blue">
               {Math.round(
                 Math.min(
                   100,
@@ -217,11 +241,15 @@ function BatchOrganizationSuggestions({
                 )
               )}
               % Match
-            </span>
+            </Text>
           </div>
           <div className="mb-4">
-            <div className="font-medium">{suggestedStrategy.name}</div>
-            <div className="text-sm text-system-gray-600 mt-1">{suggestedStrategy.description}</div>
+            <Text as="div" variant="small" className="font-medium text-system-gray-900">
+              {suggestedStrategy.name}
+            </Text>
+            <Text variant="small" className="text-system-gray-600 mt-1">
+              {suggestedStrategy.description}
+            </Text>
             <Text variant="tiny" className="text-system-gray-500 mt-2">
               Pattern:{' '}
               <code className="bg-white px-2 py-1 rounded-md">{suggestedStrategy.pattern}</code>
@@ -245,9 +273,9 @@ function BatchOrganizationSuggestions({
 
       {/* File Groups */}
       <div>
-        <h3 className="font-medium text-system-gray-900 mb-3">
+        <Heading as="h3" variant="h6" className="text-system-gray-900 mb-3">
           Suggested File Groups ({groups.length})
-        </h3>
+        </Heading>
         <div className="flex flex-col gap-6 max-h-viewport-md overflow-y-auto modern-scrollbar">
           {/* FIX: Use stable identifier instead of array index as key */}
           {groups.map((group, groupIndex) => (
@@ -271,20 +299,22 @@ function BatchOrganizationSuggestions({
                       }`}
                     />
                     <div>
-                      <div className="font-medium">{group.folder}</div>
-                      <div className="text-sm text-system-gray-600">
+                      <Text as="div" variant="small" className="font-medium text-system-gray-900">
+                        {group.folder}
+                      </Text>
+                      <Text as="div" variant="small" className="text-system-gray-600">
                         {group.files.length} file
                         {group.files.length !== 1 ? 's' : ''}
                         {group.confidence && (
-                          <span className="ml-2">
+                          <Text as="span" variant="small" className="ml-2">
                             {/* FIX: Handle confidence values that may already be 0-100 scale */}•{' '}
                             {Math.round(
                               group.confidence <= 1 ? group.confidence * 100 : group.confidence
                             )}
                             % confidence
-                          </span>
+                          </Text>
                         )}
-                      </div>
+                      </Text>
                     </div>
                   </div>
                   <Button
@@ -338,20 +368,20 @@ function BatchOrganizationSuggestions({
                         <div className="flex flex-wrap gap-2">
                           {/* FIX: Use stable identifier instead of array index as key */}
                           {group.files[0].alternatives.slice(0, 3).map((alt) => (
-                            <button
+                            <Button
                               key={alt.folder || alt.id}
-                              className="px-2 py-1 bg-white border border-system-gray-300 rounded-md hover:border-stratosort-blue transition-colors"
+                              variant="ghost"
+                              size="sm"
+                              className="h-auto px-2 py-1 text-xs bg-white border border-system-gray-300 rounded-md hover:border-stratosort-blue"
                               onClick={() =>
-                                onCustomizeGroup(groupIndex, {
+                                onCustomizeGroup?.(groupIndex, {
                                   ...group,
                                   folder: alt.folder
                                 })
                               }
                             >
-                              <Text as="span" variant="tiny">
-                                {alt.folder}
-                              </Text>
-                            </button>
+                              {alt.folder}
+                            </Button>
                           ))}
                         </div>
                       </div>
@@ -365,12 +395,13 @@ function BatchOrganizationSuggestions({
 
       {/* Actions */}
       <div className="flex justify-between pt-4 border-t">
-        <Button variant="secondary" onClick={onRejectAll}>
+        <Button variant="secondary" size="sm" onClick={onRejectAll}>
           Cancel Batch Organization
         </Button>
         <div className="flex gap-cozy">
           <Button
             variant="secondary"
+            size="sm"
             onClick={() => setShowPreview(true)}
             className="flex items-center gap-1.5"
           >
@@ -379,6 +410,7 @@ function BatchOrganizationSuggestions({
           </Button>
           <Button
             variant="primary"
+            size="sm"
             onClick={handleStrategyAccept}
             className="bg-stratosort-blue hover:bg-stratosort-blue/90"
           >
@@ -392,7 +424,9 @@ function BatchOrganizationSuggestions({
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
           <Card className="w-full max-w-2xl max-h-[80vh] overflow-hidden m-4 flex flex-col">
             <div className="p-4 border-b flex items-center justify-between">
-              <h3 className="heading-secondary">Preview Organization Changes</h3>
+              <Heading as="h3" variant="h5">
+                Preview Organization Changes
+              </Heading>
               <IconButton
                 onClick={() => setShowPreview(false)}
                 variant="ghost"
@@ -408,20 +442,25 @@ function BatchOrganizationSuggestions({
                   <div key={group.folder || index} className="border rounded-lg overflow-hidden">
                     <div className="bg-system-gray-50 p-3 flex items-center gap-2">
                       <Folder className="w-5 h-5 text-stratosort-blue" />
-                      <span className="font-medium">{group.folder}</span>
-                      <span className="text-sm text-system-gray-500">
+                      <Text as="span" variant="small" className="font-medium text-system-gray-900">
+                        {group.folder}
+                      </Text>
+                      <Text as="span" variant="small" className="text-system-gray-500">
                         ({group.files.length} file{group.files.length !== 1 ? 's' : ''})
-                      </span>
+                      </Text>
                     </div>
                     <div className="divide-y divide-system-gray-100">
                       {group.files.map((file) => (
-                        <div
-                          key={file.path || file.name}
-                          className="p-3 flex items-center gap-3 text-sm"
-                        >
+                        <div key={file.path || file.name} className="p-3 flex items-center gap-3">
                           <FileText className="w-4 h-4 text-system-gray-400 flex-shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <div className="truncate font-medium">{file.name}</div>
+                            <Text
+                              as="div"
+                              variant="small"
+                              className="truncate font-medium text-system-gray-900"
+                            >
+                              {file.name}
+                            </Text>
                             {file.currentPath && (
                               <Text
                                 as="div"
@@ -454,23 +493,24 @@ function BatchOrganizationSuggestions({
 
               {/* Summary */}
               <div className="mt-4 p-3 bg-stratosort-blue/5 rounded-lg border border-stratosort-blue/20">
-                <div className="text-sm text-system-gray-700">
+                <Text variant="small" className="text-system-gray-700">
                   <span className="font-medium">{groups.length}</span> folder
                   {groups.length !== 1 ? 's' : ''} will receive{' '}
                   <span className="font-medium">
                     {groups.reduce((sum, g) => sum + g.files.length, 0)}
                   </span>{' '}
                   file{groups.reduce((sum, g) => sum + g.files.length, 0) !== 1 ? 's' : ''} total
-                </div>
+                </Text>
               </div>
             </div>
 
             <div className="p-4 border-t flex justify-end gap-3">
-              <Button variant="secondary" onClick={() => setShowPreview(false)}>
+              <Button variant="secondary" size="sm" onClick={() => setShowPreview(false)}>
                 Close Preview
               </Button>
               <Button
                 variant="primary"
+                size="sm"
                 onClick={() => {
                   setShowPreview(false);
                   handleStrategyAccept();

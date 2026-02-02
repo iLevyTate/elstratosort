@@ -7,14 +7,13 @@
  * @module services/chromadb/chunkOperations
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { withRetry } = require('../../../shared/errorHandlingUtils');
 const { sanitizeMetadata } = require('../../../shared/pathSanitization');
 const { normalizeChunkMetadata } = require('../../../shared/normalization');
 const { chunkMetaSchema, validateSchema } = require('../../../shared/normalization/schemas');
 
-logger.setContext('ChromaDB:ChunkOps');
-
+const logger = createLogger('ChromaDB:ChunkOps');
 /**
  * Validate embedding vector for NaN/Infinity.
  * Dimension validation is handled at the service layer.

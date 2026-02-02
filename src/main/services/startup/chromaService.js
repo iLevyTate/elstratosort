@@ -12,7 +12,7 @@ const axios = require('axios');
 const { app } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { axiosWithRetry } = require('../../utils/ollamaApiRetry');
 const { hasPythonModuleAsync } = require('../../utils/asyncSpawnUtils');
 const { container, ServiceIds } = require('../ServiceContainer');
@@ -23,8 +23,7 @@ const {
   CHROMA_ERROR_MESSAGES
 } = require('../../../shared/config/chromaDefaults');
 
-logger.setContext('StartupManager:ChromaDB');
-
+const logger = createLogger('StartupManager:ChromaDB');
 // Construct a minimal, side-effect-free ChromaDB server config when the service
 // container is not yet populated during startup.
 function buildDefaultChromaConfig() {
@@ -231,27 +230,27 @@ async function startChromaDB({
   // Use cached spawn plan if available
   let plan = cachedChromaSpawnPlan;
 
-  if (!plan) {
-    const { buildChromaSpawnPlan } = require('../../utils/chromaSpawnUtils');
-    // Chroma service might not be registered yet during early startup.
-    // Prefer registered service config when available; otherwise fall back to env/defaults.
-    let serverConfig;
-    try {
-      const hasServiceResolver =
-        container && typeof container.has === 'function' && typeof container.resolve === 'function';
-      if (hasServiceResolver && container.has(ServiceIds.CHROMA_DB)) {
-        // FIX: Wrap container resolution in try-catch to handle startup failures gracefully
-        serverConfig = container.resolve(ServiceIds.CHROMA_DB).getServerConfig();
-      } else {
-        serverConfig = buildDefaultChromaConfig();
-      }
-    } catch (resolveError) {
-      // FIX Issue 3.4: Log at WARN level since this is a significant fallback scenario
-      logger.warn('[STARTUP] Failed to resolve ChromaDB service, using default config', {
-        error: resolveError?.message
-      });
+  // FIX 84: Resolve serverConfig once and reuse for both spawn plan and port check.
+  // Previously, port check created a separate default config which could differ from
+  // the container-resolved config used to build the spawn plan.
+  let serverConfig;
+  try {
+    const hasServiceResolver =
+      container && typeof container.has === 'function' && typeof container.resolve === 'function';
+    if (hasServiceResolver && container.has(ServiceIds.CHROMA_DB)) {
+      serverConfig = container.resolve(ServiceIds.CHROMA_DB).getServerConfig();
+    } else {
       serverConfig = buildDefaultChromaConfig();
     }
+  } catch (resolveError) {
+    logger.warn('[STARTUP] Failed to resolve ChromaDB service, using default config', {
+      error: resolveError?.message
+    });
+    serverConfig = buildDefaultChromaConfig();
+  }
+
+  if (!plan) {
+    const { buildChromaSpawnPlan } = require('../../utils/chromaSpawnUtils');
 
     plan = await buildChromaSpawnPlan(serverConfig);
 
@@ -296,7 +295,6 @@ async function startChromaDB({
 
   // FIX: Check if port is available before attempting spawn
   // This prevents wasted time when an existing ChromaDB is occupying the port
-  const serverConfig = buildDefaultChromaConfig();
   const { isPortAvailable } = require('./preflightChecks');
   const portAvailable = await isPortAvailable(serverConfig.host, serverConfig.port);
 

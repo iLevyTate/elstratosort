@@ -30,6 +30,17 @@ class IpcRateLimiter {
       channelData.count++;
     }
 
+    // Check limit BEFORE saving the incremented count so rejected requests
+    // don't inflate the counter
+    if (channelData.count > this.maxRequestsPerSecond) {
+      // Don't save the inflated count for rejected requests
+      channelData.count--;
+      const resetIn = Math.ceil((channelData.resetTime - now) / 1000);
+      throw new Error(
+        `Rate limit exceeded for channel: ${channel}. Please wait ${resetIn}s before retrying. Consider reducing concurrent requests.`
+      );
+    }
+
     this.rateLimiter.set(channel, channelData);
 
     // Schedule cleanup asynchronously to prevent race conditions
@@ -42,13 +53,6 @@ class IpcRateLimiter {
         this._cleanupRateLimiter();
         this._cleanupScheduled = false;
       }, 0);
-    }
-
-    if (channelData.count > this.maxRequestsPerSecond) {
-      const resetIn = Math.ceil((channelData.resetTime - now) / 1000);
-      throw new Error(
-        `Rate limit exceeded for channel: ${channel}. Please wait ${resetIn}s before retrying. Consider reducing concurrent requests.`
-      );
     }
 
     return true;

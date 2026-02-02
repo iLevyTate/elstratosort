@@ -9,24 +9,29 @@ import { Heading, Text } from '../ui/Typography';
 function SettingRow({ label, description, children, className = '', layout = 'row' }) {
   // layout 'row' puts control on the right (good for switches)
   // layout 'col' puts control below description (good for inputs/selects)
+  const isRow = layout === 'row';
+  const containerClass = isRow
+    ? 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6'
+    : 'flex flex-col gap-2';
+  const descriptionClass = label ? 'text-system-gray-500 mt-1' : 'text-system-gray-500';
 
   return (
-    <div
-      className={`flex ${layout === 'row' ? 'flex-row items-center justify-between gap-4' : 'flex-col gap-2'} ${className}`}
-    >
-      <div className={`${layout === 'row' ? 'flex-1' : ''} min-w-0`}>
+    <div className={`${containerClass} ${className}`.trim()}>
+      <div className={`${isRow ? 'flex-1' : ''} min-w-0`}>
         {label && (
-          <Heading as="h3" variant="h6" className="text-sm font-medium text-system-gray-900">
+          <Heading as="h3" variant="h6" className="text-system-gray-900">
             {label}
           </Heading>
         )}
         {description && (
-          <Text variant="small" className="text-system-gray-500 mt-1">
+          <Text variant="small" className={descriptionClass}>
             {description}
           </Text>
         )}
       </div>
-      <div className={layout === 'row' ? 'flex-shrink-0' : 'w-full max-w-md'}>{children}</div>
+      <div className={isRow ? 'w-full sm:w-auto sm:flex-shrink-0' : 'w-full max-w-2xl'}>
+        {children}
+      </div>
     </div>
   );
 }

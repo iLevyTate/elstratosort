@@ -91,6 +91,7 @@ class CacheInvalidationBus extends EventEmitter {
     // Batch coalescing for high-frequency operations
     this._batchTimer = null;
     this._batchQueue = [];
+    this._stopped = false;
     this.BATCH_COALESCE_MS = 50; // Coalesce rapid invalidations
 
     // Statistics
@@ -312,6 +313,7 @@ class CacheInvalidationBus extends EventEmitter {
    * @param {string} newPath - New path
    */
   queueInvalidation(oldPath, newPath) {
+    if (this._stopped) return;
     this._batchQueue.push({ oldPath, newPath });
 
     if (!this._batchTimer) {
@@ -404,11 +406,13 @@ class CacheInvalidationBus extends EventEmitter {
       this._batchTimer = null;
     }
 
-    // Flush any pending invalidations
+    // FIX: Flush pending invalidations BEFORE setting _stopped and clearing
+    // subscribers, so cascading invalidations from flush are still delivered.
     if (this._batchQueue.length > 0) {
       this._flushBatchQueue();
     }
 
+    this._stopped = true;
     this._subscribers.clear();
     this.removeAllListeners();
 

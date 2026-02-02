@@ -1,8 +1,7 @@
 const crypto = require('crypto');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('LLMOptimization');
-
+const logger = createLogger('LLMOptimization');
 /**
  * LLM Optimization Utilities
  * - Request deduplication: Prevent duplicate LLM calls for identical inputs
@@ -16,14 +15,20 @@ logger.setContext('LLMOptimization');
  * @param {*} obj - Value to sort (handles objects, arrays, primitives)
  * @returns {*} Sorted value
  */
-function sortObjectKeysDeep(obj) {
+function sortObjectKeysDeep(obj, _seen) {
   if (Array.isArray(obj)) {
-    return obj.map(sortObjectKeysDeep);
+    const seen = _seen || new WeakSet();
+    if (seen.has(obj)) return obj;
+    seen.add(obj);
+    return obj.map((item) => sortObjectKeysDeep(item, seen));
   }
   if (obj !== null && typeof obj === 'object') {
+    const seen = _seen || new WeakSet();
+    if (seen.has(obj)) return obj;
+    seen.add(obj);
     const sorted = {};
     for (const key of Object.keys(obj).sort()) {
-      sorted[key] = sortObjectKeysDeep(obj[key]);
+      sorted[key] = sortObjectKeysDeep(obj[key], seen);
     }
     return sorted;
   }
@@ -33,8 +38,10 @@ function sortObjectKeysDeep(obj) {
 class LLMRequestDeduplicator {
   constructor(maxPendingRequests = 100) {
     // Track in-flight requests to avoid duplicate calls
-    this.pendingRequests = new Map(); // key -> Promise
+    this.pendingRequests = new Map(); // key -> { promise, createdAt }
     this.maxPendingRequests = maxPendingRequests;
+    // Maximum age for a pending request before it's considered stale (5 minutes)
+    this.maxRequestAgeMs = 300000;
   }
 
   /**
@@ -64,52 +71,83 @@ class LLMRequestDeduplicator {
    * @param {Function} fn - Async function to execute
    * @param {Object} metadata - Optional metadata for logging (type, fileName, etc.)
    */
+  /**
+   * Evict stale entries that have been pending longer than maxRequestAgeMs.
+   * Only evicts entries whose promises are likely stuck (e.g., hung Ollama calls).
+   */
+  _evictStale() {
+    const now = Date.now();
+    let evicted = 0;
+    for (const [k, entry] of this.pendingRequests) {
+      if (now - entry.createdAt > this.maxRequestAgeMs) {
+        this.pendingRequests.delete(k);
+        evicted++;
+      }
+    }
+    if (evicted > 0) {
+      logger.warn('[LLM-DEDUP] Evicted stale entries', {
+        evicted,
+        remaining: this.pendingRequests.size
+      });
+    }
+  }
+
   async deduplicate(key, fn, metadata = {}) {
     // If request is already in flight, return the existing promise
     if (this.pendingRequests.has(key)) {
-      logger.warn('[LLM-DEDUP] Cache hit - returning in-flight request', {
-        key: key.slice(0, 12),
-        type: metadata.type || 'unknown',
-        fileName: metadata.fileName || 'unknown',
-        pendingCount: this.pendingRequests.size
-      });
-      return this.pendingRequests.get(key);
+      const entry = this.pendingRequests.get(key);
+      // Check if the cached entry is stale
+      if (Date.now() - entry.createdAt > this.maxRequestAgeMs) {
+        this.pendingRequests.delete(key);
+        logger.warn('[LLM-DEDUP] Evicted stale in-flight request', { key: key.slice(0, 12) });
+      } else {
+        logger.warn('[LLM-DEDUP] Cache hit - returning in-flight request', {
+          key: key.slice(0, 12),
+          type: metadata.type || 'unknown',
+          fileName: metadata.fileName || 'unknown',
+          pendingCount: this.pendingRequests.size
+        });
+        return entry.promise;
+      }
     }
 
-    // HIGH FIX: Instead of evicting pending requests (which could cause duplicates),
-    // log a warning but proceed. The promise will still complete and be cleaned up.
-    // Evicting pending requests causes race conditions where duplicate LLM calls are made.
+    // Evict stale entries when approaching capacity
     if (this.pendingRequests.size >= this.maxPendingRequests) {
-      logger.warn('[LLM-DEDUP] At capacity - proceeding without eviction to prevent duplicates', {
+      this._evictStale();
+    }
+
+    if (this.pendingRequests.size >= this.maxPendingRequests) {
+      logger.warn('[LLM-DEDUP] At capacity after eviction - proceeding without caching', {
         pendingCount: this.pendingRequests.size,
         maxPending: this.maxPendingRequests,
         key: key.slice(0, 12)
       });
-      // Note: We don't evict because that could cause duplicate requests
-      // The natural cleanup in .finally() will eventually free slots
+      // At true capacity with no stale entries - just execute without dedup tracking
+      return await Promise.resolve(fn());
     }
 
-    // FIX: Wrap fn() call to handle synchronous throws
-    // If fn() throws synchronously, we should not add to pendingRequests
-    let promise;
+    // Store placeholder promise before calling fn() to prevent race window
+    // where two calls with the same key both pass the has() check
+    let resolve, reject;
+    const placeholder = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    // Suppress unhandled rejection if no second caller awaits the placeholder
+    placeholder.catch(() => {});
+    this.pendingRequests.set(key, { promise: placeholder, createdAt: Date.now() });
+
     try {
       const fnResult = fn();
-      // Ensure we have a promise-like object
-      promise = Promise.resolve(fnResult).finally(() => {
-        // Clean up after completion
-        this.pendingRequests.delete(key);
-      });
-    } catch (syncError) {
-      // fn() threw synchronously, don't add to pending requests
-      logger.debug('[LLM-DEDUP] Function threw synchronously', {
-        key: key.slice(0, 8),
-        error: syncError.message
-      });
-      throw syncError;
+      const result = await Promise.resolve(fnResult);
+      resolve(result);
+      return result;
+    } catch (error) {
+      reject(error);
+      throw error;
+    } finally {
+      this.pendingRequests.delete(key);
     }
-
-    this.pendingRequests.set(key, promise);
-    return promise;
   }
 
   /**
@@ -217,15 +255,27 @@ class BatchProcessor {
     }
 
     // Process batches sequentially, items within batch in parallel
-    // Fixed: Use Promise.allSettled to handle individual failures gracefully
+    let stoppedEarly = false;
     for (const batchIndices of batches) {
-      await Promise.allSettled(batchIndices.map((index) => processItem(index)));
+      if (stopOnError) {
+        // Use Promise.all so thrown errors propagate and stop processing
+        try {
+          await Promise.all(batchIndices.map((index) => processItem(index)));
+        } catch {
+          stoppedEarly = true;
+          break;
+        }
+      } else {
+        // Use Promise.allSettled to handle individual failures gracefully
+        await Promise.allSettled(batchIndices.map((index) => processItem(index)));
+      }
     }
 
     logger.info('[BATCH-PROCESSOR] Batch processing complete', {
       total: items.length,
       successful: items.length - errors.length,
-      failed: errors.length
+      failed: errors.length,
+      stoppedEarly
     });
 
     return {

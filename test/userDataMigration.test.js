@@ -17,13 +17,14 @@ jest.mock('electron', () => ({
   }
 }));
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     warn: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 const createFileStat = (size, mtimeMs) => ({
   isFile: () => true,

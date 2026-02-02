@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { useSelector } from 'react-redux';
 import { Sparkles, FolderOpen } from 'lucide-react';
@@ -6,11 +6,12 @@ import { Button, Input, Textarea } from '../ui';
 import { Text } from '../ui/Typography';
 import Modal from '../ui/Modal';
 import { Inline, Stack } from '../layout';
-import { logger } from '../../../shared/logger';
+import { createLogger } from '../../../shared/logger';
 import { filesIpc, smartFoldersIpc } from '../../services/ipc';
+import { selectRedactPaths } from '../../store/selectors';
+import { mapErrorToNotification } from '../../utils/errorMapping';
 
-logger.setContext('AddSmartFolderModal');
-
+const logger = createLogger('AddSmartFolderModal');
 const getPathSeparator = (path) => (path && path.includes('\\') ? '\\' : '/');
 
 function AddSmartFolderModal({
@@ -21,12 +22,21 @@ function AddSmartFolderModal({
   existingFolders = [],
   showNotification
 }) {
-  const redactPaths = useSelector((state) => Boolean(state?.system?.redactPaths));
+  // PERF: Use memoized selector instead of inline Boolean coercion
+  const redactPaths = useSelector(selectRedactPaths);
   const [folderName, setFolderName] = useState('');
   const [folderPath, setFolderPath] = useState('');
   const [description, setDescription] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [isGeneratingDescription, setIsGeneratingDescription] = useState(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const resetForm = useCallback(() => {
     setFolderName('');
@@ -34,6 +44,13 @@ function AddSmartFolderModal({
     setDescription('');
     setIsGeneratingDescription(false);
   }, []);
+
+  // Reset form state when modal opens to ensure a fresh form each time
+  useEffect(() => {
+    if (isOpen) {
+      resetForm();
+    }
+  }, [isOpen, resetForm]);
 
   const handleGenerateDescription = async () => {
     if (!folderName.trim()) {
@@ -43,6 +60,7 @@ function AddSmartFolderModal({
     setIsGeneratingDescription(true);
     try {
       const result = await smartFoldersIpc.generateDescription(folderName.trim());
+      if (!isMountedRef.current) return;
       if (result?.success && result.description) {
         setDescription(result.description);
         showNotification?.('Description generated', 'success');
@@ -51,9 +69,17 @@ function AddSmartFolderModal({
       }
     } catch (err) {
       logger.error('Failed to generate description', { error: err.message });
-      showNotification?.('Failed to generate description', 'error');
+      if (isMountedRef.current) {
+        const { message, severity } = mapErrorToNotification({
+          error: err.message,
+          operationType: 'Description generation'
+        });
+        showNotification?.(message, severity);
+      }
     } finally {
-      setIsGeneratingDescription(false);
+      if (isMountedRef.current) {
+        setIsGeneratingDescription(false);
+      }
     }
   };
 
@@ -66,11 +92,15 @@ function AddSmartFolderModal({
     try {
       const res = await filesIpc.selectDirectory();
       if (res?.success && res.path) {
-        setFolderPath(res.path);
+        if (isMountedRef.current) {
+          setFolderPath(res.path);
+        }
       }
     } catch (error) {
       logger.error('Failed to browse folder', { error: error.message });
-      showNotification?.('Failed to browse folder', 'error');
+      if (isMountedRef.current) {
+        showNotification?.('Failed to browse folder', 'error');
+      }
     }
   };
 
@@ -83,7 +113,7 @@ function AddSmartFolderModal({
     }
 
     // eslint-disable-next-line no-control-regex
-    const illegalChars = /[<>:"|?*\x00-\x1f]/g;
+    const illegalChars = /[<>:"|?*\x00-\x1f]/;
     if (illegalChars.test(folderName)) {
       showNotification?.(
         'Folder name contains invalid characters. Please avoid: < > : " | ? *',
@@ -92,11 +122,25 @@ function AddSmartFolderModal({
       return;
     }
 
+    // Block path traversal via folder name (e.g., ".." or "../../etc")
+    const nameParts = folderName.split(/[\\/]/);
+    if (nameParts.some((segment) => segment === '..')) {
+      showNotification?.('Folder name cannot contain path traversal segments (..)', 'error');
+      return;
+    }
+
     const isAbsolutePath = (p) =>
       /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('/') || /^[\\/]{2}[^\\/]/.test(p);
 
     let targetPath = folderPath.trim();
     if (!targetPath) {
+      if (!defaultLocation || typeof defaultLocation !== 'string') {
+        showNotification?.(
+          'Unable to determine folder location. Please browse to select a folder.',
+          'error'
+        );
+        return;
+      }
       let resolvedDefaultLocation = defaultLocation;
       if (!isAbsolutePath(defaultLocation)) {
         try {
@@ -155,8 +199,19 @@ function AddSmartFolderModal({
       if (success) {
         handleClose();
       }
+    } catch (err) {
+      logger.error('Failed to add smart folder', { error: err.message });
+      if (isMountedRef.current) {
+        const { message, severity } = mapErrorToNotification({
+          error: err.message,
+          operationType: 'Smart folder creation'
+        });
+        showNotification?.(message, severity);
+      }
     } finally {
-      setIsAdding(false);
+      if (isMountedRef.current) {
+        setIsAdding(false);
+      }
     }
   };
 
@@ -201,9 +256,9 @@ function AddSmartFolderModal({
         />
 
         <div className="flex flex-col gap-1.5">
-          <label className="block text-sm font-medium text-system-gray-700">
+          <Text as="label" variant="small" className="block font-medium text-system-gray-700">
             Target Path <span className="text-system-gray-400 font-normal ml-1">(optional)</span>
-          </label>
+          </Text>
           <div className="flex gap-2">
             <Input
               type={redactPaths ? 'password' : 'text'}
@@ -224,7 +279,7 @@ function AddSmartFolderModal({
               title="Browse for folder"
               className="shrink-0"
             >
-              <FolderOpen className="w-4 h-4 mr-2" />
+              <FolderOpen className="w-4 h-4" />
               Browse
             </Button>
           </div>
@@ -232,32 +287,22 @@ function AddSmartFolderModal({
 
         <div className="relative">
           <div className="flex items-center justify-between mb-1.5">
-            <label className="block text-sm font-medium text-system-gray-700">
+            <Text as="label" variant="small" className="block font-medium text-system-gray-700">
               Description{' '}
               <span className="text-stratosort-blue font-medium ml-1">(AI uses this)</span>
-            </label>
-            <button
+            </Text>
+            <Button
               type="button"
               onClick={handleGenerateDescription}
               disabled={isGeneratingDescription || !folderName.trim()}
-              className="inline-flex items-center gap-1.5 px-2 py-1 font-medium text-stratosort-blue bg-stratosort-blue/10 hover:bg-stratosort-blue/20 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              isLoading={isGeneratingDescription}
+              variant="subtle"
+              size="sm"
+              leftIcon={!isGeneratingDescription ? <Sparkles className="w-4 h-4" /> : null}
+              className="text-stratosort-blue bg-stratosort-blue/10 border-stratosort-blue/20 hover:bg-stratosort-blue/20"
             >
-              {isGeneratingDescription ? (
-                <>
-                  <span className="inline-block w-3 h-3 border-2 border-stratosort-blue border-t-transparent rounded-full animate-spin" />
-                  <Text as="span" variant="tiny">
-                    Generating...
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-3 h-3" />
-                  <Text as="span" variant="tiny">
-                    Generate with AI
-                  </Text>
-                </>
-              )}
-            </button>
+              {isGeneratingDescription ? 'Generating...' : 'Generate with AI'}
+            </Button>
           </div>
           <Textarea
             value={description}

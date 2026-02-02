@@ -7,10 +7,9 @@
  * @module services/organization/patternMatcher
  */
 
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 
-logger.setContext('Organization:PatternMatcher');
-
+const logger = createLogger('Organization:PatternMatcher');
 /**
  * Pattern Matcher class for learning from user decisions
  */
@@ -41,8 +40,13 @@ class PatternMatcher {
    */
   loadPatterns(stored) {
     if (stored.patterns && Array.isArray(stored.patterns)) {
-      this.userPatterns = new Map(stored.patterns);
-      logger.info(`[PatternMatcher] Loaded ${this.userPatterns.size} user patterns`);
+      try {
+        this.userPatterns = new Map(stored.patterns);
+        logger.info(`[PatternMatcher] Loaded ${this.userPatterns.size} user patterns`);
+      } catch (e) {
+        logger.warn('[PatternMatcher] Failed to load patterns, starting fresh:', e.message);
+        this.userPatterns = new Map();
+      }
     }
 
     if (stored.feedbackHistory && Array.isArray(stored.feedbackHistory)) {
@@ -50,7 +54,15 @@ class PatternMatcher {
     }
 
     if (stored.folderUsageStats && Array.isArray(stored.folderUsageStats)) {
-      this.folderUsageStats = new Map(stored.folderUsageStats);
+      try {
+        this.folderUsageStats = new Map(stored.folderUsageStats);
+      } catch (e) {
+        logger.warn(
+          '[PatternMatcher] Failed to load folder usage stats, starting fresh:',
+          e.message
+        );
+        this.folderUsageStats = new Map();
+      }
     }
   }
 

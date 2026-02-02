@@ -1,4 +1,5 @@
 const fs = require('fs').promises;
+const fsConstants = require('fs').constants;
 const path = require('path');
 const os = require('os');
 const chokidar = require('chokidar');
@@ -87,6 +88,7 @@ class DownloadWatcher {
     this.folderMatcher = folderMatcher;
     this.watcher = null;
     this.isStarting = false;
+    this._startPromise = null; // Mutex: concurrent start() callers await the same promise
     this.restartAttempts = 0;
     this.maxRestartAttempts = 3;
     this.restartDelay = 5000; // 5 seconds between restart attempts
@@ -105,15 +107,26 @@ class DownloadWatcher {
       return;
     }
 
-    if (this.isStarting) {
-      logger.debug('[DOWNLOAD-WATCHER] Watcher is already starting');
-      return;
+    // FIX: Use start promise to prevent double-entry — concurrent callers
+    // await the same promise instead of both proceeding past the flag check.
+    if (this._startPromise) {
+      logger.debug('[DOWNLOAD-WATCHER] Watcher is already starting, awaiting existing start');
+      return this._startPromise;
     }
 
     this.isStarting = true;
     // FIX H-3: Reset stopped flag on start
     this._stopped = false;
 
+    this._startPromise = this._doStart();
+    try {
+      await this._startPromise;
+    } finally {
+      this._startPromise = null;
+    }
+  }
+
+  async _doStart() {
     try {
       const downloadsPath = path.join(os.homedir(), 'Downloads');
 
@@ -223,7 +236,7 @@ class DownloadWatcher {
       }
 
       // Try to access the directory (read permissions check)
-      await fs.access(dirPath, fs.constants?.R_OK || 4);
+      await fs.access(dirPath, fsConstants.R_OK);
       return true;
     } catch (error) {
       const fsError = FileSystemError.fromNodeError(error, {
@@ -334,22 +347,28 @@ class DownloadWatcher {
         `[DOWNLOAD-WATCHER] Attempting restart (${this.restartAttempts}/${this.maxRestartAttempts})...`
       );
 
-      // Stop the current watcher
-      this.stop();
-
-      // Schedule restart (track timer for cleanup)
-      this.restartTimer = setTimeout(() => {
-        this.restartTimer = null;
-        this.start();
-      }, this.restartDelay * this.restartAttempts); // Exponential backoff
-      this.restartTimer.unref();
+      // Stop the current watcher, then schedule restart after stop completes
+      this.stop()
+        .then(() => {
+          // Schedule restart (track timer for cleanup)
+          this.restartTimer = setTimeout(() => {
+            this.restartTimer = null;
+            // Guard: don't start if stopped externally or already running
+            if (this._stopped || this.watcher) return;
+            void this.start();
+          }, this.restartDelay * this.restartAttempts); // Exponential backoff
+          this.restartTimer.unref();
+        })
+        .catch((stopErr) => {
+          logger.error('[DOWNLOAD-WATCHER] Failed to stop before restart:', stopErr?.message);
+        });
     } else if (this.restartAttempts >= this.maxRestartAttempts) {
       logger.error('[DOWNLOAD-WATCHER] Max restart attempts reached. Watcher disabled.');
-      this.stop();
+      void this.stop();
     }
   }
 
-  stop() {
+  async stop() {
     // FIX H-3: Set stopped flag to prevent timer callbacks
     this._stopped = true;
 
@@ -370,7 +389,10 @@ class DownloadWatcher {
       try {
         // Remove all listeners before closing
         this.watcher.removeAllListeners();
-        this.watcher.close();
+        const closeResult = this.watcher.close();
+        if (closeResult && typeof closeResult.then === 'function') {
+          await closeResult;
+        }
         logger.info('[DOWNLOAD-WATCHER] Stopped watching downloads');
       } catch (error) {
         logger.error('[DOWNLOAD-WATCHER] Error stopping watcher:', error);
@@ -458,12 +480,12 @@ class DownloadWatcher {
   /**
    * Reset the watcher state and restart
    */
-  restart() {
+  async restart() {
     logger.info('[DOWNLOAD-WATCHER] Manual restart requested');
     this.restartAttempts = 0;
     this.lastError = null;
-    this.stop();
-    this.start();
+    await this.stop();
+    await this.start();
   }
 
   /**
@@ -471,16 +493,22 @@ class DownloadWatcher {
    * @param {string} filePath - Path to the file to process
    */
   async handleFile(filePath) {
+    if (this._stopped) return;
+
     // Phase 1: Validation
     if (!(await this._validateFile(filePath))) {
       return;
     }
+
+    if (this._stopped) return;
 
     // Phase 2: Auto-organize attempt
     const autoResult = await this._attemptAutoOrganize(filePath);
     if (autoResult.handled) {
       return;
     }
+
+    if (this._stopped) return;
 
     // Phase 3: Fallback processing (only if auto-organize failed with error)
     if (autoResult.shouldFallback) {
@@ -742,6 +770,15 @@ class DownloadWatcher {
           throw moveError;
         }
 
+        // Record undo action AFTER the move succeeds to avoid phantom undo entries
+        if (result.undoAction && this.autoOrganizeService?.undoRedo) {
+          try {
+            await this.autoOrganizeService.undoRedo.recordAction(result.undoAction);
+          } catch (undoErr) {
+            logger.debug('[DOWNLOAD-WATCHER] Failed to record undo action:', undoErr.message);
+          }
+        }
+
         const confidencePercent = deriveWatcherConfidencePercent(result);
         // FIX: Use renamed filename from destination, not original filename
         // This ensures notifications show the actual filename the user will see
@@ -950,6 +987,9 @@ class DownloadWatcher {
   async _moveFileWithConflictHandling(source, destPath, extname) {
     try {
       await fs.rename(source, destPath);
+      // Record operation to prevent other watchers from re-processing this file
+      getFileOperationTracker().recordOperation(destPath, 'move', 'downloadWatcher');
+      getFileOperationTracker().recordOperation(source, 'move', 'downloadWatcher');
     } catch (renameError) {
       if (isCrossDeviceError(renameError)) {
         // Cross-device move using shared utility
@@ -957,30 +997,49 @@ class DownloadWatcher {
           '[DOWNLOAD-WATCHER] Cross-device move in fallback, using crossDeviceMove utility'
         );
         await crossDeviceMove(source, destPath, { verify: true });
+        getFileOperationTracker().recordOperation(destPath, 'move', 'downloadWatcher');
+        getFileOperationTracker().recordOperation(source, 'move', 'downloadWatcher');
       } else if (isExistsError(renameError)) {
-        // Handle file exists - generate unique name
-        let counter = 1;
-        let uniquePath = destPath;
+        // Handle file exists - generate unique name using rename-on-EEXIST loop
+        // to avoid TOCTOU race between access check and rename
         const nameWithoutExt = path.basename(destPath, extname);
         const destDir = path.dirname(destPath);
+        let moved = false;
 
-        while (counter < 1000) {
-          uniquePath = path.join(destDir, `${nameWithoutExt}_${counter}${extname}`);
+        for (let counter = 1; counter < 1000; counter++) {
+          const uniquePath = path.join(destDir, `${nameWithoutExt}_${counter}${extname}`);
           try {
-            await fs.access(uniquePath);
-            counter++;
-          } catch {
-            // File doesn't exist, use this path
+            await fs.rename(source, uniquePath);
+            moved = true;
+            destPath = uniquePath;
             break;
+          } catch (retryError) {
+            if (isCrossDeviceError(retryError)) {
+              await crossDeviceMove(source, uniquePath, { verify: true });
+              moved = true;
+              destPath = uniquePath;
+              break;
+            }
+            if (!isExistsError(retryError)) {
+              throw retryError;
+            }
+            // EEXIST -- try next suffix
           }
         }
 
-        await fs.rename(source, uniquePath);
+        if (!moved) {
+          throw new Error(
+            `Could not find unique name for ${path.basename(destPath)} after 999 attempts`
+          );
+        }
+        // Record operation after successful conflict resolution move
+        getFileOperationTracker().recordOperation(destPath, 'move', 'downloadWatcher');
+        getFileOperationTracker().recordOperation(source, 'move', 'downloadWatcher');
         logger.info(
           '[DOWNLOAD-WATCHER] Moved (fallback, renamed due to conflict)',
           source,
           '=>',
-          uniquePath
+          destPath
         );
       } else {
         throw renameError;
@@ -993,8 +1052,8 @@ class DownloadWatcher {
    * Alias for stop() to support container.shutdown() pattern
    * @returns {void}
    */
-  shutdown() {
-    this.stop();
+  async shutdown() {
+    await this.stop();
   }
 
   /**
@@ -1058,6 +1117,7 @@ class DownloadWatcher {
       const project = analysis.project || '';
       const documentType = analysis.type || '';
       const extractedText = analysis.extractedText || '';
+      const keyEntities = Array.isArray(analysis.keyEntities) ? analysis.keyEntities : [];
 
       // Generate embedding vector using folderMatcher
       // Include more context for better semantic matching
@@ -1067,8 +1127,7 @@ class DownloadWatcher {
       const embedding = await this.folderMatcher.embedText(textToEmbed);
 
       if (!embedding || !embedding.vector || !Array.isArray(embedding.vector)) {
-        logger.warn('[DOWNLOAD-WATCHER] Failed to generate embedding for:', filePath);
-        return;
+        throw new Error('Failed to generate embedding vector');
       }
 
       // Prepare metadata for ChromaDB
@@ -1092,6 +1151,7 @@ class DownloadWatcher {
         entity: entity.substring(0, 255),
         project: project.substring(0, 255),
         documentType: documentType.substring(0, 100),
+        keyEntities: JSON.stringify(keyEntities.slice(0, 20)),
         reasoning: (analysis.reasoning || '').substring(0, 500),
         // Store truncated extracted text for conversation context
         extractedText: extractedText.substring(0, 5000),
@@ -1138,6 +1198,8 @@ class DownloadWatcher {
    * @param {string} filePath - Path to the deleted file
    */
   async _handleFileDeletion(filePath) {
+    // FIX: Guard against processing after watcher has been stopped
+    if (this._stopped) return;
     // Skip temp files
     if (isTemporaryFile(filePath)) {
       return;

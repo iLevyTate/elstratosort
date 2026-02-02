@@ -10,7 +10,7 @@
 const path = require('path');
 const crypto = require('crypto');
 const { app } = require('electron');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { analysisResultSchema, validateSchema } = require('../../../shared/normalization/schemas');
 const { LIMITS, TIMEOUTS } = require('../../../shared/performanceConstants');
 const { CircuitBreaker } = require('../../utils/CircuitBreaker');
@@ -67,8 +67,7 @@ const {
 
 const { performMaintenanceIfNeeded, migrateHistory } = require('./maintenance');
 
-logger.setContext('AnalysisHistoryService');
-
+const logger = createLogger('AnalysisHistoryService');
 class AnalysisHistoryServiceCore {
   constructor() {
     this.userDataPath = app.getPath('userData');
@@ -101,6 +100,7 @@ class AnalysisHistoryServiceCore {
 
     // Write lock to prevent concurrent modifications
     this._writeLock = null;
+    this._writeLockMeta = null;
 
     // FIX: Callback for cascade orphan marking when entries are removed
     // Set via setOnEntriesRemovedCallback from ServiceIntegration
@@ -114,7 +114,7 @@ class AnalysisHistoryServiceCore {
 
     // Circuit Breaker for file system operations
     this.circuitBreaker = new CircuitBreaker('AnalysisHistoryService', {
-      failureThreshold: 3,
+      failureThreshold: 8,
       timeout: 5000,
       resetTimeout: 10000
     });
@@ -342,48 +342,70 @@ class AnalysisHistoryServiceCore {
     });
   }
 
+  /**
+   * Acquire write lock using promise-chain serialization.
+   * Each caller chains onto the previous lock holder, ensuring FIFO ordering
+   * and preventing the multi-waiter race condition of the old polling approach.
+   */
   async _acquireWriteLock(context) {
     const maxWaitMs = TIMEOUTS.MUTEX_ACQUIRE;
-    const start = Date.now();
-
-    while (this._writeLock) {
-      const elapsed = Date.now() - start;
-      if (elapsed >= maxWaitMs) {
-        const error = new Error(
-          `Analysis history write lock acquisition timed out${context ? ` (${context})` : ''}`
-        );
-        error.code = 'WRITE_LOCK_TIMEOUT';
-        logger.warn('[AnalysisHistoryService] Write lock wait timed out, recovering', {
-          context,
-          elapsed,
-          error: error.message
-        });
-        this._writeLock = null;
-        break;
-      }
-
-      await Promise.race([
-        this._writeLock,
-        new Promise((resolve) => {
-          const delay = Math.min(TIMEOUTS.DELAY_LOCK_RETRY, maxWaitMs - elapsed);
-          const timeoutId = setTimeout(resolve, delay);
-          if (timeoutId && typeof timeoutId.unref === 'function') {
-            timeoutId.unref();
-          }
-        })
-      ]);
-    }
 
     let releaseLock;
-    this._writeLock = new Promise((resolve) => {
+    const lockToken = Symbol('analysis-history-write-lock');
+    const nextLock = new Promise((resolve) => {
       releaseLock = resolve;
     });
+
+    // Chain onto the previous lock (or resolve immediately if none)
+    const previousLock = this._writeLock;
+    this._writeLock = nextLock;
+    this._writeLockMeta = { token: lockToken, startedAt: Date.now(), context: context || null };
+
+    if (previousLock) {
+      // Wait for previous holder to release, with a timeout
+      let timeoutId;
+      try {
+        await Promise.race([
+          previousLock,
+          new Promise((_, reject) => {
+            timeoutId = setTimeout(() => {
+              const error = new Error(
+                `Analysis history write lock acquisition timed out${context ? ` (${context})` : ''}`
+              );
+              error.code = 'WRITE_LOCK_TIMEOUT';
+              reject(error);
+            }, maxWaitMs);
+            if (timeoutId && typeof timeoutId.unref === 'function') {
+              timeoutId.unref();
+            }
+          })
+        ]);
+      } catch (error) {
+        if (error.code === 'WRITE_LOCK_TIMEOUT') {
+          logger.error('[AnalysisHistoryService] Write lock timeout, forcing acquisition', {
+            context,
+            maxWaitMs
+          });
+          // Proceed anyway — we already installed ourselves as the lock holder
+        } else {
+          throw error;
+        }
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    }
 
     return () => {
       if (typeof releaseLock === 'function') {
         releaseLock();
       }
-      this._writeLock = null;
+      // Only clear lock state if we still own it (no subsequent waiter replaced us)
+      if (this._writeLockMeta?.token === lockToken) {
+        this._writeLockMeta = null;
+        // Safe to null: if another waiter had replaced _writeLock, their token
+        // wouldn't match ours, so we'd skip this branch entirely.
+        this._writeLock = null;
+      }
     };
   }
 
@@ -394,7 +416,10 @@ class AnalysisHistoryServiceCore {
     // Force flush if queue gets too large
     if (this._pendingWrites.length >= 50) {
       if (this._writeBufferTimer) clearTimeout(this._writeBufferTimer);
-      this._flushWrites();
+      this._writeBufferTimer = null;
+      void this._flushWrites().catch((err) => {
+        logger.error('[AnalysisHistoryService] Forced flush failed:', err.message);
+      });
     }
   }
 
@@ -402,17 +427,20 @@ class AnalysisHistoryServiceCore {
     this._writeBufferTimer = null;
     if (this._pendingWrites.length === 0) return;
 
-    const batch = this._pendingWrites.splice(0, this._pendingWrites.length);
-
     try {
       await this.initialize();
     } catch (error) {
-      batch.forEach(({ reject }) => reject(error));
+      // Reject all pending writes without splicing (they stay for retry)
+      const snapshot = [...this._pendingWrites];
+      this._pendingWrites.length = 0;
+      snapshot.forEach(({ reject }) => reject(error));
       return;
     }
     if (this._readOnly) {
       const error = this._createReadOnlyError('flushWrites');
-      batch.forEach(({ reject }) => reject(error));
+      const snapshot = [...this._pendingWrites];
+      this._pendingWrites.length = 0;
+      snapshot.forEach(({ reject }) => reject(error));
       return;
     }
 
@@ -420,20 +448,33 @@ class AnalysisHistoryServiceCore {
     try {
       releaseLock = await this._acquireWriteLock('flushWrites');
     } catch (error) {
-      batch.forEach(({ reject }) => reject(error));
+      // Re-check _readOnly after lock acquisition wait — circuit breaker may have tripped
+      if (this._readOnly) {
+        const roError = this._createReadOnlyError('flushWrites (post-lock)');
+        const snapshot = [...this._pendingWrites];
+        this._pendingWrites.length = 0;
+        snapshot.forEach(({ reject }) => reject(roError));
+        return;
+      }
+      const snapshot = [...this._pendingWrites];
+      this._pendingWrites.length = 0;
+      snapshot.forEach(({ reject }) => reject(error));
       return;
     }
+
+    // Splice AFTER acquiring lock to prevent concurrent flushes from competing
+    const batch = this._pendingWrites.splice(0, this._pendingWrites.length);
 
     try {
       const timestamp = new Date().toISOString();
       let hasChanges = false;
-      const originalHistorySnapshot = {
+      const _originalHistorySnapshot = {
         totalAnalyzed: this.analysisHistory.totalAnalyzed,
         totalSize: this.analysisHistory.totalSize,
         totalEntries: this.analysisHistory.metadata.totalEntries,
         updatedAt: this.analysisHistory.updatedAt
       };
-      const originalIndexUpdatedAt = this.analysisIndex.updatedAt;
+      const _originalIndexUpdatedAt = this.analysisIndex.updatedAt;
       const addedEntries = [];
       const pendingEntryResolutions = [];
 
@@ -549,16 +590,30 @@ class AnalysisHistoryServiceCore {
             );
           });
 
-          // Roll back in-memory changes to avoid divergence from disk
-          addedEntries.forEach((entry) => {
+          // FIX: Persistence failed - roll back in-memory mutations then force re-initialization
+          logger.error(
+            '[AnalysisHistoryService] Persistence failed, rolling back in-memory changes and forcing re-initialization'
+          );
+
+          // Roll back in-memory changes before forcing re-init
+          for (const entry of addedEntries) {
             delete this.analysisHistory.entries[entry.id];
-            removeFromIndexes(this.analysisIndex, entry);
-          });
-          this.analysisHistory.totalAnalyzed = originalHistorySnapshot.totalAnalyzed;
-          this.analysisHistory.totalSize = originalHistorySnapshot.totalSize;
-          this.analysisHistory.metadata.totalEntries = originalHistorySnapshot.totalEntries;
-          this.analysisHistory.updatedAt = originalHistorySnapshot.updatedAt;
-          this.analysisIndex.updatedAt = originalIndexUpdatedAt;
+            try {
+              removeFromIndexes(this.analysisIndex, entry);
+            } catch (indexError) {
+              logger.warn('[AnalysisHistoryService] Failed to rollback index entry', {
+                entryId: entry.id,
+                error: indexError?.message
+              });
+            }
+          }
+          this.analysisHistory.totalAnalyzed = _originalHistorySnapshot.totalAnalyzed;
+          this.analysisHistory.totalSize = _originalHistorySnapshot.totalSize;
+          this.analysisHistory.metadata.totalEntries = _originalHistorySnapshot.totalEntries;
+          this.analysisHistory.updatedAt = _originalHistorySnapshot.updatedAt;
+          this.analysisIndex.updatedAt = _originalIndexUpdatedAt;
+
+          this.initialized = false;
 
           const error = new Error('Failed to persist analysis history');
           pendingEntryResolutions.forEach(({ reject }) => reject(error));
@@ -706,11 +761,30 @@ class AnalysisHistoryServiceCore {
    * Shutdown the service and release resources
    * Should be called during app exit to cleanly unsubscribe from the cache invalidation bus
    */
-  shutdown() {
+  async shutdown() {
     if (this._busUnsubscribe) {
       this._busUnsubscribe();
       this._busUnsubscribe = null;
       logger.debug('[AnalysisHistoryService] Unsubscribed from cache invalidation bus');
+    }
+    if (this._writeBufferTimer) {
+      clearTimeout(this._writeBufferTimer);
+      this._writeBufferTimer = null;
+    }
+    // Flush any pending writes before shutdown to prevent data loss
+    if (this._pendingWrites.length > 0) {
+      try {
+        await this._flushWrites();
+      } catch (err) {
+        logger.error(
+          '[AnalysisHistoryService] Failed to flush pending writes during shutdown:',
+          err.message
+        );
+        // Reject remaining pending writes so callers don't hang
+        const remaining = this._pendingWrites.splice(0, this._pendingWrites.length);
+        const shutdownError = new Error('Analysis history shutting down');
+        remaining.forEach(({ reject }) => reject(shutdownError));
+      }
     }
     this.clearCaches();
   }
@@ -789,14 +863,27 @@ class AnalysisHistoryServiceCore {
       notFound = updateMap.size;
 
       if (updated > 0) {
+        const prevUpdatedAt = this.analysisHistory.updatedAt;
         this.analysisHistory.updatedAt = new Date().toISOString();
+
+        // Save both files atomically — if either fails, the on-disk state is inconsistent
+        const saveResults = await Promise.allSettled([this.saveHistory(), this.saveIndex()]);
+        const saveFailures = saveResults.filter((r) => r.status === 'rejected');
+
+        if (saveFailures.length > 0) {
+          // Log but don't throw — the in-memory state is already updated and callers
+          // expect path updates to take effect. Force re-init on next write to recover.
+          const errMsg = saveFailures.map((r) => r.reason?.message).join('; ');
+          logger.error('[AnalysisHistoryService] updateEntryPaths persistence partially failed', {
+            updated,
+            errors: errMsg
+          });
+          this.analysisHistory.updatedAt = prevUpdatedAt;
+          this.initialized = false; // Force re-init on next operation to reconcile
+        }
 
         // Invalidate caches since paths have changed
         clearCachesHelper(this._cache, this);
-
-        // Save to disk (both history and index since we updated path indexes)
-        await this.saveHistory();
-        await this.saveIndex();
 
         logger.info(
           `[AnalysisHistoryService] Updated ${updated} entry paths, ${notFound} not found`
@@ -840,10 +927,20 @@ class AnalysisHistoryServiceCore {
             id,
             fileHash: entry.fileHash,
             originalPath: entry.originalPath,
-            actualPath: entry.organization?.actual || null
+            actualPath: entry.organization?.actual || null,
+            _fullEntry: entry
           });
 
           delete entries[id];
+          this.analysisHistory.totalAnalyzed = Math.max(0, this.analysisHistory.totalAnalyzed - 1);
+          this.analysisHistory.totalSize = Math.max(
+            0,
+            this.analysisHistory.totalSize - (entry.fileSize || 0)
+          );
+          this.analysisHistory.metadata.totalEntries = Math.max(
+            0,
+            this.analysisHistory.metadata.totalEntries - 1
+          );
           updateIncrementalStatsOnRemove(this._cache, entry);
           removeFromIndexes(this.analysisIndex, entry);
         }
@@ -851,8 +948,39 @@ class AnalysisHistoryServiceCore {
 
       if (removedEntries.length > 0) {
         invalidateCachesOnRemove(this._cache, this);
+        const prevUpdatedAt = this.analysisHistory.updatedAt;
         this.analysisHistory.updatedAt = new Date().toISOString();
-        await this.saveHistory();
+
+        const saveResults = await Promise.allSettled([this.saveHistory(), this.saveIndex()]);
+        const saveFailures = saveResults.filter((r) => r.status === 'rejected');
+        if (saveFailures.length > 0) {
+          // Rollback in-memory mutations to match disk state
+          for (const removed of removedEntries) {
+            entries[removed.id] = removed._fullEntry;
+            this.analysisHistory.totalAnalyzed++;
+            this.analysisHistory.totalSize += removed._fullEntry.fileSize || 0;
+            this.analysisHistory.metadata.totalEntries++;
+            try {
+              updateIndexes(this.analysisIndex, removed._fullEntry);
+            } catch (indexErr) {
+              logger.warn(
+                '[AnalysisHistoryService] Index rollback error during removeEntriesByPath',
+                {
+                  error: indexErr?.message
+                }
+              );
+            }
+          }
+          this.analysisHistory.updatedAt = prevUpdatedAt;
+          this.initialized = false;
+          logger.error(
+            '[AnalysisHistoryService] removeEntriesByPath persistence failed, rolled back',
+            {
+              failures: saveFailures.map((r) => r.reason?.message)
+            }
+          );
+          return { removed: 0, error: 'Persistence failed, changes rolled back' };
+        }
       }
 
       // Notify about removals so Chroma can mark any remaining embeddings/chunks orphaned.
@@ -913,9 +1041,10 @@ class AnalysisHistoryServiceCore {
         destStats?.mtimeMs || Date.now()
       );
 
-      // Clone the entry with new path information
+      // Clone the entry with new path information (deep clone analysis to avoid shared references)
       const clonedEntry = {
         ...sourceEntry,
+        analysis: sourceEntry.analysis ? JSON.parse(JSON.stringify(sourceEntry.analysis)) : {},
         id: newId,
         fileHash: newFileHash,
         originalPath: destPath,
@@ -931,26 +1060,63 @@ class AnalysisHistoryServiceCore {
           newName: null,
           smartFolder: sourceEntry.organization?.smartFolder || null
         },
-        // Mark as cloned for audit purposes
+        // Mark as cloned for audit purposes (deep clone processing to avoid shared mutable refs)
         processing: {
-          ...sourceEntry.processing,
+          ...(sourceEntry.processing ? JSON.parse(JSON.stringify(sourceEntry.processing)) : {}),
           clonedFrom: sourcePath,
           clonedAt: new Date().toISOString()
         }
       };
 
-      // Add to entries
+      // Add to entries and update aggregate counters
       this.analysisHistory.entries[newId] = clonedEntry;
+      this.analysisHistory.totalAnalyzed++;
+      this.analysisHistory.totalSize += clonedEntry.fileSize || 0;
+      this.analysisHistory.metadata.totalEntries++;
 
       // Update indexes
       updateIndexes(this.analysisIndex, clonedEntry);
+
+      // Save to disk atomically — rollback in-memory state if either fails
+      const prevUpdatedAt = this.analysisHistory.updatedAt;
+      this.analysisHistory.updatedAt = new Date().toISOString();
+
+      const saveResults = await Promise.allSettled([this.saveHistory(), this.saveIndex()]);
+      const saveFailures = saveResults.filter((r) => r.status === 'rejected');
+
+      if (saveFailures.length > 0) {
+        // Rollback in-memory mutations
+        delete this.analysisHistory.entries[newId];
+        this.analysisHistory.totalAnalyzed = Math.max(0, this.analysisHistory.totalAnalyzed - 1);
+        this.analysisHistory.totalSize = Math.max(
+          0,
+          this.analysisHistory.totalSize - (clonedEntry.fileSize || 0)
+        );
+        this.analysisHistory.metadata.totalEntries = Math.max(
+          0,
+          this.analysisHistory.metadata.totalEntries - 1
+        );
+        try {
+          removeFromIndexes(this.analysisIndex, clonedEntry);
+        } catch (indexErr) {
+          logger.warn('[AnalysisHistoryService] Index rollback error during cloneEntryForCopy', {
+            error: indexErr?.message
+          });
+        }
+        this.analysisHistory.updatedAt = prevUpdatedAt;
+
+        const errMsg = saveFailures.map((r) => r.reason?.message).join('; ');
+        logger.error('[AnalysisHistoryService] Failed to persist cloned entry, rolled back', {
+          source: sourcePath,
+          dest: destPath,
+          errors: errMsg
+        });
+        return { success: false, error: `Persistence failed: ${errMsg}` };
+      }
+
+      // Only update caches after successful persistence
       updateIncrementalStatsOnAdd(this._cache, clonedEntry);
       invalidateCachesOnAdd(this._cache, this);
-
-      // Save to disk
-      this.analysisHistory.updatedAt = new Date().toISOString();
-      await this.saveHistory();
-      await this.saveIndex();
 
       logger.info('[AnalysisHistoryService] Cloned entry for copied file', {
         source: sourcePath,

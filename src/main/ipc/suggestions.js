@@ -8,10 +8,9 @@ const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceConte
 const { createHandler, createErrorResponse, safeHandle } = require('./ipcWrappers');
 const { schemas } = require('./validationSchemas');
 const OrganizationSuggestionService = require('../services/organization');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('IPC:Suggestions');
-
+const logger = createLogger('IPC:Suggestions');
 function registerSuggestionsIpc(servicesOrParams) {
   let container;
   if (servicesOrParams instanceof IpcServiceContext) {
@@ -60,8 +59,26 @@ function registerSuggestionsIpc(servicesOrParams) {
     // Continue anyway - handlers will check for null service
   }
 
-  // Helper to get suggestion service
-  const getSuggestionService = () => suggestionService;
+  // Helper to get suggestion service -- lazily re-create if initial construction
+  // failed because ChromaDB/FolderMatchingService weren't ready at registration time
+  const getSuggestionService = () => {
+    if (!suggestionService && getServiceIntegration) {
+      const integration = getServiceIntegration();
+      if (integration?.chromaDbService && integration?.folderMatchingService) {
+        try {
+          suggestionService = new OrganizationSuggestionService({
+            chromaDbService: integration.chromaDbService,
+            folderMatchingService: integration.folderMatchingService,
+            settingsService
+          });
+          logger.info('[SUGGESTIONS] OrganizationSuggestionService lazily initialized');
+        } catch (error) {
+          logger.debug('[SUGGESTIONS] Lazy initialization not yet possible:', error.message);
+        }
+      }
+    }
+    return suggestionService;
+  };
 
   // Get suggestions for a single file
   safeHandle(
@@ -165,7 +182,7 @@ function registerSuggestionsIpc(servicesOrParams) {
             accepted
           });
 
-          service.recordFeedback(file, suggestion, accepted);
+          await service.recordFeedback(file, suggestion, accepted, note);
           if (note) {
             await service.recordFeedbackNote(file, suggestion, accepted, note);
           }

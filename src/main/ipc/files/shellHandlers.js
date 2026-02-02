@@ -8,11 +8,10 @@
 
 const fs = require('fs').promises;
 const { withErrorLogging, safeHandle } = require('../ipcWrappers');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { validateFileOperationPath } = require('../../../shared/pathSanitization');
 
-logger.setContext('IPC:Files:Shell');
-
+const logger = createLogger('IPC:Files:Shell');
 const { IpcServiceContext, createFromLegacyParams } = require('../IpcServiceContext');
 
 /**

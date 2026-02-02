@@ -1,5 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
+import { Text } from './Typography';
 
 /**
  * LoadingSkeleton component for displaying placeholder content while data loads
@@ -9,7 +10,7 @@ import PropTypes from 'prop-types';
  */
 export function LoadingSkeleton({ className = '', variant = 'default', count = 1 }) {
   const baseClasses =
-    'animate-pulse bg-gradient-to-r from-system-gray-100 to-system-gray-200 rounded';
+    'animate-pulse animate-skeleton-enter bg-gradient-to-r from-system-gray-100 to-system-gray-200 rounded';
 
   const variantClasses = {
     default: 'h-4 w-full',
@@ -28,11 +29,15 @@ export function LoadingSkeleton({ className = '', variant = 'default', count = 1
       key={i}
       className={`${baseClasses} ${variantClasses[variant] || variantClasses.default} ${className}`}
       aria-hidden="true"
-      style={{ animationDelay: `${i * 0.1}s` }}
+      style={{ animationDelay: `${i * ANIMATION_CONFIG.DELAY_INCREMENT}s` }}
     />
   ));
 
-  return count > 1 ? <div className="space-y-2">{skeletons}</div> : skeletons[0];
+  return count > 1 ? (
+    <div className="space-y-2 animate-skeleton-enter">{skeletons}</div>
+  ) : (
+    skeletons[0]
+  );
 }
 
 LoadingSkeleton.propTypes = {
@@ -64,11 +69,12 @@ export const ANIMATION_CONFIG = {
  */
 export function FileListSkeleton({ count = ANIMATION_CONFIG.DEFAULT_FILE_COUNT }) {
   return (
-    <div className="space-y-3" role="status" aria-label="Loading files">
+    <div className="space-y-3 animate-skeleton-enter" role="status" aria-label="Loading files">
       {Array.from({ length: count }, (_, i) => (
         <div
           key={i}
           className="flex items-center gap-3 p-3 bg-white rounded-lg border border-border-soft"
+          style={{ animationDelay: `${i * ANIMATION_CONFIG.DELAY_INCREMENT}s` }}
         >
           <LoadingSkeleton variant="avatar" />
           <div className="flex-1 space-y-2">
@@ -94,12 +100,16 @@ FileListSkeleton.propTypes = {
 export function FolderGridSkeleton({ count = ANIMATION_CONFIG.DEFAULT_FOLDER_COUNT }) {
   return (
     <div
-      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-skeleton-enter"
       role="status"
       aria-label="Loading folders"
     >
       {Array.from({ length: count }, (_, i) => (
-        <div key={i} className="p-4 bg-white rounded-xl border border-border-soft">
+        <div
+          key={i}
+          className="p-4 bg-white rounded-xl border border-border-soft"
+          style={{ animationDelay: `${i * ANIMATION_CONFIG.DELAY_INCREMENT}s` }}
+        >
           <LoadingSkeleton variant="folder" />
           <div className="mt-3 space-y-2">
             <LoadingSkeleton className="w-3/4" />
@@ -119,7 +129,7 @@ FolderGridSkeleton.propTypes = {
 export function AnalysisProgressSkeleton() {
   return (
     <div
-      className="p-6 bg-white rounded-xl border border-border-soft shadow-sm"
+      className="p-6 bg-white rounded-xl border border-border-soft shadow-sm animate-skeleton-enter"
       role="status"
       aria-label="Loading analysis"
     >
@@ -151,9 +161,13 @@ export function SmartFolderListSkeleton({
   count = ANIMATION_CONFIG.DEFAULT_FOLDER_COUNT,
   compact = false
 }) {
+  const gridClass = compact
+    ? 'grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-5'
+    : 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5';
+
   const gridShell = (children) => (
     <div
-      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 md:gap-6"
+      className={`${gridClass} animate-skeleton-enter`}
       role="status"
       aria-label="Loading smart folders"
     >
@@ -231,10 +245,16 @@ export const SmartFolderSkeleton = SmartFolderListSkeleton;
 // Enhanced loading spinner for lazy-loaded components
 export function LazyLoadingSpinner({ message = 'Loading...' }) {
   return (
-    <div className="flex items-center justify-center py-12" role="status" aria-label={message}>
+    <div
+      className="flex items-center justify-center py-12 animate-skeleton-enter"
+      role="status"
+      aria-label={message}
+    >
       <div className="text-center">
         <div className="animate-spin w-12 h-12 border-4 border-stratosort-blue border-t-transparent rounded-full mx-auto mb-8" />
-        <p className="text-system-gray-700">{message}</p>
+        <Text variant="small" className="text-system-gray-700">
+          {message}
+        </Text>
         <span className="sr-only">{message}</span>
       </div>
     </div>
@@ -247,16 +267,20 @@ LazyLoadingSpinner.propTypes = {
 
 // Modal loading overlay for lazy-loaded modals/panels
 // Uses fade-in animation to prevent jarring black flash during Suspense loads
-export function ModalLoadingOverlay({ message = 'Loading...' }) {
+export function ModalLoadingOverlay({ message = 'Loading...', inline = false }) {
+  // IMPORTANT: inline overlays should never block clicks on modal controls (close/back buttons),
+  // otherwise a slow IPC call can make the UI feel "stuck".
+  const containerClass = inline
+    ? 'absolute inset-0 z-40 flex items-center justify-center bg-white/80 backdrop-blur-sm pointer-events-none'
+    : 'fixed inset-0 bg-black/40 flex items-center justify-center z-modal animate-modal-backdrop pointer-events-none';
+
   return (
-    <div
-      className="fixed inset-0 bg-black/40 flex items-center justify-center z-modal animate-modal-backdrop"
-      role="status"
-      aria-label={message}
-    >
-      <div className="bg-white rounded-xl shadow-xl px-8 py-6 text-center animate-modal-enter">
+    <div className={containerClass} role="status" aria-label={message}>
+      <div className="bg-white rounded-xl shadow-xl px-8 py-6 text-center animate-modal-enter pointer-events-none">
         <div className="animate-spin w-10 h-10 border-3 border-stratosort-blue border-t-transparent rounded-full mx-auto mb-3" />
-        <p className="text-sm text-system-gray-600">{message}</p>
+        <Text variant="small" className="text-system-gray-600">
+          {message}
+        </Text>
         <span className="sr-only">{message}</span>
       </div>
     </div>
@@ -264,5 +288,6 @@ export function ModalLoadingOverlay({ message = 'Loading...' }) {
 }
 
 ModalLoadingOverlay.propTypes = {
-  message: PropTypes.string
+  message: PropTypes.string,
+  inline: PropTypes.bool
 };

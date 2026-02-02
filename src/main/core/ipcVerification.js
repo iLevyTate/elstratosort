@@ -9,11 +9,10 @@
 
 const { ipcMain } = require('electron');
 const { isWindows } = require('../../shared/platformUtils');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { IPC_CHANNELS } = require('../../shared/constants');
 
-logger.setContext('IPC-Verify');
-
+const logger = createLogger('IPC-Verify');
 /**
  * Required IPC handlers that must be registered before window creation
  */
@@ -73,18 +72,20 @@ const WINDOWS_HANDLERS = [
  * @returns {boolean}
  */
 function hasInvokeHandler(channel) {
-  const map = ipcMain._invokeHandlers;
-  if (!map) return false;
-
-  // Electron 28+ stores handlers in a Map with has()
-  if (typeof map.has === 'function') {
-    return map.has(channel);
+  // FIX 87: Use the project's own IPC registry instead of private Electron API.
+  // ipcMain._invokeHandlers is undocumented and may not exist in Electron 40+,
+  // causing all invoke handlers to appear missing and adding startup delay.
+  try {
+    const { hasHandler } = require('./ipcRegistry');
+    return hasHandler(channel);
+  } catch {
+    // Fallback to private API if registry unavailable during early startup
+    const map = ipcMain._invokeHandlers;
+    if (!map) return false;
+    if (typeof map.has === 'function') return map.has(channel);
+    if (typeof map.get === 'function') return !!map.get(channel);
+    return false;
   }
-  // Older versions expose get() that returns handler or undefined
-  if (typeof map.get === 'function') {
-    return !!map.get(channel);
-  }
-  return false;
 }
 
 /**

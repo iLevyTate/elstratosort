@@ -16,19 +16,35 @@ const { ConfigValidationError } = require('./configValidation');
 const configManager = new ConfigurationManager();
 
 // Load configuration on module import
-configManager.load();
-
-// Log any warnings
-if (configManager.getDeprecationWarnings().length > 0) {
-  logger.warn('[Config] Deprecation warnings:', configManager.getDeprecationWarnings());
+// FIX: Wrap in try-catch so a corrupted config file doesn't crash every module that imports config
+try {
+  configManager.load();
+} catch (loadError) {
+  // Config will use schema defaults - log but don't crash
+  logger.error('[Config] Failed to load configuration, using defaults:', {
+    error: loadError.message
+  });
 }
 
-const validationReport =
-  typeof configManager.validate === 'function' ? configManager.validate() : null;
-if (validationReport && validationReport.valid === false) {
-  logger.warn('[Config] Validation errors (using defaults):', validationReport.errors);
-} else if (!validationReport && configManager.getValidationErrors().length > 0) {
-  logger.warn('[Config] Validation errors (using defaults):', configManager.getValidationErrors());
+// Log any warnings
+try {
+  if (configManager.getDeprecationWarnings().length > 0) {
+    logger.warn('[Config] Deprecation warnings:', configManager.getDeprecationWarnings());
+  }
+
+  const validationReport =
+    typeof configManager.validate === 'function' ? configManager.validate() : null;
+  if (validationReport && validationReport.valid === false) {
+    logger.warn('[Config] Validation errors (using defaults):', validationReport.errors);
+  } else if (!validationReport && configManager.getValidationErrors().length > 0) {
+    logger.warn(
+      '[Config] Validation errors (using defaults):',
+      configManager.getValidationErrors()
+    );
+  }
+} catch (validationError) {
+  // Non-fatal: validation warnings are informational only
+  logger.debug('[Config] Validation check failed:', { error: validationError.message });
 }
 
 // Export both the manager instance and convenience methods

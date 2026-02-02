@@ -219,7 +219,7 @@ async function handleBatchOrganize(params) {
     }
 
     // Generate batch ID early for lock acquisition
-    const batchId = `batch_${Date.now()}`;
+    const batchId = `batch_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 
     // FIX: Acquire global lock to prevent concurrent batch operations
     const lockAcquired = await acquireBatchLock(batchId);
@@ -339,9 +339,12 @@ async function handleBatchOrganize(params) {
             return;
           }
 
+          // FIX: Claim idempotency key immediately after check to prevent TOCTOU race
+          // with concurrent pLimit tasks that share the same processedKeys Set
+          processedKeys.add(idempotencyKey);
+
           // Skip already completed operations (for resume)
           if (op.status === 'done') {
-            processedKeys.add(idempotencyKey);
             results.push({
               success: true,
               source: op.source,
@@ -456,7 +459,6 @@ async function handleBatchOrganize(params) {
             }
 
             op.destination = moveResult.destination;
-            processedKeys.add(idempotencyKey);
 
             // FIX: Record operation in tracker to prevent SmartFolderWatcher from re-analyzing
             // This prevents "ghost" files or duplicates appearing in the UI

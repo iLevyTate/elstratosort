@@ -113,9 +113,10 @@ class OllamaConnectionError extends AnalysisError {
 
 class FileProcessingError extends AnalysisError {
   constructor(code, fileName, additionalMetadata = {}) {
+    const safeFileName = typeof fileName === 'string' ? fileName : String(fileName || '');
     super(code, {
-      fileName,
-      fileExtension: require('path').extname(fileName),
+      fileName: safeFileName,
+      fileExtension: require('path').extname(safeFileName),
       ...additionalMetadata
     });
   }

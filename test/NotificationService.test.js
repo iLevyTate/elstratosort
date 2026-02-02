@@ -24,15 +24,16 @@ jest.mock('electron', () => {
   };
 });
 
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     debug: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 const electron = require('electron');
 const { logger } = require('../src/shared/logger');
@@ -88,7 +89,10 @@ describe('NotificationService', () => {
 
     svc._sendToUi({ type: 'x' });
 
-    expect(goodWin.webContents.send).toHaveBeenCalledWith('notification', { type: 'x' });
+    expect(goodWin.webContents.send).toHaveBeenCalledWith(
+      'notification',
+      expect.objectContaining({ type: 'x' })
+    );
     expect(deadWin.webContents.send).not.toHaveBeenCalled();
   });
 

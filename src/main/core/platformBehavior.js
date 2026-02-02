@@ -8,11 +8,10 @@
  */
 
 const { isWindows, isMacOS } = require('../../shared/platformUtils');
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 const { WINDOW, PROCESS, TIMEOUTS } = require('../../shared/performanceConstants');
 
-logger.setContext('Platform');
-
+const logger = createLogger('Platform');
 // taskkill can be slow to terminate process trees on Windows; give it a generous fixed timeout.
 const TASKKILL_TIMEOUT_MS = 5000;
 

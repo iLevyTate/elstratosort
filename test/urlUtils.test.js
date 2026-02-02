@@ -77,8 +77,9 @@ describe('urlUtils', () => {
       expect(collapseDuplicateProtocols('https://http://localhost')).toBe('https://localhost');
     });
 
-    test('collapses mixed duplicate protocols preserving http if first', () => {
-      expect(collapseDuplicateProtocols('http://https://localhost')).toBe('http://localhost');
+    test('collapses mixed duplicate protocols preferring https for security', () => {
+      // Function intentionally prefers https when any duplicate protocol is https
+      expect(collapseDuplicateProtocols('http://https://localhost')).toBe('https://localhost');
     });
 
     test('returns unchanged URL if no duplicates', () => {

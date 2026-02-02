@@ -4,15 +4,16 @@
  */
 
 // Mock logger
-jest.mock('../src/shared/logger', () => ({
-  logger: {
+jest.mock('../src/shared/logger', () => {
+  const logger = {
     setContext: jest.fn(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
-  }
-}));
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
 
 describe('FolderAnalyzer', () => {
   let folderAnalyzer;
@@ -54,9 +55,8 @@ describe('FolderAnalyzer', () => {
     });
 
     test('handles empty strings', () => {
-      // Empty string splits to [''] which has 1 element, so two empty strings match
-      expect(folderAnalyzer.calculateStringSimilarity('', '')).toBe(1);
-      // 'test' vs '' - 'test' has 1 word, '' has 1 element (''), no common words
+      // Empty strings have no meaningful words, so similarity is 0
+      expect(folderAnalyzer.calculateStringSimilarity('', '')).toBe(0);
       expect(folderAnalyzer.calculateStringSimilarity('test', '')).toBe(0);
       expect(folderAnalyzer.calculateStringSimilarity('', 'test')).toBe(0);
     });

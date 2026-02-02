@@ -19,13 +19,21 @@
  * const data = safeParse(jsonString, {});
  * const items = safeParse(itemsJson, []);
  */
+// Reviver that strips prototype pollution keys
+function _safeReviver(key, value) {
+  if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+    return undefined;
+  }
+  return value;
+}
+
 function safeParse(text, fallback = null) {
   if (text === null || text === undefined) {
     return fallback;
   }
 
   try {
-    return JSON.parse(text);
+    return JSON.parse(text, _safeReviver);
   } catch {
     return fallback;
   }
@@ -69,6 +77,7 @@ function parseJsonLines(text) {
     return [];
   }
 
+  const PARSE_FAILED = Symbol('parse_failed');
   return text
     .split('\n')
     .filter((line) => line.trim())
@@ -76,10 +85,10 @@ function parseJsonLines(text) {
       try {
         return JSON.parse(line);
       } catch {
-        return null;
+        return PARSE_FAILED;
       }
     })
-    .filter((obj) => obj !== null);
+    .filter((obj) => obj !== PARSE_FAILED);
 }
 
 /**
@@ -101,7 +110,7 @@ function tryParse(text) {
   }
 
   try {
-    const value = JSON.parse(text);
+    const value = JSON.parse(text, _safeReviver);
     return { success: true, value, error: null };
   } catch (error) {
     return { success: false, value: null, error };
@@ -118,7 +127,7 @@ function tryParse(text) {
  */
 function jsonClone(value, fallback = null) {
   try {
-    return JSON.parse(JSON.stringify(value));
+    return JSON.parse(JSON.stringify(value), _safeReviver);
   } catch {
     return fallback;
   }

@@ -134,6 +134,15 @@ function removeFromIndexes(index, entry) {
     delete index.pathLookup[normalizedPath];
   }
 
+  // Also remove organization.actual paths to prevent orphaned index entries
+  if (entry.organization?.actual) {
+    delete index.pathLookup[entry.organization.actual];
+    const normalizedActual = normalizePathForIndex(entry.organization.actual);
+    if (normalizedActual && normalizedActual !== entry.organization.actual) {
+      delete index.pathLookup[normalizedActual];
+    }
+  }
+
   // Remove from tag index
   if (entry.analysis.tags) {
     entry.analysis.tags.forEach((tag) => {

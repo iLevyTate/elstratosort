@@ -12,7 +12,7 @@ const { ChromaClient } = require('chromadb');
 const path = require('path');
 const fs = require('fs').promises;
 const { EventEmitter } = require('events');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
 const { get: getConfig } = require('../../../shared/config/index');
 const { parseChromaConfig } = require('../../../shared/config/chromaDefaults');
 const { CircuitBreaker, CircuitState } = require('../../utils/CircuitBreaker');
@@ -66,8 +66,7 @@ const {
   resetFolders: resetFoldersOp
 } = require('./folderEmbeddings');
 
-logger.setContext('ChromaDBService');
-
+const logger = createLogger('ChromaDBService');
 /**
  * Embedding function placeholder.
  *
@@ -122,6 +121,7 @@ class ChromaDBServiceCore extends EventEmitter {
     this.fileChunkCollection = null;
     this.folderCollection = null;
     this.feedbackCollection = null;
+    this.learningPatternCollection = null;
     this.initialized = false;
 
     // Initialization mutex to prevent race conditions
@@ -136,11 +136,13 @@ class ChromaDBServiceCore extends EventEmitter {
     this._isShuttingDown = false;
 
     // FIX: Track collection dimensions to detect embedding model changes
+    // FIX HIGH-3: Added learningPatterns to ensure consistent dimension tracking
     this._collectionDimensions = {
       files: null,
       folders: null,
       fileChunks: null,
-      feedback: null
+      feedback: null,
+      learningPatterns: null
     };
 
     // Query cache
@@ -243,7 +245,9 @@ class ChromaDBServiceCore extends EventEmitter {
     return (
       error?.name === 'ChromaNotFoundError' ||
       /requested resource could not be found/i.test(msg) ||
-      /not found/i.test(msg)
+      /collection .* not found/i.test(msg) ||
+      /tenant .* not found/i.test(msg) ||
+      /database .* not found/i.test(msg)
     );
   }
 
@@ -251,22 +255,24 @@ class ChromaDBServiceCore extends EventEmitter {
    * Get the embedding dimension of an existing collection by peeking at stored embeddings.
    * FIX: Helps detect dimension mismatches when embedding models change.
    *
-   * @param {'files' | 'folders' | 'fileChunks' | 'feedback'} collectionType - Which collection to check
+   * @param {'files' | 'folders' | 'fileChunks' | 'feedback' | 'learningPatterns'} collectionType - Which collection to check
    * @returns {Promise<number | null>} Dimension of stored embeddings, or null if collection is empty
    */
   async getCollectionDimension(collectionType, { skipCache = false } = {}) {
     try {
-      const collection =
-        collectionType === 'files'
-          ? this.fileCollection
-          : collectionType === 'folders'
-            ? this.folderCollection
-            : collectionType === 'fileChunks'
-              ? this.fileChunkCollection
-              : this.feedbackCollection;
+      const collectionMap = {
+        files: this.fileCollection,
+        folders: this.folderCollection,
+        fileChunks: this.fileChunkCollection,
+        feedback: this.feedbackCollection,
+        learningPatterns: this.learningPatternCollection
+      };
+      const collection = collectionMap[collectionType];
       if (!collection) {
         // FIX P1-5: Invalidate cache if collection doesn't exist
-        this._collectionDimensions[collectionType] = null;
+        if (Object.prototype.hasOwnProperty.call(this._collectionDimensions, collectionType)) {
+          this._collectionDimensions[collectionType] = null;
+        }
         return null;
       }
 
@@ -308,7 +314,7 @@ class ChromaDBServiceCore extends EventEmitter {
    * FIX: Provides clear error when embedding model changed and dimensions mismatch.
    *
    * @param {Array<number>} vector - Embedding vector to validate
-   * @param {'files' | 'folders' | 'fileChunks' | 'feedback'} collectionType - Which collection this is for
+   * @param {'files' | 'folders' | 'fileChunks' | 'feedback' | 'learningPatterns'} collectionType - Which collection this is for
    * @returns {Promise<{ valid: boolean, error?: string, expectedDim?: number, actualDim?: number }>}
    */
   async validateEmbeddingDimension(vector, collectionType) {
@@ -354,6 +360,7 @@ class ChromaDBServiceCore extends EventEmitter {
 
   /**
    * Clear cached collection dimensions (call after reset operations)
+   * FIX HIGH-3: Include learningPatterns in dimension cache clearing
    * @private
    */
   _clearDimensionCache() {
@@ -361,7 +368,8 @@ class ChromaDBServiceCore extends EventEmitter {
       files: null,
       folders: null,
       fileChunks: null,
-      feedback: null
+      feedback: null,
+      learningPatterns: null
     };
   }
 
@@ -378,6 +386,7 @@ class ChromaDBServiceCore extends EventEmitter {
     this.fileChunkCollection = null;
     this.folderCollection = null;
     this.feedbackCollection = null;
+    this.learningPatternCollection = null;
     // Clear cached dimensions since collections/embedding state may change after re-init.
     this._clearDimensionCache();
     this._initPromise = null;
@@ -528,19 +537,21 @@ class ChromaDBServiceCore extends EventEmitter {
    * @private
    */
   _warnIfInsecureRemoteConnection() {
+    // Check if 172.16.0.0 - 172.31.255.255 (RFC 1918)
+    const parts172 = this.serverHost.split('.');
+    const isPrivate172 =
+      parts172.length >= 2 &&
+      parts172[0] === '172' &&
+      parseInt(parts172[1], 10) >= 16 &&
+      parseInt(parts172[1], 10) <= 31;
+
     const isLocalhost =
       this.serverHost === 'localhost' ||
       this.serverHost === '127.0.0.1' ||
       this.serverHost === '::1' ||
       this.serverHost.startsWith('192.168.') ||
       this.serverHost.startsWith('10.') ||
-      this.serverHost.startsWith('172.16.') ||
-      this.serverHost.startsWith('172.17.') ||
-      this.serverHost.startsWith('172.18.') ||
-      this.serverHost.startsWith('172.19.') ||
-      this.serverHost.startsWith('172.2') || // 172.20-172.29
-      this.serverHost.startsWith('172.30.') ||
-      this.serverHost.startsWith('172.31.');
+      isPrivate172;
 
     if (this.serverProtocol === 'http' && !isLocalhost) {
       logger.warn(
@@ -1077,6 +1088,19 @@ class ChromaDBServiceCore extends EventEmitter {
           'ChromaDB feedback memory collection init'
         );
 
+        this.learningPatternCollection = await withTimeout(
+          this.client.getOrCreateCollection({
+            name: 'learning_patterns',
+            embeddingFunction: explicitEmbeddingsOnlyEmbeddingFunction,
+            metadata: {
+              description: 'User learning patterns for organization suggestions',
+              'hnsw:space': 'cosine'
+            }
+          }),
+          CHROMADB_INIT_TIMEOUT_MS,
+          'ChromaDB learning patterns collection init'
+        );
+
         this.initialized = true;
         this.isOnline = true;
 
@@ -1084,28 +1108,34 @@ class ChromaDBServiceCore extends EventEmitter {
         this.startHealthCheck();
 
         // Count operations with timeout protection
-        const [fileCount, folderCount, fileChunkCount, feedbackCount] = await Promise.all([
-          withTimeout(
-            this.fileCollection.count(),
-            CHROMADB_OPERATION_TIMEOUT_MS,
-            'ChromaDB file count'
-          ),
-          withTimeout(
-            this.folderCollection.count(),
-            CHROMADB_OPERATION_TIMEOUT_MS,
-            'ChromaDB folder count'
-          ),
-          withTimeout(
-            this.fileChunkCollection.count(),
-            CHROMADB_OPERATION_TIMEOUT_MS,
-            'ChromaDB file chunk count'
-          ),
-          withTimeout(
-            this.feedbackCollection.count(),
-            CHROMADB_OPERATION_TIMEOUT_MS,
-            'ChromaDB feedback memory count'
-          )
-        ]);
+        const [fileCount, folderCount, fileChunkCount, feedbackCount, learningPatternCount] =
+          await Promise.all([
+            withTimeout(
+              this.fileCollection.count(),
+              CHROMADB_OPERATION_TIMEOUT_MS,
+              'ChromaDB file count'
+            ),
+            withTimeout(
+              this.folderCollection.count(),
+              CHROMADB_OPERATION_TIMEOUT_MS,
+              'ChromaDB folder count'
+            ),
+            withTimeout(
+              this.fileChunkCollection.count(),
+              CHROMADB_OPERATION_TIMEOUT_MS,
+              'ChromaDB file chunk count'
+            ),
+            withTimeout(
+              this.feedbackCollection.count(),
+              CHROMADB_OPERATION_TIMEOUT_MS,
+              'ChromaDB feedback memory count'
+            ),
+            withTimeout(
+              this.learningPatternCollection.count(),
+              CHROMADB_OPERATION_TIMEOUT_MS,
+              'ChromaDB learning patterns count'
+            )
+          ]);
 
         logger.info('[ChromaDB] Successfully initialized vector database', {
           dbPath: this.dbPath,
@@ -1113,7 +1143,8 @@ class ChromaDBServiceCore extends EventEmitter {
           fileCount,
           folderCount,
           fileChunkCount,
-          feedbackCount
+          feedbackCount,
+          learningPatternCount
         });
 
         // FIX: Mark initialization complete to enable event handler guards
@@ -1124,8 +1155,6 @@ class ChromaDBServiceCore extends EventEmitter {
         resolveInit();
         this._isInitializing = false;
       } catch (error) {
-        this._initPromise = null;
-        this._isInitializing = false;
         this.initialized = false;
         // FIX: Reset initialization complete flag on failure
         this._initializationComplete = false;
@@ -1208,6 +1237,7 @@ class ChromaDBServiceCore extends EventEmitter {
           if (this.folderCollection) this.folderCollection = null;
           if (this.fileChunkCollection) this.fileChunkCollection = null;
           if (this.feedbackCollection) this.feedbackCollection = null;
+          if (this.learningPatternCollection) this.learningPatternCollection = null;
           if (this.client) this.client = null;
         } catch (cleanupError) {
           logger.error('[ChromaDB] Error during cleanup:', cleanupError);
@@ -1215,6 +1245,8 @@ class ChromaDBServiceCore extends EventEmitter {
 
         // FIX: Reject the promise instead of throwing to properly propagate errors
         rejectInit(new Error(`Failed to initialize ChromaDB: ${errorMsg}`));
+        this._initPromise = null;
+        this._isInitializing = false;
       } finally {
         // Restore console.warn
         // eslint-disable-next-line no-console
@@ -1432,7 +1464,7 @@ class ChromaDBServiceCore extends EventEmitter {
         const distance = i < distances.length ? distances[i] : 1;
         matches.push({
           id: ids[i],
-          score: Math.max(0, 1 - distance / 2),
+          score: Number.isFinite(distance) ? Math.max(0, 1 - distance / 2) : 0,
           metadata: i < metadatas.length ? metadatas[i] : {},
           document: i < documents.length ? documents[i] : ''
         });
@@ -1472,6 +1504,167 @@ class ChromaDBServiceCore extends EventEmitter {
       }
     });
     this._collectionDimensions.feedback = null;
+  }
+
+  // ============== Learning Pattern Operations ==============
+
+  /**
+   * Upsert learning patterns to ChromaDB
+   * Used for dual-write persistence of user patterns, feedback history, and folder usage stats
+   *
+   * FIX MED-4: Learning patterns use placeholder vectors since they're retrieved by ID,
+   * not by similarity search. The dimension is dynamically matched to the file collection
+   * to avoid dimension mismatch errors when embedding models change.
+   *
+   * @param {Object} data - Learning pattern data
+   * @param {string} data.id - Unique identifier (e.g., 'learning_patterns_v1')
+   * @param {Object} data.patterns - Serialized patterns array
+   * @param {Object} data.feedbackHistory - Serialized feedback history
+   * @param {Object} data.folderUsageStats - Serialized folder usage stats
+   * @param {string} data.lastUpdated - ISO timestamp
+   * @returns {Promise<void>}
+   */
+  async upsertLearningPatterns({ id, patterns, feedbackHistory, folderUsageStats, lastUpdated }) {
+    if (!id) {
+      throw new Error('Invalid learning pattern data: missing id');
+    }
+    await this.initialize();
+
+    const metadata = {
+      lastUpdated: lastUpdated || new Date().toISOString(),
+      patternCount: Array.isArray(patterns) ? patterns.length : 0,
+      feedbackCount: Array.isArray(feedbackHistory) ? feedbackHistory.length : 0,
+      folderStatsCount: Array.isArray(folderUsageStats) ? folderUsageStats.length : 0
+    };
+
+    // Store patterns as JSON document (no vector needed - this is key-value storage)
+    const document = JSON.stringify({
+      patterns: patterns || [],
+      feedbackHistory: feedbackHistory || [],
+      folderUsageStats: folderUsageStats || []
+    });
+
+    // FIX MED-4: Use a placeholder vector with dimension matching the file collection
+    // to avoid dimension mismatch errors when embedding models change.
+    // Learning patterns are retrieved by ID, not by similarity search, so the actual
+    // vector values don't matter - only the dimension must match the collection.
+    let placeholderDimension = 384; // Default fallback
+
+    // Try to get the existing collection dimension from files (most commonly used)
+    const existingDim = await this.getCollectionDimension('learningPatterns', { skipCache: true });
+    if (existingDim !== null) {
+      placeholderDimension = existingDim;
+    } else {
+      // If learning patterns collection is empty, try to match files collection
+      const filesDim = await this.getCollectionDimension('files');
+      if (filesDim !== null) {
+        placeholderDimension = filesDim;
+      }
+    }
+
+    const placeholderVector = new Array(placeholderDimension).fill(0);
+    placeholderVector[0] = 1; // Ensure non-zero for validation
+
+    await withTimeout(
+      this.learningPatternCollection.upsert({
+        ids: [id],
+        embeddings: [placeholderVector],
+        metadatas: [metadata],
+        documents: [document]
+      }),
+      CHROMADB_OPERATION_TIMEOUT_MS,
+      'ChromaDB upsert learning patterns'
+    );
+
+    logger.debug('[ChromaDB] Upserted learning patterns', {
+      id,
+      patternCount: metadata.patternCount,
+      feedbackCount: metadata.feedbackCount,
+      placeholderDimension
+    });
+  }
+
+  /**
+   * Get learning patterns from ChromaDB by ID
+   * @param {string} id - Pattern set ID
+   * @returns {Promise<Object|null>} Stored patterns or null if not found
+   */
+  async getLearningPatterns(id) {
+    await this.initialize();
+
+    try {
+      const results = await withTimeout(
+        this.learningPatternCollection.get({
+          ids: [id],
+          include: ['documents', 'metadatas']
+        }),
+        CHROMADB_OPERATION_TIMEOUT_MS,
+        'ChromaDB get learning patterns'
+      );
+
+      if (!results.ids || results.ids.length === 0) {
+        return null;
+      }
+
+      const document = results.documents?.[0];
+      const metadata = results.metadatas?.[0];
+
+      if (!document) {
+        return null;
+      }
+
+      try {
+        const parsed = JSON.parse(document);
+        return {
+          id: results.ids[0],
+          patterns: parsed.patterns || [],
+          feedbackHistory: parsed.feedbackHistory || [],
+          folderUsageStats: parsed.folderUsageStats || [],
+          lastUpdated: metadata?.lastUpdated || null,
+          metadata
+        };
+      } catch (parseError) {
+        logger.warn('[ChromaDB] Failed to parse learning patterns document', {
+          error: parseError.message
+        });
+        return null;
+      }
+    } catch (error) {
+      logger.warn('[ChromaDB] Failed to get learning patterns', { error: error.message });
+      return null;
+    }
+  }
+
+  /**
+   * Delete learning patterns from ChromaDB
+   * @param {string} id - Pattern set ID
+   * @returns {Promise<void>}
+   */
+  async deleteLearningPatterns(id) {
+    await this.initialize();
+    await withTimeout(
+      this.learningPatternCollection.delete({ ids: [id] }),
+      CHROMADB_OPERATION_TIMEOUT_MS,
+      'ChromaDB delete learning patterns'
+    );
+  }
+
+  /**
+   * Reset learning patterns collection
+   * @returns {Promise<void>}
+   */
+  async resetLearningPatterns() {
+    await this.initialize();
+    await this.client.deleteCollection({ name: 'learning_patterns' });
+    this.learningPatternCollection = await this.client.createCollection({
+      name: 'learning_patterns',
+      embeddingFunction: explicitEmbeddingsOnlyEmbeddingFunction,
+      metadata: {
+        description: 'User learning patterns for organization suggestions',
+        'hnsw:space': 'cosine'
+      }
+    });
+    this._collectionDimensions.learningPatterns = null;
   }
 
   // ============== File Operations ==============
@@ -1528,11 +1721,15 @@ class ChromaDBServiceCore extends EventEmitter {
   }
 
   async _directUpsertFile(file) {
-    return directUpsertFile({
-      file,
-      fileCollection: this.fileCollection,
-      queryCache: this.queryCache
-    });
+    return withTimeout(
+      directUpsertFile({
+        file,
+        fileCollection: this.fileCollection,
+        queryCache: this.queryCache
+      }),
+      CHROMADB_OPERATION_TIMEOUT_MS,
+      `chroma upsert file ${file?.id || 'unknown'}`
+    );
   }
 
   async batchUpsertFiles(files) {
@@ -1601,11 +1798,15 @@ class ChromaDBServiceCore extends EventEmitter {
   }
 
   async _directBatchUpsertFiles(files) {
-    return directBatchUpsertFiles({
-      files,
-      fileCollection: this.fileCollection,
-      queryCache: this.queryCache
-    });
+    return withTimeout(
+      directBatchUpsertFiles({
+        files,
+        fileCollection: this.fileCollection,
+        queryCache: this.queryCache
+      }),
+      CHROMADB_OPERATION_TIMEOUT_MS,
+      `chroma batch upsert files x${files?.length || 0}`
+    );
   }
 
   async deleteFileEmbedding(fileId) {
@@ -1991,6 +2192,9 @@ class ChromaDBServiceCore extends EventEmitter {
     await this.resetFiles();
     await this.resetFileChunks();
     await this.resetFolders();
+    // FIX: Also reset feedback and learning collections for a complete reset
+    await this.resetFeedbackMemory();
+    await this.resetLearningPatterns();
   }
 
   // ============== Orphan Management ==============
@@ -2284,7 +2488,7 @@ class ChromaDBServiceCore extends EventEmitter {
           const batch = await this.fileCollection.get({
             limit: batchSize,
             offset,
-            include: ['metadatas', 'documents', 'embeddings']
+            include: ['metadatas']
           });
 
           if (!batch?.ids || batch.ids.length === 0) {
@@ -2473,27 +2677,49 @@ class ChromaDBServiceCore extends EventEmitter {
       }
     }
 
-    // FIX: CRITICAL - Remove event listeners before cleanup to prevent memory leaks
+    // FIX LOW-1: CRITICAL - Remove event listeners before cleanup to prevent memory leaks
     // Previously, CircuitBreaker and OfflineQueue listeners were never removed
-    if (this.circuitBreaker) {
-      this.circuitBreaker.removeAllListeners();
-      this.circuitBreaker.cleanup();
+    // Wrap each cleanup step in try-catch to ensure all cleanup completes
+    try {
+      if (this.circuitBreaker) {
+        this.circuitBreaker.removeAllListeners();
+        this.circuitBreaker.cleanup();
+      }
+    } catch (cbError) {
+      logger.warn('[ChromaDB] Error cleaning up circuit breaker:', cbError.message);
     }
 
-    if (this.offlineQueue) {
-      this.offlineQueue.removeAllListeners();
-      await this.offlineQueue.cleanup();
+    try {
+      if (this.offlineQueue) {
+        this.offlineQueue.removeAllListeners();
+        await this.offlineQueue.cleanup();
+      }
+    } catch (queueError) {
+      logger.warn('[ChromaDB] Error cleaning up offline queue:', queueError.message);
     }
 
-    this.queryCache.clear();
+    try {
+      this.queryCache.dispose();
+    } catch (cacheError) {
+      logger.warn('[ChromaDB] Error disposing query cache:', cacheError.message);
+    }
+
     this.inflightQueries.clear();
 
-    this.stopHealthCheck();
+    try {
+      this.stopHealthCheck();
+    } catch (healthError) {
+      logger.warn('[ChromaDB] Error stopping health check:', healthError.message);
+    }
+
     this.removeAllListeners();
 
     if (this.client) {
       this.fileCollection = null;
       this.folderCollection = null;
+      this.fileChunkCollection = null;
+      this.feedbackCollection = null;
+      this.learningPatternCollection = null;
       this.client = null;
       this.initialized = false;
       logger.info('[ChromaDB] Cleaned up connections');

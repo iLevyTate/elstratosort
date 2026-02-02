@@ -10,12 +10,11 @@
 import { useCallback, useState } from 'react';
 import { TIMEOUTS } from '../../../shared/performanceConstants';
 import { ANALYSIS_SUPPORTED_EXTENSIONS, ALL_SUPPORTED_EXTENSIONS } from '../../../shared/constants';
-import { logger } from '../../../shared/logger';
+import { createLogger } from '../../../shared/logger';
 import { extractExtension, extractFileName } from './namingUtils';
 import { normalizePathValue, isAbsolutePath } from '../../utils/pathNormalization';
 
-logger.setContext('DiscoverPhase:FileHandlers');
-
+const logger = createLogger('DiscoverPhase:FileHandlers');
 const ensureFileApi = (addNotification, actionLabel) => {
   if (!window?.electronAPI?.files) {
     logger.warn('[DiscoverPhase] File API unavailable', { actionLabel });
@@ -432,13 +431,14 @@ export function useFileHandlers({
           source: 'file_selection'
         }));
 
-        // Merge with existing files
-        const allFiles = [...selectedFiles, ...baseFiles];
-        const uniqueFiles = allFiles.filter(
-          (file, index, self) => index === self.findIndex((f) => f.path === file.path)
-        );
-
-        setSelectedFiles(uniqueFiles);
+        // FIX: Use functional updater to avoid stale closure over selectedFiles
+        setSelectedFiles((prev) => {
+          const existing = Array.isArray(prev) ? prev : [];
+          const allFiles = [...existing, ...baseFiles];
+          return allFiles.filter(
+            (file, index, self) => index === self.findIndex((f) => f.path === file.path)
+          );
+        });
 
         addNotification(
           `Added ${baseFiles.length} new file${baseFiles.length !== 1 ? 's' : ''} for analysis`,
@@ -551,13 +551,14 @@ export function useFileHandlers({
             source: 'folder_scan'
           }));
 
-          // Merge files
-          const allFiles = [...selectedFiles, ...baseFiles];
-          const uniqueFiles = allFiles.filter(
-            (file, index, self) => index === self.findIndex((f) => f.path === file.path)
-          );
-
-          setSelectedFiles(uniqueFiles);
+          // FIX: Use functional updater to avoid stale closure over selectedFiles
+          setSelectedFiles((prev) => {
+            const existing = Array.isArray(prev) ? prev : [];
+            const allFiles = [...existing, ...baseFiles];
+            return allFiles.filter(
+              (file, index, self) => index === self.findIndex((f) => f.path === file.path)
+            );
+          });
 
           addNotification(
             `Added ${baseFiles.length} new file${baseFiles.length !== 1 ? 's' : ''} from folder for analysis`,
@@ -686,13 +687,14 @@ export function useFileHandlers({
         // Update file states
         enhancedFiles.forEach((file) => updateFileState(file.path, 'pending'));
 
-        // Merge files
-        const allFiles = [...selectedFiles, ...enhancedFiles];
-        const uniqueFiles = allFiles.filter(
-          (file, index, self) => index === self.findIndex((f) => f.path === file.path)
-        );
-
-        setSelectedFiles(uniqueFiles);
+        // FIX: Use functional updater to avoid stale closure over selectedFiles
+        setSelectedFiles((prev) => {
+          const existing = Array.isArray(prev) ? prev : [];
+          const allFiles = [...existing, ...enhancedFiles];
+          return allFiles.filter(
+            (file, index, self) => index === self.findIndex((f) => f.path === file.path)
+          );
+        });
 
         addNotification(
           `Added ${enhancedFiles.length} new file${enhancedFiles.length !== 1 ? 's' : ''} for analysis`,

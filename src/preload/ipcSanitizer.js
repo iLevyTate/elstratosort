@@ -13,7 +13,9 @@ function createIpcSanitizer({ log }) {
     let output = '';
     for (let i = 0; i < str.length; i += 1) {
       const code = str.charCodeAt(i);
-      if (code >= 32) {
+      // Preserve tab (9), newline (10), and carriage return (13) -- these are
+      // normal whitespace characters used in multi-line user text (chat, notes, descriptions)
+      if (code >= 32 || code === 9 || code === 10 || code === 13) {
         output += str[i];
       }
     }
@@ -93,6 +95,7 @@ function createIpcSanitizer({ log }) {
 
     let cleaned = str;
 
+    // Remove dangerous executable tags (script, style, iframe)
     cleaned = cleaned.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
     cleaned = cleaned.replace(/<script\b[^>]*>[\s\S]*$/gi, '');
 
@@ -101,16 +104,12 @@ function createIpcSanitizer({ log }) {
 
     cleaned = cleaned.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
 
-    cleaned = cleaned.replace(/<[^>]*>?/g, '');
-
-    const openTagIndex = cleaned.indexOf('<');
-    if (openTagIndex !== -1) {
-      cleaned = cleaned.substring(0, openTagIndex);
-    }
-
-    cleaned = cleaned.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-    return cleaned;
+    // FIX: Do NOT strip generic HTML tags, truncate at '<', or entity-encode < and >.
+    // IPC data is rendered through React JSX which auto-escapes, so entity encoding
+    // is unnecessary. The previous code corrupted user text like "size < 10MB",
+    // search queries with comparison operators, and folder descriptions.
+    // Only strip control chars from the result.
+    return stripControlChars(cleaned);
   };
 
   /**
@@ -121,18 +120,34 @@ function createIpcSanitizer({ log }) {
   const sanitizeObject = (obj, isFilePath = false) => {
     if (typeof obj === 'string') {
       if (isFilePath || looksLikeFilePath(obj)) {
-        let sanitized = stripControlChars(obj).replace(/[<>"|?*]/g, '');
+        // Only strip ? and * on Windows where they are invalid in filenames.
+        // process.platform may be undefined in bundled preload (process/browser polyfill),
+        // so fall back to navigator.platform which is always available in Electron's renderer context.
+        const isWin =
+          (typeof navigator !== 'undefined' && /^Win/i.test(navigator.platform)) ||
+          (typeof process !== 'undefined' && process.platform === 'win32');
+        const invalidCharsPattern = isWin ? /[<>"|?*]/g : /[<>"]/g;
+        let sanitized = stripControlChars(obj).replace(invalidCharsPattern, '');
         const parts = sanitized.split(/[\\/]+/).filter((segment) => segment.length > 0);
         const hasTraversal = parts.some((segment) => segment === '..');
         if (hasTraversal) {
           log.warn('[SecureIPC] Blocked path traversal attempt in file path');
+          // Detect the original path separator to preserve it
+          const isWindowsPath = obj.includes('\\') || /^[a-zA-Z]:/.test(obj);
+          const sep = isWindowsPath ? '\\' : '/';
           const hasLeadingSlash = sanitized.startsWith('/') || sanitized.startsWith('\\\\');
           const filtered = parts.filter((segment) => segment !== '..');
-          sanitized = filtered.join('/');
+          sanitized = filtered.join(sep);
           if (hasLeadingSlash && !/^[a-zA-Z]:/.test(sanitized)) {
-            sanitized = `/${sanitized}`;
+            sanitized = `${sep}${sanitized}`;
           }
-          sanitized = sanitized.replace(/[/\\]+/g, '/');
+          // Collapse duplicate separators but preserve UNC prefix
+          if (isWindowsPath && sanitized.startsWith('\\\\')) {
+            sanitized = '\\\\' + sanitized.slice(2).replace(/\\+/g, '\\');
+          } else {
+            const sepPattern = isWindowsPath ? /\\+/g : /\/+/g;
+            sanitized = sanitized.replace(sepPattern, sep);
+          }
         }
         return sanitized;
       }

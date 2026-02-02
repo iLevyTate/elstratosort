@@ -67,15 +67,21 @@ const loadState = () => {
               activeModal: null,
               settings: null,
               settingsLoading: false,
+              settingsError: null,
               isOrganizing: false,
               isAnalyzing: false,
-              navigationError: null
+              isDiscovering: false,
+              isProcessing: false,
+              navigationError: null,
+              lastOperationError: null,
+              resetCounter: 0
             },
             files: {
               // Serialize dates in legacy state
               selectedFiles: serializeLoadedFiles(parsedLegacy.phaseData?.selectedFiles || []),
               smartFolders: parsedLegacy.phaseData?.smartFolders || [],
               smartFoldersLoading: false,
+              smartFoldersError: null,
               organizedFiles: serializeLoadedFiles(parsedLegacy.phaseData?.organizedFiles || []),
               fileStates: parsedLegacy.phaseData?.fileStates || {},
               namingConvention: parsedLegacy.phaseData?.namingConvention || {
@@ -126,9 +132,14 @@ const loadState = () => {
           activeModal: null,
           settings: null,
           settingsLoading: false,
+          settingsError: null,
           isOrganizing: false,
           isAnalyzing: false,
-          navigationError: null
+          isDiscovering: false,
+          isProcessing: false,
+          navigationError: null,
+          lastOperationError: null,
+          resetCounter: 0
         },
         files: {
           selectedFiles: [],
@@ -161,7 +172,11 @@ const loadState = () => {
           unreadNotificationCount: 0,
           version: '1.0.0',
           documentsPath: parsed.system?.documentsPath || null,
-          documentsPathLoading: false
+          documentsPathLoading: false,
+          documentsPathError: null,
+          redactPaths: null,
+          redactPathsLoading: false,
+          redactPathsError: null
         }
       };
     }
@@ -174,15 +189,21 @@ const loadState = () => {
         currentPhase: parsed.ui?.currentPhase || (PHASES?.WELCOME ?? 'welcome'),
         previousPhase: parsed.ui?.previousPhase || null,
         sidebarOpen: parsed.ui?.sidebarOpen !== false, // default true
-        showSettings: parsed.ui?.showSettings || false,
+        // Do not rehydrate transient overlays on startup
+        showSettings: false,
         isLoading: false, // Always reset loading state
         loadingMessage: '',
-        activeModal: parsed.ui?.activeModal || null,
+        activeModal: null,
         settings: parsed.ui?.settings || null,
         settingsLoading: false,
+        settingsError: null,
         isOrganizing: false,
         isAnalyzing: false,
-        navigationError: null
+        isDiscovering: false,
+        isProcessing: false,
+        navigationError: null,
+        lastOperationError: null,
+        resetCounter: 0
       },
       files: {
         // Ensure arrays and serialize dates, with explicit defaults for all properties
@@ -218,7 +239,11 @@ const loadState = () => {
         unreadNotificationCount: 0,
         version: '1.0.0',
         documentsPath: parsed.system?.documentsPath || null,
-        documentsPathLoading: false
+        documentsPathLoading: false,
+        documentsPathError: null,
+        redactPaths: null,
+        redactPathsLoading: false,
+        redactPathsError: null
       }
     };
   } catch {

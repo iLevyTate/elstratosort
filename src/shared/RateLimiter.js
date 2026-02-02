@@ -84,7 +84,7 @@ class SlidingWindowRateLimiter {
       // FIX Bug 7: Smart waiting - calculate when oldest call will expire
       this._cleanup();
       if (this.calls.length > 0) {
-        const oldestCall = Math.min(...this.calls);
+        const oldestCall = this.calls[0];
         const oldestExpiry = oldestCall + this.windowMs;
         const waitTime = oldestExpiry - Date.now() + EXPIRY_BUFFER_MS;
 

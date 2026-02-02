@@ -69,6 +69,7 @@ const IPC_CHANNELS = {
     UNDO: 'undo-redo:undo',
     REDO: 'undo-redo:redo',
     GET_HISTORY: 'undo-redo:get-history',
+    GET_STATE: 'undo-redo:get-state',
     CLEAR_HISTORY: 'undo-redo:clear',
     CAN_UNDO: 'undo-redo:can-undo',
     CAN_REDO: 'undo-redo:can-redo',
@@ -110,7 +111,7 @@ const IPC_CHANNELS = {
     APPLY_UPDATE: 'system:apply-update',
     GET_CONFIG: 'system:get-config',
     GET_CONFIG_VALUE: 'system:get-config-value',
-    RENDERER_ERROR_REPORT: 'system:renderer-error',
+    RENDERER_ERROR_REPORT: 'renderer-error-report',
     GET_RECOMMENDED_CONCURRENCY: 'system:get-recommended-concurrency'
   },
   WINDOW: {
@@ -167,7 +168,8 @@ const IPC_CHANNELS = {
     RESET_SESSION: 'chat:reset-session'
   },
   KNOWLEDGE: {
-    GET_RELATIONSHIP_EDGES: 'knowledge:get-relationship-edges'
+    GET_RELATIONSHIP_EDGES: 'knowledge:get-relationship-edges',
+    GET_RELATIONSHIP_STATS: 'knowledge:get-relationship-stats'
   }
 };
 
@@ -183,7 +185,8 @@ const ACTION_TYPES = {
   FOLDER_RENAME: 'FOLDER_RENAME',
   SETTINGS_CHANGE: 'SETTINGS_CHANGE',
   ANALYSIS_RESULT: 'ANALYSIS_RESULT',
-  BATCH_OPERATION: 'BATCH_OPERATION'
+  BATCH_OPERATION: 'BATCH_OPERATION',
+  BATCH_ORGANIZE: 'BATCH_ORGANIZE'
 };
 
 /**
@@ -246,7 +249,10 @@ const FILE_SIZE_LIMITS = {
  */
 const LIMITS = {
   ...PERFORMANCE_LIMITS,
-  MAX_PATH_LENGTH: 260,
+  MAX_PATH_LENGTH:
+    { win32: 260, linux: 4096, darwin: 1024 }[
+      typeof process !== 'undefined' && process.platform ? process.platform : 'win32'
+    ] || 260,
   MAX_FILE_SIZE: 100 * 1024 * 1024,
   MAX_FILENAME_LENGTH: PERFORMANCE_LIMITS.MAX_FILENAME_LENGTH ?? 255
 };
@@ -256,7 +262,8 @@ const LIMITS = {
  */
 const UI_VIRTUALIZATION = {
   THRESHOLD: 30, // Number of items before enabling virtualization
-  ANALYSIS_RESULTS_ITEM_HEIGHT: 100, // px
+  ANALYSIS_RESULTS_ITEM_HEIGHT: 116, // px
+  ANALYSIS_RESULTS_ITEM_GAP: 16, // px
   FILE_GRID_ITEM_HEIGHT: 200, // px
   FILE_GRID_ITEM_WIDTH: 180, // px
   FILE_GRID_ROW_HEIGHT: 240, // px

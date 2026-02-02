@@ -1,10 +1,9 @@
-const { logger } = require('../../shared/logger');
-const { cosineSimilarity } = require('../../shared/vectorMath');
+const { createLogger } = require('../../shared/logger');
+const { cosineSimilarity, padOrTruncateVector } = require('../../shared/vectorMath');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
 const { getChatPersonaOrDefault } = require('../../shared/chatPersonas');
 
-logger.setContext('ChatService');
-
+const logger = createLogger('ChatService');
 const DEFAULTS = {
   topK: 6,
   mode: 'hybrid',
@@ -14,19 +13,21 @@ const DEFAULTS = {
   memoryWindow: 6
 };
 
+const MAX_SESSIONS = 50;
+
 const RESPONSE_MODES = {
   fast: {
     chunkTopK: 10,
     chunkWeight: 0.2,
-    expandSynonyms: false,
-    correctSpelling: false,
+    expandSynonyms: true,
+    correctSpelling: true,
     rerank: false
   },
   deep: {
     chunkTopK: 60,
     chunkWeight: 0.4,
     expandSynonyms: true,
-    correctSpelling: false,
+    correctSpelling: true,
     rerank: true
   }
 };
@@ -72,12 +73,48 @@ class ChatService {
       });
       return { success: false, error: 'Query must be at least 2 characters' };
     }
+
     if (!this.ollamaService) {
       logger.error('[ChatService] Service unavailable', {
         hasSearch: Boolean(this.searchService),
         hasOllama: Boolean(this.ollamaService)
       });
       return { success: false, error: 'Chat service unavailable' };
+    }
+
+    // Short-circuit for pure chitchat to save resources
+    if (this._isConversational(cleanQuery)) {
+      logger.info('[ChatService] Detected conversational query, skipping retrieval', {
+        query: cleanQuery
+      });
+      const memory = await this._getSessionMemory(sessionId);
+      const history = await this._getHistoryText(memory);
+
+      const prompt = `
+You are StratoSort, a helpful document assistant.
+The user said: "${cleanQuery}"
+Conversation history:
+${history || '(none)'}
+
+Respond naturally and friendly. If they are greeting you, greet them back and offer to help find documents.
+Return ONLY valid JSON:
+{
+  "modelAnswer": [{ "text": "Your conversational response here." }],
+  "documentAnswer": [],
+  "followUps": ["What projects are active?", "Find my tax returns", "Show me recent images"]
+}`;
+
+      try {
+        const result = await this.ollamaService.analyzeText(prompt, { format: 'json' });
+        if (result?.success) {
+          const parsed = this._parseResponse(result.response, []);
+          await this._saveMemoryTurn(memory, cleanQuery, this._formatForMemory(parsed));
+          return { success: true, response: parsed, sources: [], meta: { retrievalSkipped: true } };
+        }
+      } catch (err) {
+        logger.warn('[ChatService] Conversational response failed:', err);
+      }
+      // Fall through to normal flow if something fails
     }
 
     logger.info('[ChatService] Query received', {
@@ -178,6 +215,12 @@ class ChatService {
       return this.sessions.get(key);
     }
 
+    // Evict oldest session if at capacity (Map maintains insertion order)
+    if (this.sessions.size >= MAX_SESSIONS) {
+      const oldestKey = this.sessions.keys().next().value;
+      this.sessions.delete(oldestKey);
+    }
+
     const memory = await this._createMemory();
     this.sessions.set(key, memory);
     return memory;
@@ -267,6 +310,26 @@ class ChatService {
     }
   }
 
+  _isConversational(query) {
+    const conversational = new Set([
+      'hello',
+      'hi',
+      'hey',
+      'thanks',
+      'thank you',
+      'good morning',
+      'good afternoon',
+      'good evening',
+      'who are you',
+      'what can you do'
+    ]);
+    const clean = query
+      .toLowerCase()
+      .replace(/[^\w\s]/g, '')
+      .trim();
+    return conversational.has(clean);
+  }
+
   async _retrieveSources(
     query,
     { topK, mode, chunkTopK, chunkWeight, contextFileIds, expandSynonyms, correctSpelling, rerank }
@@ -286,8 +349,37 @@ class ChatService {
       };
     }
 
+    let settingsSnapshot = null;
+
     let searchResults;
     try {
+      let retrievalSettings = {};
+      try {
+        if (this.settingsService?.load) {
+          const settings = await this.settingsService.load();
+          settingsSnapshot = settings;
+          retrievalSettings = {
+            ...(typeof settings?.graphExpansionEnabled === 'boolean' && {
+              graphExpansion: settings.graphExpansionEnabled
+            }),
+            ...(Number.isFinite(settings?.graphExpansionWeight) && {
+              graphExpansionWeight: settings.graphExpansionWeight
+            }),
+            ...(Number.isInteger(settings?.graphExpansionMaxNeighbors) && {
+              graphExpansionMaxNeighbors: settings.graphExpansionMaxNeighbors
+            }),
+            ...(typeof settings?.chunkContextEnabled === 'boolean' && {
+              chunkContext: settings.chunkContextEnabled
+            }),
+            ...(Number.isInteger(settings?.chunkContextMaxNeighbors) && {
+              chunkContextMaxNeighbors: settings.chunkContextMaxNeighbors
+            })
+          };
+        }
+      } catch (settingsError) {
+        logger.debug('[ChatService] Failed to load retrieval settings:', settingsError?.message);
+      }
+
       searchResults = await this.searchService.hybridSearch(query, {
         topK,
         mode,
@@ -295,7 +387,8 @@ class ChatService {
         chunkTopK,
         expandSynonyms,
         correctSpelling,
-        rerank
+        rerank,
+        ...retrievalSettings
       });
     } catch (error) {
       logger.warn('[ChatService] Search failed:', error?.message || error);
@@ -327,12 +420,22 @@ class ChatService {
     const chunkResults = await this.searchService.chunkSearch(
       query,
       topK,
-      Number.isInteger(chunkTopK) ? chunkTopK : DEFAULTS.chunkTopK
+      Number.isInteger(chunkTopK) ? chunkTopK : DEFAULTS.chunkTopK,
+      {
+        chunkContext:
+          typeof settingsSnapshot?.chunkContextEnabled === 'boolean'
+            ? settingsSnapshot.chunkContextEnabled
+            : undefined,
+        chunkContextMaxNeighbors: Number.isInteger(settingsSnapshot?.chunkContextMaxNeighbors)
+          ? settingsSnapshot.chunkContextMaxNeighbors
+          : undefined
+      }
     );
     const chunkMap = new Map();
     chunkResults.forEach((r) => {
-      if (r?.id && r?.matchDetails?.bestSnippet) {
-        chunkMap.set(r.id, r.matchDetails.bestSnippet);
+      const snippet = r?.matchDetails?.contextSnippet || r?.matchDetails?.bestSnippet;
+      if (r?.id && snippet) {
+        chunkMap.set(r.id, snippet);
       }
     });
 
@@ -480,14 +583,9 @@ class ChatService {
     }
   }
 
+  // FIX: Use shared padOrTruncateVector from vectorMath.js to eliminate duplication
   _padOrTruncateVector(vector, expectedDim) {
-    if (!Array.isArray(vector) || vector.length === 0) return null;
-    if (!Number.isInteger(expectedDim) || expectedDim <= 0) return vector;
-    if (vector.length === expectedDim) return vector;
-    if (vector.length < expectedDim) {
-      return vector.concat(new Array(expectedDim - vector.length).fill(0));
-    }
-    return vector.slice(0, expectedDim);
+    return padOrTruncateVector(vector, expectedDim);
   }
 
   async _getPersona() {
@@ -535,8 +633,7 @@ class ChatService {
 
     return `
 You are StratoSort, an intelligent and helpful local document assistant.
-You have access to the user's documents and can answer questions about them.
-You may use your general training knowledge, but you must clearly distinguish it from document-sourced information.
+Your goal is to help the user understand their documents and find information quickly.
 
 Persona guidance:
 ${personaText}
@@ -547,7 +644,7 @@ ${history || '(none)'}
 User question:
 ${query}
 
-Document sources (for citations):
+Document sources:
 ${sourcesText || '(no documents found)'}
 
 Return ONLY valid JSON with this shape:
@@ -556,20 +653,22 @@ Return ONLY valid JSON with this shape:
     { "text": "answer grounded in documents", "citations": ["doc-1", "doc-2"] }
   ],
   "modelAnswer": [
-    { "text": "answer using model knowledge (no citations)" }
+    { "text": "answer using model knowledge or conversational glue" }
   ],
   "followUps": ["Natural follow-up question 1?", "Natural follow-up question 2?"]
 }
 
 Rules:
-- Use the document metadata (category, type, entity, project, purpose, tags) to provide rich context.
-- Put document-grounded statements only in documentAnswer, with citations to the source ids above.
-- Put training-knowledge statements only in modelAnswer, with no citations.
-- If no document support exists, documentAnswer should be empty.
-- If the question is conversational (e.g., "hello", "who are you"), respond in modelAnswer with a natural, engaging tone.
-- When discussing documents, mention relevant details like entity, project, and purpose when helpful.
-- Keep responses conversational and helpful. Avoid being overly terse.
-- Generate 1-3 natural, relevant follow-up questions that help the user explore the topic further. Do NOT use single words or extremely short phrases.
+1. Synthesize information from the provided documents to answer the user's question directly.
+2. Use 'documentAnswer' for any statements backed by the sources, and include the relevant citations.
+3. Use 'modelAnswer' for:
+   - General knowledge or explanations not found in the docs.
+   - Conversational transitions or friendly closing remarks.
+   - Responses to greetings or off-topic chitchat.
+4. Use document metadata (Project, Entity, Date, Type) to add useful context to your answer.
+5. Be concise but helpful. Avoid robotic repetition.
+6. If the documents don't answer the question, say so clearly in 'modelAnswer' and offer general advice if applicable.
+7. Generate 1-3 natural follow-up questions that help the user explore their data further.
 `.trim();
   }
 

@@ -5,8 +5,10 @@ import { List } from 'react-window';
 import { Folder } from 'lucide-react';
 import { UI_VIRTUALIZATION } from '../../../shared/constants';
 import { formatDisplayPath } from '../../utils/pathDisplay';
+import { joinPath } from '../../utils/platform';
 import Card from '../ui/Card';
 import { Text } from '../ui/Typography';
+import { selectRedactPaths } from '../../store/selectors';
 
 const ITEM_HEIGHT = UI_VIRTUALIZATION.TARGET_FOLDER_ITEM_HEIGHT;
 const VIRTUALIZATION_THRESHOLD = 20;
@@ -19,8 +21,9 @@ const getListHeight = (folderCount, viewportHeight) => {
 };
 
 const FolderItem = memo(function FolderItem({ folder, defaultLocation, style }) {
-  const fullPath = folder.path || `${defaultLocation}/${folder.name}`;
-  const redactPaths = useSelector((state) => Boolean(state?.system?.redactPaths));
+  const fullPath = folder.path || joinPath(defaultLocation, folder.name);
+  // PERF: Use memoized selector instead of inline Boolean coercion
+  const redactPaths = useSelector(selectRedactPaths);
   const displayPath = formatDisplayPath(fullPath, { redact: redactPaths, segments: 2 });
 
   return (
@@ -133,7 +136,7 @@ const TargetFolderList = memo(function TargetFolderList({
   }
 
   return (
-    <div className="grid grid-cols-auto-fit-md gap-4">
+    <div className="grid grid-cols-auto-fit-md gap-spacious">
       {folders.map((folder) => (
         <FolderItem key={folder.id} folder={folder} defaultLocation={defaultLocation} />
       ))}

@@ -3,9 +3,6 @@
  * Single source of truth for environment variables, ports, and service URLs
  */
 
-// FIX CRIT-40: Remove logger import to prevent circular dependency
-// const { logger } = require('./logger');
-
 // Default service ports
 const PORTS = {
   CHROMA_DB: 8000,

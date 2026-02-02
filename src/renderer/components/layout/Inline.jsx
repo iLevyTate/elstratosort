@@ -12,6 +12,7 @@ export default function Inline({
   wrap = true,
   className,
   children,
+  style,
   ...rest
 }) {
   const gapClass =
@@ -24,13 +25,28 @@ export default function Inline({
           : gap === 'spacious'
             ? 'gap-spacious'
             : 'gap-default';
+  const gapValue =
+    gap === 'compact'
+      ? 'var(--spacing-compact)'
+      : gap === 'cozy'
+        ? 'var(--spacing-cozy)'
+        : gap === 'relaxed'
+          ? 'var(--spacing-relaxed)'
+          : gap === 'spacious'
+            ? 'var(--spacing-spacious)'
+            : 'var(--spacing-default)';
 
   const alignClass =
     align === 'start' ? 'items-start' : align === 'end' ? 'items-end' : 'items-center';
+  const mergedStyle = {
+    ...style,
+    gap: style?.gap ?? gapValue
+  };
 
   return (
     <Comp
       className={cx('flex', alignClass, wrap ? 'flex-wrap' : 'flex-nowrap', gapClass, className)}
+      style={mergedStyle}
       {...rest}
     >
       {children}
@@ -44,5 +60,6 @@ Inline.propTypes = {
   align: PropTypes.oneOf(['start', 'center', 'end']),
   wrap: PropTypes.bool,
   className: PropTypes.string,
+  style: PropTypes.object,
   children: PropTypes.node
 };

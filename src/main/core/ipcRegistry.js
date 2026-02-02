@@ -7,10 +7,9 @@
  * @module core/ipcRegistry
  */
 
-const { logger } = require('../../shared/logger');
+const { createLogger } = require('../../shared/logger');
 
-logger.setContext('IPCRegistry');
-
+const logger = createLogger('IPCRegistry');
 /**
  * Registry of all IPC channels registered through this module.
  * Separated by type: handlers (handle/invoke) vs listeners (on/send).

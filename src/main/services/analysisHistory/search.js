@@ -10,7 +10,8 @@
 const { getSearchCacheKey, maintainCacheSize } = require('./cacheManager');
 const { getInstance: getParallelEmbedding } = require('../ParallelEmbeddingService');
 const { cosineSimilarity } = require('../../../shared/vectorMath');
-const { logger } = require('../../../shared/logger');
+const { createLogger } = require('../../../shared/logger');
+const logger = createLogger('AnalysisHistory-Search');
 
 // Build the text representation used for semantic embedding
 function buildEntryText(entry) {
@@ -156,7 +157,11 @@ async function searchAnalysis(analysisHistory, cache, searchCacheTTL, query, opt
           entryVector = vector;
           if (Array.isArray(entryVector) && entryVector.length > 0) {
             const entryCacheKey = model ? `${entry.id}:${model}` : String(entry.id);
-            cacheStore.entryEmbeddings.set(entryCacheKey, { vector: entryVector, model });
+            cacheStore.entryEmbeddings.set(entryCacheKey, {
+              vector: entryVector,
+              model,
+              timestamp: Date.now()
+            });
           }
         } catch {
           entryVector = null;
@@ -178,21 +183,22 @@ async function searchAnalysis(analysisHistory, cache, searchCacheTTL, query, opt
       }
     }
 
-    if (entry.analysis.subject) {
+    // FIX: Use optional chaining — entry.analysis can be null for malformed entries
+    if (entry.analysis?.subject) {
       const subjectLower = entry.analysis.subject.toLowerCase();
       if (subjectLower.includes(queryLower)) {
         score += 8;
       }
     }
 
-    if (entry.analysis.summary) {
+    if (entry.analysis?.summary) {
       const summaryLower = entry.analysis.summary.toLowerCase();
       if (summaryLower.includes(queryLower)) {
         score += 6;
       }
     }
 
-    if (entry.analysis.tags && entry.analysis.tags.length > 0) {
+    if (entry.analysis?.tags && entry.analysis.tags.length > 0) {
       for (const tag of entry.analysis.tags) {
         if (tag.toLowerCase().includes(queryLower)) {
           score += 4;
@@ -201,7 +207,7 @@ async function searchAnalysis(analysisHistory, cache, searchCacheTTL, query, opt
       }
     }
 
-    if (entry.analysis.category && entry.analysis.category.toLowerCase().includes(queryLower)) {
+    if (entry.analysis?.category && entry.analysis.category.toLowerCase().includes(queryLower)) {
       score += 5;
     }
 

@@ -12,17 +12,17 @@ import {
   X
 } from 'lucide-react';
 import { PHASES, PHASE_TRANSITIONS, PHASE_METADATA, PHASE_ORDER } from '../../shared/constants';
-import { logger } from '../../shared/logger';
+import { createLogger } from '../../shared/logger';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { setPhase, toggleSettings } from '../store/slices/uiSlice';
 import { updateHealth } from '../store/slices/systemSlice';
 import { useFloatingSearch } from '../contexts/FloatingSearchContext';
 import UpdateIndicator from './UpdateIndicator';
+import { Button, IconButton } from './ui';
 import { Text } from './ui/Typography';
 import { isMac } from '../utils/platform';
 
-logger.setContext('NavigationBar');
-
+const logger = createLogger('NavigationBar');
 // =============================================================================
 // Icon Components - Using Lucide React for premium icons
 // =============================================================================
@@ -161,12 +161,20 @@ const NavTab = memo(function NavTab({
   isActive,
   canNavigate,
   isLoading,
-  onClick,
+  onPhaseChange,
   onHover,
   isHovered
 }) {
   const metadata = PHASE_METADATA[phase];
   const IconComponent = PHASE_ICONS[phase];
+
+  // Stable click handler - avoids inline arrow in parent's render loop
+  const handleClick = useCallback(() => {
+    if (canNavigate) onPhaseChange(phase);
+  }, [canNavigate, onPhaseChange, phase]);
+
+  const handleMouseEnter = useCallback(() => onHover(phase), [onHover, phase]);
+  const handleMouseLeave = useCallback(() => onHover(null), [onHover]);
 
   // Get short label for nav
   const label = useMemo(() => {
@@ -193,9 +201,9 @@ const NavTab = memo(function NavTab({
   return (
     <button
       type="button"
-      onClick={onClick}
-      onMouseEnter={() => onHover(phase)}
-      onMouseLeave={() => onHover(null)}
+      onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       disabled={!canNavigate}
       className={`
         phase-nav-tab
@@ -211,6 +219,7 @@ const NavTab = memo(function NavTab({
       aria-label={metadata?.title}
       aria-current={isActive ? 'page' : undefined}
       aria-busy={showSpinner}
+      aria-disabled={!canNavigate}
       title={
         !canNavigate && !isActive
           ? 'Navigation disabled during operation'
@@ -245,7 +254,7 @@ NavTab.propTypes = {
   isActive: PropTypes.bool.isRequired,
   canNavigate: PropTypes.bool.isRequired,
   isLoading: PropTypes.bool.isRequired,
-  onClick: PropTypes.func.isRequired,
+  onPhaseChange: PropTypes.func.isRequired,
   onHover: PropTypes.func.isRequired,
   isHovered: PropTypes.bool.isRequired
 };
@@ -259,42 +268,25 @@ const NavActions = memo(function NavActions({ onSettingsClick }) {
   return (
     <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' }}>
       <UpdateIndicator />
-      <button
-        type="button"
+      <Button
         onClick={isWidgetOpen ? closeWidget : openWidget}
-        className={`
-          h-9 px-2 sm:px-3 rounded-lg flex items-center justify-center gap-2
-          text-system-gray-500 hover:text-stratosort-blue
-          bg-white/80 hover:bg-white border border-system-gray-200 hover:border-stratosort-blue/30
-          shadow-sm hover:shadow-md
-          transition-all duration-200 ease-out
-          focus:outline-none focus-visible:ring-2 focus-visible:ring-stratosort-blue focus-visible:ring-offset-2
-          ${isWidgetOpen ? 'bg-stratosort-blue/10 border-stratosort-blue/50 text-stratosort-blue' : ''}
-        `}
+        variant="secondary"
+        size="sm"
+        leftIcon={<SearchIcon className="h-4 w-4" />}
+        className={`shadow-sm ${isWidgetOpen ? 'bg-stratosort-blue/10 border-stratosort-blue/30 text-stratosort-blue hover:bg-stratosort-blue/15' : ''}`}
         aria-label={isWidgetOpen ? 'Close Search Widget' : 'Open Search Widget (Ctrl+K)'}
         title={isWidgetOpen ? 'Close Search Widget' : 'Search files (Ctrl+K)'}
       >
-        <SearchIcon className="h-4 w-4" />
-        <Text as="span" variant="tiny" className="font-medium hidden sm:inline">
-          Search
-        </Text>
-      </button>
-      <button
-        type="button"
+        <span className="hidden sm:inline">Search</span>
+      </Button>
+      <IconButton
+        icon={<SettingsIcon className="h-4 w-4" />}
+        size="sm"
+        variant="secondary"
         onClick={onSettingsClick}
-        className="
-          h-9 w-9 rounded-lg flex items-center justify-center
-          text-system-gray-500 hover:text-stratosort-blue
-          bg-white/80 hover:bg-white border border-system-gray-200 hover:border-stratosort-blue/30
-          shadow-sm hover:shadow-md
-          transition-all duration-200 ease-out
-          focus:outline-none focus-visible:ring-2 focus-visible:ring-stratosort-blue focus-visible:ring-offset-2
-        "
         aria-label="Open Settings"
         title="Settings"
-      >
-        <SettingsIcon className="h-5 w-5" />
-      </button>
+      />
     </div>
   );
 });
@@ -515,6 +507,14 @@ function NavigationBar() {
   useEffect(() => {
     let scrollRafId = null;
     let isMounted = true;
+    const scrollTarget = document.getElementById('main-content') || window;
+
+    const getScrollTop = () => {
+      if (scrollTarget === window) {
+        return window.scrollY || 0;
+      }
+      return scrollTarget?.scrollTop || 0;
+    };
 
     const handleScroll = () => {
       if (scrollRafId) {
@@ -523,19 +523,19 @@ function NavigationBar() {
       scrollRafId = requestAnimationFrame(() => {
         scrollRafId = null;
         if (isMounted) {
-          setIsScrolled(window.scrollY > 10);
+          setIsScrolled(getScrollTop() > 10);
         }
       });
     };
 
     handleScroll();
-    window.addEventListener('scroll', handleScroll, { passive: true });
+    scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
     return () => {
       isMounted = false;
       if (scrollRafId) {
         cancelAnimationFrame(scrollRafId);
       }
-      window.removeEventListener('scroll', handleScroll);
+      scrollTarget.removeEventListener('scroll', handleScroll);
     };
   }, []);
 
@@ -598,6 +598,8 @@ function NavigationBar() {
         </div>
 
         {/* Center: Phase Navigation - Absolute center relative to viewport width */}
+        {/* pointer-events-none on wrapper so it doesn't block Brand/Actions; */}
+        {/* the inner <nav> restores pointer-events via .phase-nav CSS class. */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <nav
             className="phase-nav max-w-[60vw]"
@@ -635,7 +637,7 @@ function NavigationBar() {
                     isActive={isActive}
                     canNavigate={canNavigate}
                     isLoading={isActive && navSpinnerActive}
-                    onClick={() => canNavigate && handlePhaseChange(phase)}
+                    onPhaseChange={handlePhaseChange}
                     onHover={setHoveredTab}
                     isHovered={hoveredTab === phase}
                   />
