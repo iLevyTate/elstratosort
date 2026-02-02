@@ -23,9 +23,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Stage bundled runtimes
-        run: npm run setup:runtime
-
       - name: Build Windows installer
         run: npm run dist:win
 

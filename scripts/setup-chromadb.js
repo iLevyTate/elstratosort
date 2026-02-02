@@ -53,12 +53,21 @@ function parseArgs(argv) {
 }
 
 async function tryCmd(cmd, args, timeout = 5000, options = {}) {
-  const res = await asyncSpawn(cmd, args, {
+  // IMPORTANT (Windows): allow callers to override shell explicitly, but do not let
+  // `shell: undefined` override the default (Node treats undefined like "not set").
+  // This matters for system Python where PATH resolution may rely on shell semantics.
+  const { shell, ...rest } = options || {};
+  const spawnOptions = {
     timeout,
     windowsHide: true,
     shell: process.platform === 'win32',
-    ...options
-  });
+    ...rest
+  };
+  if (shell !== undefined) {
+    spawnOptions.shell = shell;
+  }
+
+  const res = await asyncSpawn(cmd, args, spawnOptions);
   return res;
 }
 
