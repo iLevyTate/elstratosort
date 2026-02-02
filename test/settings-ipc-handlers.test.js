@@ -249,6 +249,8 @@ describe('Settings IPC Handlers', () => {
         settings: { language: 'en', ollamaHost: 'http://localhost:11434' },
         validationWarnings: []
       }),
+      // SECURITY: backupDir is needed for IPC-layer path traversal validation
+      backupDir: '/tmp/test-app/settings-backups',
       createBackup: jest.fn().mockResolvedValue({
         success: true,
         path: '/tmp/test-app/settings-backups/settings-2024-01-01.json',
@@ -359,18 +361,25 @@ describe('Settings IPC Handlers', () => {
   });
 
   describe('IMPORT handler', () => {
-    test('imports settings from provided path', async () => {
+    test('always shows open dialog for security (ignores provided path)', async () => {
+      // SECURITY: importPath parameter is now ignored to prevent path traversal attacks
       const importPath = '/tmp/import-settings.json';
       const importData = {
         version: '1.0.0',
         settings: { language: 'en', ollamaHost: 'http://localhost:11434' }
       };
+      mockShowOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ['/tmp/chosen-import.json']
+      });
       mockFs.stat.mockResolvedValueOnce({ size: 500 });
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
       const result = await handler({}, importPath);
 
+      // Dialog is always shown, even when path is provided
+      expect(mockShowOpenDialog).toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(mockSettingsService.save).toHaveBeenCalled();
     });
@@ -408,42 +417,50 @@ describe('Settings IPC Handlers', () => {
     });
 
     test('rejects files larger than 1MB', async () => {
-      const importPath = '/tmp/large-settings.json';
+      mockShowOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ['/tmp/large-settings.json']
+      });
       mockFs.stat.mockResolvedValueOnce({ size: 2 * 1024 * 1024 }); // 2MB
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('too large');
     });
 
     test('rejects invalid JSON', async () => {
-      const importPath = '/tmp/invalid-settings.json';
+      mockShowOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ['/tmp/invalid-settings.json']
+      });
       mockFs.stat.mockResolvedValueOnce({ size: 500 });
       mockFs.readFile.mockResolvedValueOnce('not valid json');
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Invalid JSON');
     });
 
     test('rejects file without settings object', async () => {
-      const importPath = '/tmp/no-settings.json';
+      mockShowOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ['/tmp/no-settings.json']
+      });
       mockFs.stat.mockResolvedValueOnce({ size: 500 });
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify({ version: '1.0.0' }));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('missing');
     });
 
     test('applies imported settings to services', async () => {
-      const importPath = '/tmp/import-settings.json';
       const importData = {
         version: '1.0.0',
         settings: {
@@ -452,6 +469,10 @@ describe('Settings IPC Handlers', () => {
           visionModel: 'llava'
         }
       };
+      mockShowOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ['/tmp/import-settings.json']
+      });
       mockFs.stat.mockResolvedValueOnce({ size: 500 });
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
       mockSettingsService.save.mockResolvedValueOnce({
@@ -460,7 +481,7 @@ describe('Settings IPC Handlers', () => {
       });
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      await handler({}, importPath);
+      await handler({});
 
       // Settings are now applied via OllamaService.updateConfig() to ensure proper model change notifications
       expect(mockOllamaServiceUpdateConfig).toHaveBeenCalledWith(
@@ -606,8 +627,17 @@ describe('Settings IPC Handlers', () => {
   });
 
   describe('Security validations', () => {
+    // Helper: mock the open dialog so import tests work with the security fix
+    // (import handler now always shows dialog, ignoring renderer-supplied paths)
+    function mockImportDialog(filePath) {
+      mockShowOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: [filePath || '/tmp/test-import.json']
+      });
+    }
+
     test('rejects imported settings with prototype pollution attempts', async () => {
-      const importPath = '/tmp/malicious-settings.json';
+      mockImportDialog('/tmp/malicious-settings.json');
       // Use raw JSON string because JS object literal __proto__ sets prototype, not own property
       const maliciousJson =
         '{"version":"1.0.0","settings":{"__proto__":{"isAdmin":true},"language":"en"}}';
@@ -615,7 +645,7 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(maliciousJson);
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       // Should reject prototype pollution attempts entirely
       expect(result.success).toBe(false);
@@ -624,7 +654,7 @@ describe('Settings IPC Handlers', () => {
     });
 
     test('rejects unsafe URL patterns in ollamaHost', async () => {
-      const importPath = '/tmp/unsafe-settings.json';
+      mockImportDialog('/tmp/unsafe-settings.json');
       const importData = {
         version: '1.0.0',
         settings: {
@@ -635,14 +665,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('unsafe');
     });
 
     test('rejects URLs with credentials', async () => {
-      const importPath = '/tmp/cred-settings.json';
+      mockImportDialog('/tmp/cred-settings.json');
       const importData = {
         version: '1.0.0',
         settings: {
@@ -653,7 +683,7 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       // The URL regex may fail before the credentials check (depending on regex pattern)
       // Either way, it should fail validation
@@ -662,7 +692,7 @@ describe('Settings IPC Handlers', () => {
     });
 
     test('rejects invalid model names', async () => {
-      const importPath = '/tmp/bad-model-settings.json';
+      mockImportDialog('/tmp/bad-model-settings.json');
       const importData = {
         version: '1.0.0',
         settings: {
@@ -673,14 +703,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('textModel');
     });
 
     test('rejects model names that are too long', async () => {
-      const importPath = '/tmp/long-model-settings.json';
+      mockImportDialog('/tmp/long-model-settings.json');
       const importData = {
         version: '1.0.0',
         settings: {
@@ -691,14 +721,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('visionModel');
     });
 
     test('rejects non-boolean for boolean settings', async () => {
-      const importPath = '/tmp/bad-bool-settings.json';
+      mockImportDialog('/tmp/bad-bool-settings.json');
       const importData = {
         version: '1.0.0',
         settings: {
@@ -709,14 +739,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('launchOnStartup');
     });
 
     test('rejects invalid language codes', async () => {
-      const importPath = '/tmp/bad-lang-settings.json';
+      mockImportDialog('/tmp/bad-lang-settings.json');
       const importData = {
         version: '1.0.0',
         settings: {
@@ -727,14 +757,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('language');
     });
 
     test('rejects invalid logging levels', async () => {
-      const importPath = '/tmp/bad-log-settings.json';
+      mockImportDialog('/tmp/bad-log-settings.json');
       const importData = {
         version: '1.0.0',
         settings: {
@@ -745,14 +775,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('loggingLevel');
     });
 
     test('rejects invalid cacheSize values', async () => {
-      const importPath = '/tmp/bad-cache-settings.json';
+      mockImportDialog('/tmp/bad-cache-settings.json');
       const importData = {
         version: '1.0.0',
         settings: {
@@ -763,14 +793,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('cacheSize');
     });
 
     test('rejects invalid maxBatchSize values', async () => {
-      const importPath = '/tmp/bad-batch-settings.json';
+      mockImportDialog('/tmp/bad-batch-settings.json');
       const importData = {
         version: '1.0.0',
         settings: {
@@ -781,14 +811,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('maxBatchSize');
     });
 
     test('rejects invalid notificationMode', async () => {
-      const importPath = '/tmp/bad-notif-settings.json';
+      mockImportDialog('/tmp/bad-notif-settings.json');
       const importData = {
         version: '1.0.0',
         settings: { notificationMode: 'invalid' }
@@ -797,14 +827,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('notificationMode');
     });
 
     test('rejects invalid namingConvention', async () => {
-      const importPath = '/tmp/bad-naming-settings.json';
+      mockImportDialog('/tmp/bad-naming-settings.json');
       const importData = {
         version: '1.0.0',
         settings: { namingConvention: 'invalid' }
@@ -813,14 +843,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('namingConvention');
     });
 
     test('rejects invalid caseConvention', async () => {
-      const importPath = '/tmp/bad-case-settings.json';
+      mockImportDialog('/tmp/bad-case-settings.json');
       const importData = {
         version: '1.0.0',
         settings: { caseConvention: 'invalid' }
@@ -829,14 +859,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('caseConvention');
     });
 
     test('rejects invalid separator', async () => {
-      const importPath = '/tmp/bad-sep-settings.json';
+      mockImportDialog('/tmp/bad-sep-settings.json');
       const importData = {
         version: '1.0.0',
         settings: { separator: '/' } // Unsafe char
@@ -845,14 +875,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('separator');
     });
 
     test('rejects invalid confidenceThreshold', async () => {
-      const importPath = '/tmp/bad-conf-settings.json';
+      mockImportDialog('/tmp/bad-conf-settings.json');
       const importData = {
         version: '1.0.0',
         settings: { confidenceThreshold: 1.5 }
@@ -861,14 +891,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('confidenceThreshold');
     });
 
     test('rejects invalid maxConcurrentAnalysis', async () => {
-      const importPath = '/tmp/bad-concurrent-settings.json';
+      mockImportDialog('/tmp/bad-concurrent-settings.json');
       const importData = {
         version: '1.0.0',
         settings: { maxConcurrentAnalysis: 100 }
@@ -877,14 +907,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('maxConcurrentAnalysis');
     });
 
     test('rejects invalid path settings', async () => {
-      const importPath = '/tmp/bad-path-settings.json';
+      mockImportDialog('/tmp/bad-path-settings.json');
       const importData = {
         version: '1.0.0',
         settings: { defaultSmartFolderLocation: 'a'.repeat(1001) }
@@ -893,14 +923,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('defaultSmartFolderLocation');
     });
 
     test('ignores unknown setting keys', async () => {
-      const importPath = '/tmp/unknown-settings.json';
+      mockImportDialog('/tmp/unknown-settings.json');
       const importData = {
         version: '1.0.0',
         settings: {
@@ -914,14 +944,14 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       // Should succeed but ignore unknown keys
       expect(result.success).toBe(true);
     });
 
     test('rejects non-object settings', async () => {
-      const importPath = '/tmp/non-object-settings.json';
+      mockImportDialog('/tmp/non-object-settings.json');
       const importData = {
         version: '1.0.0',
         settings: 'not an object'
@@ -930,7 +960,7 @@ describe('Settings IPC Handlers', () => {
       mockFs.readFile.mockResolvedValueOnce(JSON.stringify(importData));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
-      const result = await handler({}, importPath);
+      const result = await handler({});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('invalid settings object');
@@ -1193,7 +1223,8 @@ describe('Settings IPC Handlers', () => {
       mockSettingsService.restoreFromBackup.mockRejectedValueOnce(new Error('Restore IO Error'));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.RESTORE_BACKUP];
-      const result = await handler({}, '/some/path');
+      // Use a path within the backup directory so IPC-layer validation passes
+      const result = await handler({}, '/tmp/test-app/settings-backups/settings-test.json');
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Restore IO Error');
@@ -1203,10 +1234,29 @@ describe('Settings IPC Handlers', () => {
       mockSettingsService.deleteBackup.mockRejectedValueOnce(new Error('Delete IO Error'));
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.DELETE_BACKUP];
-      const result = await handler({}, '/some/path');
+      // Use a path within the backup directory so IPC-layer validation passes
+      const result = await handler({}, '/tmp/test-app/settings-backups/settings-test.json');
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Delete IO Error');
+    });
+
+    test('rejects backup restore with path traversal attempt', async () => {
+      const handler = handlers[IPC_CHANNELS.SETTINGS.RESTORE_BACKUP];
+      const result = await handler({}, '/etc/passwd');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('outside the backup directory');
+      expect(mockSettingsService.restoreFromBackup).not.toHaveBeenCalled();
+    });
+
+    test('rejects backup delete with path traversal attempt', async () => {
+      const handler = handlers[IPC_CHANNELS.SETTINGS.DELETE_BACKUP];
+      const result = await handler({}, '/tmp/test-app/settings-backups/../../etc/passwd');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('outside the backup directory');
+      expect(mockSettingsService.deleteBackup).not.toHaveBeenCalled();
     });
   });
 });

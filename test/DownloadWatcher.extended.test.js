@@ -273,16 +273,16 @@ describe('DownloadWatcher Extended Coverage', () => {
 
   describe('_moveFileWithConflictHandling', () => {
     test('generates unique name if destination exists', async () => {
-      // First rename fails with EEXIST
+      // First rename fails with EEXIST (destination occupied)
       mockFs.rename.mockRejectedValueOnce(new Error('EEXIST'));
       errorClassifier.isExistsError.mockReturnValueOnce(true);
 
-      // Access for _1 fails (so it's free)
-      mockFs.access.mockRejectedValueOnce(new Error('ENOENT'));
+      // Second rename (_1 suffix) succeeds
+      mockFs.rename.mockResolvedValueOnce(undefined);
 
       await watcher._moveFileWithConflictHandling('/src/file.txt', '/dest/file.txt', '.txt');
 
-      // Second rename should use unique name
+      // Should have tried _1 suffix directly via rename (no fs.access TOCTOU)
       expect(mockFs.rename).toHaveBeenLastCalledWith(
         '/src/file.txt',
         expect.stringContaining('file_1.txt')
@@ -290,15 +290,18 @@ describe('DownloadWatcher Extended Coverage', () => {
     });
 
     test('increments counter until free name found', async () => {
+      // First rename fails with EEXIST
       mockFs.rename.mockRejectedValueOnce(new Error('EEXIST'));
       errorClassifier.isExistsError.mockReturnValueOnce(true);
 
-      // _1 exists
-      mockFs.access.mockResolvedValueOnce(undefined);
-      // _2 exists
-      mockFs.access.mockResolvedValueOnce(undefined);
-      // _3 free
-      mockFs.access.mockRejectedValueOnce(new Error('ENOENT'));
+      // _1 rename fails with EEXIST
+      mockFs.rename.mockRejectedValueOnce(new Error('EEXIST'));
+      errorClassifier.isExistsError.mockReturnValueOnce(true);
+      // _2 rename fails with EEXIST
+      mockFs.rename.mockRejectedValueOnce(new Error('EEXIST'));
+      errorClassifier.isExistsError.mockReturnValueOnce(true);
+      // _3 rename succeeds
+      mockFs.rename.mockResolvedValueOnce(undefined);
 
       await watcher._moveFileWithConflictHandling('/src/file.txt', '/dest/file.txt', '.txt');
 

@@ -26,6 +26,11 @@ jest.mock('../src/shared/logger', () => {
   return { logger, createLogger: jest.fn(() => logger) };
 });
 
+// Mock ipcRegistry - hasHandler delegates back to _invokeHandlers for test compat
+jest.mock('../src/main/core/ipcRegistry', () => ({
+  hasHandler: jest.fn(() => false)
+}));
+
 describe('ipcVerification', () => {
   let ipcVerification;
   let ipcMain;
@@ -86,19 +91,23 @@ describe('ipcVerification', () => {
     });
 
     test('returns allRegistered: true when all handlers registered via invoke', () => {
-      // Set up all required handlers in the invoke map
+      // Set up all required handlers via the registry mock
+      const { hasHandler } = require('../src/main/core/ipcRegistry');
+      const registeredHandlers = new Set();
       ipcVerification.REQUIRED_HANDLERS.forEach((handler) => {
-        ipcMain._invokeHandlers.set(handler, jest.fn());
+        registeredHandlers.add(handler);
       });
+      hasHandler.mockImplementation((ch) => registeredHandlers.has(ch));
 
       const result = ipcVerification.checkHandlers();
 
       expect(result.allRegistered).toBe(true);
     });
 
-    test('detects handlers registered via Map.has()', () => {
+    test('detects handlers registered via registry', () => {
       const channel = 'settings:get';
-      ipcMain._invokeHandlers.set(channel, jest.fn());
+      const { hasHandler } = require('../src/main/core/ipcRegistry');
+      hasHandler.mockImplementation((ch) => ch === channel);
       ipcMain.listenerCount.mockReturnValue(0);
 
       const result = ipcVerification.checkHandlers();

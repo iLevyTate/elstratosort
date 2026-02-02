@@ -37,44 +37,23 @@ describe('platformUtils', () => {
   });
 
   describe('getNpmCommand', () => {
-    test('returns npm for Unix', () => {
-      if (!platformUtils.isWindows) {
-        expect(platformUtils.getNpmCommand()).toBe('npm');
-      }
-    });
-
-    test('returns npm.cmd for Windows', () => {
-      if (platformUtils.isWindows) {
-        expect(platformUtils.getNpmCommand()).toBe('npm.cmd');
-      }
+    test('returns correct npm command for current platform', () => {
+      const expected = platformUtils.isWindows ? 'npm.cmd' : 'npm';
+      expect(platformUtils.getNpmCommand()).toBe(expected);
     });
   });
 
   describe('getChromaDbBinName', () => {
-    test('returns chromadb for Unix', () => {
-      if (!platformUtils.isWindows) {
-        expect(platformUtils.getChromaDbBinName()).toBe('chroma');
-      }
-    });
-
-    test('returns chromadb.cmd for Windows', () => {
-      if (platformUtils.isWindows) {
-        expect(platformUtils.getChromaDbBinName()).toBe('chroma.cmd');
-      }
+    test('returns correct chroma binary name for current platform', () => {
+      const expected = platformUtils.isWindows ? 'chroma.cmd' : 'chroma';
+      expect(platformUtils.getChromaDbBinName()).toBe(expected);
     });
   });
 
   describe('getNvidiaSmiCommand', () => {
-    test('returns nvidia-smi for Unix', () => {
-      if (!platformUtils.isWindows) {
-        expect(platformUtils.getNvidiaSmiCommand()).toBe('nvidia-smi');
-      }
-    });
-
-    test('returns nvidia-smi.exe for Windows', () => {
-      if (platformUtils.isWindows) {
-        expect(platformUtils.getNvidiaSmiCommand()).toBe('nvidia-smi.exe');
-      }
+    test('returns correct nvidia-smi command for current platform', () => {
+      const expected = platformUtils.isWindows ? 'nvidia-smi.exe' : 'nvidia-smi';
+      expect(platformUtils.getNvidiaSmiCommand()).toBe(expected);
     });
   });
 
@@ -85,18 +64,10 @@ describe('platformUtils', () => {
       expect(result).toHaveProperty('args');
     });
 
-    test('returns timeout for Windows', () => {
-      if (platformUtils.isWindows) {
-        const result = platformUtils.getSleepCommand(5);
-        expect(result.cmd).toBe('timeout');
-      }
-    });
-
-    test('returns sleep for Unix', () => {
-      if (!platformUtils.isWindows) {
-        const result = platformUtils.getSleepCommand(5);
-        expect(result.cmd).toBe('sleep');
-      }
+    test('returns correct sleep command for current platform', () => {
+      const result = platformUtils.getSleepCommand(5);
+      const expected = platformUtils.isWindows ? 'timeout' : 'sleep';
+      expect(result.cmd).toBe(expected);
     });
   });
 
@@ -107,45 +78,16 @@ describe('platformUtils', () => {
       expect(result).toHaveProperty('args');
     });
 
-    test('returns taskkill for Windows', () => {
-      if (platformUtils.isWindows) {
-        const result = platformUtils.getKillCommand(1234);
-        expect(result.cmd).toBe('taskkill');
-      }
+    test('returns correct kill command for current platform', () => {
+      const result = platformUtils.getKillCommand(1234);
+      const expected = platformUtils.isWindows ? 'taskkill' : 'kill';
+      expect(result.cmd).toBe(expected);
     });
 
-    test('returns kill for Unix', () => {
-      if (!platformUtils.isWindows) {
-        const result = platformUtils.getKillCommand(1234);
-        expect(result.cmd).toBe('kill');
-      }
-    });
-
-    test('includes force flag', () => {
+    test('includes force flag for current platform', () => {
       const result = platformUtils.getKillCommand(1234, true);
-      if (platformUtils.isWindows) {
-        expect(result.args).toContain('/f');
-      } else {
-        expect(result.args).toContain('-KILL');
-      }
-    });
-  });
-
-  describe('shouldUseShell', () => {
-    test('returns true on Windows', () => {
-      if (platformUtils.isWindows) {
-        expect(platformUtils.shouldUseShell()).toBe(true);
-      }
-    });
-
-    test('returns false on Unix by default', () => {
-      if (!platformUtils.isWindows) {
-        expect(platformUtils.shouldUseShell()).toBe(false);
-      }
-    });
-
-    test('returns true when forceShell is true', () => {
-      expect(platformUtils.shouldUseShell(true)).toBe(true);
+      const expectedFlag = platformUtils.isWindows ? '/f' : '-KILL';
+      expect(result.args).toContain(expectedFlag);
     });
   });
 

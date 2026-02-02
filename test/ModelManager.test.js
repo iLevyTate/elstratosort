@@ -33,7 +33,6 @@ const mockSettingsService = {
 
 jest.mock('../src/main/services/SettingsService', () => {
   return {
-    getService: jest.fn(() => mockSettingsService),
     getInstance: jest.fn(() => mockSettingsService)
   };
 });
@@ -713,6 +712,13 @@ describe('ModelManager', () => {
     });
 
     test('skips empty responses', async () => {
+      // Need 3 models to exercise all 3 mock responses since each model is tried once
+      modelManager.availableModels = [
+        { name: 'llama3.2', size: 4000000000 },
+        { name: 'mistral', size: 7000000000 },
+        { name: 'gemma', size: 5000000000 }
+      ];
+
       mockOllamaClient.generate
         .mockResolvedValueOnce({ response: '' })
         .mockResolvedValueOnce({ response: '   ' })
@@ -834,9 +840,15 @@ describe('ModelManager', () => {
 
   describe('edge cases and error handling', () => {
     test('handles null/undefined model names gracefully', () => {
+      // analyzeModelCapabilities handles null/undefined names gracefully
+      // via (model.name || '').toLowerCase() - it should not throw
       expect(() => {
         modelManager.analyzeModelCapabilities({ name: null });
-      }).toThrow();
+      }).not.toThrow();
+
+      expect(() => {
+        modelManager.analyzeModelCapabilities({ name: undefined });
+      }).not.toThrow();
     });
 
     test('handles concurrent initialize calls', async () => {

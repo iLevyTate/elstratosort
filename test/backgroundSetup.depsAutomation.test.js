@@ -83,9 +83,9 @@ jest.mock('../src/main/services/startup', () => ({
   getStartupManager: () => mockStartupManagerInstance
 }));
 
-// Mock SettingsService getService()
+// Mock SettingsService getInstance()
 jest.mock('../src/main/services/SettingsService', () => ({
-  getService: () => ({
+  getInstance: () => ({
     load: jest.fn().mockResolvedValue({
       textModel: 'llama3.2:latest',
       visionModel: 'llava:latest',

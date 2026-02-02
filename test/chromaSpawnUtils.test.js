@@ -107,6 +107,11 @@ describe('chromaSpawnUtils', () => {
   describe('buildChromaSpawnPlan', () => {
     test('uses custom command from environment variable', async () => {
       process.env.CHROMA_SERVER_COMMAND = '/custom/chroma run --port 9000';
+      // Mock fs.access to succeed for the custom command path (security validation)
+      mockFs.access.mockImplementation(async (p) => {
+        if (String(p) === '/custom/chroma') return undefined;
+        throw new Error('ENOENT');
+      });
 
       const result = await chromaSpawnUtils.buildChromaSpawnPlan(defaultConfig);
 

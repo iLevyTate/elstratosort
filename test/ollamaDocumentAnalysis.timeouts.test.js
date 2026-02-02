@@ -1,5 +1,7 @@
 /**
- * Verifies long-running extraction steps are wrapped with withTimeout
+ * Verifies long-running extraction steps use appropriate timeout handling.
+ * PDF and OCR extractors have built-in timeouts (120s and 180s respectively),
+ * so they should NOT be double-wrapped. Office extraction still uses withTimeout.
  */
 
 jest.mock('../src/main/utils/ollamaDetection', () => ({
@@ -72,33 +74,36 @@ describe('ollamaDocumentAnalysis timeouts', () => {
     extractTextFromDocx = documentExtractors.extractTextFromDocx;
   });
 
-  test('wraps PDF extraction with withTimeout', async () => {
+  test('does NOT double-wrap PDF extraction with withTimeout (extractors have built-in timeouts)', async () => {
     extractTextFromPdf.mockResolvedValue('pdf body');
     const { analyzeDocumentFile } = require('../src/main/analysis/ollamaDocumentAnalysis');
 
     await analyzeDocumentFile('/tmp/file.pdf', []);
 
-    expect(withTimeout).toHaveBeenCalledWith(
-      expect.any(Promise),
-      expect.any(Number),
-      expect.stringContaining('PDF extraction')
+    // PDF extraction should NOT be wrapped with withTimeout since extractTextFromPdf
+    // already has a 120s internal timeout. Double-wrapping with 60s would kill it prematurely.
+    const pdfTimeoutCalls = withTimeout.mock.calls.filter(
+      (call) => call[2] && String(call[2]).includes('PDF extraction')
     );
-    expect(withTimeout).toHaveBeenCalledTimes(1);
+    expect(pdfTimeoutCalls).toHaveLength(0);
   });
 
-  test('wraps OCR fallback when PDF extraction yields no text', async () => {
+  test('does NOT double-wrap OCR with withTimeout (extractors have built-in timeouts)', async () => {
     extractTextFromPdf.mockResolvedValue('');
     ocrPdfIfNeeded.mockResolvedValue('ocr text');
     const { analyzeDocumentFile } = require('../src/main/analysis/ollamaDocumentAnalysis');
 
     await analyzeDocumentFile('/tmp/file.pdf', []);
 
-    const labels = withTimeout.mock.calls.map((call) => call[2]);
-    expect(labels.some((label) => String(label).includes('PDF extraction'))).toBe(true);
-    expect(labels.some((label) => String(label).includes('OCR'))).toBe(true);
+    // OCR should NOT be wrapped with withTimeout since ocrPdfIfNeeded
+    // already has a 180s internal timeout.
+    const ocrTimeoutCalls = withTimeout.mock.calls.filter(
+      (call) => call[2] && String(call[2]).includes('OCR')
+    );
+    expect(ocrTimeoutCalls).toHaveLength(0);
   });
 
-  test('wraps office extraction with withTimeout', async () => {
+  test('wraps office extraction with withTimeout using AI_ANALYSIS_LONG', async () => {
     extractTextFromDocx.mockResolvedValue('docx body');
     const { analyzeDocumentFile } = require('../src/main/analysis/ollamaDocumentAnalysis');
 
@@ -109,5 +114,10 @@ describe('ollamaDocumentAnalysis timeouts', () => {
       expect.any(Number),
       expect.stringContaining('Office extraction')
     );
+    // Verify the timeout is AI_ANALYSIS_LONG (180s) not AI_ANALYSIS_MEDIUM (60s)
+    const officeCall = withTimeout.mock.calls.find(
+      (call) => call[2] && String(call[2]).includes('Office extraction')
+    );
+    expect(officeCall[1]).toBeGreaterThanOrEqual(120000);
   });
 });

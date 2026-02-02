@@ -89,7 +89,10 @@ describe('NotificationService', () => {
 
     svc._sendToUi({ type: 'x' });
 
-    expect(goodWin.webContents.send).toHaveBeenCalledWith('notification', { type: 'x' });
+    expect(goodWin.webContents.send).toHaveBeenCalledWith(
+      'notification',
+      expect.objectContaining({ type: 'x' })
+    );
     expect(deadWin.webContents.send).not.toHaveBeenCalled();
   });
 

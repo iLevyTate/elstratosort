@@ -3,7 +3,11 @@
  * Tests the WeakMap-based caching to prevent race conditions
  */
 
-import { selectReadyFiles, selectFileStats } from '../src/renderer/store/selectors';
+import {
+  selectReadyFiles,
+  selectFileStats,
+  LARGE_ARRAY_THRESHOLD
+} from '../src/renderer/store/selectors';
 
 describe('createStableSelector', () => {
   describe('Reference Stability', () => {
@@ -241,6 +245,111 @@ describe('createStableSelector', () => {
         expect(result.length).toBe(1);
         expect(result[0].path).toBe(`/file${i}.pdf`);
       });
+    });
+  });
+
+  describe('Large Array Memory Protection (C12)', () => {
+    test('LARGE_ARRAY_THRESHOLD is exported and equals 1000', () => {
+      expect(LARGE_ARRAY_THRESHOLD).toBe(1000);
+    });
+
+    test('does not cache arrays exceeding LARGE_ARRAY_THRESHOLD', () => {
+      // Build a state with more than LARGE_ARRAY_THRESHOLD ready files.
+      // We need two different state object references that produce equivalent
+      // large output arrays -- this simulates Redux creating new state on dispatch
+      // while the underlying data stays the same.
+      const count = LARGE_ARRAY_THRESHOLD + 1;
+      const makeState = () => {
+        const selectedFiles = Array.from({ length: count }, (_, i) => ({
+          path: `/file${i}.pdf`,
+          name: `file${i}.pdf`
+        }));
+        const results = selectedFiles.map((f) => ({
+          path: f.path,
+          analysis: { category: 'docs' }
+        }));
+        return {
+          files: { selectedFiles, fileStates: {} },
+          analysis: { results }
+        };
+      };
+
+      const state1 = makeState();
+      const state2 = makeState();
+
+      const result1 = selectReadyFiles(state1);
+      const result2 = selectReadyFiles(state2);
+
+      // Both calls should return correct data
+      expect(result1.length).toBe(count);
+      expect(result2.length).toBe(count);
+
+      // They should NOT be the same reference (cache was skipped)
+      // because the array exceeds the threshold and should not be pinned
+      expect(result1).not.toBe(result2);
+    });
+
+    test('still caches arrays at or below LARGE_ARRAY_THRESHOLD', () => {
+      const count = LARGE_ARRAY_THRESHOLD;
+      const selectedFiles = Array.from({ length: count }, (_, i) => ({
+        path: `/cached${i}.pdf`,
+        name: `cached${i}.pdf`
+      }));
+      const results = selectedFiles.map((f) => ({
+        path: f.path,
+        analysis: { category: 'docs' }
+      }));
+
+      const state = {
+        files: { selectedFiles, fileStates: {} },
+        analysis: { results }
+      };
+
+      const result1 = selectReadyFiles(state);
+      const result2 = selectReadyFiles(state);
+
+      // At the threshold boundary, caching should still work
+      expect(result1.length).toBe(count);
+      expect(result1).toBe(result2);
+    });
+
+    test('clears lastResult when large array is encountered', () => {
+      // First, call with a small array to populate lastResult
+      const smallState = {
+        files: {
+          selectedFiles: [{ path: '/small.pdf', name: 'small.pdf' }],
+          fileStates: {}
+        },
+        analysis: {
+          results: [{ path: '/small.pdf', analysis: { category: 'docs' } }]
+        }
+      };
+
+      const smallResult = selectReadyFiles(smallState);
+      expect(smallResult.length).toBe(1);
+
+      // Now call with a large array -- this should clear the cache
+      const count = LARGE_ARRAY_THRESHOLD + 5;
+      const selectedFiles = Array.from({ length: count }, (_, i) => ({
+        path: `/large${i}.pdf`,
+        name: `large${i}.pdf`
+      }));
+      const results = selectedFiles.map((f) => ({
+        path: f.path,
+        analysis: { category: 'docs' }
+      }));
+
+      const largeState = {
+        files: { selectedFiles, fileStates: {} },
+        analysis: { results }
+      };
+
+      const largeResult = selectReadyFiles(largeState);
+      expect(largeResult.length).toBe(count);
+
+      // Go back to small state -- should still work correctly
+      const smallResult2 = selectReadyFiles(smallState);
+      expect(smallResult2.length).toBe(1);
     });
   });
 });

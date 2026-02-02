@@ -452,10 +452,12 @@ describe('SettingsService', () => {
     const validBackupPath = '/tmp/test-app/settings-backups/backup.json';
 
     test('restores settings from backup', async () => {
+      // FIX: Backups now require a valid SHA256 hash for integrity verification
       mockFs.readFile.mockResolvedValueOnce(
         JSON.stringify({
           timestamp: '2024-01-01T00:00:00Z',
-          settings: { language: 'en', autoOrganize: true }
+          settings: { language: 'en', autoOrganize: true },
+          hash: '7eb30b516d7c368d6b67eb27238b2807799fe67c42127a766e3c3365ff6afdad'
         })
       );
 
@@ -566,12 +568,12 @@ describe('SettingsService', () => {
     });
   });
 
-  describe('getService singleton', () => {
+  describe('getInstance singleton', () => {
     test('returns singleton instance', () => {
-      const { getService } = require('../src/main/services/SettingsService');
+      const { getInstance } = require('../src/main/services/SettingsService');
 
-      const instance1 = getService();
-      const instance2 = getService();
+      const instance1 = getInstance();
+      const instance2 = getInstance();
 
       expect(instance1).toBe(instance2);
     });

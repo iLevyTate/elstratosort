@@ -96,7 +96,7 @@ jest.mock('lucide-react', () => ({
 }));
 
 // Mock Modal component
-jest.mock('../../src/renderer/components/Modal', () => ({
+jest.mock('../../src/renderer/components/ui/Modal', () => ({
   __esModule: true,
   default: ({ children, isOpen, onClose, title }) =>
     isOpen ? (

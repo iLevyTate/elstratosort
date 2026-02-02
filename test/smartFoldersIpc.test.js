@@ -101,7 +101,12 @@ jest.mock('../src/main/utils/jsonRepair', () => ({
 // Mock security config
 jest.mock('../src/shared/securityConfig', () => ({
   getDangerousPaths: jest.fn(() => ['/System', '/Windows', 'C:\\Windows']),
-  ALLOWED_APP_PATHS: ['documents', 'downloads', 'desktop', 'pictures', 'videos', 'music', 'home']
+  ALLOWED_APP_PATHS: ['documents', 'downloads', 'desktop', 'pictures', 'videos', 'music', 'home'],
+  MAX_PATH_LENGTHS: {
+    win32: 260,
+    linux: 4096,
+    darwin: 1024
+  }
 }));
 
 // Mock crossPlatformUtils

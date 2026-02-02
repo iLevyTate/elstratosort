@@ -160,6 +160,13 @@ describe('Settings IPC Handlers', () => {
 
       const handler = handlers[IPC_CHANNELS.SETTINGS.IMPORT];
 
+      // Mock dialog to return a file path (handler uses dialog, not the provided path)
+      const { dialog } = require('electron');
+      dialog.showOpenDialog.mockResolvedValue({
+        canceled: false,
+        filePaths: ['/path/to/settings.json']
+      });
+
       // Mock fs.stat and readFile
       fs.stat.mockResolvedValue({ size: 100 });
 

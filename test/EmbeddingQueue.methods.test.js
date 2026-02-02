@@ -163,9 +163,11 @@ describe('EmbeddingQueueCore Methods', () => {
 
       expect(result.success).toBe(true);
       expect(embeddingQueue.queue).toContain(validItem);
-      expect(persistQueueData).toHaveBeenCalled();
-      // Wait a tick for scheduleFlush check if needed, but since it sets a timer, we check timer state or spy on flush
+      // scheduleFlush() sets the timer immediately (it may fire later and clear itself)
       expect(embeddingQueue.flushTimer).not.toBeNull();
+      // Persistence is debounced (500ms) - wait for it to fire
+      await new Promise((r) => setTimeout(r, 600));
+      expect(persistQueueData).toHaveBeenCalled();
     });
 
     test('initializes if not already initialized', async () => {

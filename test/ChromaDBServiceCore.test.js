@@ -130,6 +130,7 @@ const mockQueryCache = {
   get: jest.fn().mockReturnValue(null),
   set: jest.fn(),
   clear: jest.fn(),
+  dispose: jest.fn(),
   invalidateForFile: jest.fn(),
   invalidateForFolder: jest.fn(),
   getStats: jest.fn().mockReturnValue({ hits: 0, misses: 0, size: 0 })
@@ -246,7 +247,10 @@ describe('ChromaDBServiceCore', () => {
       expect(
         service._isChromaNotFoundError({ message: 'Requested resource could not be found' })
       ).toBe(true);
-      expect(service._isChromaNotFoundError({ message: 'not found' })).toBe(true);
+      expect(service._isChromaNotFoundError({ message: 'collection files not found' })).toBe(true);
+      expect(service._isChromaNotFoundError({ message: 'tenant default not found' })).toBe(true);
+      expect(service._isChromaNotFoundError({ message: 'database default not found' })).toBe(true);
+      expect(service._isChromaNotFoundError({ message: 'not found' })).toBe(false);
       expect(service._isChromaNotFoundError({ message: 'other' })).toBe(false);
     });
   });
@@ -291,7 +295,7 @@ describe('ChromaDBServiceCore', () => {
       const forceSpy = jest.spyOn(service, '_forceReinitialize').mockResolvedValue(undefined);
       const fn = jest
         .fn()
-        .mockRejectedValueOnce(new Error('not found'))
+        .mockRejectedValueOnce(new Error('collection files not found'))
         .mockResolvedValueOnce('ok');
 
       const res = await service._executeWithNotFoundRecovery('op', fn);
@@ -302,7 +306,7 @@ describe('ChromaDBServiceCore', () => {
 
     test('throws after max not-found retries', async () => {
       jest.spyOn(service, '_forceReinitialize').mockResolvedValue(undefined);
-      const fn = jest.fn().mockRejectedValue(new Error('not found'));
+      const fn = jest.fn().mockRejectedValue(new Error('collection files not found'));
       await expect(service._executeWithNotFoundRecovery('op', fn)).rejects.toThrow('failed after');
     });
   });
@@ -1057,7 +1061,7 @@ describe('ChromaDBServiceCore', () => {
       expect(service.client).toBeNull();
       expect(mockCircuitBreaker.cleanup).toHaveBeenCalled();
       expect(mockOfflineQueue.cleanup).toHaveBeenCalled();
-      expect(mockQueryCache.clear).toHaveBeenCalled();
+      expect(mockQueryCache.dispose).toHaveBeenCalled();
     });
 
     test('removes all listeners from CircuitBreaker and OfflineQueue', async () => {

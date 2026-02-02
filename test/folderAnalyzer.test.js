@@ -55,9 +55,8 @@ describe('FolderAnalyzer', () => {
     });
 
     test('handles empty strings', () => {
-      // Empty string splits to [''] which has 1 element, so two empty strings match
-      expect(folderAnalyzer.calculateStringSimilarity('', '')).toBe(1);
-      // 'test' vs '' - 'test' has 1 word, '' has 1 element (''), no common words
+      // Empty strings have no meaningful words, so similarity is 0
+      expect(folderAnalyzer.calculateStringSimilarity('', '')).toBe(0);
       expect(folderAnalyzer.calculateStringSimilarity('test', '')).toBe(0);
       expect(folderAnalyzer.calculateStringSimilarity('', 'test')).toBe(0);
     });

@@ -13,6 +13,16 @@ jest.mock('fs', () => ({
     }),
     writeFile: jest.fn(async (path, contents) => {
       mockFsStore.set(path, contents);
+    }),
+    rename: jest.fn(async (oldPath, newPath) => {
+      const contents = mockFsStore.get(oldPath);
+      if (contents !== undefined) {
+        mockFsStore.set(newPath, contents);
+        mockFsStore.delete(oldPath);
+      }
+    }),
+    unlink: jest.fn(async (path) => {
+      mockFsStore.delete(path);
     })
   }
 }));
