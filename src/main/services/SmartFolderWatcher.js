@@ -1822,7 +1822,19 @@ class SmartFolderWatcher {
       };
     }
 
-    const stats = await fs.stat(filePath);
+    let stats;
+    try {
+      stats = await fs.stat(filePath);
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return { queued: false, error: 'File not found', errorCode: 'ENOENT' };
+      }
+      logger.warn('[SMART-FOLDER-WATCHER] Failed to stat file for reanalysis', {
+        filePath,
+        error: error.message
+      });
+      return { queued: false, error: 'Unable to stat file', errorCode: 'STAT_FAILED' };
+    }
     const mtime = stats?.mtime ? new Date(stats.mtime).getTime() : Date.now();
 
     this._enqueueAnalysisItem({

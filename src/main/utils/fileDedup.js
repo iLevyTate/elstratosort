@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
+const { isNotFoundError } = require('../../shared/errorClassifier');
 
 const DEFAULTS = {
   maxCandidates: 200,
@@ -251,6 +252,26 @@ async function handleDuplicateMove({
     reason: 'duplicate'
   });
 
+  const unlink = typeof unlinkFn === 'function' ? unlinkFn : fs.unlink;
+  try {
+    await unlink(sourcePath);
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      logger?.warn?.(`${logPrefix} Failed to remove source after duplicate detection`, {
+        source: sourcePath,
+        destination: duplicatePath,
+        context: dedupContext,
+        error: error.message
+      });
+      throw error;
+    }
+    logger?.debug?.(`${logPrefix} Source already removed before dedup cleanup`, {
+      source: sourcePath,
+      destination: duplicatePath,
+      context: dedupContext
+    });
+  }
+
   if (typeof removeEmbeddings === 'function') {
     try {
       await removeEmbeddings(sourcePath, logger);
@@ -258,9 +279,6 @@ async function handleDuplicateMove({
       // Non-fatal
     }
   }
-
-  const unlink = typeof unlinkFn === 'function' ? unlinkFn : fs.unlink;
-  await unlink(sourcePath);
 
   return { skipped: true, destination: duplicatePath, reason: 'duplicate' };
 }
