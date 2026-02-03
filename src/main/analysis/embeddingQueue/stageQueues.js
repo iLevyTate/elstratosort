@@ -10,7 +10,7 @@ const { get: getConfig } = require('../../../shared/config/index');
 const { CONCURRENCY, BATCH } = require('../../../shared/performanceConstants');
 
 const analysisQueue = require('./index'); // Backward-compatible singleton
-const { EmbeddingQueue } = require('./index');
+const EmbeddingQueue = require('./EmbeddingQueueCore');
 
 const organizeQueue = new EmbeddingQueue({
   persistenceFileName: 'pending_embeddings_organize.json',

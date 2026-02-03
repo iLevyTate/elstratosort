@@ -22,6 +22,7 @@ const { normalizePathForIndex } = require('../../shared/pathSanitization');
 const { getInstance: getFileOperationTracker } = require('../../shared/fileOperationTracker');
 const { isUNCPath } = require('../../shared/crossPlatformUtils');
 const { shouldEmbed } = require('./embedding/embeddingGate');
+const { computeFileChecksum, findDuplicateForDestination } = require('../utils/fileDedup');
 
 const logger = typeof createLogger === 'function' ? createLogger('DownloadWatcher') : baseLogger;
 if (typeof createLogger !== 'function' && logger?.setContext) {
@@ -100,6 +101,34 @@ class DownloadWatcher {
     this.restartTimer = null; // Track restart timer for cleanup
     // FIX H-3: Track stopped state to prevent timer callbacks after stop()
     this._stopped = false;
+  }
+
+  async _handleDuplicateMove(source, destination) {
+    if (typeof fs.readdir !== 'function') {
+      return null;
+    }
+    const duplicatePath = await findDuplicateForDestination({
+      sourcePath: source,
+      destinationPath: destination,
+      checksumFn: computeFileChecksum,
+      logger
+    });
+    if (!duplicatePath) return null;
+
+    const sourceHash = await computeFileChecksum(source);
+    logger.info('[DOWNLOAD-WATCHER] Skipping move - duplicate already exists', {
+      source,
+      destination: duplicatePath,
+      checksum: sourceHash.substring(0, 16) + '...'
+    });
+
+    await fs.unlink(source);
+
+    // Record operations to avoid reprocessing
+    getFileOperationTracker().recordOperation(duplicatePath, 'move', 'downloadWatcher');
+    getFileOperationTracker().recordOperation(source, 'delete', 'downloadWatcher');
+
+    return { skipped: true, destination: duplicatePath };
   }
 
   async start() {
@@ -897,6 +926,11 @@ class DownloadWatcher {
     const RETRY_DELAY_MS = 2000; // 2 seconds between retries
 
     try {
+      const duplicateResult = await this._handleDuplicateMove(source, destination);
+      if (duplicateResult?.skipped) {
+        return;
+      }
+
       await fs.rename(source, destination);
       // FIX: Record operation to prevent other watchers from re-processing this file
       getFileOperationTracker().recordOperation(destination, 'move', 'downloadWatcher');
@@ -987,6 +1021,11 @@ class DownloadWatcher {
    */
   async _moveFileWithConflictHandling(source, destPath, extname) {
     try {
+      const duplicateResult = await this._handleDuplicateMove(source, destPath);
+      if (duplicateResult?.skipped) {
+        return;
+      }
+
       await fs.rename(source, destPath);
       // Record operation to prevent other watchers from re-processing this file
       getFileOperationTracker().recordOperation(destPath, 'move', 'downloadWatcher');

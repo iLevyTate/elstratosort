@@ -3,6 +3,7 @@ const fs = require('fs').promises;
 const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 // FIX: Import safeSend for validated IPC event sending
 const { safeSend } = require('../ipc/ipcWrappers');
+const { computeFileChecksum, findDuplicateForDestination } = require('../utils/fileDedup');
 
 async function pathExists(filePath, logger, label) {
   try {
@@ -82,6 +83,40 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
           // Ensure destination directory exists
           const destDir = path.dirname(op.destination);
           await fs.mkdir(destDir, { recursive: true });
+
+          const duplicatePath = await findDuplicateForDestination({
+            sourcePath: op.source,
+            destinationPath: op.destination,
+            checksumFn: computeFileChecksum,
+            logger
+          });
+          if (duplicatePath) {
+            const sourceHash = await computeFileChecksum(op.source);
+            logger?.info?.('[RESUME] Skipping move - duplicate already exists', {
+              source: op.source,
+              destination: duplicatePath,
+              checksum: sourceHash.substring(0, 16) + '...'
+            });
+
+            await fs.unlink(op.source);
+
+            op.destination = duplicatePath;
+            await serviceIntegration.processingState.markOrganizeOpDone(batch.id, i, {
+              destination: duplicatePath,
+              skipped: true
+            });
+
+            const win = getMainWindow?.();
+            if (win && !win.isDestroyed()) {
+              safeSend(win.webContents, 'operation-progress', {
+                type: 'batch_organize',
+                current: i + 1,
+                total,
+                currentFile: path.basename(op.source)
+              });
+            }
+            continue;
+          }
 
           // Check destination collision and adjust
           if (destinationExists) {

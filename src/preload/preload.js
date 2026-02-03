@@ -112,6 +112,7 @@ const IPC_CHANNELS = {
     REBUILD_FILES: 'embeddings:rebuild-files',
     FULL_REBUILD: 'embeddings:full-rebuild',
     REANALYZE_ALL: 'embeddings:reanalyze-all',
+    REANALYZE_FILE: 'embeddings:reanalyze-file',
     CLEAR_STORE: 'embeddings:clear-store',
     GET_STATS: 'embeddings:get-stats',
     SEARCH: 'embeddings:search',
@@ -935,6 +936,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     rebuildFiles: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REBUILD_FILES),
     fullRebuild: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.FULL_REBUILD),
     reanalyzeAll: (options) => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REANALYZE_ALL, options),
+    reanalyzeFile: (filePath, options = {}) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REANALYZE_FILE, {
+        filePath,
+        ...options
+      }),
     clearStore: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.CLEAR_STORE),
     getStats: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.GET_STATS),
     // Enhanced search with hybrid BM25 + vector fusion
