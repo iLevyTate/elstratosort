@@ -11,7 +11,8 @@ import {
   Trash2,
   Database,
   Globe,
-  Ban
+  Ban,
+  RefreshCw
 } from 'lucide-react';
 import { Button, StatusBadge, Card, IconButton, StateMessage } from '../ui';
 import { logger } from '../../../shared/logger';
@@ -227,6 +228,18 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
         {/* Actions */}
         <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
           <IconButton
+            icon={<RefreshCw className="w-4 h-4" />}
+            size="sm"
+            variant="ghost"
+            disabled={!file.path}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAction && handleAction('reanalyze', file.path);
+            }}
+            title={file.path ? 'Reanalyze File' : 'Reanalyze unavailable'}
+            aria-label="Reanalyze file"
+          />
+          <IconButton
             icon={<PolicyIcon className="w-4 h-4" />}
             size="sm"
             variant="ghost"
@@ -241,6 +254,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
                   ? 'Web-only'
                   : 'Skip'
             }`}
+            aria-label="Change embedding policy"
           />
           <IconButton
             icon={<Eye className="w-4 h-4" />}
@@ -251,6 +265,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
               handleAction && handleAction('open', file.path);
             }}
             title="Open File"
+            aria-label="Open file"
           />
           <IconButton
             icon={<FolderOpen className="w-4 h-4" />}
@@ -261,6 +276,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
               handleAction && handleAction('reveal', file.path);
             }}
             title="Reveal in Folder"
+            aria-label="Reveal in folder"
           />
           <IconButton
             icon={<Trash2 className="w-4 h-4" />}
@@ -272,6 +288,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
               handleAction && handleAction('remove', file.path);
             }}
             title="Remove from List"
+            aria-label="Remove from list"
           />
         </div>
       </Card>

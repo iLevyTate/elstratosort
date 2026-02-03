@@ -97,6 +97,12 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
               destination: duplicatePath,
               checksum: sourceHash.substring(0, 16) + '...'
             });
+            logger?.info?.('[DEDUP] Move skipped', {
+              source: op.source,
+              destination: duplicatePath,
+              context: 'organizeResume',
+              reason: 'duplicate'
+            });
 
             await fs.unlink(op.source);
 

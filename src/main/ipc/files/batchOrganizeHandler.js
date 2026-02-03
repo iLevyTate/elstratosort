@@ -678,6 +678,12 @@ async function performFileMove(op, log, checksumFn) {
       destination: duplicatePath,
       checksum: sourceHash.substring(0, 16) + '...'
     });
+    log.info('[DEDUP] Move skipped', {
+      source: op.source,
+      destination: duplicatePath,
+      context: 'batchOrganize',
+      reason: 'duplicate'
+    });
     // Remove source since identical content already exists at destination
     await fs.unlink(op.source);
     return { destination: duplicatePath, skipped: true, reason: 'duplicate' };

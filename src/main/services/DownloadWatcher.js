@@ -121,6 +121,12 @@ class DownloadWatcher {
       destination: duplicatePath,
       checksum: sourceHash.substring(0, 16) + '...'
     });
+    logger.info('[DEDUP] Move skipped', {
+      source,
+      destination: duplicatePath,
+      context: 'downloadWatcher',
+      reason: 'duplicate'
+    });
 
     await fs.unlink(source);
 
