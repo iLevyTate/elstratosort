@@ -3,7 +3,7 @@ const fs = require('fs').promises;
 const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 // FIX: Import safeSend for validated IPC event sending
 const { safeSend } = require('../ipc/ipcWrappers');
-const { computeFileChecksum, findDuplicateForDestination } = require('../utils/fileDedup');
+const { computeFileChecksum, handleDuplicateMove } = require('../utils/fileDedup');
 const { removeEmbeddingsForPathBestEffort } = require('../ipc/files/embeddingSync');
 
 async function pathExists(filePath, logger, label) {
@@ -85,39 +85,20 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
           const destDir = path.dirname(op.destination);
           await fs.mkdir(destDir, { recursive: true });
 
-          const duplicateMatch = await findDuplicateForDestination({
+          const duplicateResult = await handleDuplicateMove({
             sourcePath: op.source,
             destinationPath: op.destination,
             checksumFn: computeFileChecksum,
             logger,
-            returnSourceHash: true
+            logPrefix: '[RESUME]',
+            dedupContext: 'organizeResume',
+            removeEmbeddings: removeEmbeddingsForPathBestEffort,
+            unlinkFn: fs.unlink
           });
-          const duplicatePath = duplicateMatch?.path;
-          if (duplicatePath) {
-            const sourceHash = duplicateMatch?.sourceHash;
-            logger?.info?.('[RESUME] Skipping move - duplicate already exists', {
-              source: op.source,
-              destination: duplicatePath,
-              checksum: sourceHash ? `${sourceHash.substring(0, 16)}...` : 'unknown'
-            });
-            logger?.info?.('[DEDUP] Move skipped', {
-              source: op.source,
-              destination: duplicatePath,
-              context: 'organizeResume',
-              reason: 'duplicate'
-            });
-
-            try {
-              await removeEmbeddingsForPathBestEffort(op.source, logger);
-            } catch {
-              // Non-fatal
-            }
-
-            await fs.unlink(op.source);
-
-            op.destination = duplicatePath;
+          if (duplicateResult) {
+            op.destination = duplicateResult.destination;
             await serviceIntegration.processingState.markOrganizeOpDone(batch.id, i, {
-              destination: duplicatePath,
+              destination: op.destination,
               skipped: true
             });
 

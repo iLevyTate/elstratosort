@@ -218,7 +218,55 @@ async function findDuplicateForDestination({
   });
 }
 
+async function handleDuplicateMove({
+  sourcePath,
+  destinationPath,
+  checksumFn = computeFileChecksum,
+  logger,
+  logPrefix = '[DEDUP]',
+  dedupContext = 'unknown',
+  removeEmbeddings,
+  unlinkFn
+}) {
+  const duplicateMatch = await findDuplicateForDestination({
+    sourcePath,
+    destinationPath,
+    checksumFn,
+    logger,
+    returnSourceHash: true
+  });
+  const duplicatePath = duplicateMatch?.path;
+  if (!duplicatePath) return null;
+
+  const sourceHash = duplicateMatch?.sourceHash;
+  logger?.info?.(`${logPrefix} Skipping move - duplicate already exists`, {
+    source: sourcePath,
+    destination: duplicatePath,
+    checksum: sourceHash ? `${sourceHash.substring(0, 16)}...` : 'unknown'
+  });
+  logger?.info?.('[DEDUP] Move skipped', {
+    source: sourcePath,
+    destination: duplicatePath,
+    context: dedupContext,
+    reason: 'duplicate'
+  });
+
+  if (typeof removeEmbeddings === 'function') {
+    try {
+      await removeEmbeddings(sourcePath, logger);
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  const unlink = typeof unlinkFn === 'function' ? unlinkFn : fs.unlink;
+  await unlink(sourcePath);
+
+  return { skipped: true, destination: duplicatePath, reason: 'duplicate' };
+}
+
 module.exports = {
   computeFileChecksum,
-  findDuplicateForDestination
+  findDuplicateForDestination,
+  handleDuplicateMove
 };

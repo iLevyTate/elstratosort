@@ -277,6 +277,7 @@ async function syncEmbeddingForMove({
   });
 
   const destId = getSemanticFileId(destPath);
+  const sourceId = sourcePath ? getSemanticFileId(sourcePath) : null;
 
   // Optimization: if an embedding already exists for this destination ID, update metadata
   // in-place via ChromaDB (avoids recomputing vectors during moves).
@@ -285,8 +286,9 @@ async function syncEmbeddingForMove({
     try {
       await chromaDbService.initialize?.();
       if (chromaDbService.isOnline) {
+        const oldId = operation === 'copy' || !sourceId ? destId : sourceId;
         const updated = await chromaDbService.updateFilePaths([
-          { oldId: destId, newId: destId, newMeta: meta }
+          { oldId, newId: destId, newMeta: meta }
         ]);
         if (updated > 0) {
           try {

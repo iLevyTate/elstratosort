@@ -6,9 +6,18 @@
  */
 const { analysisQueue, organizeQueue } = require('./stageQueues');
 
-function safeCall(queue, method, ...args) {
+function safeCallOptional(queue, method, ...args) {
   const fn = queue && typeof queue[method] === 'function' ? queue[method] : null;
   if (!fn) return 0;
+  return fn.apply(queue, args);
+}
+
+function safeCallRequired(queue, method, ...args) {
+  const fn = queue && typeof queue[method] === 'function' ? queue[method] : null;
+  if (!fn) {
+    const queueName = queue?.constructor?.name || 'UnknownQueue';
+    throw new Error(`[EmbeddingQueueManager] Missing ${method} on ${queueName}`);
+  }
   return fn.apply(queue, args);
 }
 
@@ -20,25 +29,25 @@ module.exports = {
 
   updateByFilePath(oldPath, newPath) {
     let total = 0;
-    for (const q of queues) total += safeCall(q, 'updateByFilePath', oldPath, newPath) || 0;
+    for (const q of queues) total += safeCallOptional(q, 'updateByFilePath', oldPath, newPath) || 0;
     return total;
   },
 
   updateByFilePaths(pathChanges) {
     let total = 0;
-    for (const q of queues) total += safeCall(q, 'updateByFilePaths', pathChanges) || 0;
+    for (const q of queues) total += safeCallOptional(q, 'updateByFilePaths', pathChanges) || 0;
     return total;
   },
 
   removeByFilePath(filePath) {
     let total = 0;
-    for (const q of queues) total += safeCall(q, 'removeByFilePath', filePath) || 0;
+    for (const q of queues) total += safeCallOptional(q, 'removeByFilePath', filePath) || 0;
     return total;
   },
 
   removeByFilePaths(filePaths) {
     let total = 0;
-    for (const q of queues) total += safeCall(q, 'removeByFilePaths', filePaths) || 0;
+    for (const q of queues) total += safeCallOptional(q, 'removeByFilePaths', filePaths) || 0;
     return total;
   },
 
@@ -50,12 +59,26 @@ module.exports = {
   },
 
   async forceFlush() {
-    const results = await Promise.allSettled(queues.map((q) => safeCall(q, 'forceFlush')));
+    const results = await Promise.allSettled(queues.map((q) => safeCallRequired(q, 'forceFlush')));
+    const failures = results.filter((result) => result.status === 'rejected');
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures.map((result) => result.reason),
+        'Embedding queue forceFlush failed'
+      );
+    }
     return results;
   },
 
   async shutdown() {
-    const results = await Promise.allSettled(queues.map((q) => safeCall(q, 'shutdown')));
+    const results = await Promise.allSettled(queues.map((q) => safeCallRequired(q, 'shutdown')));
+    const failures = results.filter((result) => result.status === 'rejected');
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures.map((result) => result.reason),
+        'Embedding queue shutdown failed'
+      );
+    }
     return results;
   }
 };

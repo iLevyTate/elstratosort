@@ -828,7 +828,7 @@ class SmartFolderWatcher {
       const analysisTime = new Date(
         matchedAnalysis.lastModified || matchedAnalysis.timestamp
       ).getTime();
-      if (!Number.isFinite(currentMtimeMs)) {
+      if (!Number.isFinite(currentMtimeMs) || !Number.isFinite(analysisTime)) {
         return true;
       }
 

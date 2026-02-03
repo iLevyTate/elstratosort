@@ -87,6 +87,8 @@ class EmbeddingQueue {
       typeof options.deadLetterPath === 'string' && options.deadLetterPath.trim()
         ? options.deadLetterPath.trim()
         : path.join(app.getPath('userData'), 'dead_letter_embeddings.json');
+    this.failedItemsPath = failedItemsPath;
+    this.deadLetterPath = deadLetterPath;
     this._failedItemHandler = createFailedItemHandler({
       itemMaxRetries: getConfig('ANALYSIS.retryAttempts', 3),
       maxDeadLetterSize: LIMITS.MAX_DEAD_LETTER_SIZE,
@@ -217,9 +219,8 @@ class EmbeddingQueue {
       );
 
       // Load failed items
-      const failedItemsPath = path.join(app.getPath('userData'), 'failed_embeddings.json');
       await loadPersistedData(
-        failedItemsPath,
+        this.failedItemsPath,
         (data) => {
           if (data && typeof data === 'object') {
             // Handle both object format { id: itemData } and array format [{ id, item, ... }]
@@ -242,9 +243,8 @@ class EmbeddingQueue {
       );
 
       // Load dead letter queue
-      const deadLetterPath = path.join(app.getPath('userData'), 'dead_letter_embeddings.json');
       await loadPersistedData(
-        deadLetterPath,
+        this.deadLetterPath,
         (data) => {
           if (Array.isArray(data) && data.length > 0) {
             this._failedItemHandler.setDeadLetterQueue(data);

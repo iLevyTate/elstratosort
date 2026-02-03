@@ -22,7 +22,7 @@ const { normalizePathForIndex } = require('../../shared/pathSanitization');
 const { getInstance: getFileOperationTracker } = require('../../shared/fileOperationTracker');
 const { isUNCPath } = require('../../shared/crossPlatformUtils');
 const { shouldEmbed } = require('./embedding/embeddingGate');
-const { computeFileChecksum, findDuplicateForDestination } = require('../utils/fileDedup');
+const { computeFileChecksum, handleDuplicateMove } = require('../utils/fileDedup');
 const { removeEmbeddingsForPathBestEffort } = require('../ipc/files/embeddingSync');
 
 const logger = typeof createLogger === 'function' ? createLogger('DownloadWatcher') : baseLogger;
@@ -108,42 +108,27 @@ class DownloadWatcher {
     if (typeof fs.readdir !== 'function') {
       return null;
     }
-    const duplicateMatch = await findDuplicateForDestination({
+    const duplicateResult = await handleDuplicateMove({
       sourcePath: source,
       destinationPath: destination,
       checksumFn: computeFileChecksum,
       logger,
-      returnSourceHash: true
+      logPrefix: '[DOWNLOAD-WATCHER]',
+      dedupContext: 'downloadWatcher',
+      removeEmbeddings: removeEmbeddingsForPathBestEffort,
+      unlinkFn: fs.unlink
     });
-    const duplicatePath = duplicateMatch?.path;
-    if (!duplicatePath) return null;
-
-    const sourceHash = duplicateMatch?.sourceHash;
-    logger.info('[DOWNLOAD-WATCHER] Skipping move - duplicate already exists', {
-      source,
-      destination: duplicatePath,
-      checksum: sourceHash ? `${sourceHash.substring(0, 16)}...` : 'unknown'
-    });
-    logger.info('[DEDUP] Move skipped', {
-      source,
-      destination: duplicatePath,
-      context: 'downloadWatcher',
-      reason: 'duplicate'
-    });
-
-    try {
-      await removeEmbeddingsForPathBestEffort(source, logger);
-    } catch {
-      // Non-fatal
-    }
-
-    await fs.unlink(source);
+    if (!duplicateResult) return null;
 
     // Record operations to avoid reprocessing
-    getFileOperationTracker().recordOperation(duplicatePath, 'move', 'downloadWatcher');
+    getFileOperationTracker().recordOperation(
+      duplicateResult.destination,
+      'move',
+      'downloadWatcher'
+    );
     getFileOperationTracker().recordOperation(source, 'delete', 'downloadWatcher');
 
-    return { skipped: true, destination: duplicatePath };
+    return { skipped: true, destination: duplicateResult.destination };
   }
 
   async start() {
@@ -613,10 +598,7 @@ class DownloadWatcher {
       }
 
       if (analysisResult) {
-        // 1. Embed for search
-        await this._embedAnalyzedFile(filePath, analysisResult);
-
-        // 2. Record to analysis history for conversations and queries
+        // 1. Record to analysis history for conversations and queries
         if (this.analysisHistoryService) {
           try {
             await recordAnalysisResult({
@@ -634,6 +616,9 @@ class DownloadWatcher {
             });
           }
         }
+
+        // 2. Embed for search (after history is recorded for per-file policy overrides)
+        await this._embedAnalyzedFile(filePath, analysisResult);
 
         // 3. Apply naming convention if enabled (rename in place)
         const settings = await this.settingsService.load();

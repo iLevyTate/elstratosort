@@ -626,9 +626,6 @@ class SecureIPCManager {
       }
     };
 
-    ipcRenderer.on(channel, wrappedCallback);
-
-    // Track listener for cleanup
     this.activeListeners.set(listenerKey, {
       channel,
       callback: wrappedCallback,
@@ -636,6 +633,8 @@ class SecureIPCManager {
       lastCalledAt: null,
       callCount: 0
     });
+
+    ipcRenderer.on(channel, wrappedCallback);
 
     // Return cleanup function
     return () => {

@@ -1080,7 +1080,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
         type: 'image'
       });
 
-      // FIX: Explicitly queue embedding for images to ensure they are searchable
+      // Explicitly queue embedding for images to ensure they are searchable
       // even if they don't have OCR text (using keywords/description instead)
       const { matcher } = getServices();
       const gate = await shouldEmbed({ stage: 'analysis' });
