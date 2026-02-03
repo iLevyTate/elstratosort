@@ -4,6 +4,7 @@ const { crossDeviceMove } = require('../../shared/atomicFileOperations');
 // FIX: Import safeSend for validated IPC event sending
 const { safeSend } = require('../ipc/ipcWrappers');
 const { computeFileChecksum, findDuplicateForDestination } = require('../utils/fileDedup');
+const { removeEmbeddingsForPathBestEffort } = require('../ipc/files/embeddingSync');
 
 async function pathExists(filePath, logger, label) {
   try {
@@ -84,18 +85,20 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
           const destDir = path.dirname(op.destination);
           await fs.mkdir(destDir, { recursive: true });
 
-          const duplicatePath = await findDuplicateForDestination({
+          const duplicateMatch = await findDuplicateForDestination({
             sourcePath: op.source,
             destinationPath: op.destination,
             checksumFn: computeFileChecksum,
-            logger
+            logger,
+            returnSourceHash: true
           });
+          const duplicatePath = duplicateMatch?.path;
           if (duplicatePath) {
-            const sourceHash = await computeFileChecksum(op.source);
+            const sourceHash = duplicateMatch?.sourceHash;
             logger?.info?.('[RESUME] Skipping move - duplicate already exists', {
               source: op.source,
               destination: duplicatePath,
-              checksum: sourceHash.substring(0, 16) + '...'
+              checksum: sourceHash ? `${sourceHash.substring(0, 16)}...` : 'unknown'
             });
             logger?.info?.('[DEDUP] Move skipped', {
               source: op.source,
@@ -103,6 +106,12 @@ async function resumeIncompleteBatches(serviceIntegration, logger, getMainWindow
               context: 'organizeResume',
               reason: 'duplicate'
             });
+
+            try {
+              await removeEmbeddingsForPathBestEffort(op.source, logger);
+            } catch {
+              // Non-fatal
+            }
 
             await fs.unlink(op.source);
 

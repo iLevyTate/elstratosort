@@ -23,6 +23,7 @@ const { getInstance: getFileOperationTracker } = require('../../shared/fileOpera
 const { isUNCPath } = require('../../shared/crossPlatformUtils');
 const { shouldEmbed } = require('./embedding/embeddingGate');
 const { computeFileChecksum, findDuplicateForDestination } = require('../utils/fileDedup');
+const { removeEmbeddingsForPathBestEffort } = require('../ipc/files/embeddingSync');
 
 const logger = typeof createLogger === 'function' ? createLogger('DownloadWatcher') : baseLogger;
 if (typeof createLogger !== 'function' && logger?.setContext) {
@@ -107,19 +108,21 @@ class DownloadWatcher {
     if (typeof fs.readdir !== 'function') {
       return null;
     }
-    const duplicatePath = await findDuplicateForDestination({
+    const duplicateMatch = await findDuplicateForDestination({
       sourcePath: source,
       destinationPath: destination,
       checksumFn: computeFileChecksum,
-      logger
+      logger,
+      returnSourceHash: true
     });
+    const duplicatePath = duplicateMatch?.path;
     if (!duplicatePath) return null;
 
-    const sourceHash = await computeFileChecksum(source);
+    const sourceHash = duplicateMatch?.sourceHash;
     logger.info('[DOWNLOAD-WATCHER] Skipping move - duplicate already exists', {
       source,
       destination: duplicatePath,
-      checksum: sourceHash.substring(0, 16) + '...'
+      checksum: sourceHash ? `${sourceHash.substring(0, 16)}...` : 'unknown'
     });
     logger.info('[DEDUP] Move skipped', {
       source,
@@ -127,6 +130,12 @@ class DownloadWatcher {
       context: 'downloadWatcher',
       reason: 'duplicate'
     });
+
+    try {
+      await removeEmbeddingsForPathBestEffort(source, logger);
+    } catch {
+      // Non-fatal
+    }
 
     await fs.unlink(source);
 

@@ -185,6 +185,12 @@ async function removeEmbeddingsForPath(filePath, services, log = logger) {
   }
 }
 
+async function removeEmbeddingsForPathBestEffort(filePath, log = logger) {
+  if (!filePath) return { removed: 0 };
+  const services = resolveServices();
+  return removeEmbeddingsForPath(filePath, services, log);
+}
+
 async function syncEmbeddingForMove({
   sourcePath,
   destPath,
@@ -290,6 +296,15 @@ async function syncEmbeddingForMove({
           } catch {
             // Non-fatal
           }
+          // For moves/renames, ensure we don't leave behind stale embeddings for the old path.
+          // For copies, the source should remain indexed.
+          if (operation !== 'copy' && sourcePath && sourcePath !== destPath) {
+            try {
+              await removeEmbeddingsForPath(sourcePath, services, log);
+            } catch {
+              // Non-fatal
+            }
+          }
           return { action: 'updated_meta', smartFolder: smartFolder.name };
         }
       }
@@ -345,5 +360,6 @@ async function syncEmbeddingForMove({
 
 module.exports = {
   syncEmbeddingForMove,
-  removeEmbeddingsForPath
+  removeEmbeddingsForPath,
+  removeEmbeddingsForPathBestEffort
 };

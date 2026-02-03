@@ -23,7 +23,7 @@ const { validateBatchOperation, MAX_BATCH_SIZE } = require('./batchValidator');
 const { executeRollback } = require('./batchRollback');
 const { sendOperationProgress, sendChunkedResults } = require('./batchProgressReporter');
 const { getInstance: getFileOperationTracker } = require('../../../shared/fileOperationTracker');
-const { syncEmbeddingForMove } = require('./embeddingSync');
+const { syncEmbeddingForMove, removeEmbeddingsForPathBestEffort } = require('./embeddingSync');
 const { computeFileChecksum, findDuplicateForDestination } = require('../../utils/fileDedup');
 
 const logger =
@@ -665,18 +665,20 @@ function isCriticalFileError(error) {
 async function performFileMove(op, log, checksumFn) {
   // FIX P2-1: Check for identical content at destination or within destination dir.
   // This prevents creating numbered copies of files that already exist.
-  const duplicatePath = await findDuplicateForDestination({
+  const duplicateMatch = await findDuplicateForDestination({
     sourcePath: op.source,
     destinationPath: op.destination,
     checksumFn,
-    logger: log
+    logger: log,
+    returnSourceHash: true
   });
+  const duplicatePath = duplicateMatch?.path;
   if (duplicatePath) {
-    const sourceHash = await checksumFn(op.source);
+    const sourceHash = duplicateMatch?.sourceHash;
     log.info('[FILE-OPS] Skipping move - identical file already exists', {
       source: op.source,
       destination: duplicatePath,
-      checksum: sourceHash.substring(0, 16) + '...'
+      checksum: sourceHash ? `${sourceHash.substring(0, 16)}...` : 'unknown'
     });
     log.info('[DEDUP] Move skipped', {
       source: op.source,
@@ -684,6 +686,13 @@ async function performFileMove(op, log, checksumFn) {
       context: 'batchOrganize',
       reason: 'duplicate'
     });
+    // Remove source embeddings since identical content already exists at destination
+    try {
+      await removeEmbeddingsForPathBestEffort(op.source, log);
+    } catch {
+      // Non-fatal
+    }
+
     // Remove source since identical content already exists at destination
     await fs.unlink(op.source);
     return { destination: duplicatePath, skipped: true, reason: 'duplicate' };

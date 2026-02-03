@@ -87,7 +87,8 @@ async function findDuplicateInDirectory({
   checksumFn = computeFileChecksum,
   maxCandidates = DEFAULTS.maxCandidates,
   maxDirEntries = DEFAULTS.maxDirEntries,
-  logger
+  logger,
+  returnSourceHash = false
 }) {
   if (!sourcePath || !destinationDir) return null;
   const sourceStat = await statSafe(sourcePath);
@@ -152,7 +153,7 @@ async function findDuplicateInDirectory({
       continue;
     }
     if (candidateHash === sourceHash) {
-      return candidate;
+      return returnSourceHash ? { path: candidate, sourceHash } : candidate;
     }
   }
 
@@ -176,7 +177,8 @@ async function findDuplicateForDestination({
   checksumFn = computeFileChecksum,
   logger,
   maxCandidates,
-  maxDirEntries
+  maxDirEntries,
+  returnSourceHash = false
 }) {
   if (!sourcePath || !destinationPath) return null;
 
@@ -187,7 +189,9 @@ async function findDuplicateForDestination({
         checksumFn(sourcePath),
         checksumFn(destinationPath)
       ]);
-      if (sourceHash === destHash) return destinationPath;
+      if (sourceHash === destHash) {
+        return returnSourceHash ? { path: destinationPath, sourceHash } : destinationPath;
+      }
     } catch (error) {
       if (logger?.debug) {
         logger.debug('[DEDUP] Failed to compute destination checksum', {
@@ -209,12 +213,12 @@ async function findDuplicateForDestination({
     checksumFn,
     maxCandidates,
     maxDirEntries,
-    logger
+    logger,
+    returnSourceHash
   });
 }
 
 module.exports = {
   computeFileChecksum,
-  findDuplicateInDirectory,
   findDuplicateForDestination
 };

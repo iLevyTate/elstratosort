@@ -86,7 +86,14 @@ const formatConfidence = (value) => {
 const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }) {
   const dispatch = useDispatch();
   if (!data || !data.items) return null;
-  const { items, handleAction, getFileStateDisplay, redactPaths, isVirtualized } = data;
+  const {
+    items,
+    handleAction,
+    getFileStateDisplay,
+    redactPaths,
+    isVirtualized,
+    defaultEmbeddingPolicy
+  } = data;
 
   if (!Array.isArray(items) || index < 0 || index >= items.length) return null;
 
@@ -109,7 +116,8 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
   const displayColor = stateDisplay?.color || '';
 
   const confidence = formatConfidence(file.analysis?.confidence);
-  const embeddingPolicy = file.embeddingPolicy || file.analysis?.embeddingPolicy || 'embed';
+  const embeddingPolicy =
+    file.embeddingPolicy || file.analysis?.embeddingPolicy || defaultEmbeddingPolicy || 'embed';
   const nextEmbeddingPolicy =
     embeddingPolicy === 'embed' ? 'web_only' : embeddingPolicy === 'web_only' ? 'skip' : 'embed';
   const policyLabel =
@@ -304,13 +312,21 @@ AnalysisResultRow.propTypes = {
     handleAction: PropTypes.func.isRequired,
     getFileStateDisplay: PropTypes.func.isRequired,
     redactPaths: PropTypes.bool,
-    isVirtualized: PropTypes.bool
+    isVirtualized: PropTypes.bool,
+    defaultEmbeddingPolicy: PropTypes.string
   }).isRequired
 };
 
 function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }) {
   // PERF: Use memoized selector instead of inline Boolean coercion
   const redactPaths = useSelector(selectRedactPaths);
+  const settings = useSelector((state) => state.ui?.settings);
+  const defaultEmbeddingPolicy = useMemo(() => {
+    const candidate = settings?.defaultEmbeddingPolicy;
+    return candidate === 'embed' || candidate === 'skip' || candidate === 'web_only'
+      ? candidate
+      : 'embed';
+  }, [settings]);
   const safeResults = useMemo(() => {
     if (!Array.isArray(results)) return [];
     return results.filter((r) => r && typeof r === 'object' && (r.path || r.name));
@@ -387,17 +403,26 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
         handleAction,
         getFileStateDisplay,
         redactPaths,
-        isVirtualized: shouldVirtualize
+        isVirtualized: shouldVirtualize,
+        defaultEmbeddingPolicy
       }
     }),
-    [items, handleAction, getFileStateDisplay, redactPaths, shouldVirtualize]
+    [
+      items,
+      handleAction,
+      getFileStateDisplay,
+      redactPaths,
+      shouldVirtualize,
+      defaultEmbeddingPolicy
+    ]
   );
   const safeRowProps = rowProps ?? {};
   const listItemData = safeRowProps.data || {
     items: [],
     handleAction,
     getFileStateDisplay,
-    redactPaths
+    redactPaths,
+    defaultEmbeddingPolicy
   };
 
   const listContainerClass = `w-full h-full modern-scrollbar overflow-y-auto overflow-x-hidden flex flex-col gap-default`;
