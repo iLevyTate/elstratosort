@@ -1,14 +1,25 @@
 import React, { memo, useMemo, useCallback, useState, useEffect, Component } from 'react';
 import PropTypes from 'prop-types';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { List } from 'react-window';
-import { FileText, Compass, AlertTriangle, Eye, FolderOpen, Trash2 } from 'lucide-react';
+import {
+  FileText,
+  Compass,
+  AlertTriangle,
+  Eye,
+  FolderOpen,
+  Trash2,
+  Database,
+  Globe,
+  Ban
+} from 'lucide-react';
 import { Button, StatusBadge, Card, IconButton, StateMessage } from '../ui';
 import { logger } from '../../../shared/logger';
 import { UI_VIRTUALIZATION } from '../../../shared/constants';
 import { formatDisplayPath } from '../../utils/pathDisplay';
 import { Text } from '../ui/Typography';
 import { selectRedactPaths } from '../../store/selectors';
+import { setEmbeddingPolicyForFile } from '../../store/thunks/fileThunks';
 
 class AnalysisResultsErrorBoundary extends Component {
   constructor(props) {
@@ -72,6 +83,7 @@ const formatConfidence = (value) => {
 };
 
 const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }) {
+  const dispatch = useDispatch();
   if (!data || !data.items) return null;
   const { items, handleAction, getFileStateDisplay, redactPaths, isVirtualized } = data;
 
@@ -96,6 +108,17 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
   const displayColor = stateDisplay?.color || '';
 
   const confidence = formatConfidence(file.analysis?.confidence);
+  const embeddingPolicy = file.embeddingPolicy || file.analysis?.embeddingPolicy || 'embed';
+  const nextEmbeddingPolicy =
+    embeddingPolicy === 'embed' ? 'web_only' : embeddingPolicy === 'web_only' ? 'skip' : 'embed';
+  const policyLabel =
+    embeddingPolicy === 'embed'
+      ? 'Embed locally'
+      : embeddingPolicy === 'web_only'
+        ? 'Web-only'
+        : 'Skip embedding';
+  const PolicyIcon =
+    embeddingPolicy === 'embed' ? Database : embeddingPolicy === 'web_only' ? Globe : Ban;
   const tone = displayColor.includes('green')
     ? 'success'
     : displayColor.includes('amber') || displayColor.includes('warning')
@@ -161,6 +184,17 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
                   Conf. {confidence}%
                 </Text>
               )}
+              <Text
+                variant="tiny"
+                className="text-system-gray-400 font-medium whitespace-nowrap"
+                title={`Embedding policy: ${policyLabel}`}
+              >
+                {embeddingPolicy === 'embed'
+                  ? 'Embed: Local'
+                  : embeddingPolicy === 'web_only'
+                    ? 'Embed: Web-only'
+                    : 'Embed: Off'}
+              </Text>
             </div>
           </div>
 
@@ -192,6 +226,22 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
 
         {/* Actions */}
         <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+          <IconButton
+            icon={<PolicyIcon className="w-4 h-4" />}
+            size="sm"
+            variant="ghost"
+            onClick={(e) => {
+              e.stopPropagation();
+              dispatch(setEmbeddingPolicyForFile(file.path, nextEmbeddingPolicy));
+            }}
+            title={`Embedding policy: ${policyLabel}. Click to set: ${
+              nextEmbeddingPolicy === 'embed'
+                ? 'Embed locally'
+                : nextEmbeddingPolicy === 'web_only'
+                  ? 'Web-only'
+                  : 'Skip'
+            }`}
+          />
           <IconButton
             icon={<Eye className="w-4 h-4" />}
             size="sm"
