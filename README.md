@@ -1,21 +1,12 @@
-# El StratoSort
-
 <p align="center">
-  <img src="assets/stratosort-logo.png" alt="El StratoSort Logo" width="128" />
+  <img src="assets/stratosort-logo.png" alt="StratoSort Logo" width="128" />
 </p>
 
+<h1 align="center">StratoSort</h1>
+
 <p align="center">
-  <strong>Smart File Organization with Local AI</strong>
+  <strong>Intelligent File Organization with Privacy-First Local AI</strong>
 </p>
-
-### 🎬 Demo
-
-> **High-level overview of StratoSort in action.**
->
-> 🖥️ **Desktop/Laptop:** The video will play directly below. 📱 **Mobile:** Click the filename below
-> the player to watch.
-
-https://github.com/user-attachments/assets/7cd1f974-33cb-4d2d-ac8d-ea30c015389b
 
 <p align="center">
   <a href="https://github.com/iLevyTate/elstratosort/releases"><img src="https://img.shields.io/badge/version-1.2.2-blue?style=flat-square" alt="Version" /></a>
@@ -31,50 +22,67 @@ https://github.com/user-attachments/assets/7cd1f974-33cb-4d2d-ac8d-ea30c015389b
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> &bull;
-  <a href="#quick-start">Quick Start</a> &bull;
-  <a href="#documentation">Docs</a> &bull;
-  <a href="#contributing">Contributing</a> &bull;
+  <a href="#features">Features</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#documentation">Documentation</a> •
+  <a href="#contributing">Contributing</a> •
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 ---
 
-**El StratoSort** turns file chaos into order using privacy-first local AI. It automatically
-categorizes, tags, and organizes your documents completely offline—leveraging **Ollama** for
-intelligence and **ChromaDB** for semantic search—ensuring your personal data stays 100% on your
-machine.
+**StratoSort** transforms file chaos into intelligent order using privacy-first local AI. It automatically categorizes, tags, and organizes your documents completely offline—leveraging **Ollama** for intelligence and **ChromaDB** for semantic search—ensuring your data never leaves your machine.
+
+
+
+## Demo
+
+<p align="center">
+  <strong>See StratoSort in action</strong>
+</p>
+
+> **Desktop:** Video plays directly below | **Mobile:** Click the filename to watch
+
+https://github.com/user-attachments/assets/7cd1f974-33cb-4d2d-ac8d-ea30c015389b
+
+
 
 ## What's New in v1.2.2
 
-- **UI Consistency Pass** - Standardized typography, spacing tokens, and button styles across views
-- **Search + Graph Polish** - Unified metadata labels, banners, and empty states
-- **Organize UX Fix** - Restored missing button import to prevent ReadyFileItem crash
-- **Modal + Loading UI** - Aligned modal descriptions and loading text with shared Typography
+- **UI Consistency Pass** — Standardized typography, spacing tokens, and button styles across all views
+- **Search and Graph Polish** — Unified metadata labels, banners, and empty states
+- **Organize UX Fix** — Restored missing button import to prevent ReadyFileItem crash
+- **Modal and Loading UI** — Aligned modal descriptions and loading text with shared Typography system
 
-See [CHANGELOG.md](CHANGELOG.md) for full release notes.
+See **[CHANGELOG.md](CHANGELOG.md)** for complete release notes.
+
+
 
 ## Features
 
-| Feature                      | Description                                                                               |
-| :--------------------------- | :---------------------------------------------------------------------------------------- |
-| **🧠 Local AI Intelligence** | Powered by **Ollama** (LLMs + Vision) to understand file content, not just filenames.     |
-| **🔒 Privacy-First**         | Zero data exfiltration. All processing happens locally on your device.                    |
-| **👀 Smart Folder Watcher**  | Real-time monitoring that automatically analyzes and sorts new files as they arrive.      |
-| **📸 Image Understanding**   | Uses vision models and OCR to categorize screenshots, photos, and scanned documents.      |
-| **🕸️ Knowledge Graph**       | Interactive visualization of your file relationships, clusters, and semantic connections. |
-| **🔍 Semantic Search**       | Find files by _meaning_ (e.g., "vacation photos") using Vector Search and AI Re-Ranking.  |
-| **🛡️ Safe Operations**       | Full Undo/Redo capability for all file moves and renames.                                 |
+| Feature | Description |
+|:--------|:------------|
+| **Local AI Intelligence** | Powered by Ollama (LLMs + Vision) to understand file content, not just filenames |
+| **Privacy-First Design** | Zero data exfiltration. All processing happens locally on your device |
+| **Smart Folder Watcher** | Real-time monitoring that automatically analyzes and sorts new files as they arrive |
+| **Image Understanding** | Vision models and OCR categorize screenshots, photos, and scanned documents |
+| **Knowledge Graph** | Interactive visualization of file relationships, clusters, and semantic connections |
+| **Semantic Search** | Find files by meaning using Vector Search and AI Re-Ranking |
+| **Safe Operations** | Full Undo/Redo capability for all file moves and renames |
+
+
 
 ## Quick Start
 
 ### Prerequisites
 
-- **OS**: Windows 10/11 (Recommended), macOS 10.15+, or Linux.
-- **RAM**: 8GB+ recommended.
-- **Tools**: [Ollama](https://ollama.ai) (Required for AI), Python 3.9+ (For ChromaDB).  
-  _Windows installer can bundle portable Ollama + embeddable Python; otherwise the app
-  installs/downloads on first run without CLI steps._
+| Requirement | Specification |
+|:------------|:--------------|
+| **Operating System** | Windows 10/11 (recommended), macOS 10.15+, or Linux |
+| **Memory** | 8GB RAM minimum recommended |
+| **Dependencies** | [Ollama](https://ollama.ai) (required), Python 3.9+ (for ChromaDB) |
+
+> **Note:** Windows installer can bundle portable Ollama + embeddable Python. The app handles installation automatically on first run—no CLI required.
 
 ### Installation
 
@@ -85,86 +93,134 @@ npm ci
 npm run dev
 ```
 
-**First Launch:** The app will guide you through setting up Ollama, downloading the necessary AI
-models, and installing the vector database. On Windows, setup can run fully in the background with a
-single consent (use “Install All” in the AI setup modal)—no CLI required.
+**First Launch:** The app guides you through Ollama setup, AI model downloads, and vector database installation.
 
-### Platform Setup Notes
+### Platform-Specific Setup
 
-- **Windows:** Fully bundled AI runtime. Portable Ollama + embeddable Python + Tesseract are staged
-  during packaging via `npm run setup:runtime`; click “Install All (Background)” on first launch. No
-  CLI or admin prompts; models download on first use.
-- **macOS:** Uses system Python 3.9+ and Homebrew/manual Ollama. “Install All” will guide you; brew
-  may prompt. Tesseract auto-installs via brew and falls back to the built-in OCR fallback if
-  missing. Models download on first use.
-- **In-app installs:** The AI Setup modal includes an “Install All (Background)” option that
-  downloads/installs Ollama, ChromaDB, and the recommended models directly from the app UI.
+<details>
+<summary><strong>Windows</strong></summary>
 
-> **Note:** El StratoSort is developed with a Windows-first approach. While releases are published
-> for all major platforms, only the Windows build is robustly tested.
+
+
+Fully bundled AI runtime with zero CLI required:
+
+- Portable Ollama + embeddable Python + Tesseract staged during packaging via `npm run setup:runtime`
+- Click **"Install All (Background)"** on first launch
+- No admin prompts required; models download on first use
+
+</details>
+
+<details>
+<summary><strong>macOS</strong></summary>
+
+
+
+Uses system dependencies:
+
+- Requires Python 3.9+ and Homebrew/manual Ollama installation
+- **"Install All"** guides you through setup; Homebrew may prompt for permissions
+- Tesseract auto-installs via Homebrew with built-in OCR fallback
+- Models download on first use
+
+</details>
+
+<details>
+<summary><strong>Linux</strong></summary>
+
+
+
+Standard package manager installation:
+
+- Install Ollama, Python 3.9+, and Tesseract via your distribution's package manager
+- Follow the in-app **"Install All"** wizard for guided setup
+- Models download on first use
+
+</details>
+
+
+
+> **Development Note:** StratoSort is developed with a Windows-first approach. While releases are published for all major platforms, Windows receives the most comprehensive testing.
 
 For detailed instructions, see the **[Getting Started Guide](docs/GETTING_STARTED.md)**.
 
-## Privacy & Security
 
-| Principle             | Implementation                                         |
-| :-------------------- | :----------------------------------------------------- |
-| **100% Local**        | No internet required after initial setup               |
-| **No Tracking**       | Zero data collection or telemetry                      |
-| **Open Source**       | Full source code available for inspection              |
-| **Secure by Default** | Context isolation, input validation, path sanitization |
-
-See [SECURITY.md](SECURITY.md) for our security policy.
 
 ## Advanced Capabilities
 
-### 📂 Smart Folders & Watchers
+### Smart Folders and Watchers
 
-Define categories with natural language descriptions. The **Smart Folder Watcher** monitors your
-downloads or designated folders, automatically analyzing new items and moving them to the right
-place based on their content.
+Define categories with natural language descriptions. The Smart Folder Watcher monitors your downloads or designated folders, automatically analyzing new items and routing them based on content understanding.
 
-### 🖼️ Vision & OCR
+### Vision and OCR
 
-El StratoSort doesn't just read text files. It uses computer vision to "see" your images and
-Tesseract OCR to read text inside them, allowing you to organize receipts, screenshots, and scanned
-PDFs automatically.
+StratoSort doesn't just read text files—it uses computer vision to interpret images and Tesseract OCR to extract text, enabling automatic organization of receipts, screenshots, and scanned PDFs.
 
-### 🧠 Semantic Search & Re-Ranking
+### Semantic Search and Re-Ranking
 
-Search implies meaning. The built-in **ReRanker Service** uses a small LLM to evaluate search
-results, ensuring the top results are conceptually relevant to your query, not just keyword matches.
+Search implies meaning. The built-in ReRanker Service uses a compact LLM to evaluate results, surfacing conceptually relevant matches rather than simple keyword hits.
+
+
+
+## Privacy and Security
+
+| Principle | Implementation |
+|:----------|:---------------|
+| **100% Local Processing** | No internet required after initial setup |
+| **Zero Telemetry** | No data collection or tracking of any kind |
+| **Open Source** | Full source code available for inspection |
+| **Secure by Default** | Context isolation, input validation, path sanitization |
+
+See **[SECURITY.md](SECURITY.md)** for the complete security policy.
+
+
 
 ## Documentation
 
-| Document                                   | Description                  |
-| :----------------------------------------- | :--------------------------- |
-| [Getting Started](docs/GETTING_STARTED.md) | Installation and setup guide |
-| [Architecture](docs/ARCHITECTURE.md)       | System design and data flow  |
-| [Learning Guide](docs/LEARNING_GUIDE.md)   | Codebase onboarding          |
-| [Graph Features](docs/FEATURES_GRAPH.md)   | Knowledge Graph capabilities |
-| [IPC Contracts](docs/IPC_CONTRACTS.md)     | IPC communication specs      |
-| [Release Guide](docs/RELEASING.md)         | Release process and checks   |
+| Document | Description |
+|:---------|:------------|
+| **[Getting Started](docs/GETTING_STARTED.md)** | Installation and setup guide |
+| **[Architecture](docs/ARCHITECTURE.md)** | System design and data flow |
+| **[Learning Guide](docs/LEARNING_GUIDE.md)** | Codebase onboarding |
+| **[Graph Features](docs/FEATURES_GRAPH.md)** | Knowledge Graph capabilities |
+| **[IPC Contracts](docs/IPC_CONTRACTS.md)** | IPC communication specifications |
+| **[Release Guide](docs/RELEASING.md)** | Release process and checks |
+
+
 
 ## Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions are welcome. Please see **[CONTRIBUTING.md](CONTRIBUTING.md)** for guidelines.
 
 1. Fork the repository
 2. Create a feature branch
 3. Make changes and verify with `npm test`
 4. Submit a Pull Request
 
+
+
+## Inspiration and Related Projects
+
+StratoSort builds on ideas from the growing ecosystem of AI-powered file organization:
+
+| Project | Description |
+|:--------|:------------|
+| **[llama-fs](https://github.com/iyaja/llama-fs)** | Self-organizing filesystem with Llama 3; pioneered watch mode learning |
+| **[Local-File-Organizer](https://github.com/QiuYannnn/Local-File-Organizer)** | Privacy-first organizer using Llama3.2 and LLaVA |
+| **[ai-file-sorter](https://github.com/hyperfield/ai-file-sorter)** | Cross-platform desktop app with preview and undo |
+| **[Hazel](https://www.noodlesoft.com/)** | Industry standard Mac file automation |
+| **[Sparkle](https://makeitsparkle.co/)** | Mac AI organizer using GPT-4/Gemini |
+
 ## License
 
-Stratosort Personal Use License 1.0.0 (Based on PolyForm Noncommercial) - See [LICENSE](LICENSE) for
-details.
+**StratoSort Personal Use License 1.0.0** (Based on PolyForm Noncommercial)
+
+See **[LICENSE](LICENSE)** for details.
 
 ---
 
 <p align="center">
-  <a href="https://github.com/iLevyTate/elstratosort">GitHub</a> &bull;
-  <a href="https://github.com/iLevyTate/elstratosort/issues">Report Bug</a> &bull;
+  <a href="https://github.com/iLevyTate/elstratosort">GitHub</a> •
+  <a href="https://github.com/iLevyTate/elstratosort/issues">Report Bug</a> •
   <a href="https://github.com/iLevyTate/elstratosort/issues">Request Feature</a>
 </p>
 
