@@ -20,18 +20,13 @@ const {
   SEPARATOR_PATTERN
 } = require('./validationConstants');
 const { validateFileOperationPathSync } = require('./pathSanitization');
-const {
-  normalizeSlashes,
-  normalizeProtocolCase,
-  extractBaseUrl,
-  hasProtocol
-} = require('./urlUtils');
+// URL utilities available via require('./urlUtils') when needed
 const { isValidEmbeddingModel } = require('./modelCategorization');
 
 /**
  * Shared URL validation regex (from validationConstants)
  * Matches URLs with optional protocol (http/https), hostname/IP, optional port, optional path
- * Examples: "localhost:11434", "http://127.0.0.1:11434", "https://ollama.example.com/api"
+ * Examples: "localhost:3000", "http://127.0.0.1:3000", "https://example.com/api"
  */
 const URL_PATTERN = LENIENT_URL_PATTERN;
 
@@ -114,6 +109,11 @@ const isSafeDefaultLocation = (value) => {
 };
 
 const CHAT_PERSONA_IDS = CHAT_PERSONAS.map((persona) => persona.id);
+const DEPRECATED_SETTINGS_KEYS = new Set([
+  'dependencyWizardShown',
+  'dependencyWizardLastPromptAt',
+  'dependencyWizardPromptIntervalDays'
+]);
 
 /**
  * Validation rules for settings
@@ -222,13 +222,6 @@ const VALIDATION_RULES = {
     // Reject unsafe path characters
     pattern: SEPARATOR_PATTERN
   },
-  ollamaHost: {
-    type: 'string',
-    // Uses shared URL_PATTERN - allows URLs with or without protocol
-    pattern: URL_PATTERN,
-    maxLength: 500,
-    required: false
-  },
   textModel: {
     type: 'string',
     minLength: 1,
@@ -256,6 +249,27 @@ const VALIDATION_RULES = {
     validatorMessage:
       'embeddingModel must be a valid embedding model (e.g., embeddinggemma, mxbai-embed-large, nomic-embed-text)'
   },
+  llamaGpuLayers: {
+    type: 'number',
+    min: -1,
+    integer: true,
+    required: false
+  },
+  llamaContextSize: {
+    type: 'number',
+    min: 512,
+    max: 131072,
+    integer: true,
+    required: false
+  },
+  vectorDbPersistPath: {
+    type: 'string',
+    minLength: 1,
+    maxLength: 200,
+    validator: isSafeDefaultLocation,
+    validatorMessage: 'vectorDbPersistPath must be a safe relative folder name',
+    required: false
+  },
   embeddingTiming: {
     type: 'string',
     enum: ['during_analysis', 'after_organize', 'manual'],
@@ -274,31 +288,6 @@ const VALIDATION_RULES = {
   chatResponseMode: {
     type: 'string',
     enum: ['fast', 'deep'],
-    required: false
-  },
-  autoUpdateOllama: {
-    type: 'boolean',
-    required: false
-  },
-  autoUpdateChromaDb: {
-    type: 'boolean',
-    required: false
-  },
-  dependencyWizardShown: {
-    type: 'boolean',
-    required: false
-  },
-  dependencyWizardLastPromptAt: {
-    // ISO string (or null) — keep validation loose to avoid breaking old settings.
-    type: 'string',
-    maxLength: 100,
-    required: false
-  },
-  dependencyWizardPromptIntervalDays: {
-    type: 'number',
-    min: 1,
-    max: 365,
-    integer: true,
     required: false
   },
   maxFileSize: {
@@ -415,18 +404,9 @@ const VALIDATION_RULES = {
   smartFolderWatchEnabled: {
     type: 'boolean',
     required: false
-  },
-
-  // Learning/Feedback ChromaDB Sync Settings
-  // See ARCHITECTURE.md for details on dual-write behavior
-  enableChromaLearningSync: {
-    type: 'boolean',
-    required: false
-  },
-  enableChromaLearningDryRun: {
-    type: 'boolean',
-    required: false
   }
+
+  // Learning/Feedback dual-write settings removed with legacy stack
 };
 
 /**
@@ -516,6 +496,9 @@ function validateSettings(settings) {
     if (key === 'theme') {
       continue;
     }
+    if (DEPRECATED_SETTINGS_KEYS.has(key)) {
+      continue;
+    }
     const rule = VALIDATION_RULES[key];
 
     if (!rule) {
@@ -561,6 +544,9 @@ function sanitizeSettings(settings) {
     if (key === 'theme') {
       continue;
     }
+    if (DEPRECATED_SETTINGS_KEYS.has(key)) {
+      continue;
+    }
 
     const rule = VALIDATION_RULES[key];
 
@@ -581,25 +567,6 @@ function sanitizeSettings(settings) {
 
     // Normalize special fields before validation
     let normalizedValue = value;
-    if (key === 'ollamaHost' && typeof value === 'string') {
-      let s = value.trim();
-
-      // Normalize common Windows paste mistakes (backslashes) and mixed-case protocols.
-      // Examples:
-      // - "HTTP://127.0.0.1:11434/" -> "http://127.0.0.1:11434"
-      // - "http:\\\\127.0.0.1:11434\\api\\tags" -> "http://127.0.0.1:11434"
-      s = normalizeSlashes(s);
-      if (hasProtocol(s)) {
-        s = normalizeProtocolCase(s);
-      }
-
-      // Remove path/query/hash and keep only protocol + host[:port]
-      // (users often paste "/api/tags" or other endpoints).
-      s = extractBaseUrl(s);
-
-      normalizedValue = s;
-    }
-
     // Normalize confidence threshold to a finite number in [0, 1]
     if (key === 'confidenceThreshold') {
       const num = Number(normalizedValue);

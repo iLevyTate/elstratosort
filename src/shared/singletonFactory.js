@@ -81,7 +81,7 @@ function getNodeRequire() {
  *
  * @param {Object} options - Configuration options
  * @param {Function} options.ServiceClass - The service class constructor
- * @param {string} options.serviceId - ServiceIds enum key (e.g., 'CHROMA_DB')
+ * @param {string} options.serviceId - ServiceIds enum key (e.g., 'ORAMA_VECTOR')
  * @param {string} options.serviceName - Human-readable name for logging
  * @param {string} options.containerPath - Relative path to ServiceContainer from caller
  * @param {string} options.shutdownMethod - Method to call on cleanup ('shutdown' or 'cleanup')

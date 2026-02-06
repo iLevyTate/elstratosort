@@ -330,13 +330,12 @@ class FileOperationTracker {
    * Persists remaining operations before shutdown
    */
   async shutdown() {
-    this._isShutdown = true;
-
     // Persist any remaining operations before clearing
     if (this._persistencePath && this.recentOperations.size > 0) {
       await this._persistOperations();
     }
 
+    this._isShutdown = true;
     this.clear();
     logger.debug('[FILE-OP-TRACKER] Shutdown complete');
   }

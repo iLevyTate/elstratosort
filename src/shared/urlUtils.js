@@ -1,9 +1,7 @@
 /**
  * Shared URL normalization utilities
  * Consolidates duplicated URL handling logic from:
- * - src/main/ollamaUtils.js
  * - src/main/ipc/validationSchemas.js
- * - src/shared/settingsValidation.js
  */
 
 /**
@@ -67,7 +65,7 @@ function normalizeSlashes(url) {
 
 /**
  * Extract base URL (protocol + host + port) stripping path/query/hash
- * Useful when users paste full API URLs like "http://localhost:11434/api/tags"
+ * Useful when users paste full API URLs like "http://localhost:8080/api/endpoint"
  * @param {string} url - Full URL
  * @returns {string} Base URL without path
  */
@@ -98,7 +96,7 @@ function ensureProtocol(url, defaultProtocol = 'http') {
 }
 
 /**
- * Full URL normalization for service URLs (Ollama, ChromaDB, etc.)
+ * Full URL normalization for service URLs
  * Handles common user input issues:
  * - Missing protocol
  * - Duplicate protocols from copy-paste

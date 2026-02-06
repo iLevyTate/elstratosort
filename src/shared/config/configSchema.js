@@ -7,7 +7,7 @@
  * @module config/configSchema
  */
 
-const { PORTS, SERVICE_URLS, TIMEOUTS: CONFIG_DEFAULT_TIMEOUTS } = require('../configDefaults');
+const { PORTS, TIMEOUTS: CONFIG_DEFAULT_TIMEOUTS } = require('../configDefaults');
 const { DEFAULT_SETTINGS } = require('../defaultSettings');
 const {
   TIMEOUTS: PERF_TIMEOUTS,
@@ -32,58 +32,9 @@ const {
 const CONFIG_SCHEMA = {
   /**
    * Server Configuration
-   * External service URLs and connection settings
+   * Local dev server settings only (no external AI services)
    */
   SERVER: {
-    /** ChromaDB vector database URL */
-    chromaUrl: {
-      type: 'url',
-      default: SERVICE_URLS.CHROMA_SERVER_URL,
-      envVar: 'CHROMA_SERVER_URL',
-      description: 'ChromaDB vector database server URL',
-      required: false
-    },
-    /** ChromaDB server host */
-    chromaHost: {
-      type: 'string',
-      default: '127.0.0.1',
-      envVar: 'CHROMA_SERVER_HOST',
-      description: 'ChromaDB server hostname'
-    },
-    /** ChromaDB server port */
-    chromaPort: {
-      type: 'number',
-      default: PORTS.CHROMA_DB,
-      envVar: 'CHROMA_SERVER_PORT',
-      min: 1,
-      max: 65535,
-      description: 'ChromaDB server port'
-    },
-    /** ChromaDB server protocol */
-    chromaProtocol: {
-      type: 'enum',
-      default: 'http',
-      envVar: 'CHROMA_SERVER_PROTOCOL',
-      values: ['http', 'https'],
-      description: 'ChromaDB server protocol'
-    },
-    /** Ollama LLM server URL */
-    ollamaUrl: {
-      type: 'url',
-      default: SERVICE_URLS.OLLAMA_HOST,
-      envVar: ['OLLAMA_BASE_URL', 'OLLAMA_HOST'],
-      description: 'Ollama LLM server URL',
-      required: false
-    },
-    /** Ollama server port */
-    ollamaPort: {
-      type: 'number',
-      default: PORTS.OLLAMA,
-      envVar: 'OLLAMA_PORT',
-      min: 1,
-      max: 65535,
-      description: 'Ollama server port'
-    },
     /** Development server port */
     devServerPort: {
       type: 'number',
@@ -104,24 +55,24 @@ const CONFIG_SCHEMA = {
     textModel: {
       type: 'string',
       default: DEFAULT_AI_MODELS.TEXT_ANALYSIS,
-      envVar: 'OLLAMA_TEXT_MODEL',
-      description: 'Ollama model for text analysis',
+      envVar: 'STRATOSORT_TEXT_MODEL',
+      description: 'Text model for document analysis',
       pattern: /^[a-zA-Z0-9][a-zA-Z0-9\-_.:/]*$/
     },
     /** Vision/image analysis model */
     visionModel: {
       type: 'string',
       default: DEFAULT_AI_MODELS.IMAGE_ANALYSIS,
-      envVar: ['OLLAMA_VISION_MODEL', 'OLLAMA_MULTIMODAL_MODEL'],
-      description: 'Ollama model for image/vision analysis',
+      envVar: 'STRATOSORT_VISION_MODEL',
+      description: 'Vision model for image analysis',
       pattern: /^[a-zA-Z0-9][a-zA-Z0-9\-_.:/]*$/
     },
     /** Embedding model */
     embeddingModel: {
       type: 'string',
       default: DEFAULT_AI_MODELS.EMBEDDING,
-      envVar: 'OLLAMA_EMBEDDING_MODEL',
-      description: 'Ollama model for generating embeddings (1024 dims for mxbai-embed-large)',
+      envVar: 'STRATOSORT_EMBEDDING_MODEL',
+      description: 'Embedding model for semantic search',
       pattern: /^[a-zA-Z0-9][a-zA-Z0-9\-_.:/]*$/
     },
     /** Fallback models list */
@@ -225,10 +176,10 @@ const CONFIG_SCHEMA = {
       max: 600000,
       description: 'Image analysis timeout (ms)'
     },
-    /** Embedding vector dimension (model-dependent: 768 for embeddinggemma, 1024 for mxbai-embed-large) */
+    /** Embedding vector dimension (model-dependent: 768 for nomic-embed-text v1.5) */
     embeddingDimension: {
       type: 'number',
-      default: AI_DEFAULTS?.EMBEDDING?.DIMENSIONS ?? 1024,
+      default: AI_DEFAULTS?.EMBEDDING?.DIMENSIONS ?? 768,
       min: 128,
       max: 4096,
       description: 'Embedding vector dimension for current model'
@@ -312,13 +263,13 @@ const CONFIG_SCHEMA = {
       max: 50,
       description: 'Maximum concurrent network operations'
     },
-    /** Chroma query cache size */
+    /** Vector DB query cache size */
     queryCacheSize: {
       type: 'number',
       default: 200,
       min: 0,
       max: 5000,
-      description: 'Maximum cached ChromaDB query results'
+      description: 'Maximum cached vector DB query results'
     },
     /** Delay for batching insert operations (ms) */
     batchInsertDelay: {
@@ -326,93 +277,7 @@ const CONFIG_SCHEMA = {
       default: 100,
       min: 0,
       max: 5000,
-      description: 'Delay before flushing batched ChromaDB inserts (ms)'
-    }
-  },
-
-  /**
-   * ChromaDB Service Configuration
-   * Service-specific timeouts and limits
-   */
-  CHROMADB: {
-    /** Timeout for ChromaDB operations (ms) */
-    operationTimeout: {
-      type: 'number',
-      default: 30000,
-      envVar: 'CHROMADB_OPERATION_TIMEOUT',
-      min: 1000,
-      max: 300000,
-      description: 'Timeout for ChromaDB operations (ms)'
-    },
-    /** Timeout for ChromaDB initialization (ms) */
-    initTimeout: {
-      type: 'number',
-      default: 60000,
-      envVar: 'CHROMADB_INIT_TIMEOUT',
-      min: 5000,
-      max: 600000,
-      description: 'Timeout for ChromaDB initialization (ms)'
-    },
-    /** Maximum in-flight ChromaDB queries */
-    maxInflightQueries: {
-      type: 'number',
-      default: 100,
-      envVar: 'CHROMADB_MAX_INFLIGHT_QUERIES',
-      min: 10,
-      max: 1000,
-      description: 'Maximum in-flight ChromaDB queries'
-    }
-  },
-
-  /**
-   * Circuit Breaker Configuration
-   * Settings for ChromaDB circuit breaker fault tolerance
-   */
-  CIRCUIT_BREAKER: {
-    /** Number of consecutive failures before opening the circuit */
-    failureThreshold: {
-      type: 'number',
-      default: 5,
-      envVar: 'CHROMADB_CIRCUIT_FAILURE_THRESHOLD',
-      min: 1,
-      max: 20,
-      description: 'Failures before opening circuit'
-    },
-    /** Number of successes in half-open state before closing circuit */
-    successThreshold: {
-      type: 'number',
-      default: 2,
-      envVar: 'CHROMADB_CIRCUIT_SUCCESS_THRESHOLD',
-      min: 1,
-      max: 10,
-      description: 'Successes needed to close circuit'
-    },
-    /** Time in ms before attempting recovery when circuit is open */
-    timeout: {
-      type: 'number',
-      default: 30000,
-      envVar: 'CHROMADB_CIRCUIT_TIMEOUT',
-      min: 5000,
-      max: 300000,
-      description: 'Recovery timeout (ms)'
-    },
-    /** Time in ms before resetting failure count in closed state */
-    resetTimeout: {
-      type: 'number',
-      default: 60000,
-      envVar: 'CHROMADB_CIRCUIT_RESET_TIMEOUT',
-      min: 10000,
-      max: 600000,
-      description: 'Failure count reset timeout (ms)'
-    },
-    /** Maximum operations to queue when circuit is open */
-    maxQueueSize: {
-      type: 'number',
-      default: 1000,
-      envVar: 'CHROMADB_MAX_QUEUE_SIZE',
-      min: 100,
-      max: 10000,
-      description: 'Maximum queued operations'
+      description: 'Delay before flushing batched vector DB inserts (ms)'
     }
   },
 
@@ -513,13 +378,6 @@ const CONFIG_SCHEMA = {
       envVar: 'STRATOSORT_DEBUG',
       description: 'Enable debug mode with verbose logging'
     },
-    /** Disable ChromaDB entirely */
-    disableChromaDB: {
-      type: 'boolean',
-      default: false,
-      envVar: 'STRATOSORT_DISABLE_CHROMADB',
-      description: 'Disable ChromaDB vector database'
-    },
     /** Force DevTools open on start */
     forceDevTools: {
       type: 'boolean',
@@ -596,6 +454,13 @@ const CONFIG_SCHEMA = {
       default: false,
       envVar: 'CI',
       description: 'Running in CI environment'
+    },
+    /** Settings schema version for migrations */
+    settingsSchemaVersion: {
+      type: 'number',
+      default: 1,
+      min: 1,
+      description: 'Current schema version for settings migration'
     }
   }
 };
@@ -609,12 +474,7 @@ const SENSITIVE_KEYS = ['password', 'secret', 'token', 'apiKey', 'api_key', 'cre
  * Deprecated configuration mappings
  * Maps old config keys to new keys for backward compatibility
  */
-const DEPRECATED_MAPPINGS = {
-  OLLAMA_HOST: 'SERVER.ollamaUrl',
-  selectedModel: 'MODELS.textModel',
-  selectedVisionModel: 'MODELS.visionModel',
-  selectedEmbeddingModel: 'MODELS.embeddingModel'
-};
+const DEPRECATED_MAPPINGS = {};
 
 module.exports = {
   CONFIG_SCHEMA,

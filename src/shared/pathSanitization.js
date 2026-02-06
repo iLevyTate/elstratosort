@@ -4,7 +4,18 @@
  */
 
 const path = require('path');
-const os = require('os');
+
+// Guard Node.js-only modules that are unavailable in preload/renderer
+// (webpack sets os: false, fs: false for target: 'web')
+let _platform;
+try {
+  const os = require('os');
+  _platform = typeof os.platform === 'function' ? os.platform() : null;
+} catch {
+  _platform = null;
+}
+// Fallback to process.platform which is available in all Electron contexts
+const PLATFORM = _platform || (typeof process !== 'undefined' ? process.platform : 'linux');
 
 let fs;
 try {
@@ -83,7 +94,7 @@ function sanitizePath(filePath) {
   }
 
   // 5. Handle path length limits AFTER normalization and traversal check
-  const platform = os.platform();
+  const platform = PLATFORM;
   const maxLength = MAX_PATH_LENGTHS[platform] || MAX_PATH_LENGTHS.linux;
   if (normalized.length > maxLength) {
     // Truncate the path if it's too long instead of throwing
@@ -610,11 +621,11 @@ function validateFileOperationPathSync(filePath, allowedBasePaths = null, option
 }
 
 /**
- * Prepare file metadata for ChromaDB storage
+ * Prepare file metadata for vector DB storage
  * Combines base metadata with file.meta and sanitizes the result.
  *
  * @param {Object} file - File object with id, meta, model, updatedAt
- * @returns {Object} Sanitized metadata ready for ChromaDB
+ * @returns {Object} Sanitized metadata ready for vector DB
  */
 function prepareFileMetadata(file) {
   if (!file) return {};
@@ -633,11 +644,11 @@ function prepareFileMetadata(file) {
 }
 
 /**
- * Prepare folder metadata for ChromaDB storage
+ * Prepare folder metadata for vector DB storage
  * Creates base metadata from folder properties and sanitizes the result.
  *
  * @param {Object} folder - Folder object with id, name, description, path, model, updatedAt
- * @returns {Object} Sanitized metadata ready for ChromaDB
+ * @returns {Object} Sanitized metadata ready for vector DB
  */
 function prepareFolderMetadata(folder) {
   if (!folder) return {};
@@ -660,7 +671,7 @@ function prepareFolderMetadata(folder) {
  * On Windows (case-insensitive): converts path to lowercase
  * On Unix (case-sensitive): preserves original case
  *
- * This is critical for BM25 index, ChromaDB lookups, and analysis history
+ * This is critical for BM25 index, vector DB lookups, and analysis history
  * to ensure renamed/moved files are found consistently.
  *
  * @param {string} filePath - The file path to normalize for indexing
@@ -675,8 +686,7 @@ function normalizePathForIndex(filePath) {
   let normalized = path.normalize(filePath);
 
   // On case-insensitive filesystems (Windows, macOS default), lowercase for consistent comparison
-  const platform = os.platform();
-  if (platform === 'win32' || platform === 'darwin') {
+  if (PLATFORM === 'win32' || PLATFORM === 'darwin') {
     normalized = normalized.toLowerCase();
   }
 
@@ -687,7 +697,7 @@ function normalizePathForIndex(filePath) {
 }
 
 /**
- * Create a canonical file ID for use in search indexes and ChromaDB
+ * Create a canonical file ID for use in search indexes and vector DB
  * Format: "file:{normalizedPath}" or "image:{normalizedPath}"
  *
  * Uses normalizePathForIndex for consistent lookups on case-insensitive filesystems
@@ -717,7 +727,7 @@ module.exports = {
   sanitizePath,
   isPathSafe,
   sanitizeMetadata,
-  // ChromaDB metadata helpers
+  // Vector DB metadata helpers
   prepareFileMetadata,
   prepareFolderMetadata,
   // New exports for file operation security

@@ -199,7 +199,6 @@ const ALLOWED_APP_PATHS = [
 const SETTINGS_VALIDATION = {
   // Keys that can be modified through the settings API
   allowedKeys: new Set([
-    'ollamaHost',
     'textModel',
     'visionModel',
     'embeddingModel',
@@ -208,12 +207,6 @@ const SETTINGS_VALIDATION = {
     'defaultEmbeddingPolicy',
     'chatPersona',
     'chatResponseMode',
-    // Dependency lifecycle consent + UX cadence
-    'autoUpdateOllama',
-    'autoUpdateChromaDb',
-    'dependencyWizardShown',
-    'dependencyWizardLastPromptAt',
-    'dependencyWizardPromptIntervalDays',
     'launchOnStartup',
     'autoOrganize',
     'backgroundMode',
@@ -256,9 +249,6 @@ const SETTINGS_VALIDATION = {
     // UI limits
     'workflowRestoreMaxAge',
     'saveDebounceMs',
-    // ChromaDB learning sync settings
-    'enableChromaLearningSync',
-    'enableChromaLearningDryRun',
     // Deprecated settings (kept for backward compatibility)
     'smartFolderWatchEnabled'
   ]),
@@ -332,7 +322,7 @@ const RATE_LIMITS = {
 
 /**
  * IPC receive channels that are safe to expose to renderer
- * FIX: Added chromadb:status-changed for service status tracking
+ * Includes vector DB status tracking (legacy + current)
  */
 const ALLOWED_RECEIVE_CHANNELS = [
   'system-metrics',
@@ -346,8 +336,7 @@ const ALLOWED_RECEIVE_CHANNELS = [
   'operation-complete',
   'operation-failed',
   'file-operation-complete', // File move/delete notifications for search invalidation
-  'chromadb:status-changed', // FIX: ChromaDB status events for UI integration
-  'dependencies:service-status-changed', // FIX: Missing channel for dependency status updates
+  'vectordb:status-changed', // Vector DB status events for UI integration
   'notification', // Toast notifications from main process
   'undo-redo:state-changed', // FIX: Undo/redo state change notifications
   'batch-results-chunk' // FIX: Batch results streaming for progressive UI updates
@@ -356,7 +345,12 @@ const ALLOWED_RECEIVE_CHANNELS = [
 /**
  * IPC send channels that renderer can use
  */
-const ALLOWED_SEND_CHANNELS = ['renderer-error-report', 'startup-continue', 'startup-quit'];
+const ALLOWED_SEND_CHANNELS = [
+  'renderer-error-report',
+  'startup-continue',
+  'startup-quit',
+  'system:log'
+];
 
 module.exports = {
   // Path security

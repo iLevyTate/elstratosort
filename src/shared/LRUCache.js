@@ -3,7 +3,7 @@
  *
  * High-performance cache implementation consolidating patterns from:
  * - EmbeddingCache: access-time based LRU, metrics, lifecycle
- * - ChromaQueryCache: simple Map-based LRU, domain invalidation
+ * - Vector query cache: simple Map-based LRU, domain invalidation
  *
  * @module shared/LRUCache
  */

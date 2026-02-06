@@ -5,16 +5,13 @@
 
 // Default service ports
 const PORTS = {
-  CHROMA_DB: 8000,
-  OLLAMA: 11434,
   DEV_SERVER: 3000
 };
 
 // Default service URLs
-// Note: Using 127.0.0.1 instead of localhost for cross-platform IPv4/IPv6 consistency
 const SERVICE_URLS = {
-  OLLAMA_HOST: 'http://127.0.0.1:11434',
-  CHROMA_SERVER_URL: 'http://127.0.0.1:8000'
+  // No external AI services - everything is local/in-process
+  MODEL_DOWNLOAD_BASE: 'https://huggingface.co'
 };
 
 // Default timeout values (in milliseconds)
@@ -80,38 +77,6 @@ function getEnvInt(key, defaultValue) {
     return defaultValue;
   }
   return parsed;
-}
-
-/**
- * Get Ollama host from environment or default
- * @returns {string} Ollama host URL
- */
-function getOllamaHost() {
-  return getEnvOrDefault('OLLAMA_HOST', SERVICE_URLS.OLLAMA_HOST);
-}
-
-/**
- * Get ChromaDB server URL from environment or default
- * @returns {string} ChromaDB server URL
- */
-function getChromaServerUrl() {
-  return getEnvOrDefault('CHROMA_SERVER_URL', SERVICE_URLS.CHROMA_SERVER_URL);
-}
-
-/**
- * Get ChromaDB port from environment or default
- * @returns {number} ChromaDB port
- */
-function getChromaPort() {
-  return getEnvInt('CHROMA_SERVER_PORT', PORTS.CHROMA_DB);
-}
-
-/**
- * Get Ollama port from environment or default
- * @returns {number} Ollama port
- */
-function getOllamaPort() {
-  return getEnvInt('OLLAMA_PORT', PORTS.OLLAMA);
 }
 
 /**
@@ -220,114 +185,6 @@ function validateServiceUrl(urlString, options = {}) {
 }
 
 /**
- * Get and validate ChromaDB server URL from environment
- * Returns validated URL or default with validation result
- * @returns {Object} { url, valid, error, isDefault }
- */
-function getValidatedChromaServerUrl() {
-  const envUrl = process.env.CHROMA_SERVER_URL;
-
-  if (!envUrl) {
-    return {
-      url: SERVICE_URLS.CHROMA_SERVER_URL,
-      valid: true,
-      error: null,
-      isDefault: true
-    };
-  }
-
-  const result = validateServiceUrl(envUrl);
-
-  if (!result.valid) {
-    if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
-      // Prefer logger when available; fall back to console.warn to avoid hard deps.
-      try {
-        const { logger } = require('./logger');
-        if (logger?.warn) {
-          logger.warn(`[Config] Invalid CHROMA_SERVER_URL: ${result.error}. Using default.`);
-        } else {
-          // eslint-disable-next-line no-console
-          console.warn(`[Config] Invalid CHROMA_SERVER_URL: ${result.error}. Using default.`);
-        }
-      } catch {
-        // eslint-disable-next-line no-console
-        console.warn(`[Config] Invalid CHROMA_SERVER_URL: ${result.error}. Using default.`);
-      }
-    }
-    return {
-      url: SERVICE_URLS.CHROMA_SERVER_URL,
-      valid: false,
-      error: result.error,
-      isDefault: true
-    };
-  }
-
-  return {
-    url: result.url,
-    valid: true,
-    error: null,
-    isDefault: false,
-    protocol: result.protocol,
-    hostname: result.hostname,
-    port: result.port
-  };
-}
-
-/**
- * Get and validate Ollama host URL from environment
- * Returns validated URL or default with validation result
- * @returns {Object} { url, valid, error, isDefault }
- */
-function getValidatedOllamaHost() {
-  const envUrl = process.env.OLLAMA_BASE_URL || process.env.OLLAMA_HOST;
-
-  if (!envUrl) {
-    return {
-      url: SERVICE_URLS.OLLAMA_HOST,
-      valid: true,
-      error: null,
-      isDefault: true
-    };
-  }
-
-  const result = validateServiceUrl(envUrl);
-
-  if (!result.valid) {
-    if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
-      // Prefer logger when available; fall back to console.warn to avoid hard deps.
-      try {
-        const { logger } = require('./logger');
-        if (logger?.warn) {
-          logger.warn(`[Config] Invalid OLLAMA_BASE_URL: ${result.error}. Using default.`);
-        } else {
-          // eslint-disable-next-line no-console
-          console.warn(`[Config] Invalid OLLAMA_BASE_URL: ${result.error}. Using default.`);
-        }
-      } catch {
-        // eslint-disable-next-line no-console
-        console.warn(`[Config] Invalid OLLAMA_BASE_URL: ${result.error}. Using default.`);
-      }
-    }
-    return {
-      url: SERVICE_URLS.OLLAMA_HOST,
-      valid: false,
-      error: result.error,
-      isDefault: true
-    };
-  }
-
-  return {
-    url: result.url,
-    valid: true,
-    error: null,
-    isDefault: false,
-    protocol: result.protocol,
-    hostname: result.hostname,
-    port: result.port
-  };
-}
-
-/**
  * Validate all critical environment variables and return a report
  * Useful for startup diagnostics
  * @returns {Object} Validation report for all critical env vars
@@ -351,22 +208,6 @@ function validateEnvironment() {
   }
   report.config.nodeEnv = nodeEnv || 'undefined';
 
-  // Check ChromaDB URL
-  const chromaResult = getValidatedChromaServerUrl();
-  report.config.chromaServerUrl = chromaResult.url;
-  report.config.chromaIsDefault = chromaResult.isDefault;
-  if (!chromaResult.valid) {
-    report.warnings.push(`ChromaDB URL validation failed: ${chromaResult.error}`);
-  }
-
-  // Check Ollama URL
-  const ollamaResult = getValidatedOllamaHost();
-  report.config.ollamaHost = ollamaResult.url;
-  report.config.ollamaIsDefault = ollamaResult.isDefault;
-  if (!ollamaResult.valid) {
-    report.warnings.push(`Ollama URL validation failed: ${ollamaResult.error}`);
-  }
-
   // Set overall validity
   report.valid = report.errors.length === 0;
 
@@ -382,14 +223,8 @@ module.exports = {
   getEnvOrDefault,
   getEnvBool,
   getEnvInt,
-  getOllamaHost,
-  getChromaServerUrl,
-  getChromaPort,
-  getOllamaPort,
   isDevelopment,
   isProduction,
   validateServiceUrl,
-  getValidatedChromaServerUrl,
-  getValidatedOllamaHost,
   validateEnvironment
 };

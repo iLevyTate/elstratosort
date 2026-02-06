@@ -34,14 +34,21 @@ const schemas = z
        */
       const operationProgressSchema = z.object({
         type: z
-          .enum(['batch_organize', 'batch_analyze', 'ollama-pull', 'dependency', 'hint', 'analyze'])
+          .enum([
+            'batch_organize',
+            'batch_analyze',
+            'model-download',
+            'dependency',
+            'hint',
+            'analyze'
+          ])
           .optional(),
         current: z.number().optional(),
         total: z.number().optional(),
         percentage: z.number().min(0).max(100).optional(),
         message: z.string().optional(),
         phase: z.string().optional(),
-        // For ollama-pull type
+        // For model-download type
         model: z.string().optional(),
         status: z.string().optional(),
         digest: z.string().optional(),
@@ -150,10 +157,10 @@ const schemas = z
       });
 
       /**
-       * ChromaDB Status Changed Event
-       * Emitted when ChromaDB connection status changes
+       * Vector DB Status Changed Event
+       * Emitted when Vector DB connection status changes
        */
-      const chromadbStatusChangedSchema = z.object({
+      const vectorDbStatusChangedSchema = z.object({
         status: z.enum([
           'connected',
           'disconnected',
@@ -167,18 +174,6 @@ const schemas = z
         ]),
         timestamp: z.number().optional(),
         error: z.string().optional()
-      });
-
-      /**
-       * Service Status Changed Event
-       * Emitted when any dependency service status changes
-       */
-      const serviceStatusChangedSchema = z.object({
-        timestamp: z.number().optional(),
-        service: z.string().optional(),
-        status: z.string().optional(),
-        health: z.string().optional(),
-        details: z.any().optional()
       });
 
       /**
@@ -265,8 +260,7 @@ const schemas = z
         notificationSchema,
         appErrorSchema,
         settingsChangedExternalSchema,
-        chromadbStatusChangedSchema,
-        serviceStatusChangedSchema,
+        vectorDbStatusChangedSchema,
         menuActionSchema,
         appUpdateSchema,
         openSemanticSearchSchema,
@@ -291,8 +285,7 @@ const EVENT_SCHEMAS = z
       notification: schemas.notificationSchema,
       'app:error': schemas.appErrorSchema,
       'settings-changed-external': schemas.settingsChangedExternalSchema,
-      [IPC_CHANNELS.CHROMADB.STATUS_CHANGED]: schemas.chromadbStatusChangedSchema,
-      [IPC_CHANNELS.DEPENDENCIES.SERVICE_STATUS_CHANGED]: schemas.serviceStatusChangedSchema,
+      [IPC_CHANNELS.VECTOR_DB.STATUS_CHANGED]: schemas.vectorDbStatusChangedSchema,
       'menu-action': schemas.menuActionSchema,
       'app:update': schemas.appUpdateSchema,
       'open-semantic-search': schemas.openSemanticSearchSchema,

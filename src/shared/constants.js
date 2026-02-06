@@ -1,7 +1,6 @@
 // Shared Constants
 // Central source of truth for constants used across main and renderer processes
 
-const { SERVICE_URLS } = require('./configDefaults');
 const { LIMITS: PERFORMANCE_LIMITS = {} } = require('./performanceConstants');
 
 /**
@@ -59,11 +58,15 @@ const IPC_CHANNELS = {
     RESTORE_BACKUP: 'settings:restore-backup',
     DELETE_BACKUP: 'settings:delete-backup'
   },
-  OLLAMA: {
-    GET_MODELS: 'ollama:get-models',
-    TEST_CONNECTION: 'ollama:test-connection',
-    PULL_MODELS: 'ollama:pull-models',
-    DELETE_MODEL: 'ollama:delete-model'
+  // LLM service (node-llama-cpp - in-process)
+  LLAMA: {
+    GET_MODELS: 'llama:get-models',
+    GET_CONFIG: 'llama:get-config',
+    UPDATE_CONFIG: 'llama:update-config',
+    TEST_CONNECTION: 'llama:test-connection',
+    DOWNLOAD_MODEL: 'llama:download-model',
+    DELETE_MODEL: 'llama:delete-model',
+    GET_DOWNLOAD_STATUS: 'llama:get-download-status'
   },
   UNDO_REDO: {
     UNDO: 'undo-redo:undo',
@@ -114,7 +117,8 @@ const IPC_CHANNELS = {
     GET_CONFIG: 'system:get-config',
     GET_CONFIG_VALUE: 'system:get-config-value',
     RENDERER_ERROR_REPORT: 'renderer-error-report',
-    GET_RECOMMENDED_CONCURRENCY: 'system:get-recommended-concurrency'
+    GET_RECOMMENDED_CONCURRENCY: 'system:get-recommended-concurrency',
+    LOG: 'system:log'
   },
   WINDOW: {
     MINIMIZE: 'window:minimize',
@@ -149,22 +153,14 @@ const IPC_CHANNELS = {
     IDENTIFY_OUTLIERS: 'organize:identify-outliers',
     GET_CLUSTER_SUGGESTIONS: 'organize:get-cluster-suggestions'
   },
-  CHROMADB: {
-    GET_STATUS: 'chromadb:get-status',
-    GET_CIRCUIT_STATS: 'chromadb:get-circuit-stats',
-    GET_QUEUE_STATS: 'chromadb:get-queue-stats',
-    FORCE_RECOVERY: 'chromadb:force-recovery',
-    HEALTH_CHECK: 'chromadb:health-check',
-    STATUS_CHANGED: 'chromadb:status-changed'
+  // Vector DB (Orama - in-process)
+  VECTOR_DB: {
+    GET_STATUS: 'vectordb:get-status',
+    GET_STATS: 'vectordb:get-stats',
+    HEALTH_CHECK: 'vectordb:health-check',
+    STATUS_CHANGED: 'vectordb:status-changed'
   },
-  DEPENDENCIES: {
-    GET_STATUS: 'dependencies:get-status',
-    INSTALL_OLLAMA: 'dependencies:install-ollama',
-    INSTALL_CHROMADB: 'dependencies:install-chromadb',
-    UPDATE_OLLAMA: 'dependencies:update-ollama',
-    UPDATE_CHROMADB: 'dependencies:update-chromadb',
-    SERVICE_STATUS_CHANGED: 'dependencies:service-status-changed'
-  },
+  // Dependencies removed - in-process AI stack only
   CHAT: {
     QUERY: 'chat:query',
     RESET_SESSION: 'chat:reset-session'
@@ -192,36 +188,49 @@ const ACTION_TYPES = {
 };
 
 /**
- * Default AI Models
+ * Default AI Models (GGUF format for node-llama-cpp)
+ * These are in-process models, no external server required
  */
 const DEFAULT_AI_MODELS = {
-  TEXT_ANALYSIS: 'llama3.2:latest',
-  IMAGE_ANALYSIS: 'llava:latest',
-  EMBEDDING: 'mxbai-embed-large',
-  FALLBACK_MODELS: ['llama3.2:latest', 'mistral:latest', 'gemma:7b']
+  // Text generation model (instruction-tuned)
+  TEXT_ANALYSIS: 'Mistral-7B-Instruct-v0.3-Q4_K_M.gguf',
+  // Vision-language model for image understanding
+  IMAGE_ANALYSIS: 'llava-v1.6-mistral-7b-Q4_K_M.gguf',
+  // Embedding model for semantic search
+  EMBEDDING: 'nomic-embed-text-v1.5-Q8_0.gguf',
+  // Fallback models (smaller, for CPU-only systems)
+  FALLBACK_MODELS: ['Llama-3.2-3B-Instruct-Q4_K_M.gguf', 'Phi-3-mini-4k-instruct-q4.gguf']
 };
 
 /**
+ * Settings schema version (shared across main/renderer)
+ */
+const SETTINGS_SCHEMA_VERSION = 2;
+
+/**
  * AI Processing Defaults
+ * Updated for in-process node-llama-cpp (no external server)
  */
 const AI_DEFAULTS = {
   TEXT: {
     MODEL: DEFAULT_AI_MODELS.TEXT_ANALYSIS,
-    HOST: SERVICE_URLS.OLLAMA_HOST,
+    GPU_LAYERS: -1, // -1 = auto (use all available GPU layers)
     TEMPERATURE: 0.7,
     MAX_TOKENS: 8192,
-    MAX_CONTENT_LENGTH: 32000 // Optimized to match 8k context window (8192 * 4 chars) to prevent wasted processing
+    CONTEXT_SIZE: 8192,
+    MAX_CONTENT_LENGTH: 32000 // Optimized to match 8k context window
   },
   IMAGE: {
     MODEL: DEFAULT_AI_MODELS.IMAGE_ANALYSIS,
-    HOST: SERVICE_URLS.OLLAMA_HOST,
+    GPU_LAYERS: -1,
     TEMPERATURE: 0.2,
     MAX_TOKENS: 4096
   },
   EMBEDDING: {
     MODEL: DEFAULT_AI_MODELS.EMBEDDING,
-    DIMENSIONS: 1024,
-    FALLBACK_MODELS: ['mxbai-embed-large', 'nomic-embed-text', 'embeddinggemma'],
+    DIMENSIONS: 768, // nomic-embed-text v1.5 uses 768 dimensions
+    GPU_LAYERS: -1,
+    FALLBACK_MODELS: ['nomic-embed-text-v1.5-Q4_K_M.gguf', 'all-MiniLM-L6-v2.Q8_0.gguf'],
     AUTO_CHUNK_ON_ANALYSIS: false
   }
 };
@@ -576,6 +585,7 @@ module.exports = {
   IPC_CHANNELS,
   ACTION_TYPES,
   DEFAULT_AI_MODELS,
+  SETTINGS_SCHEMA_VERSION,
   AI_DEFAULTS,
   PROCESSING_LIMITS,
   FILE_SIZE_LIMITS,

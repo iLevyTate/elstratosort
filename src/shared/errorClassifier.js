@@ -82,7 +82,7 @@ const RETRYABLE_CODES = new Set([
   'EPERM', // Windows file lock - might be released
   'ETIMEDOUT', // Network timeout - might succeed on retry
   'ECONNRESET', // Connection reset - might succeed on retry
-  'ECONNREFUSED', // Connection refused - service might start
+  'ECONNREFUSED', // Connection refused - external service might start (not used for in-process AI)
   'EIO' // I/O error - might be transient
 ]);
 
@@ -126,7 +126,12 @@ function getErrorCategory(error) {
     return ErrorCategory.TIMEOUT;
   }
 
-  if (message.includes('network') || message.includes('connection')) {
+  // Narrowed match: avoid false positives from AI/in-process "connection" errors
+  if (
+    message.includes('network') ||
+    message.includes('ECONNREFUSED') ||
+    message.includes('ECONNRESET')
+  ) {
     return ErrorCategory.NETWORK_ERROR;
   }
 
@@ -211,7 +216,11 @@ function isNetworkError(error) {
   }
 
   const message = error.message?.toLowerCase() || '';
-  return message.includes('network') || message.includes('connection');
+  return (
+    message.includes('network') ||
+    message.includes('econnrefused') ||
+    message.includes('econnreset')
+  );
 }
 
 /**

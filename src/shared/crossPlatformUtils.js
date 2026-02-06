@@ -66,8 +66,6 @@ const WINDOWS_EXECUTABLE_EXTENSIONS = {
   npx: '.cmd',
   yarn: '.cmd',
   pnpm: '.cmd',
-  chroma: '.cmd',
-  chromadb: '.cmd',
   pip: '.exe',
   pip3: '.exe'
   // Most Python-related tools installed via pip

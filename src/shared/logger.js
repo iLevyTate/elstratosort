@@ -1,18 +1,40 @@
 /**
  * Unified Logging System for StratoSort
- * Provides structured logging across main and renderer processes
+ * Provides structured logging across main and renderer processes using Pino
  */
 
+const pino = require('pino');
+const { getCorrelationId } = require('./correlationId');
+
+// Legacy level mapping for compatibility
 const LOG_LEVELS = {
-  ERROR: 0,
-  WARN: 1,
-  INFO: 2,
-  DEBUG: 3,
-  TRACE: 4
+  ERROR: 'error',
+  WARN: 'warn',
+  INFO: 'info',
+  DEBUG: 'debug',
+  TRACE: 'trace'
 };
 
 const LOG_LEVEL_NAMES = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'];
-const { getCorrelationId } = require('./correlationId');
+
+// pino.transport() is only available in the Node.js build (main process).
+// The preload (target: 'web') and renderer use pino/browser.js which lacks it.
+const _hasPinoTransport = typeof pino.transport === 'function';
+
+// FIX: Share a single pino-pretty transport across all Logger instances.
+// Previously, every createLogger() call spawned a new pino transport worker,
+// each registering its own process.on('exit') handler. With 100+ loggers in
+// the main process, this caused MaxListenersExceededWarning at startup.
+let _sharedDevTransport = null;
+function _getSharedDevTransport() {
+  if (!_sharedDevTransport && _hasPinoTransport) {
+    _sharedDevTransport = pino.transport({
+      target: 'pino-pretty',
+      options: { colorize: true }
+    });
+  }
+  return _sharedDevTransport;
+}
 
 /**
  * Best-effort redaction for production logs.
@@ -72,362 +94,188 @@ function sanitizeLogData(data) {
 }
 
 class Logger {
-  constructor() {
-    this.level = LOG_LEVELS.INFO; // Default log level
-    this.enableConsole = true;
+  constructor(context = '', options = {}) {
+    this.context = context;
     this.enableFile = false;
     this.logFile = null;
-    this.context = '';
-    this.fileFormat = 'jsonl'; // 'jsonl' | 'text'
-    this._fileWriteFailed = false;
-    this.MAX_LOG_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-    this.MAX_ROTATED_FILES = 3;
-    this._isRotating = false;
-    this._lastRotationCheck = 0; // FIX HIGH-50: Debounce rotation checks
+    this.level = process.env.NODE_ENV === 'development' ? 'debug' : 'info';
+
+    // Initialize Pino instance
+    this._initPino(options);
   }
 
-  /**
-   * Check if log rotation is needed and perform it
-   * @private
-   */
-  async rotateLogIfNeeded() {
-    // FIX HIGH-50: Prevent rapid-fire rotation checks (max once per second)
-    const now = Date.now();
-    if (now - this._lastRotationCheck < 1000) return;
-    this._lastRotationCheck = now;
+  _initPino(options = {}) {
+    const isDev = process.env.NODE_ENV === 'development';
+    // Detect non-main contexts: renderer (process.type === 'renderer'),
+    // preload (no process.type but window exists), or browser pino build.
+    const isRenderer =
+      (typeof process !== 'undefined' && process.type === 'renderer') || !_hasPinoTransport;
 
-    if (!this.logFile || this._isRotating || this._fileWriteFailed) return;
+    const pinoOptions = {
+      level: this.level,
+      base: {
+        pid: typeof process !== 'undefined' ? process.pid : undefined,
+        context: this.context
+      },
+      timestamp: pino.stdTimeFunctions.isoTime,
+      formatters: {
+        level: (label) => ({ level: label })
+      },
+      mixin: () => {
+        const correlationId = getCorrelationId();
+        return correlationId ? { correlationId } : {};
+      },
+      // Use built-in redaction for simple keys, but we rely on sanitizeLogData for complex logic
+      redact: {
+        paths: ['*.password', '*.token', '*.secret', '*.key'],
+        remove: true
+      },
+      ...options
+    };
 
-    try {
-      const fs = require('fs');
-      // Use sync stat to avoid race conditions during rapid logging
-      const stats = fs.statSync(this.logFile);
+    if (isRenderer) {
+      // Browser/Renderer configuration
+      this.pino = pino({
+        ...pinoOptions,
+        browser: {
+          asObject: true,
+          transmit: {
+            level: this.level,
+            send: (level, logEvent) => {
+              if (typeof window !== 'undefined' && window.electronAPI?.system?.log) {
+                // Ensure messages property is serialized correctly
+                const messages = logEvent.messages || [];
+                const message = messages[0] || '';
+                const data = messages[1] || {};
 
-      if (stats.size > this.MAX_LOG_FILE_SIZE) {
-        this._isRotating = true;
-        await this.rotateLog();
-      }
-    } catch (error) {
-      if (error.code !== 'ENOENT') {
-        // If file doesn't exist, no need to rotate. Other errors are warnings.
-        if (this.enableConsole) {
-          // Use console directly to avoid recursion
-          console.warn(`[Logger] Failed to check log size: ${error.message}`);
+                // Use non-blocking fire-and-forget for logs
+                window.electronAPI.system.log(level, message, data).catch(() => {
+                  // Silently fail if log transmission fails to avoid loops
+                });
+              }
+            }
+          }
+        }
+      });
+    } else {
+      // Main process configuration
+      let transport;
+
+      if (this.logFile && this.enableFile && _hasPinoTransport) {
+        // Multi-stream: Console + File
+        const targets = [
+          {
+            target: 'pino/file',
+            options: { destination: this.logFile, mkdir: true }
+          }
+        ];
+
+        // Add pretty print for console in dev
+        if (isDev && this.enableConsole !== false) {
+          targets.push({
+            target: 'pino-pretty',
+            options: { colorize: true }
+          });
+        } else if (this.enableConsole !== false) {
+          // Basic console in prod (if enabled)
+          targets.push({
+            target: 'pino/file', // stdout (descriptor 1)
+            options: { destination: 1 }
+          });
+        }
+
+        transport = pino.transport({ targets });
+      } else {
+        // Console only — reuse module-level shared transport in dev
+        if (isDev) {
+          transport = _getSharedDevTransport();
         }
       }
-    } finally {
-      this._isRotating = false;
-    }
-  }
 
-  /**
-   * Rotate log files (log.log -> log.1.log -> log.2.log ...)
-   * @private
-   */
-  async rotateLog() {
-    try {
-      const fs = require('fs').promises;
-
-      // Delete the oldest rotated file if it exists
-      const oldestFile = `${this.logFile}.${this.MAX_ROTATED_FILES}`;
-      try {
-        await fs.unlink(oldestFile);
-      } catch {
-        // Ignore if doesn't exist
-      }
-
-      // Rename existing rotated files (3->4, 2->3, 1->2)
-      for (let i = this.MAX_ROTATED_FILES - 1; i >= 1; i--) {
-        const current = `${this.logFile}.${i}`;
-        const next = `${this.logFile}.${i + 1}`;
-        try {
-          await fs.rename(current, next);
-        } catch {
-          // Ignore if doesn't exist
-        }
-      }
-
-      // Rename current log file to .1
-      try {
-        await fs.rename(this.logFile, `${this.logFile}.1`);
-      } catch (e) {
-        // If rename fails, we might just continue appending to big file
-        // or it might be locked.
-        if (this.enableConsole) {
-          console.warn(`[Logger] Failed to rotate current log file: ${e.message}`);
-        }
-      }
-    } catch (error) {
-      if (this.enableConsole) {
-        console.error(`[Logger] Log rotation failed: ${error.message}`);
-      }
+      // FIX: Use the shared transport for the common dev-console-only case
+      // to avoid spawning a separate pino worker per logger instance.
+      // Only custom transports (e.g. file logging) get their own stream.
+      this.pino = pino(pinoOptions, transport || undefined);
     }
   }
 
   setLevel(level) {
-    if (typeof level === 'string') {
-      this.level = LOG_LEVELS[level.toUpperCase()] ?? LOG_LEVELS.INFO;
+    // Map legacy numeric/string levels to Pino strings
+    const allowed = ['error', 'warn', 'info', 'debug', 'trace'];
+    if (typeof level === 'number') {
+      this.level = allowed[level] || 'info';
+    } else if (typeof level === 'string') {
+      const normalized = level.toLowerCase();
+      this.level = allowed.includes(normalized) ? normalized : 'info';
     } else {
-      this.level = level;
+      this.level = 'info';
+    }
+    if (this.pino) {
+      this.pino.level = this.level;
     }
   }
 
   setContext(context) {
     this.context = context;
+    // Re-bind pino child with new context
+    this.pino = this.pino.child({ context });
   }
 
-  enableFileLogging(logFile, options = {}) {
+  enableFileLogging(logFile, _options = {}) {
     this.enableFile = true;
     this.logFile = logFile;
-    this.fileFormat = options.format === 'text' ? 'text' : 'jsonl';
-    this._fileWriteFailed = false;
+    // Re-initialize to add file transport
+    this._initPino();
   }
 
   disableConsoleLogging() {
     this.enableConsole = false;
+    this._initPino();
   }
 
-  /**
-   * Normalize a level to the numeric LOG_LEVELS form.
-   * Accepts numbers or common strings ("error", "warn", "critical", etc).
-   * @private
-   */
-  normalizeLevel(level) {
-    if (typeof level === 'number') return level;
-    if (typeof level !== 'string') return LOG_LEVELS.INFO;
-
-    const key = level.toUpperCase();
-    if (key === 'CRITICAL') return LOG_LEVELS.ERROR;
-    if (key === 'WARNING') return LOG_LEVELS.WARN;
-    return LOG_LEVELS[key] ?? LOG_LEVELS.INFO;
-  }
-
-  /**
-   * Safe JSON stringifier that handles circular references
-   * @private
-   */
-  safeStringify(obj) {
-    const seen = new WeakSet();
-    return JSON.stringify(
-      obj,
-      (key, value) => {
-        // Fixed: Handle circular references
-        if (typeof value === 'object' && value !== null) {
-          if (seen.has(value)) {
-            return '[Circular Reference]';
-          }
-          seen.add(value);
-        }
-
-        // Fixed: Handle Error objects
-        if (value instanceof Error) {
-          return {
-            name: value.name,
-            message: value.message,
-            stack: value.stack
-          };
-        }
-
-        // Fixed: Handle functions (convert to string)
-        if (typeof value === 'function') {
-          return `[Function: ${value.name || 'anonymous'}]`;
-        }
-
-        return value;
-      },
-      2
-    );
-  }
-
-  formatMessage(level, message, data) {
-    const timestamp = new Date().toISOString();
-    const levelName = LOG_LEVEL_NAMES[level] || 'UNKNOWN';
-    const contextStr = this.context ? ` [${this.context}]` : '';
-    const correlationId = getCorrelationId();
-    const correlationStr = correlationId ? ` [${correlationId}]` : '';
-
-    let formattedMessage = `${timestamp} ${levelName}${contextStr}${correlationStr}: ${message}`;
-
-    if (data != null) {
-      // FIX: Error objects have non-enumerable properties (message, stack),
-      // so Object.keys(error) returns []. Convert to plain object first.
-      const displayData =
-        data instanceof Error
-          ? { name: data.name, message: data.message, stack: data.stack, code: data.code }
-          : data;
-      if (Object.keys(displayData).length > 0) {
-        try {
-          // Fixed: Use safe stringify to handle circular references
-          formattedMessage += `\n  Data: ${this.safeStringify(displayData)}`;
-        } catch (error) {
-          formattedMessage += `\n  Data: [Error stringifying data: ${error.message}]`;
-        }
-      }
-    }
-
-    return formattedMessage;
-  }
-
-  buildLogEntry(level, message, data) {
-    const timestamp = new Date().toISOString();
-    const levelName = LOG_LEVEL_NAMES[level] || 'UNKNOWN';
-
-    const safeData = sanitizeLogData(data);
-    const safeMessage = sanitizeLogData(message);
-    const correlationId = getCorrelationId();
-
-    return {
-      timestamp,
-      level: levelName,
-      context: this.context || undefined,
-      correlationId: correlationId || undefined,
-      message: safeMessage,
-      data: safeData && Object.keys(safeData).length > 0 ? safeData : undefined,
-      pid: typeof process !== 'undefined' ? process.pid : undefined,
-      processType: typeof process !== 'undefined' ? process.type || 'node' : undefined
-    };
-  }
-
-  shouldWriteSync(level) {
-    // Sync write on higher-severity logs to maximize chance it lands on disk before exit/crash.
-    return level <= LOG_LEVELS.WARN;
-  }
-
-  writeToFile(level, entryOrText) {
-    if (!this.enableFile || !this.logFile) return;
-    if (this._fileWriteFailed) return;
-
-    try {
-      // Check for rotation before writing
-      if (this.enableFile && this.logFile && !this._fileWriteFailed) {
-        // We use a promise check but don't await it to avoid blocking the main thread
-        // for every log write. If rotation is needed, it will happen eventually.
-        // For critical size enforcement, we would await, but logging performance is priority.
-        this.rotateLogIfNeeded().catch(() => {});
-      }
-
-      const fsSync = require('fs');
-      const line =
-        this.fileFormat === 'text'
-          ? `${String(entryOrText)}\n`
-          : `${JSON.stringify(entryOrText)}\n`;
-
-      if (this.shouldWriteSync(level)) {
-        fsSync.appendFileSync(this.logFile, line);
-      } else {
-        // Best-effort async for low-severity logs to reduce impact
-        fsSync.promises.appendFile(this.logFile, line).catch(() => {
-          this._fileWriteFailed = true;
-        });
-      }
-    } catch (error) {
-      // Avoid recursive logging loops; disable file logging after first failure.
-      this._fileWriteFailed = true;
-      // In dev, surface a concise hint without using console.* to respect CSP.
-      if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
-        try {
-          const message = `LOGGER FILE WRITE FAILED: ${error?.message || error}\n`;
-          // Write directly to stderr to avoid recursive logger usage or console calls.
-          if (typeof process.stderr?.write === 'function') {
-            process.stderr.write(message);
-          }
-        } catch {
-          // ignore
-        }
-      }
+  // API Compatibility methods
+  log(level, message, data) {
+    // Legacy generic log method
+    const lvl = typeof level === 'number' ? LOG_LEVEL_NAMES[level]?.toLowerCase() : level;
+    if (this[lvl]) {
+      this[lvl](message, data);
+    } else {
+      this.info(message, data);
     }
   }
 
-  log(level, message, data = {}) {
-    const normalizedLevel = this.normalizeLevel(level);
-    if (normalizedLevel > this.level) return;
-
-    const sanitizedData = sanitizeLogData(data);
-    const sanitizedMessage = sanitizeLogData(message);
-
-    const formattedMessage = this.formatMessage(normalizedLevel, sanitizedMessage, sanitizedData);
-
-    // In test environments, always go through console.* so Jest spies can observe calls
-    const useConsoleDirect = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test';
-
-    if (this.enableConsole) {
-      try {
-        if (useConsoleDirect) {
-          const consoleMethod = this.getConsoleMethod(normalizedLevel);
-          consoleMethod(formattedMessage);
-        } else if (typeof process !== 'undefined' && process.stdout && process.stderr) {
-          // Write directly to stdout/stderr for terminal visibility
-          // This ensures output appears in terminal, not just DevTools console
-          const output = formattedMessage + '\n';
-          if (normalizedLevel <= LOG_LEVELS.WARN) {
-            process.stderr.write(output);
-          } else {
-            process.stdout.write(output);
-          }
-        } else {
-          // Fallback to console for renderer process or environments without process
-          const consoleMethod = this.getConsoleMethod(normalizedLevel);
-          consoleMethod(formattedMessage);
-        }
-      } catch (error) {
-        // Handle EPIPE errors gracefully (broken console pipe)
-        // This can happen when stdout/stderr pipe is closed
-        if (error.code !== 'EPIPE') {
-          // Re-throw non-EPIPE errors, but disable console to prevent loops
-          this.enableConsole = false;
-          throw error;
-        }
-        // Silently ignore EPIPE - console is gone, continue with file logging
-        this.enableConsole = false;
-      }
-    }
-
-    if (this.enableFile) {
-      const entry =
-        this.fileFormat === 'text'
-          ? formattedMessage
-          : this.buildLogEntry(normalizedLevel, sanitizedMessage, sanitizedData);
-      this.writeToFile(normalizedLevel, entry);
-    }
-  }
-
-  getConsoleMethod(level) {
-    switch (level) {
-      case LOG_LEVELS.ERROR:
-        return console.error;
-      case LOG_LEVELS.WARN:
-        return console.warn;
-      case LOG_LEVELS.INFO:
-        return console.info;
-      case LOG_LEVELS.DEBUG:
-      case LOG_LEVELS.TRACE:
-        return console.debug;
-      default:
-        return console.log;
-    }
-  }
-
+  // Core logging methods
   error(message, data) {
-    this.log(LOG_LEVELS.ERROR, message, data);
+    const sanitized = data ? sanitizeLogData(data) : undefined;
+    if (sanitized) this.pino.error(sanitized, message);
+    else this.pino.error(message);
   }
 
   warn(message, data) {
-    this.log(LOG_LEVELS.WARN, message, data);
+    const sanitized = data ? sanitizeLogData(data) : undefined;
+    if (sanitized) this.pino.warn(sanitized, message);
+    else this.pino.warn(message);
   }
 
   info(message, data) {
-    this.log(LOG_LEVELS.INFO, message, data);
+    const sanitized = data ? sanitizeLogData(data) : undefined;
+    if (sanitized) this.pino.info(sanitized, message);
+    else this.pino.info(message);
   }
 
   debug(message, data) {
-    this.log(LOG_LEVELS.DEBUG, message, data);
+    const sanitized = data ? sanitizeLogData(data) : undefined;
+    if (sanitized) this.pino.debug(sanitized, message);
+    else this.pino.debug(message);
   }
 
   trace(message, data) {
-    this.log(LOG_LEVELS.TRACE, message, data);
+    const sanitized = data ? sanitizeLogData(data) : undefined;
+    if (sanitized) this.pino.trace(sanitized, message);
+    else this.pino.trace(message);
   }
 
-  // Convenience methods for common logging patterns
+  // Convenience methods
   fileOperation(operation, filePath, result = 'success') {
     this.info(`File ${operation}`, { filePath, result });
   }
@@ -452,145 +300,51 @@ class Logger {
     });
   }
 
-  /**
-   * Write directly to terminal (stdout/stderr) AND log to file
-   * Use this for important diagnostic output that MUST be visible in terminal
-   * @param {string} level - 'error', 'warn', 'info'
-   * @param {string} message - The message to write
-   * @param {Object} [data] - Optional structured data
-   */
   terminal(level, message, data = {}) {
-    const normalizedLevel = this.normalizeLevel(level);
-    const timestamp = new Date().toISOString();
-    const levelName = LOG_LEVEL_NAMES[normalizedLevel] || 'INFO';
-    const contextStr = this.context ? ` [${this.context}]` : '';
-
-    // Format message for terminal
-    let output = `${timestamp} ${levelName}${contextStr}: ${message}`;
-    if (data && Object.keys(data).length > 0) {
-      try {
-        output += `\n  ${this.safeStringify(data)}`;
-      } catch {
-        output += `\n  [Data stringify error]`;
-      }
-    }
-    output += '\n';
-
-    // Write directly to stdout/stderr (bypasses console which may not show in terminal)
-    try {
-      if (typeof process !== 'undefined') {
-        if (normalizedLevel <= LOG_LEVELS.ERROR) {
-          process.stderr.write(output);
-        } else {
-          process.stdout.write(output);
-        }
-      }
-    } catch {
-      // Fallback to console if process not available
-      if (this.enableConsole) {
-        const consoleMethod = this.getConsoleMethod(normalizedLevel);
-        consoleMethod(output);
-      }
-    }
-
-    // Also write to log file
-    if (this.enableFile) {
-      const entry =
-        this.fileFormat === 'text'
-          ? output.trim()
-          : this.buildLogEntry(normalizedLevel, message, data);
-      this.writeToFile(normalizedLevel, entry);
+    // Force write to stdout/file by bypassing level check if possible?
+    // Pino respects configured level. We'll just log at 'info' or 'error'.
+    // And assume transport handles stdout.
+    const lvl = (typeof level === 'string' ? level : 'info').toLowerCase();
+    const sanitized = data ? sanitizeLogData(data) : undefined;
+    if (this.pino[lvl]) {
+      if (sanitized) this.pino[lvl](sanitized, message);
+      else this.pino[lvl](message);
     }
   }
 
-  /**
-   * Write raw text directly to terminal stdout (no formatting)
-   * Use for diagnostic reports, tables, etc.
-   * @param {string} text - Raw text to write
-   */
   terminalRaw(text) {
-    try {
-      if (typeof process !== 'undefined' && process.stdout) {
-        process.stdout.write(text);
-      }
-    } catch {
-      // Fallback
-      if (this.enableConsole) {
-        console.log(text);
-      }
-    }
-
-    // Also write to log file if enabled
-    if (this.enableFile && this.logFile) {
-      try {
-        const fs = require('fs');
-        fs.appendFileSync(this.logFile, text);
-      } catch {
-        // Ignore file write errors for raw output
-      }
-    }
+    // Direct write for raw output (legacy support)
+    // Pino doesn't support raw text bypass easily.
+    // We'll log as info message.
+    this.info(text);
   }
 }
 
 // Create singleton instance
 const logger = new Logger();
 
-// Set log level based on environment
-if (typeof process !== 'undefined' && process.env.NODE_ENV === 'development') {
-  logger.setLevel(LOG_LEVELS.DEBUG);
-} else {
-  logger.setLevel(LOG_LEVELS.INFO);
-}
-
-/**
- * DUP-5: Logger factory function to reduce boilerplate
- * Creates a logger instance with context already set
- *
- * Instead of:
- *   const { logger } = require('../../shared/logger');
- *   logger.setContext('ServiceName');
- *
- * Use:
- *   const { createLogger } = require('../../shared/logger');
- *   const logger = createLogger('ServiceName');
- *
- * @param {string} context - The context name for this logger
- * @returns {Logger} Logger instance with context set
- */
+// Factory functions
 function createLogger(context) {
-  // Create a new logger instance for this context
-  // This allows different modules to have independent log levels if needed
-  const contextLogger = new Logger();
-  // Inherit configuration from singleton so context loggers behave consistently
-  contextLogger.setLevel(logger.level);
-  contextLogger.enableConsole = logger.enableConsole;
+  const contextLogger = new Logger(context);
+  // Inherit settings from singleton
+  contextLogger.level = logger.level;
   contextLogger.enableFile = logger.enableFile;
   contextLogger.logFile = logger.logFile;
-  contextLogger.fileFormat = logger.fileFormat;
-  contextLogger.setContext(context);
+  contextLogger.enableConsole = logger.enableConsole;
+  contextLogger._initPino(); // Re-init with inherited settings
   return contextLogger;
 }
 
-/**
- * Get the singleton logger with context already set
- * Use this when you want all modules to share the same logger instance
- *
- * @param {string} context - The context name for this logger
- * @returns {Logger} The singleton logger with context set
- */
 function getLogger(context) {
   return createLogger(context);
 }
 
-// Export both the class and singleton
 module.exports = {
   Logger,
   logger,
   LOG_LEVELS,
   LOG_LEVEL_NAMES,
-  // DUP-5: Factory functions
   createLogger,
   getLogger,
-  // Shared utility for sanitizing log data (used by ErrorHandler.js)
   sanitizeLogData
 };

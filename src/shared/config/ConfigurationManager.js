@@ -75,7 +75,7 @@ class ConfigurationManager {
 
   /**
    * Get a configuration value by path
-   * @param {string} path - Dot-separated path (e.g., 'SERVER.chromaUrl')
+   * @param {string} path - Dot-separated path (e.g., 'SERVER.devServerPort')
    * @param {*} [defaultValue] - Default value if not found
    * @returns {*} Configuration value
    */

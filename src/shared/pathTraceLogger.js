@@ -39,7 +39,7 @@ const PathStage = {
   // Coordinator stages
   COORDINATOR_START: 'coordinator-start',
   COORDINATOR_COMPLETE: 'coordinator-complete',
-  CHROMADB_UPDATE: 'chromadb-update',
+  VECTOR_DB_UPDATE: 'vector-db-update',
   HISTORY_UPDATE: 'history-update',
   QUEUE_UPDATE: 'queue-update',
   PROCESSING_STATE_UPDATE: 'processing-state-update',
@@ -298,7 +298,7 @@ function traceDeleteComplete(filePath, source, success, error = null) {
 /**
  * Trace a database path update (coordinator)
  *
- * @param {string} system - System being updated (chromadb, history, queue, etc.)
+ * @param {string} system - System being updated (vectordb, history, queue, etc.)
  * @param {string} oldPath - Original path
  * @param {string} newPath - New path
  * @param {boolean} success - Whether update succeeded
@@ -307,7 +307,7 @@ function traceDeleteComplete(filePath, source, success, error = null) {
  */
 function traceDbUpdate(system, oldPath, newPath, success, error = null) {
   const stageMap = {
-    chromadb: PathStage.CHROMADB_UPDATE,
+    vectordb: PathStage.VECTOR_DB_UPDATE,
     history: PathStage.HISTORY_UPDATE,
     queue: PathStage.QUEUE_UPDATE,
     processingState: PathStage.PROCESSING_STATE_UPDATE
@@ -411,7 +411,7 @@ function traceHistoryUpdate(oldPath, newPath, entryId, success) {
 }
 
 /**
- * Trace ChromaDB metadata update
+ * Trace vector DB metadata update
  *
  * @param {string} oldPath - Original path
  * @param {string} newPath - New path
@@ -420,12 +420,12 @@ function traceHistoryUpdate(oldPath, newPath, entryId, success) {
  * @param {string} [error] - Error message if failed
  * @returns {Object} Event object
  */
-function traceChromaDbUpdate(oldPath, newPath, variantsUpdated, success, error = null) {
+function traceVectorDbUpdate(oldPath, newPath, variantsUpdated, success, error = null) {
   return tracePathEvent({
-    stage_name: PathStage.CHROMADB_UPDATE,
+    stage_name: PathStage.VECTOR_DB_UPDATE,
     old_path: oldPath,
     new_path: newPath,
-    source: 'chromadb/fileOperations',
+    source: 'vectordb/fileOperations',
     success,
     error,
     extra: { variants_updated: variantsUpdated }
@@ -469,7 +469,7 @@ function traceCoordinatorComplete(oldPath, newPath, updated, errorCount) {
     source: 'FilePathCoordinator',
     success: errorCount === 0,
     extra: {
-      updated_chromadb: updated.chromaDb,
+      updated_vectordb: updated.vectorDb,
       updated_history: updated.analysisHistory,
       updated_queue: updated.embeddingQueue,
       updated_processing: updated.processingState,
@@ -495,7 +495,7 @@ module.exports = {
   traceCacheInvalidateBatch,
   traceQueueUpdate,
   traceHistoryUpdate,
-  traceChromaDbUpdate,
+  traceVectorDbUpdate,
   traceCoordinatorStart,
   traceCoordinatorComplete,
   buildFileId,

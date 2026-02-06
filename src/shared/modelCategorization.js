@@ -1,7 +1,7 @@
 /**
  * Model Categorization Utilities
  *
- * Shared model categorization logic for Ollama models.
+ * Shared model categorization logic for local models.
  * Consolidates patterns from multiple modules into a single source of truth.
  *
  * @module shared/modelCategorization

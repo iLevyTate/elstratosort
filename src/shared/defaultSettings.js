@@ -3,9 +3,8 @@
  * Single source of truth for all default settings
  */
 
-const { SERVICE_URLS } = require('./configDefaults');
 const { CONCURRENCY } = require('./performanceConstants');
-const { DEFAULT_AI_MODELS } = require('./constants');
+const { AI_DEFAULTS, DEFAULT_AI_MODELS, SETTINGS_SCHEMA_VERSION } = require('./constants');
 const { DEFAULT_CHAT_PERSONA_ID } = require('./chatPersonas');
 
 const DEFAULT_SETTINGS = {
@@ -37,10 +36,16 @@ const DEFAULT_SETTINGS = {
   caseConvention: 'kebab-case',
   separator: '-',
   // AI - model defaults imported from constants.js for single source of truth
-  ollamaHost: SERVICE_URLS.OLLAMA_HOST,
   textModel: DEFAULT_AI_MODELS.TEXT_ANALYSIS,
   visionModel: DEFAULT_AI_MODELS.IMAGE_ANALYSIS,
   embeddingModel: DEFAULT_AI_MODELS.EMBEDDING,
+  // Llama-specific tuning (in-process)
+  llamaGpuLayers: AI_DEFAULTS?.TEXT?.GPU_LAYERS ?? -1,
+  llamaContextSize: AI_DEFAULTS?.TEXT?.CONTEXT_SIZE ?? 8192,
+  // Vector DB persistence (relative to userData)
+  vectorDbPersistPath: 'vector-db',
+  // Settings schema version for migrations
+  settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
   // Embedding workflow controls
   // - during_analysis: embed while analyzing (current/default)
   // - after_organize: defer file embeddings until after moves/renames
@@ -53,14 +58,6 @@ const DEFAULT_SETTINGS = {
   defaultEmbeddingPolicy: 'embed',
   chatPersona: DEFAULT_CHAT_PERSONA_ID,
   chatResponseMode: 'fast',
-  // Dependency lifecycle management (user consent required)
-  autoUpdateOllama: false,
-  autoUpdateChromaDb: false,
-  // First-run UX
-  dependencyWizardShown: false,
-  // Re-prompt cadence (only used when dependencies are still missing)
-  dependencyWizardLastPromptAt: null, // ISO string
-  dependencyWizardPromptIntervalDays: 7,
   // File Size Limits (in bytes)
   maxFileSize: 100 * 1024 * 1024, // 100MB default
   maxImageFileSize: 100 * 1024 * 1024, // 100MB
@@ -75,13 +72,8 @@ const DEFAULT_SETTINGS = {
   workflowRestoreMaxAge: 60 * 60 * 1000, // 1 hour - how long to keep workflow state
   saveDebounceMs: 1000, // Debounce delay for auto-save
 
-  // Learning/Feedback ChromaDB Sync
-  // When enabled, learning patterns and feedback are dual-written to ChromaDB in addition to JSON
-  // This enables semantic retrieval of learned patterns in the future
   // Chunking: auto-generate chunk embeddings during file analysis (opt-in)
   autoChunkOnAnalysis: false,
-  enableChromaLearningSync: false, // Default off - JSON primary for backward compatibility
-  enableChromaLearningDryRun: false, // When true, logs ChromaDB operations without executing
   // Graph-aware retrieval (GraphRAG-lite)
   graphExpansionEnabled: true,
   graphExpansionWeight: 0.2,

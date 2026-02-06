@@ -12,7 +12,7 @@ const { SUPPORTED_IMAGE_EXTENSIONS } = require('./constants');
 const { normalizePathForIndex } = require('./pathSanitization');
 
 /**
- * Generate a semantic file ID for ChromaDB storage
+ * Generate a semantic file ID for vector storage
  * Format: "image:{path}" for images, "file:{path}" for other files
  *
  * @param {string} filePath - The file path

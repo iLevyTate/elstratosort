@@ -154,7 +154,7 @@ const withRetry = consolidatedWithRetry;
  * making otherwise silent failures visible for debugging.
  *
  * @param {Object} logger - Logger instance with debug/warn methods
- * @param {string} context - Context identifier (e.g., 'DocumentExtractor', 'OllamaUtils')
+ * @param {string} context - Context identifier (e.g., 'DocumentExtractor', 'LlamaUtils')
  * @param {string} operation - Description of the operation that failed
  * @param {Error|string} error - The caught error or error message
  * @param {*} fallbackValue - The fallback value to return
@@ -170,7 +170,7 @@ const withRetry = consolidatedWithRetry;
  *
  * // With warn level:
  * catch (error) {
- *   return logFallback(logger, 'OllamaUtils', 'loadConfig', error, {}, { level: 'warn' });
+ *   return logFallback(logger, 'LlamaUtils', 'loadConfig', error, {}, { level: 'warn' });
  * }
  */
 function logFallback(logger, context, operation, error, fallbackValue, options = {}) {

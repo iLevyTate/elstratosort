@@ -66,7 +66,7 @@ const SEPARATOR_PATTERN = /^[^/\\:*?"<>|]+$/;
 
 /**
  * URL validation pattern
- * Matches: http://127.0.0.1:11434, https://localhost:11434, http://hostname:port/path
+ * Matches: http://127.0.0.1:8080, https://localhost:3000, http://hostname:port/path
  * Supports IP addresses, localhost, and hostnames with optional port and path
  */
 const URL_PATTERN =

@@ -59,7 +59,7 @@ const TIMEOUTS = {
   MODEL_DISCOVERY: 5000, // Model discovery/list timeout
   EMBEDDING_REQUEST: 30000, // FIX: Per-request timeout for embedding calls to prevent indefinite hangs
   BATCH_EMBEDDING_MAX: 5 * 60 * 1000, // 5 minutes max for batch embedding operations
-  MODEL_LIST: 15000, // Timeout for listing all models from Ollama
+  MODEL_LIST: 15000, // Timeout for listing all local models
   DELAY_MICRO: 50, // Very short delays for race condition prevention
   DELAY_TINY: 5, // Minimal delay for inter-file processing
   DELAY_MINI: 10, // Small delay for inter-batch processing
@@ -103,15 +103,14 @@ const RETRY = {
   NETWORK_REQUEST: { maxAttempts: 5, initialDelay: 1000, maxDelay: 10000 },
   AI_ANALYSIS: { maxAttempts: 2, initialDelay: 2000, maxDelay: 10000 },
   IPC_HANDLER: { maxAttempts: 5, initialDelay: 100 },
-  OLLAMA_API: { maxAttempts: 3, initialDelay: 1000, maxDelay: 4000 },
-  CHROMADB: { maxAttempts: 3, initialDelay: 500, maxDelay: 5000 },
+  LLAMA_API: { maxAttempts: 3, initialDelay: 1000, maxDelay: 4000 },
+  VECTOR_DB: { maxAttempts: 3, initialDelay: 500, maxDelay: 5000 },
   DATABASE_OFFLINE_MAX: 10,
   ITEM_MAX_RETRIES: 3,
   BACKOFF_BASE_MS: 5000,
   BACKOFF_MAX_MS: 300000,
   // Atomic operation retry backoff (multiplied by attempt number)
-  ATOMIC_BACKOFF_STEP_MS: 50, // e.g., 50ms, 100ms, 150ms for attempts 1, 2, 3
-  CHROMADB_BACKOFF_STEP_MS: 100 // e.g., 100ms, 200ms, 300ms for attempts 1, 2, 3
+  ATOMIC_BACKOFF_STEP_MS: 50 // e.g., 50ms, 100ms, 150ms for attempts 1, 2, 3
 };
 
 const CACHE = {
@@ -120,8 +119,6 @@ const CACHE = {
   MAX_EMBEDDING_CACHE: 1000,
   MAX_ANALYSIS_CACHE: 200,
   MAX_LRU_CACHE: 100,
-  CHROMADB_QUERY_CACHE_SIZE: 200,
-  CHROMADB_QUERY_TTL_MS: 120000,
   TTL_SHORT: 5 * 60 * 1000,
   TTL_MEDIUM: 30 * 60 * 1000,
   TTL_LONG: 2 * 60 * 60 * 1000,
@@ -144,7 +141,6 @@ const BATCH = {
   EMBEDDING_BATCH_SIZE: 50,
   EMBEDDING_PARALLEL_SIZE: 10,
   EMBEDDING_FLUSH_DELAY_MS: 500,
-  CHROMADB_INSERT_DELAY_MS: 100,
   SEMANTIC_BATCH_SIZE: 50,
   AUTO_ORGANIZE_BATCH_SIZE: getEnvNumber('AUTO_ORGANIZE_BATCH_SIZE', 10, {
     min: 1,
@@ -157,7 +153,6 @@ const POLLING = {
   NORMAL: 500,
   SLOW: 2000,
   VERY_SLOW: 5000,
-  CHROMADB_HEALTH_CHECK: 30000,
   STARTUP_POLL_INITIAL: 50,
   STARTUP_POLL_SLOW: 200,
   STARTUP_POLL_SLOWER: 500,
@@ -276,8 +271,6 @@ const LIMITS = {
 const IMAGE = { MAX_DIMENSION: 1536 };
 
 const NETWORK = {
-  OLLAMA_PORT: 11434,
-  CHROMADB_PORT: 8000,
   DEV_SERVER_PORT: 3000,
   HTTPS_PORT: 443,
   HTTP_PORT: 80,
@@ -327,22 +320,23 @@ const GPU_TUNING = {
 };
 
 /**
- * Ollama-specific performance tuning constants
- * Based on 2025 best practices for local LLM inference
+ * LLM inference performance tuning constants
+ * Used for node-llama-cpp in-process inference
+ * Based on 2026 best practices for local LLM inference
  */
-const OLLAMA = {
+const LLAMA = {
   // Max loaded models - actual value is VRAM-dependent (set in PerformanceService)
   // 8GB+: 3 models (text + vision + embedding), <8GB: 2 models
   MAX_LOADED_MODELS: 2, // Default for <8GB VRAM
-  // Parallel requests for embeddings (1 is more stable)
+  // Parallel requests for embeddings (1 is more stable with in-process inference)
   NUM_PARALLEL_EMBEDDINGS: 1,
-  // Keep model in memory duration
-  KEEP_ALIVE_DEFAULT: '10m',
+  // GPU layers configuration (-1 = auto-detect)
+  GPU_LAYERS_DEFAULT: -1,
   // Context window sizes by task type
   CONTEXT_EMBEDDINGS: 512,
   CONTEXT_VISION: 2048,
   CONTEXT_TEXT: 8192,
-  // Rate limiting
+  // Rate limiting (internal, not network-based)
   MAX_REQUESTS_PER_SECOND: 5,
   RATE_LIMIT_WINDOW_MS: 1000
 };
@@ -462,7 +456,7 @@ module.exports = {
   DEBOUNCE,
   CONCURRENCY,
   GPU_TUNING,
-  OLLAMA,
+  LLAMA,
   WINDOW,
   PROCESS,
   TRUNCATION,

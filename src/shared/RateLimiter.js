@@ -5,7 +5,7 @@
  *
  * Two patterns are available:
  * 1. SlidingWindowRateLimiter - Limits calls per time window (X calls per Y ms)
- * 2. Semaphore - Limits concurrent in-flight requests (used in OllamaClient)
+ * 2. Semaphore - Limits concurrent in-flight requests (used in LlamaService)
  *
  * @module shared/RateLimiter
  */
@@ -275,20 +275,20 @@ class Semaphore {
 }
 
 /**
- * Create a pre-configured rate limiter for Ollama requests
+ * Create a pre-configured rate limiter for LLM requests (node-llama-cpp)
  * @param {Object} options - Configuration options
  * @param {number} options.maxCalls - Max calls per window (default: 5)
  * @param {number} options.windowMs - Window size in ms (default: 1000)
  * @returns {SlidingWindowRateLimiter}
  */
-function createOllamaRateLimiter(options = {}) {
+function createLlamaRateLimiter(options = {}) {
   return new SlidingWindowRateLimiter(options.maxCalls || 5, options.windowMs || 1000);
 }
 
 module.exports = {
   SlidingWindowRateLimiter,
   Semaphore,
-  createOllamaRateLimiter,
+  createLlamaRateLimiter,
   // Alias for backward compatibility
   RateLimiter: SlidingWindowRateLimiter
 };

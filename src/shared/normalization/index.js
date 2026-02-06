@@ -34,7 +34,7 @@ function classifyErrorType(message) {
   if (msg.includes('not found') || msg.includes('enoent')) return 'FILE_NOT_FOUND';
   if (msg.includes('model') && (msg.includes('not found') || msg.includes('unknown')))
     return 'MODEL_NOT_FOUND';
-  if (msg.includes('ollama')) return 'OLLAMA_ERROR';
+  if (msg.includes('llama') || msg.includes('ai engine')) return 'AI_ENGINE_ERROR';
   if (msg.includes('memory') || msg.includes('oom')) return 'OUT_OF_MEMORY';
   if (msg.includes('too large') || msg.includes('size limit')) return 'FILE_TOO_LARGE';
   if (msg.includes('permission') || msg.includes('access denied')) return 'PERMISSION_DENIED';
@@ -43,7 +43,7 @@ function classifyErrorType(message) {
 }
 
 function isRetryableErrorType(errorType) {
-  return ['TIMEOUT', 'NETWORK', 'OLLAMA_ERROR'].includes(errorType);
+  return ['TIMEOUT', 'NETWORK', 'AI_ENGINE_ERROR'].includes(errorType);
 }
 
 function normalizeError(error, context = {}) {

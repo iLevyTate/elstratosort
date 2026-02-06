@@ -65,24 +65,6 @@ function getNpmCommand() {
 }
 
 /**
- * Get ChromaDB CLI executable name from node_modules
- * The npm package 'chromadb' provides a CLI binary named 'chroma' (not 'chromadb')
- * @returns {string} chroma executable
- */
-function getChromaDbBinName() {
-  return getExecutableName('chroma');
-}
-
-/**
- * Get ChromaDB CLI executable candidates (new + legacy)
- * @returns {string[]} chroma executable candidates
- */
-function getChromaDbBinCandidates() {
-  const candidates = [getExecutableName('chroma'), getExecutableName('chromadb')];
-  return [...new Set(candidates.filter(Boolean))];
-}
-
-/**
  * Get NVIDIA SMI executable for GPU detection
  * @returns {string} nvidia-smi executable
  */
@@ -176,8 +158,6 @@ module.exports = {
 
   // Command helpers (legacy API)
   getNpmCommand,
-  getChromaDbBinName,
-  getChromaDbBinCandidates,
   getNvidiaSmiCommand,
   getSleepCommand,
   getKillCommand,
