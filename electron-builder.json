@@ -12,11 +12,21 @@
   "compression": "maximum",
   "asar": true,
   "asarUnpack": [
-    "**/*.{node,dll}",
+    "**/*.{node,dll,so,dylib,gguf,bin}",
     "**/node_modules/sharp/**/*",
     "**/node_modules/@img/**/*",
     "**/node_modules/tesseract.js-core/**/*",
-    "**/node_modules/tesseract.js/dist/**/*"
+    "**/node_modules/tesseract.js/dist/**/*",
+    "**/node_modules/node-llama-cpp/**/*",
+    "**/node_modules/@node-llama-cpp/**/*",
+    "**/node_modules/@napi-rs/canvas/**/*",
+    "**/node_modules/better-sqlite3/**/*",
+    "**/node_modules/lz4-napi/**/*",
+    "**/node_modules/pino/**/*",
+    "**/node_modules/pino-pretty/**/*",
+    "**/node_modules/thread-stream/**/*",
+    "**/node_modules/piscina/**/*",
+    "dist/*Worker.js"
   ],
   "files": [
     "dist/**/*",
@@ -153,13 +163,9 @@
         "stratosort-logo.png",
         "icons/win/icon.ico",
         "icons/png/*.png",
-        "entitlements.mac.plist"
+        "entitlements.mac.plist",
+        "runtime/**"
       ]
-    },
-    {
-      "from": "assets/runtime/",
-      "to": "assets/runtime/",
-      "filter": ["**/*", "!.cache/**"]
     }
   ]
 }

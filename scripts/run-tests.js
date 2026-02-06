@@ -26,7 +26,7 @@ if (catIndex !== -1) {
   if (value) {
     const map = {
       'file-upload': 'react-app|integration',
-      'ai-processing': 'ollama|model-verifier',
+      'ai-processing': 'llama|model-verifier',
       performance: 'performance'
     };
     const pattern = map[String(value)] || String(value);

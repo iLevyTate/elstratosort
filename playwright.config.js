@@ -6,7 +6,7 @@
  *
  * Prerequisites:
  * - Run `npm run build:dev` before running tests to ensure the renderer is built
- * - Ollama should be running for AI-related tests (optional, tests handle missing Ollama)
+ * - Models should be available for AI-related tests (optional)
  *
  * Running tests:
  * - `npm run test:e2e` - Run all E2E tests in headless mode
@@ -69,8 +69,7 @@ module.exports = defineConfig({
     ...(process.env.CI ? [['github']] : [])
   ],
 
-  // Global setup/teardown
-  globalSetup: path.join(__dirname, 'test/e2e/helpers/globalSetup.js'),
+  // Global teardown
   globalTeardown: path.join(__dirname, 'test/e2e/helpers/globalTeardown.js'),
 
   // Projects configuration - Electron doesn't use browser projects

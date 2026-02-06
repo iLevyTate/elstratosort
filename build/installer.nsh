@@ -58,10 +58,10 @@
   DeleteRegKey HKCU "Software\Classes\Applications\StratoSort.exe"
   DeleteRegKey HKCU "Software\StratoSort"
 
-  ; Ask about app data (includes ChromaDB data, settings, logs)
-  MessageBox MB_YESNO "Remove all StratoSort settings and data?$\r$\n$\r$\nThis includes:$\r$\n• AI embedding database (ChromaDB)$\r$\n• User settings and preferences$\r$\n• Application logs" IDNO SkipAppData
+  ; Ask about app data (includes vector DB data, settings, logs)
+  MessageBox MB_YESNO "Remove all StratoSort settings and data?$\r$\n$\r$\nThis includes:$\r$\n• AI embedding database$\r$\n• User settings and preferences$\r$\n• Application logs" IDNO SkipAppData
     RMDir /r "$APPDATA\StratoSort"
-    ; Also clean up Local AppData (contains Electron cache, chromadb data)
+    ; Also clean up Local AppData (contains Electron cache, vector DB data)
     RMDir /r "$LOCALAPPDATA\StratoSort"
   SkipAppData:
 !macroend

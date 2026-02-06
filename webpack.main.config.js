@@ -7,22 +7,19 @@ const commonConfig = (isProduction) => ({
   module: {
     rules: [
       {
-        test: /\.(js|ts)$/,
+        test: /\.js$/,
         exclude: /node_modules/,
         use: {
           loader: 'babel-loader',
           options: {
-            presets: [
-              ['@babel/preset-env', { targets: { node: 'current' } }],
-              '@babel/preset-typescript'
-            ]
+            presets: [['@babel/preset-env', { targets: { node: 'current' } }]]
           }
         }
       }
     ]
   },
   resolve: {
-    extensions: ['.js', '.ts', '.json']
+    extensions: ['.js', '.json']
   },
   optimization: {
     minimize: isProduction,
@@ -48,7 +45,9 @@ module.exports = (env, argv) => {
   const mainConfig = {
     ...common,
     entry: {
-      main: './src/main/simple-main.js'
+      main: './src/main/simple-main.js',
+      ocrWorker: './src/main/workers/ocrWorker.js',
+      embeddingWorker: './src/main/workers/embeddingWorker.js'
     },
     output: {
       path: path.resolve(__dirname, 'dist'),
@@ -56,22 +55,39 @@ module.exports = (env, argv) => {
       clean: false
     },
     target: 'electron-main',
-    externals: {
-      electron: 'commonjs electron',
-      sharp: 'commonjs sharp',
-      'node-tesseract-ocr': 'commonjs node-tesseract-ocr',
-      chromadb: 'commonjs chromadb',
-      'electron-updater': 'commonjs electron-updater',
-      'pdf-parse': 'commonjs pdf-parse'
-    },
-    ignoreWarnings: [
-      (warning) =>
-        /Critical dependency: the request of a dependency is an expression/.test(
-          warning?.message || ''
-        ) &&
-        /[\\/]node_modules[\\/]pdf-parse[\\/]dist[\\/]pdf-parse[\\/]cjs[\\/]index\.cjs$/.test(
-          warning?.module?.resource || ''
-        )
+    externals: [
+      {
+        electron: 'commonjs electron',
+        sharp: 'commonjs sharp',
+        'electron-updater': 'commonjs electron-updater',
+        'better-sqlite3': 'commonjs better-sqlite3',
+        'lz4-napi': 'commonjs lz4-napi',
+        // Pino uses thread-stream which spawns Worker threads via __dirname-relative
+        // paths. Bundling breaks __dirname resolution, so keep pino ecosystem external.
+        pino: 'commonjs pino',
+        'pino-pretty': 'commonjs pino-pretty',
+        // Piscina spawns its internal bootstrap worker via resolve(__dirname, 'worker.js').
+        // Bundling moves __dirname to dist/ where piscina's worker.js doesn't exist.
+        piscina: 'commonjs piscina'
+      },
+      ({ request }, callback) => {
+        if (!request) return callback();
+
+        if (
+          request === 'node-llama-cpp' ||
+          request.startsWith('@node-llama-cpp/') ||
+          request === '@reflink/reflink' ||
+          request.startsWith('@reflink/')
+        ) {
+          return callback(null, `commonjs ${request}`);
+        }
+
+        if (request.endsWith('.node')) {
+          return callback(null, `commonjs ${request}`);
+        }
+
+        return callback();
+      }
     ],
     plugins: [
       new webpack.DefinePlugin({
@@ -103,9 +119,7 @@ module.exports = (env, argv) => {
     externals: {
       electron: 'commonjs electron',
       // Preload doesn't have access to these native modules anyway
-      sharp: 'commonjs sharp',
-      'node-tesseract-ocr': 'commonjs node-tesseract-ocr',
-      chromadb: 'commonjs chromadb'
+      sharp: 'commonjs sharp'
     },
     plugins: [
       new webpack.DefinePlugin({

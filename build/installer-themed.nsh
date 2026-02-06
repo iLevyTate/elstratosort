@@ -33,7 +33,7 @@
 ; WELCOME PAGE CUSTOMIZATION
 ; ============================================================================
 !define MUI_WELCOMEPAGE_TITLE "Welcome to StratoSort Setup"
-!define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of StratoSort.$\r$\n$\r$\nStratoSort uses AI to intelligently organize your files into smart folders. After installation, the app will help you set up the optional AI components (Ollama and ChromaDB).$\r$\n$\r$\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of StratoSort.$\r$\n$\r$\nStratoSort uses AI to intelligently organize your files into smart folders. After installation, the app will help you set up local models and OCR components.$\r$\n$\r$\nClick Next to continue."
 
 ; ============================================================================
 ; FINISH PAGE CUSTOMIZATION
@@ -116,10 +116,10 @@
   DeleteRegKey HKCU "Software\Classes\Applications\StratoSort.exe"
   DeleteRegKey HKCU "Software\StratoSort"
 
-  ; Ask about app data (includes ChromaDB data, settings, logs)
-  MessageBox MB_YESNO "Remove all StratoSort settings and data?$\r$\n$\r$\nThis includes:$\r$\n• AI embedding database (ChromaDB)$\r$\n• User settings and preferences$\r$\n• Application logs" IDNO SkipAppData
+  ; Ask about app data (includes vector DB data, settings, logs)
+  MessageBox MB_YESNO "Remove all StratoSort settings and data?$\r$\n$\r$\nThis includes:$\r$\n• AI embedding database$\r$\n• User settings and preferences$\r$\n• Application logs" IDNO SkipAppData
     RMDir /r "$APPDATA\StratoSort"
-    ; Also clean up Local AppData (contains Electron cache, chromadb data)
+    ; Also clean up Local AppData (contains Electron cache, vector DB data)
     RMDir /r "$LOCALAPPDATA\StratoSort"
   SkipAppData:
 !macroend

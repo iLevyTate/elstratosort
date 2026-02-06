@@ -2,7 +2,6 @@
 
 const path = require('path');
 const fs = require('fs');
-const { asyncSpawn } = require('../src/main/utils/asyncSpawnUtils');
 
 // Inline ANSI helpers (chalk v5+ is ESM-only, incompatible with require())
 const ansi = {
@@ -30,13 +29,6 @@ function printStatus(ok, label, details) {
   console.log(`${icon} ${label}${details ? ansi.gray(` — ${details}`) : ''}`);
 }
 
-async function runCmd(cmd, args = []) {
-  return await asyncSpawn(cmd, args, {
-    encoding: 'utf8',
-    timeout: 5000
-  });
-}
-
 async function main() {
   console.log(ansi.cyanBold('\nStratoSort Startup Checklist'));
   // Basic file presence
@@ -47,28 +39,11 @@ async function main() {
   printStatus(hasRendererIndex, 'Renderer index present', 'src/renderer/index.html');
   printStatus(hasDistIndex, 'Built renderer present', 'dist/index.html');
 
-  // Check Ollama (optional) - using async spawn to avoid blocking
-  const ollamaHost = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
-  const curl = await runCmd(
-    process.platform === 'win32' ? 'powershell.exe' : 'curl',
-    process.platform === 'win32'
-      ? [
-          '-NoProfile',
-          '-Command',
-          `try { (Invoke-WebRequest -Uri "${ollamaHost}/api/tags" -UseBasicParsing).StatusCode } catch { 0 }`
-        ]
-      : ['-s', '-o', '/dev/null', '-w', '%{http_code}', `${ollamaHost}/api/tags`]
-  );
-  const httpCode = (curl.stdout || '').toString().trim();
-  const connected = httpCode && httpCode !== '0' && httpCode !== '000';
-  printStatus(
-    connected,
-    'Ollama reachable',
-    connected ? `${ollamaHost}` : 'Optional: start with "ollama serve"'
-  );
+  // Check models directory
+  const hasModels = checkFileExists('models');
+  printStatus(hasModels, 'Models directory present', 'GGUF models storage');
 
   // Final hint
-
   console.log(
     `\n${ansi.gray('Tip:')} Run ${ansi.yellow('npm run dev')} to build and launch in development mode.`
   );

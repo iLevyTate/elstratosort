@@ -28,7 +28,7 @@ module.exports = (env, argv) => {
     module: {
       rules: [
         {
-          test: /\.(js|jsx|ts|tsx)$/,
+          test: /\.(js|jsx)$/,
           exclude: /node_modules/,
           use: {
             loader: 'babel-loader',
@@ -40,8 +40,7 @@ module.exports = (env, argv) => {
                     targets: { electron: '40.0' }
                   }
                 ],
-                '@babel/preset-react',
-                '@babel/preset-typescript'
+                '@babel/preset-react'
               ],
               plugins: [
                 '@babel/plugin-transform-react-jsx',
@@ -82,7 +81,7 @@ module.exports = (env, argv) => {
       ]
     },
     resolve: {
-      extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
+      extensions: ['.js', '.jsx', '.json'],
       // FIX: Use consistent fallbacks for both dev and prod to avoid module resolution issues
       // Redux Toolkit and other modern libraries require process polyfill
       // Note: crypto fallback disabled - renderer uses native Web Crypto API instead
@@ -160,7 +159,7 @@ module.exports = (env, argv) => {
           // Security headers
           headers: {
             'Content-Security-Policy':
-              "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' http://localhost:11434 http://127.0.0.1:11434 ws://localhost:*; object-src 'none'; base-uri 'self'; form-action 'self';"
+              "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws://localhost:*; object-src 'none'; base-uri 'self'; form-action 'self';"
           }
         },
 

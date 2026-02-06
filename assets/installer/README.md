@@ -40,7 +40,6 @@ The installer includes:
 ## Building
 
 ```bash
-npm run setup:runtime
 npm run dist:win
 ```
 

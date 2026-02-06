@@ -15,8 +15,7 @@ function main(
   const isCI = parseBool(env.CI);
   const skipAppDeps = parseBool(env.SKIP_APP_DEPS);
 
-  // Only required step: rebuild native modules (e.g. Sharp) for Electron's Node version.
-  // The app's UI (AiDependenciesModal) handles Ollama/ChromaDB installation on first launch.
+  // Rebuild native modules (including node-llama-cpp and sharp)
   if (!isCI && !skipAppDeps) {
     log.log('[postinstall] Rebuilding native modules for Electron...');
     const result = spawnSyncImpl('npx', ['--no', 'electron-builder', 'install-app-deps'], {
@@ -31,12 +30,10 @@ function main(
     }
   }
 
-  // Run setup scripts (best effort)
-  const setupScripts = [
-    'scripts/setup-ollama.js',
-    'scripts/setup-chromadb.js',
-    'scripts/setup-tesseract.js'
-  ];
+  // Run remaining setup scripts (best-effort)
+  // In-process AI stack (node-llama-cpp + Orama) requires no external runtime setup.
+  // Only model bootstrap remains (GGUF downloads/registry initialization).
+  const setupScripts = ['scripts/setup-models.js'];
   for (const script of setupScripts) {
     try {
       // Use node to run the script
@@ -54,7 +51,7 @@ function main(
 
   log.log('\n[StratoSort] Setup complete!');
   log.log('  Run: npm run dev');
-  log.log('  The app will guide you through AI setup on first launch.\n');
+  log.log('  The app will use local AI engine (node-llama-cpp + Orama).\n');
 
   return 0;
 }
