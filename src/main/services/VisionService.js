@@ -1,0 +1,624 @@
+const path = require('path');
+const fs = require('fs');
+const http = require('http');
+const https = require('https');
+const { spawn } = require('child_process');
+const AdmZip = require('adm-zip');
+const tar = require('tar');
+const { app } = require('electron');
+const { createLogger } = require('../../shared/logger');
+const { createSingletonHelpers } = require('../../shared/singletonFactory');
+const { resolveRuntimePath } = require('../utils/runtimePaths');
+
+const logger = createLogger('VisionService');
+
+const LLAMA_CPP_RELEASE_TAG = process.env.STRATOSORT_LLAMA_CPP_TAG || 'b7956';
+const LLAMA_CPP_BASE_URL = 'https://github.com/ggml-org/llama.cpp/releases/download';
+const SERVER_BINARY_NAME = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
+
+const DEFAULT_STARTUP_TIMEOUT_MS = 60000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 120000;
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function getRuntimeRoot(tag = LLAMA_CPP_RELEASE_TAG) {
+  return path.join(app.getPath('userData'), 'runtime', 'llama.cpp', tag);
+}
+
+function inferArchiveType(url) {
+  const lower = url.toLowerCase();
+  if (lower.endsWith('.zip')) return 'zip';
+  if (lower.endsWith('.tar.gz') || lower.endsWith('.tgz')) return 'tar.gz';
+  return null;
+}
+
+function getAssetConfig(tag = LLAMA_CPP_RELEASE_TAG) {
+  const overrideUrl = process.env.STRATOSORT_LLAMA_CPP_URL;
+  if (overrideUrl && overrideUrl.trim()) {
+    const archiveType = inferArchiveType(overrideUrl);
+    if (!archiveType) {
+      throw new Error('Unsupported llama.cpp runtime archive format');
+    }
+    return {
+      tag: 'custom',
+      assetName: path.basename(overrideUrl),
+      archiveType,
+      url: overrideUrl
+    };
+  }
+
+  const platform = process.platform;
+  const arch = process.arch;
+
+  if (platform === 'win32') {
+    const assetName =
+      arch === 'arm64' ? `llama-${tag}-bin-win-cpu-arm64.zip` : `llama-${tag}-bin-win-cpu-x64.zip`;
+    return {
+      tag,
+      assetName,
+      archiveType: 'zip',
+      url: `${LLAMA_CPP_BASE_URL}/${tag}/${assetName}`
+    };
+  }
+
+  if (platform === 'darwin') {
+    const assetName =
+      arch === 'arm64'
+        ? `llama-${tag}-bin-macos-arm64.tar.gz`
+        : `llama-${tag}-bin-macos-x64.tar.gz`;
+    return {
+      tag,
+      assetName,
+      archiveType: 'tar.gz',
+      url: `${LLAMA_CPP_BASE_URL}/${tag}/${assetName}`
+    };
+  }
+
+  if (platform === 'linux') {
+    if (arch !== 'x64') {
+      throw new Error(`Unsupported Linux architecture for vision runtime: ${arch}`);
+    }
+    const assetName = `llama-${tag}-bin-ubuntu-x64.tar.gz`;
+    return {
+      tag,
+      assetName,
+      archiveType: 'tar.gz',
+      url: `${LLAMA_CPP_BASE_URL}/${tag}/${assetName}`
+    };
+  }
+
+  throw new Error(`Unsupported platform for vision runtime: ${platform}`);
+}
+
+async function downloadFile(url, destination) {
+  await fs.promises.mkdir(path.dirname(destination), { recursive: true });
+
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { headers: { 'User-Agent': 'StratoSort' } }, (response) => {
+      if (
+        response.statusCode &&
+        response.statusCode >= 300 &&
+        response.statusCode < 400 &&
+        response.headers.location
+      ) {
+        response.destroy();
+        downloadFile(response.headers.location, destination).then(resolve).catch(reject);
+        return;
+      }
+
+      if (response.statusCode !== 200) {
+        reject(new Error(`Download failed with status ${response.statusCode}`));
+        response.resume();
+        return;
+      }
+
+      const fileStream = fs.createWriteStream(destination);
+      response.pipe(fileStream);
+
+      fileStream.on('finish', () => {
+        fileStream.close(resolve);
+      });
+      fileStream.on('error', (error) => {
+        fs.unlink(destination, () => reject(error));
+      });
+    });
+
+    request.on('error', reject);
+  });
+}
+
+async function extractArchive(archivePath, destination, archiveType) {
+  if (archiveType === 'zip') {
+    const zip = new AdmZip(archivePath);
+    zip.extractAllTo(destination, true);
+    return;
+  }
+
+  if (archiveType === 'tar.gz') {
+    await tar.x({ file: archivePath, cwd: destination });
+    return;
+  }
+
+  throw new Error(`Unsupported archive type: ${archiveType}`);
+}
+
+async function findBinary(rootDir, binaryName, maxDepth = 5) {
+  async function walk(dir, depth) {
+    if (depth < 0) return null;
+    let entries;
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name === binaryName) {
+        return path.join(dir, entry.name);
+      }
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const found = await walk(path.join(dir, entry.name), depth - 1);
+        if (found) return found;
+      }
+    }
+
+    return null;
+  }
+
+  return walk(rootDir, maxDepth);
+}
+
+async function getAvailablePort() {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer();
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      server.close(() => resolve(address.port));
+    });
+    server.on('error', reject);
+  });
+}
+
+async function requestJson({ method, port, path: endpointPath, body, timeoutMs, signal }) {
+  const payload = body ? JSON.stringify(body) : null;
+  const options = {
+    method,
+    hostname: '127.0.0.1',
+    port,
+    path: endpointPath,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {})
+    }
+  };
+
+  return new Promise((resolve, reject) => {
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk.toString('utf8');
+      });
+      res.on('end', () => {
+        if (!data) {
+          resolve({ status: res.statusCode, json: null });
+          return;
+        }
+        try {
+          resolve({ status: res.statusCode, json: JSON.parse(data) });
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+
+    if (timeoutMs) {
+      req.setTimeout(timeoutMs, () => {
+        req.destroy(new Error('Vision request timed out'));
+      });
+    }
+
+    if (signal) {
+      if (signal.aborted) {
+        req.destroy(new Error('Vision request aborted'));
+        return;
+      }
+      signal.addEventListener(
+        'abort',
+        () => {
+          req.destroy(new Error('Vision request aborted'));
+        },
+        { once: true }
+      );
+    }
+
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+function detectBase64Mime(imageBase64) {
+  if (typeof imageBase64 !== 'string') return null;
+  if (imageBase64.startsWith('/9j/')) return 'image/jpeg';
+  if (imageBase64.startsWith('iVBOR')) return 'image/png';
+  if (imageBase64.startsWith('R0lG')) return 'image/gif';
+  if (imageBase64.startsWith('UklGR')) return 'image/webp';
+  return null;
+}
+
+function detectMimeFromPath(filePath) {
+  const ext = path.extname(filePath || '').toLowerCase();
+  if (ext === '.png') return 'image/png';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.bmp') return 'image/bmp';
+  if (ext === '.tif' || ext === '.tiff') return 'image/tiff';
+  return null;
+}
+
+class VisionService {
+  constructor() {
+    this._process = null;
+    this._port = null;
+    this._binaryPath = null;
+    this._activeConfig = null;
+    this._runtimeInit = null;
+    this._startPromise = null;
+  }
+
+  async isAvailable() {
+    const envPath = process.env.STRATOSORT_LLAMA_SERVER_PATH;
+    if (envPath && fs.existsSync(envPath)) {
+      return true;
+    }
+
+    const packagedCandidate = resolveRuntimePath(SERVER_BINARY_NAME);
+    if (fs.existsSync(packagedCandidate)) {
+      return true;
+    }
+
+    try {
+      const asset = getAssetConfig();
+      const runtimeRoot = getRuntimeRoot(asset.tag);
+      const manifestPath = path.join(runtimeRoot, 'runtime.json');
+      if (fs.existsSync(manifestPath)) {
+        const manifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8'));
+        if (manifest?.binaryPath && fs.existsSync(manifest.binaryPath)) {
+          return true;
+        }
+      }
+    } catch {
+      // ignore availability checks that error
+    }
+
+    return false;
+  }
+
+  async _ensureBinary() {
+    if (this._binaryPath) {
+      return this._binaryPath;
+    }
+
+    const envPath = process.env.STRATOSORT_LLAMA_SERVER_PATH;
+    if (envPath) {
+      try {
+        await fs.promises.access(envPath);
+        this._binaryPath = envPath;
+        return envPath;
+      } catch {
+        logger.warn('[VisionService] STRATOSORT_LLAMA_SERVER_PATH not accessible', {
+          path: envPath
+        });
+      }
+    }
+
+    const packagedCandidate = resolveRuntimePath(SERVER_BINARY_NAME);
+    if (fs.existsSync(packagedCandidate)) {
+      this._binaryPath = packagedCandidate;
+      return packagedCandidate;
+    }
+
+    if (!this._runtimeInit) {
+      this._runtimeInit = this._downloadRuntime();
+    }
+    try {
+      await this._runtimeInit;
+    } catch (error) {
+      throw new Error(`Vision runtime not found: ${error.message}`);
+    }
+    return this._binaryPath;
+  }
+
+  async _downloadRuntime() {
+    const asset = getAssetConfig();
+    const runtimeRoot = getRuntimeRoot(asset.tag);
+    await fs.promises.mkdir(runtimeRoot, { recursive: true });
+
+    const manifestPath = path.join(runtimeRoot, 'runtime.json');
+    try {
+      const existing = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8'));
+      if (existing?.binaryPath && fs.existsSync(existing.binaryPath)) {
+        this._binaryPath = existing.binaryPath;
+        return;
+      }
+    } catch {
+      // Ignore missing/invalid manifest
+    }
+
+    const archivePath = path.join(runtimeRoot, asset.assetName);
+    logger.info('[VisionService] Downloading vision runtime', {
+      asset: asset.assetName
+    });
+    await downloadFile(asset.url, archivePath);
+    await extractArchive(archivePath, runtimeRoot, asset.archiveType);
+
+    const binaryPath = await findBinary(runtimeRoot, SERVER_BINARY_NAME);
+    if (!binaryPath) {
+      throw new Error('Vision runtime binary not found after extraction');
+    }
+
+    if (process.platform !== 'win32') {
+      try {
+        await fs.promises.chmod(binaryPath, 0o755);
+      } catch (error) {
+        logger.debug('[VisionService] Failed to chmod vision binary', { error: error.message });
+      }
+    }
+
+    this._binaryPath = binaryPath;
+    await fs.promises.writeFile(
+      manifestPath,
+      JSON.stringify(
+        {
+          tag: asset.tag,
+          assetName: asset.assetName,
+          binaryPath
+        },
+        null,
+        2
+      )
+    );
+
+    try {
+      await fs.promises.unlink(archivePath);
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+
+  _buildServerArgs(config, port) {
+    const args = [
+      '-m',
+      config.modelPath,
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(port),
+      '--no-webui'
+    ];
+
+    if (config.mmprojPath) {
+      args.push('--mmproj', config.mmprojPath);
+    }
+
+    if (typeof config.contextSize === 'number' && config.contextSize > 0) {
+      args.push('--ctx-size', String(config.contextSize));
+    }
+
+    if (typeof config.threads === 'number' && config.threads > 0) {
+      args.push('--threads', String(config.threads));
+    }
+
+    if (typeof config.gpuLayers === 'number' && config.gpuLayers >= 0) {
+      args.push('--n-gpu-layers', String(config.gpuLayers));
+    }
+
+    return args;
+  }
+
+  async _waitForHealth(port, timeoutMs = DEFAULT_STARTUP_TIMEOUT_MS) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const { status, json } = await requestJson({
+          method: 'GET',
+          port,
+          path: '/health'
+        });
+        if (status === 200 && (json?.status === 'ok' || json?.status === 'OK')) {
+          return;
+        }
+      } catch {
+        // ignore until timeout
+      }
+      await delay(500);
+    }
+    throw new Error('Vision runtime failed to start in time');
+  }
+
+  async _startServer(config) {
+    const binaryPath = await this._ensureBinary();
+    const port = await getAvailablePort();
+    const args = this._buildServerArgs(config, port);
+
+    logger.info('[VisionService] Starting vision runtime', {
+      binaryPath,
+      port
+    });
+
+    const child = spawn(binaryPath, args, {
+      cwd: path.dirname(binaryPath),
+      windowsHide: true,
+      env: {
+        ...process.env,
+        LLAMA_ARG_LOG_VERBOSITY: process.env.LLAMA_ARG_LOG_VERBOSITY || '2'
+      }
+    });
+
+    child.stdout?.on('data', (data) => {
+      logger.debug('[VisionService][stdout]', { message: data.toString() });
+    });
+
+    child.stderr?.on('data', (data) => {
+      logger.debug('[VisionService][stderr]', { message: data.toString() });
+    });
+
+    child.on('exit', (code, signal) => {
+      logger.warn('[VisionService] Vision runtime exited', { code, signal });
+      this._process = null;
+      this._port = null;
+      this._activeConfig = null;
+      this._startPromise = null;
+    });
+
+    this._process = child;
+    this._port = port;
+
+    await this._waitForHealth(port);
+  }
+
+  _configMatches(config) {
+    if (!this._activeConfig) return false;
+    return (
+      this._activeConfig.modelPath === config.modelPath &&
+      this._activeConfig.mmprojPath === config.mmprojPath &&
+      this._activeConfig.contextSize === config.contextSize &&
+      this._activeConfig.threads === config.threads &&
+      this._activeConfig.gpuLayers === config.gpuLayers
+    );
+  }
+
+  async _ensureServer(config) {
+    if (this._process && this._port && this._configMatches(config)) {
+      return;
+    }
+
+    if (this._process) {
+      await this.shutdown();
+    }
+
+    this._activeConfig = { ...config };
+    if (!this._startPromise) {
+      this._startPromise = this._startServer(config).catch((error) => {
+        this._startPromise = null;
+        throw error;
+      });
+    }
+
+    await this._startPromise;
+  }
+
+  async analyzeImage(options = {}) {
+    const {
+      imageBase64,
+      imagePath,
+      prompt,
+      systemPrompt,
+      maxTokens = 1024,
+      temperature = 0.2,
+      signal,
+      config
+    } = options;
+
+    if (!config?.modelPath) {
+      throw new Error('Vision model not found: no model path provided');
+    }
+
+    if (config?.mmprojRequired && !config?.mmprojPath) {
+      throw new Error('Vision model not found: missing multimodal projector');
+    }
+
+    await this._ensureServer(config);
+
+    let imageData = imageBase64;
+    let mimeType = null;
+
+    if (!imageData && imagePath) {
+      const buffer = await fs.promises.readFile(imagePath);
+      imageData = buffer.toString('base64');
+      mimeType = detectMimeFromPath(imagePath);
+    }
+
+    if (!imageData) {
+      throw new Error('Vision input not found');
+    }
+
+    if (!mimeType) {
+      mimeType = detectBase64Mime(imageData) || 'image/png';
+    }
+
+    const dataUrl = `data:${mimeType};base64,${imageData}`;
+    const response = await requestJson({
+      method: 'POST',
+      port: this._port,
+      path: '/v1/chat/completions',
+      body: {
+        model: path.basename(config.modelPath),
+        messages: [
+          systemPrompt
+            ? { role: 'system', content: systemPrompt }
+            : { role: 'system', content: 'You are a helpful vision assistant.' },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt || 'Describe this image.' },
+              { type: 'image_url', image_url: { url: dataUrl } }
+            ]
+          }
+        ],
+        max_tokens: maxTokens,
+        temperature
+      },
+      timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+      signal
+    });
+
+    if (response?.json?.error) {
+      throw new Error(response.json.error.message || 'Vision runtime error');
+    }
+
+    const content = response?.json?.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error('Vision runtime returned empty response');
+    }
+
+    return { response: content };
+  }
+
+  async shutdown() {
+    if (this._process) {
+      logger.info('[VisionService] Shutting down vision runtime');
+      try {
+        this._process.kill();
+      } catch {
+        // ignore
+      }
+    }
+
+    this._process = null;
+    this._port = null;
+    this._activeConfig = null;
+    this._startPromise = null;
+  }
+}
+
+const { getInstance, createInstance, registerWithContainer, resetInstance } =
+  createSingletonHelpers({
+    ServiceClass: VisionService,
+    serviceId: 'VISION_SERVICE',
+    serviceName: 'VisionService',
+    containerPath: './ServiceContainer',
+    shutdownMethod: 'shutdown'
+  });
+
+module.exports = {
+  VisionService,
+  getInstance,
+  createInstance,
+  registerWithContainer,
+  resetInstance
+};
