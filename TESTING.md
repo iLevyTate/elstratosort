@@ -84,7 +84,7 @@ Where to focus your testing efforts.
 **Risk:** High. If this fails, the app does nothing.
 
 - **Path:** User Selects → Validation → Extraction → LLM Analysis → Results.
-- **Key Services:** `FileAnalysisService.js`, `OllamaService.js`.
+- **Key Services:** `FileAnalysisService.js`, `LlamaService.js`.
 - **Test For:** Corrupted PDFs, Password-protected files, 0-byte files.
 
 ### Priority 2: Organization System
@@ -114,13 +114,13 @@ Where to focus your testing efforts.
 
 ### Common Issues
 
-| Symptom                  | Probable Cause               | Fix                                               |
-| ------------------------ | ---------------------------- | ------------------------------------------------- |
-| **Analysis Stuck**       | Ollama service down          | Run `ollama serve` in terminal. Check port 11434. |
-| **No Text in Images**    | Tesseract missing            | Install Tesseract (see README).                   |
-| **Search Empty**         | ChromaDB issue               | Check logs. Verify python/pip dependencies.       |
-| **Graph "Congested"**    | Similarity threshold too low | Adjust `threshold` in `UnifiedSearchModal.jsx`.   |
-| **"Cannot find module"** | Stale Webpack cache          | Run `npm run clean`.                              |
+| Symptom                  | Probable Cause               | Fix                                                   |
+| ------------------------ | ---------------------------- | ----------------------------------------------------- |
+| **Analysis Stuck**       | Model missing/unloaded       | Run `npm run setup:models:check` and download models. |
+| **No Text in Images**    | Tesseract missing            | Install Tesseract (see README).                       |
+| **Search Empty**         | Vector DB needs rebuild      | Re-run analysis or trigger rebuild in the app.        |
+| **Graph "Congested"**    | Similarity threshold too low | Adjust `threshold` in `UnifiedSearchModal.jsx`.       |
+| **"Cannot find module"** | Stale Webpack cache          | Run `npm run clean`.                                  |
 
 ---
 
@@ -129,5 +129,5 @@ Where to focus your testing efforts.
 If you find an issue, please report it on GitHub with:
 
 1. **Steps to Reproduce:** Exact sequence of clicks.
-2. **Environment:** OS Version, RAM, Ollama Version.
+2. **Environment:** OS Version, RAM, GPU info (if available).
 3. **Logs:** Attach relevant snippets from the log files above.

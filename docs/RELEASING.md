@@ -8,18 +8,13 @@ ensure releases are reproducible, include bundled runtimes, and publish checksum
 1. **Update versions**
    - Bump `version` in `package.json`
    - Update `CHANGELOG.md` under **[Unreleased]**
-2. **Verify runtime manifest**
-   - Review `assets/runtime/runtime-manifest.json`
-   - Ensure download URLs are correct
-   - Populate `sha256` values for runtime binaries when available
-3. **Stage bundled runtimes**
-   - `npm run setup:runtime`
-   - `npm run setup:runtime:check`
-4. **Build & smoke test**
+2. **Build & smoke test**
    - `npm run dist:win`
    - Install the generated `StratoSort-Setup-*.exe`
-   - Confirm AI Dependencies modal shows **Bundled** for Ollama/Python/Tesseract
-   - Confirm “Download Base Models” works (models are not bundled)
+
+- Confirm AI Model Setup wizard shows **Bundled** for OCR runtime
+- Confirm “Download Base Models” works (models are not bundled)
+
 5. **Generate checksums**
    - The workflow generates `checksums.sha256` automatically
    - If building locally, generate with:
@@ -45,7 +40,6 @@ ensure releases are reproducible, include bundled runtimes, and publish checksum
    git push origin vX.Y.Z
    ```
 2. The **Release** workflow will:
-   - Run `npm run setup:runtime`
    - Build the Windows installer
    - Publish artifacts + `checksums.sha256`
 
@@ -59,7 +53,6 @@ ensure releases are reproducible, include bundled runtimes, and publish checksum
 
 ```powershell
 npm ci
-npm run setup:runtime
 npm run dist:win
 ```
 
@@ -71,11 +64,8 @@ Artifacts are under `release/build/`:
 - `*.blockmap`
 - `checksums.sha256`
 
-## Notes on Bundled Runtimes
+## Notes on AI Stack
 
-- Bundled runtimes live under `assets/runtime/` at build time and are copied to the installer via
-  `electron-builder.json` `extraResources`.
-- Models are **not** bundled. The app provides a one‑click model download in the AI Dependencies
-  modal and the existing Welcome flow remains unchanged.
-- Use the manifest (`assets/runtime/runtime-manifest.json`) as the single source of truth for
-  runtime URLs + checksums.
+- The AI stack (node-llama-cpp, Orama) runs fully in-process. No external runtimes are bundled.
+- Models are **not** bundled. The app provides a one-click model download in the Settings panel.
+- Tesseract OCR auto-installs or falls back to bundled `tesseract.js`.

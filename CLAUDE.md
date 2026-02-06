@@ -3,14 +3,14 @@
 ## What This Is
 
 ElStratoSort is a privacy-first, local AI-powered document organizer built with Electron 40+. It
-uses Ollama for local LLM inference and ChromaDB for vector search. All processing happens
-on-device - no data leaves the machine.
+uses **node-llama-cpp** for in-process LLM inference and **Orama** for vector search. All processing
+happens on-device with zero external dependencies - no data leaves the machine.
 
 ## Tech Stack
 
 - **Runtime:** Electron 40 (main + renderer + preload processes)
 - **Frontend:** React 19 + Redux Toolkit + Tailwind CSS 4 + Framer Motion
-- **AI Backend:** Ollama (LLM/vision) + ChromaDB (vectors) + Tesseract.js (OCR)
+- **AI Backend:** node-llama-cpp (in-process LLM) + Orama (in-process vectors) + Tesseract.js (OCR)
 - **Build:** Webpack 5 (3 configs: main, preload, renderer) + Babel 7
 - **Package:** electron-builder 26 (NSIS/Portable on Windows, DMG on macOS, AppImage on Linux)
 - **Test:** Jest 30 + Playwright 1.58
@@ -21,7 +21,7 @@ on-device - no data leaves the machine.
 ### Process Model
 
 - **Main process** (`src/main/simple-main.js`): Window management, 30+ services, IPC server,
-  Ollama/ChromaDB orchestration
+  LlamaService/OramaVectorService orchestration
 - **Preload** (`src/preload/preload.js`): Secure IPC bridge with rate limiting (200 req/s), input
   sanitization, path validation, timeout handling
 - **Renderer** (`src/renderer/`): React SPA with Redux state, no direct Node.js access
@@ -29,7 +29,7 @@ on-device - no data leaves the machine.
 ### Key Directories
 
 ```
-src/main/services/       # 30+ backend services (OllamaService, SearchService, etc.)
+src/main/services/       # 30+ backend services (LlamaService, OramaVectorService, SearchService, etc.)
 src/main/analysis/       # Document/image analysis pipeline + embedding queue
 src/main/core/           # Electron lifecycle, window creation, auto-updater, IPC registry
 src/main/ipc/            # IPC handler registrations
@@ -37,7 +37,7 @@ src/renderer/components/ # React components organized by feature (discover/, org
 src/renderer/store/      # Redux slices, middleware (persistence, IPC), thunks, selectors
 src/shared/              # Cross-process utilities (logger, security, config schemas, constants)
 test/                    # 264+ test files (unit, integration, e2e, perf, stress)
-scripts/                 # 14 build/setup scripts (Ollama, ChromaDB, Tesseract, icons, runtime)
+scripts/                 # 14 build/setup scripts (models, Tesseract, icons, runtime)
 ```
 
 ### Data Flow
@@ -64,7 +64,7 @@ npm run dist:win         # Build Windows installer
 ## Conventions
 
 - **IPC channels** are defined in `src/shared/constants.js` and validated in preload. Run
-  `npm run preload:check` to verify channel consistency.
+  `npm run generate:channels:check` to verify channel consistency.
 - **Services** follow dependency injection patterns documented in `docs/DI_PATTERNS.md`.
 - **Error handling** uses custom error types in `src/main/errors/` with a centralized error
   classifier.
@@ -92,20 +92,21 @@ These are tracked gaps that the project slash commands help address:
 8. **No remote logging** - all logs stay on device
 9. **Accessibility minimal** - some ARIA present but no audit performed
 
-## Custom Slash Commands
+## Cursor Rules & Commands
 
-Use these production-focused commands in Claude Code:
+The following capabilities are available as Cursor Rules. You can invoke them by asking for the
+specific audit or check in natural language.
 
-| Command                       | Purpose                               |
-| ----------------------------- | ------------------------------------- |
-| `/project:security-audit`     | Full Electron security audit          |
-| `/project:harden-electron`    | Fix sandbox, CSP, webPreferences      |
-| `/project:ipc-audit`          | Validate IPC contracts and security   |
-| `/project:test-coverage`      | Run tests, analyze coverage gaps      |
-| `/project:pre-release`        | Pre-release checklist validation      |
-| `/project:perf-audit`         | Performance and memory analysis       |
-| `/project:a11y-audit`         | Accessibility/WCAG compliance audit   |
-| `/project:dep-audit`          | Dependency security and license audit |
-| `/project:build-check`        | Build config and packaging validation |
-| `/project:validate-state`     | State persistence and migration audit |
-| `/project:fix-production-gap` | Interactive production gap fixer      |
+| Request               | Purpose                               | Rule File                               |
+| :-------------------- | :------------------------------------ | :-------------------------------------- |
+| "Run security audit"  | Full Electron security audit          | `.cursor/rules/audit-security.mdc`      |
+| "Harden electron"     | Fix sandbox, CSP, webPreferences      | `.cursor/rules/harden-electron.mdc`     |
+| "Audit IPC"           | Validate IPC contracts and security   | `.cursor/rules/audit-ipc.mdc`           |
+| "Check test coverage" | Run tests, analyze coverage gaps      | `.cursor/rules/check-coverage.mdc`      |
+| "Pre-release check"   | Pre-release checklist validation      | `.cursor/rules/check-prerelease.mdc`    |
+| "Performance audit"   | Performance and memory analysis       | `.cursor/rules/audit-perf.mdc`          |
+| "Accessibility audit" | Accessibility/WCAG compliance audit   | `.cursor/rules/audit-a11y.mdc`          |
+| "Dependency audit"    | Dependency security and license audit | `.cursor/rules/audit-deps.mdc`          |
+| "Check build"         | Build config and packaging validation | `.cursor/rules/check-build.mdc`         |
+| "Validate state"      | State persistence and migration audit | `.cursor/rules/validate-state.mdc`      |
+| "Fix production gaps" | Interactive production gap fixer      | `.cursor/rules/fix-production-gaps.mdc` |

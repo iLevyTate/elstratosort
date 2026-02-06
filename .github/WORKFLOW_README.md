@@ -35,7 +35,7 @@ This repository is configured with automated dependency updates and release buil
 #### Automatic Releases
 
 - **Triggers on version tags** (e.g., `v1.0.0`, `v2.1.3`)
-- Stages bundled runtimes (`npm run setup:runtime`)
+- Installs dependencies and rebuilds native modules
 - Builds Windows installer
 - Publishes to GitHub Releases with `checksums.sha256`
 
@@ -94,7 +94,6 @@ git push origin v1.0.0
 ### Build Windows installer:
 
 ```bash
-npm run setup:runtime
 npm run dist:win
 ```
 

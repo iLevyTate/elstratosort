@@ -17,7 +17,7 @@
 
 StratoSort is designed with security and privacy as core principles:
 
-- **Local-First Processing**: All AI analysis happens locally using Ollama. No data is sent to
+- **Local-First Processing**: All AI analysis happens locally in-process. No data is sent to
   external servers.
 - **Context Isolation**: The Electron renderer process runs with strict context isolation and
   sandbox enabled.
@@ -74,9 +74,8 @@ steps:
 
 ### Network
 
-- StratoSort communicates only with local services (Ollama, ChromaDB)
+- StratoSort runs entirely in-process for AI and vector search
 - No external network requests are made during normal operation
-- If using remote Ollama instances, ensure proper network security
 
 ## Known Security Considerations
 

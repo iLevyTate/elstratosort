@@ -15,15 +15,13 @@ find the right documentation for your needs.
 
 ## Installation & Dependencies
 
-> **Beta Notice**: The automatic dependency installation feature is in beta. See
-> [CONFIG.md](./CONFIG.md#dependency-installation-beta) for manual CLI installation instructions.
+> **Note**: Model setup is handled by `setup:models` (OCR uses system Tesseract or the JS fallback).
+> See [CONFIG.md](./CONFIG.md#model--ocr-setup) for details.
 
-- **[CONFIG.md](./CONFIG.md)** - Complete dependency installation guide including:
-  - Manual CLI installation for Ollama and ChromaDB
-  - Required AI models and how to pull them
+- **[CONFIG.md](./CONFIG.md)** - Complete setup guide including:
+  - Model download and OCR setup
   - Environment variable reference
   - Troubleshooting tips
-- **[Runtime Assets](../assets/runtime/README.md)** - Bundled runtime manifest and staging notes
 
 ## Architecture & Design
 

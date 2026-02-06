@@ -63,9 +63,9 @@ common software problems.
 **Examples in Code:**
 
 - **`ServiceContainer.js`**: A massive Registry that holds Singletons. It ensures we don't create 10
-  connections to ChromaDB, but reuse the same one everywhere.
-- **`OllamaClient.js`**: The AI client is a Singleton (`getInstance`). We only want one client
-  talking to the local AI server at a time.
+  vector DB instances, but reuse the same one everywhere.
+- **`LlamaService.js`**: The AI client is a Singleton (`getInstance`). We only want one in-process
+  model manager at a time.
 
 ### B. Observer Pattern
 
@@ -73,9 +73,8 @@ common software problems.
 state changes. **Usage:** Decoupling components. The component changing the settings doesn't need to
 know _who_ is listening, just that it changed. **Examples in Code:**
 
-- **`ChromaDBServiceCore`**: Extends `EventEmitter`. It emits `'offline'`, `'online'`,
-  `'circuitStateChange'`. The UI listens for these events to show the red/green status connection
-  badge.
+- **`OramaVectorService`**: Extends `EventEmitter`. It emits `'online'`, `'dimension-mismatch'`, and
+  `'embedding-blocked'`. The UI listens for these events to show the status connection badge.
 - **`SettingsService`**: When `settings.json` changes on disk, it emits an event so the app updates
   live without a restart.
 
@@ -113,14 +112,14 @@ How does data move and persist?
   tree called the **Store**.
 - **Flow:** `Action (User Clicks)` -> `Reducer (Updates State)` -> `View (Re-renders)`.
 
-**B. Vector Database (ChromaDB)**
+**B. Vector Database (Orama)**
 
 - **Concept:** High-dimensional data storage. Standard databases (SQL) store text. Vector DBs store
   _meaning_.
 - **Data:** We store "Embeddings" (arrays of floating-point numbers like `[0.12, -0.98, 0.33...]`).
 - **Querying:** We don't search for "keyword matches". We search for "Cosine Similarity"
   (mathematical closeness).
-- **Key File:** `src/main/services/chromadb/ChromaDBServiceCore.js`.
+- **Key File:** `src/main/services/OramaVectorService.js`.
 
 **C. Caching Strategy**
 
@@ -129,7 +128,7 @@ How does data move and persist?
   - **File Analysis Cache:** `FileAnalysisService.js` keeps a map of `path + size + mtime`. If a
     file hasn't changed, we return the previous AI result instantly (0ms) instead of re-running the
     LLM (3000ms).
-  - **Query Cache:** `ChromaQueryCache.js` caches database results to make the UI snappy.
+  - **Query Cache:** `OramaVectorService` caches vector search results to keep the UI snappy.
 
 ---
 
@@ -143,15 +142,15 @@ This is the "Brain" of the operation.
 - **Flow:**
   1.  User asks: "Where are my tax documents?"
   2.  App converts question to Vector.
-  3.  App queries ChromaDB for files with similar Vectors (Retrieval).
-  4.  App sends the _question_ + _file summaries_ to Ollama (Generation).
+  3.  App queries Orama for files with similar vectors (Retrieval).
+  4.  App sends the _question_ + _file summaries_ to the Llama engine (Generation).
 - **Code:** `FolderMatchingService.js` implements the retrieval part of this flow.
 
 **B. Embeddings**
 
 - **Concept:** Translating human language into machine language (vectors).
-- **Implementation:** We use a specific model (like `nomic-embed-text`) via Ollama to turn file
-  content into vectors.
+- **Implementation:** We use GGUF embedding models via node-llama-cpp to turn file content into
+  vectors.
 
 **C. Local Inference**
 
@@ -184,7 +183,7 @@ How does the software handle failure? (This distinguishes "scripts" from "system
 
 **A. Circuit Breaker Pattern**
 
-- **Problem:** If ChromaDB crashes, asking it for data 100 times a second will just generate 100
+- **Problem:** If the vector DB fails, asking it for data 100 times a second will just generate 100
   errors and maybe freeze the app.
 - **Solution:** The `CircuitBreaker` (`CircuitBreaker.js`) monitors failures.
   - _Closed (Normal):_ Requests go through.
@@ -192,13 +191,12 @@ How does the software handle failure? (This distinguishes "scripts" from "system
     without trying the DB.
   - _Half-Open (Recovery):_ After 30s, it lets one request through to test if the DB is back.
 
-**B. Offline Queue Pattern**
+**B. Deferred Retry Pattern**
 
-- **Problem:** The user organizes a file while the database is disconnected. We can't just lose that
-  data.
-- **Solution:** `OfflineQueue.js`. Operations are saved to a persistent queue (on disk). When the
-  Circuit Breaker closes (comes back online), the queue automatically flushes (replays) all the
-  saved actions.
+- **Problem:** A transient storage or analysis failure could drop an operation.
+- **Solution:** The in-process Orama storage reduces external dependency failures. When a transient
+  error does occur, operations return actionable errors and are retried via bounded queues (e.g.,
+  embedding queues) rather than a persistent offline queue on disk.
 
 **C. Dead Letter Handling**
 
@@ -238,17 +236,17 @@ How does the software handle failure? (This distinguishes "scripts" from "system
 
 - **Dependency Injection (DI):** A design pattern where a class receives its dependencies from the
   outside rather than creating them itself. Our `ServiceContainer` injects services like
-  `ChromaDBService` into `FolderMatchingService`, making testing easier.
+  `OramaVectorService` into `FolderMatchingService`, making testing easier.
 
 - **Memoization:** An optimization technique where the result of a function is cached. If the
   function is called again with the same inputs, the cached result is returned instantly. Used in
   React (`React.memo`) and backend (`FileAnalysisService` caches results).
 
-- **Singleton:** A pattern ensuring a class has only one instance. Used for `OllamaClient` (one AI
-  connection) and `SettingsService` (one source of truth).
+- **Singleton:** A pattern ensuring a class has only one instance. Used for `LlamaService` (one AI
+  engine) and `SettingsService` (one source of truth).
 
 - **Circuit Breaker:** A resilience pattern that detects failures and prevents cascading errors. If
-  ChromaDB fails repeatedly, the breaker "trips" and stops requests for a recovery period.
+  the vector DB fails repeatedly, the breaker "trips" and stops requests for a recovery period.
 
 ### Electron & Architecture
 
@@ -271,7 +269,7 @@ How does the software handle failure? (This distinguishes "scripts" from "system
 ### AI & Data Science
 
 - **LLM (Large Language Model):** An AI model trained on vast amounts of text to understand and
-  generate human language. We use models like `llama3` via Ollama.
+  generate human language. We use GGUF models via node-llama-cpp.
 
 - **Inference:** Running live data through a trained AI model to get a prediction. When you click
   "Analyze", the app performs local inference on your GPU.
@@ -280,18 +278,17 @@ How does the software handle failure? (This distinguishes "scripts" from "system
   Similar concepts have mathematically similar vectors, enabling semantic search.
 
 - **RAG (Retrieval-Augmented Generation):** A technique where an AI is given relevant external data
-  (retrieved from a database) to help it answer accurately. We retrieve similar folders from
-  ChromaDB, then ask the AI where a file belongs.
+  (retrieved from a database) to help it answer accurately. We retrieve similar folders from Orama,
+  then ask the AI where a file belongs.
 
-- **Cosine Similarity:** A metric measuring how similar two vectors are. Used by ChromaDB to rank
+- **Cosine Similarity:** A metric measuring how similar two vectors are. Used by Orama to rank
   folder matches.
 
 - **Brandes-Koepf:** An algorithm used in graph visualization to minimize edge crossings and
   straighten long edges in layered graphs. We use this to keep the Knowledge Graph clean and
   legible.
 
-- **Ollama:** A tool for running open-source LLMs locally. Acts as our local AI server at
-  `localhost:11434`.
+- **node-llama-cpp:** A native binding to llama.cpp used for in-process local inference.
 
 ### Frontend & UI (React/Redux)
 
@@ -317,8 +314,8 @@ How does the software handle failure? (This distinguishes "scripts" from "system
 - **ServiceContainer:** Our custom Dependency Injection system in
   `src/main/services/ServiceContainer.js` managing service lifecycle.
 
-- **ChromaDBService:** The service wrapper for the ChromaDB vector database, handling Circuit
-  Breaker logic and health checks.
+- **OramaVectorService:** The service wrapper for the Orama vector database, handling embedding
+  validation and search caching.
 
 - **File Signature:** A unique string (`path + size + lastModifiedTime`) used as a cache key to
   detect file changes.
@@ -383,7 +380,7 @@ const MyNewService = require('./MyNewService');
 // Inside _registerCoreServices():
 if (!container.has('myNewService')) {
   container.registerSingleton('myNewService', (c) => {
-    const depA = c.resolve(ServiceIds.CHROMA_DB);
+    const depA = c.resolve(ServiceIds.ORAMA_VECTOR);
     const depB = c.resolve(ServiceIds.SETTINGS);
     return new MyNewService(depA, depB);
   });
@@ -476,17 +473,17 @@ export const MyComponent = () => {
 };
 ```
 
-### 8.3 AI & Ollama Integration
+### 8.3 AI & Llama Integration
 
 ```javascript
 const { container, ServiceIds } = require('./ServiceContainer');
 
 async function summarizeText(text) {
-  const ollamaService = container.resolve(ServiceIds.OLLAMA_SERVICE);
-  const response = await ollamaService.generateCompletion({
-    model: 'llama3',
+  const llamaService = container.resolve(ServiceIds.LLAMA_SERVICE);
+  const response = await llamaService.generateText({
     prompt: `Summarize this: ${text}`,
-    stream: false
+    maxTokens: 512,
+    temperature: 0.3
   });
   return response.response;
 }
@@ -497,22 +494,17 @@ async function getVector(text) {
 }
 ```
 
-### 8.4 ChromaDB Operations
+### 8.4 Orama Vector Operations
 
 ```javascript
 const { container, ServiceIds } = require('./ServiceContainer');
 
 async function findSimilarFolders(fileContent) {
-  const chromaService = container.resolve(ServiceIds.CHROMA_DB);
+  const vectorDb = container.resolve(ServiceIds.ORAMA_VECTOR);
   const embeddingService = container.resolve(ServiceIds.PARALLEL_EMBEDDING);
 
   const queryVector = await embeddingService.generateEmbedding(fileContent);
-  const collection = await chromaService.getCollection('folders');
-
-  return await collection.query({
-    queryEmbeddings: [queryVector],
-    nResults: 5
-  });
+  return await vectorDb.queryFoldersByEmbedding(queryVector, 5);
 }
 ```
 

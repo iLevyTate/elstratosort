@@ -2,7 +2,9 @@
 
 ## Overview
 
-This guide provides comprehensive patterns and best practices for error handling across the StratoSort codebase. It consolidates all error handling utilities and provides clear guidance on when to use each pattern.
+This guide provides comprehensive patterns and best practices for error handling across the
+StratoSort codebase. It consolidates all error handling utilities and provides clear guidance on
+when to use each pattern.
 
 ---
 
@@ -137,8 +139,8 @@ const analyzeFile = withErrorHandling(
   },
   {
     context: 'FileAnalysis',
-    operation: 'analyze-file',
-  },
+    operation: 'analyze-file'
+  }
 );
 ```
 
@@ -158,11 +160,11 @@ const analyzeFile = withErrorHandling(
 const { withErrorLogging } = require('./withErrorLogging');
 
 ipcMain.handle(
-  IPC_CHANNELS.FILES.ANALYZE,
+  IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT,
   withErrorLogging(logger, async (event, filePath) => {
     const result = await analyzeFile(filePath);
     return createSuccessResponse(result);
-  }),
+  })
 );
 ```
 
@@ -184,15 +186,15 @@ const z = require('zod');
 
 const schema = z.object({
   filePath: z.string().min(1),
-  options: z.object({}).optional(),
+  options: z.object({}).optional()
 });
 
 ipcMain.handle(
-  IPC_CHANNELS.FILES.ANALYZE,
+  IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT,
   withValidation(logger, schema, async (event, { filePath, options }) => {
     const result = await analyzeFile(filePath, options);
     return createSuccessResponse(result);
-  }),
+  })
 );
 ```
 
@@ -222,8 +224,8 @@ const result = await withRetry(
     operationName: 'FetchData',
     shouldRetry: (error) => {
       return error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT';
-    },
-  },
+    }
+  }
 );
 ```
 
@@ -245,7 +247,7 @@ const { withTimeout } = require('../utils/promiseUtils');
 const result = await withTimeout(
   performLongOperation(),
   30000, // 30 seconds
-  'LongOperation',
+  'LongOperation'
 );
 ```
 
@@ -284,7 +286,7 @@ const settings = safeGet(config, 'app.settings', {});
 const { safeCall } = require('../utils/safeAccess');
 
 const result = await safeCall(async () => await riskyOperation(), [], {
-  default: 'fallback',
+  default: 'fallback'
 });
 ```
 
@@ -381,8 +383,8 @@ class FileAnalysisService {
         onError: (error) => {
           // Custom error handling
           logger.error('Custom error handling', { filePath });
-        },
-      },
+        }
+      }
     )();
   }
 }
@@ -398,21 +400,17 @@ const analyzeSchema = z.object({
   filePath: z.string().min(1),
   options: z
     .object({
-      includeMetadata: z.boolean().optional(),
+      includeMetadata: z.boolean().optional()
     })
-    .optional(),
+    .optional()
 });
 
 ipcMain.handle(
-  IPC_CHANNELS.FILES.ANALYZE,
-  withValidation(
-    logger,
-    analyzeSchema,
-    async (event, { filePath, options }) => {
-      const result = await analyzeFile(filePath, options);
-      return createSuccessResponse(result);
-    },
-  ),
+  IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT,
+  withValidation(logger, analyzeSchema, async (event, { filePath, options }) => {
+    const result = await analyzeFile(filePath, options);
+    return createSuccessResponse(result);
+  })
 );
 ```
 
@@ -428,14 +426,14 @@ async function fetchWithRetryAndTimeout() {
       return await withTimeout(
         fetchDataFromAPI(),
         10000, // 10 second timeout
-        'FetchData',
+        'FetchData'
       );
     },
     {
       maxAttempts: 3,
       delay: 1000,
-      operationName: 'FetchData',
-    },
+      operationName: 'FetchData'
+    }
   );
 }
 ```
@@ -447,11 +445,7 @@ const { safeGet } = require('../utils/safeAccess');
 
 function getUserDisplayName(user) {
   // Safe access with fallback
-  return safeGet(
-    user,
-    'profile.displayName',
-    safeGet(user, 'email', 'Anonymous'),
-  );
+  return safeGet(user, 'profile.displayName', safeGet(user, 'email', 'Anonymous'));
 }
 ```
 
@@ -489,7 +483,7 @@ try {
 } catch (error) {
   logger.error('Operation failed', {
     error: error.message,
-    stack: error.stack,
+    stack: error.stack
   });
   throw error;
 }
@@ -517,7 +511,7 @@ throw new Error('Failed');
 // Good: Contextual error
 throw new Error(`Failed to analyze file: ${filePath}`, {
   filePath,
-  errorCode: ERROR_CODES.ANALYSIS_FAILED,
+  errorCode: ERROR_CODES.ANALYSIS_FAILED
 });
 ```
 
@@ -528,7 +522,7 @@ throw new Error(`Failed to analyze file: ${filePath}`, {
 const { ERROR_CODES } = require('../../shared/errorHandlingUtils');
 
 return createErrorResponse('File not found', ERROR_CODES.FILE_NOT_FOUND, {
-  filePath,
+  filePath
 });
 ```
 
@@ -573,7 +567,7 @@ try {
   logger.error('Operation failed', {
     error: error.message,
     stack: error.stack,
-    context: 'additional context',
+    context: 'additional context'
   });
   throw error; // Re-throw or return error response
 }
@@ -584,7 +578,7 @@ try {
 ```javascript
 if (!filePath || typeof filePath !== 'string') {
   return createErrorResponse('Invalid file path', ERROR_CODES.INVALID_INPUT, {
-    filePath,
+    filePath
   });
 }
 
@@ -605,7 +599,7 @@ const { withRetry } = require('../../shared/errorHandlingUtils');
 const result = await withRetry(async () => await networkOperation(), {
   maxAttempts: 3,
   delay: 1000, // Initial delay: 1 second
-  backoff: 2, // Double each time
+  backoff: 2 // Double each time
   // Attempt 1: 1s delay
   // Attempt 2: 2s delay
   // Attempt 3: 4s delay
@@ -621,7 +615,7 @@ try {
   const result = await withTimeout(
     slowOperation(),
     5000, // 5 second timeout
-    'SlowOperation',
+    'SlowOperation'
   );
   return result;
 } catch (error) {

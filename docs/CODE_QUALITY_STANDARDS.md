@@ -78,7 +78,7 @@ function onAnalysisComplete(results) {}
 
 ```javascript
 class FileAnalysisService {}
-class ChromaDBService {}
+class OramaVectorService {}
 class ErrorHandler {}
 ```
 
@@ -409,10 +409,10 @@ async function analyzeFile(filePath, options = {}) {
 class FileAnalysisService {
   /**
    * Creates a new FileAnalysisService
-   * @param {OllamaService} ollamaService - Ollama service instance
+   * @param {LlamaService} llamaService - Llama service instance
    */
-  constructor(ollamaService) {
-    this.ollamaService = ollamaService;
+  constructor(llamaService) {
+    this.llamaService = llamaService;
   }
 
   /**
@@ -564,7 +564,7 @@ const fs = require('fs').promises;
 const path = require('path');
 
 // 2. External packages
-const { Ollama } = require('ollama');
+const { getInstance: getLlamaService } = require('../services/LlamaService');
 const sharp = require('sharp');
 
 // 3. Internal absolute imports (from src/)
@@ -597,7 +597,7 @@ const fs = require('fs').promises;
 const path = require('path');
 
 // AI services
-const { Ollama } = require('ollama');
+const { getInstance: getLlamaService } = require('../services/LlamaService');
 const { analyzeWithLLM } = require('./llmService');
 
 // Utilities

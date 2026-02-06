@@ -17,19 +17,18 @@ This guide will walk you through setting up **El StratoSort** on your local mach
 
 ## System Requirements
 
-Before you begin, ensure your system meets the following requirements. El StratoSort relies on
-several local AI tools that need to be configured correctly.
+Before you begin, ensure your system meets the following requirements. El StratoSort runs a fully
+local, in-process AI stack and does not rely on external servers.
 
 ### System Dependencies Chart
 
-| Component     | Purpose                  | Requirement / Setup                                       |
-| :------------ | :----------------------- | :-------------------------------------------------------- |
-| **Node.js**   | Core Application Runtime | v18+ (Included in installer; dev needs node installed)    |
-| **Python**    | Vector Database Runtime  | v3.9+ (bundled on Win if provided; else system PATH)      |
-| **Ollama**    | Local AI Engine          | Bundled portable (if provided) or auto-installed          |
-| **ChromaDB**  | Semantic Search DB       | Auto-installed via pip (uses bundled Python when present) |
-| **Tesseract** | Image Text Recognition   | Auto-installed (Win/Mac/Linux) with tesseract.js fallback |
-| **GPU**       | AI Acceleration          | Optional but recommended (4GB+ VRAM)                      |
+| Component       | Purpose                  | Requirement / Setup                                       |
+| :-------------- | :----------------------- | :-------------------------------------------------------- |
+| **Node.js**     | Core Application Runtime | v18+ (Included in installer; dev needs node installed)    |
+| **GGUF Models** | Local AI Inference       | Auto-downloaded on first use (`npm run setup:models`)     |
+| **Orama**       | Vector Search DB         | Bundled in the app (no external install)                  |
+| **Tesseract**   | Image Text Recognition   | Auto-installed (Win/Mac/Linux) with tesseract.js fallback |
+| **GPU**         | AI Acceleration          | Optional but recommended (4GB+ VRAM)                      |
 
 ---
 
@@ -62,18 +61,16 @@ npm run dev
 ## Detailed Setup Instructions
 
 On the first launch, the application will attempt to automatically set up all necessary AI
-dependencies.
+dependencies (models + OCR).
 
 ### Platform Notes
 
-- **Windows:** Fully bundled AI runtime. Portable Ollama + embeddable Python + Tesseract are staged
-  during packaging via `npm run setup:runtime`, then included in the installer. Click “Install All
-  (Background)” on first launch; models download on first use.
-- **macOS:** Uses system Python 3.9+ and Homebrew/manual Ollama. “Install All” will guide you; brew
-  may prompt. Tesseract auto-installs via brew and falls back to the built-in OCR fallback if
-  missing. Models download on first use.
-- **In-app installs:** The AI Setup modal’s “Install All (Background)” triggers downloads/installs
-  of Ollama, ChromaDB, and recommended models entirely from the UI.
+- **Windows:** Models download on first use. Tesseract auto-installs via `winget`/`chocolatey` and
+  falls back to bundled `tesseract.js`. Click “Install All (Background)” on first launch to download
+  models.
+- **macOS/Linux:** Models download on first use. Tesseract auto-installs via brew/apt and falls back
+  to `tesseract.js` if native install is unavailable.
+- **In-app setup:** The Settings panel lets you configure models and verify OCR status.
 
 ### Setup Workflow (No-CLI first run)
 
@@ -81,27 +78,10 @@ The following flowchart illustrates the automated setup process that runs on fir
 
 ```mermaid
 graph TD
-    Start([Start App / Setup]) --> CheckOllama{Ollama Installed?}
-
-    %% Ollama Flow
-    CheckOllama -- No --> InstallOllama[Install Instructions / Auto]
-    InstallOllama --> CheckRunning
-    CheckOllama -- Yes --> CheckRunning{Is Service Running?}
-    CheckRunning -- No --> StartServer[Start 'ollama serve']
-    CheckRunning -- Yes --> CheckModels{Models Found?}
-    StartServer --> CheckModels
-    CheckModels -- No --> PullModels[Pull AI Models<br/>(llama3, moondream, etc)]
-    CheckModels -- Yes --> CheckPython
-    PullModels --> CheckPython
-
-    %% ChromaDB Flow
-    CheckPython{Python 3.9+?<br/>or Bundled Runtime?}
-    CheckPython -- No --> FailPython[User Action Required:<br/>Install Python 3.9+]
-    CheckPython -- Yes --> CheckChroma{ChromaDB Pkg?}
-    CheckChroma -- No --> PipInstall[pip install chromadb]
-    CheckChroma -- Yes --> CheckTess
-    PipInstall --> CheckTess
-    FailPython --> CheckTess
+    Start([Start App / Setup]) --> CheckModels{Models Found?}
+    CheckModels -- No --> DownloadModels[Download Models]
+    CheckModels -- Yes --> CheckTess
+    DownloadModels --> CheckTess
 
     %% Tesseract Flow
     CheckTess{Tesseract OCR?}
@@ -116,37 +96,34 @@ graph TD
     classDef warning fill:#fff3e0,stroke:#e65100,stroke-width:2px;
 
     class Ready success;
-    class FailPython,ManualTess warning;
+    class ManualTess warning;
 ```
 
 ### Startup Preflight Checks
 
-On each launch, StratoSort runs preflight checks to verify Python, Ollama, and ChromaDB health. If a
-service is slow to respond, you can raise the timeout using `SERVICE_CHECK_TIMEOUT` (ms). Check logs
-if the app reports missing or unreachable dependencies.
-
-### ChromaDB Setup (bundled-friendly)
-
-El StratoSort uses **ChromaDB** for vector storage (semantic search). The setup script prefers a
-bundled embeddable Python runtime (staged via `npm run setup:runtime`) and installs the Python
-package automatically using that interpreter. If no bundled runtime is present, it falls back to
-system Python 3.9+ on PATH.
-
-If automatic installation fails:
-
-1.  Ensure Python 3.9+ is installed (or provide a bundled runtime): `python --version`
-2.  Install ChromaDB manually: `pip install chromadb`
+On each launch, StratoSort runs preflight checks to verify model availability, vector DB readiness,
+and OCR health. If a service is slow to respond, you can raise the timeout using
+`SERVICE_CHECK_TIMEOUT` (ms). Check logs if the app reports missing or unreachable dependencies.
 
 ### Tesseract OCR Setup
 
-El StratoSort uses **Tesseract OCR** to read text from images. On Windows, the embedded runtime is
-staged via `npm run setup:runtime`. If no embedded runtime is present, the setup script attempts to
-install it automatically and falls back to the bundled `tesseract.js` implementation if native
+El StratoSort uses **Tesseract OCR** to read text from images. The setup script attempts to install
+Tesseract automatically and falls back to the bundled `tesseract.js` implementation if native
 install is unavailable:
 
 - **Windows**: Uses `winget` or `chocolatey`
 - **macOS**: Uses `brew`
 - **Linux**: Uses `apt-get`
+
+#### Language Data (tessdata)
+
+Tesseract requires language data files to recognize text. The app configures this automatically:
+
+- **System-installed Tesseract**: Uses the system tessdata directory (e.g.
+  `/usr/share/tesseract-ocr/5/tessdata`, `/opt/homebrew/share/tessdata`, or
+  `C:\Program Files\Tesseract-OCR\tessdata`).
+
+To use additional languages beyond English, install language packs for your Tesseract installation.
 
 If automatic installation fails, please install Tesseract manually:
 
@@ -155,16 +132,41 @@ If automatic installation fails, please install Tesseract manually:
 - **macOS**: `brew install tesseract`
 - **Linux**: `sudo apt-get install tesseract-ocr`
 
-After manual installation, restart the application.
+After manual installation:
+
+1. Restart the application.
+2. If Tesseract is installed in a non-standard location, set `TESSERACT_PATH` to the binary path.
+3. If language data is in a non-standard location, set `TESSDATA_PREFIX` to the tessdata directory.
+
+#### Fallback Behavior
+
+If native Tesseract is unavailable, the app falls back to `tesseract.js`. This fallback:
+
+- Works without a system install
+- Supports English only (`eng`)
+- Can be slower on large images
+
+Check logs for `[OCR]` messages to confirm which backend is active.
+
+#### Adding Additional Languages
+
+To use languages other than English:
+
+1. **System Tesseract**:
+   - Windows: Download `.traineddata` files from https://github.com/tesseract-ocr/tessdata and place
+     them in `C:\Program Files\Tesseract-OCR\tessdata\`.
+   - macOS: `brew install tesseract-lang`
+   - Linux: `sudo apt-get install tesseract-ocr-[lang]` (e.g., `tesseract-ocr-fra`)
+2. **Verify**: Run `tesseract --list-langs` to see available languages.
+
+Note: The app currently defaults to English (`eng`). Multi-language selection is planned.
 
 ### One-click background setup
 
 On first launch, open the AI Setup modal and click **Install All (Background)**. This will:
 
-- Install Ollama (bundled portable binary if present, otherwise downloaded)
-- Install ChromaDB using bundled Python if available (otherwise system Python 3.9+)
+- Download the recommended text/vision/embedding GGUF models
 - Ensure OCR is available (bundled Tesseract or JS fallback)
-- Pull the recommended text/vision/embedding models
 
 The UI stays usable while installs/downloads run in the background.
 
@@ -179,21 +181,18 @@ For release steps (runtime staging, checksums, and notes), see the [Release Guid
 If you encounter issues during setup:
 
 1.  **Check Logs**:
-    - Windows: `%APPDATA%/El StratoSort/logs/`
-    - macOS: `~/Library/Logs/El StratoSort/`
-    - Linux: `~/.config/El StratoSort/logs/`
+    - Windows: `%APPDATA%/stratosort/logs/`
+    - macOS: `~/Library/Logs/stratosort/`
+    - Linux: `~/.config/stratosort/logs/`
 
-2.  **Verify Ollama**:
-    - Run `ollama serve` in a terminal to verify it starts correctly.
-    - Check http://localhost:11434 to see if it's running.
+2.  **Verify Models**:
+    - Run `npm run setup:models:check` to verify models are available.
 
 3.  **Run Setup Script Manually**:
     - You can trigger dependency setup manually via:
     ```bash
     npm run setup:deps
-    npm run setup:ollama
-    npm run setup:chromadb
-    npm run setup:tesseract
+    npm run setup:models
     ```
 
 ---

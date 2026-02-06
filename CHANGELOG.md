@@ -156,8 +156,8 @@ notes.
 
 #### Core Features
 
-- **AI-Powered Document Organization**: Local LLM analysis using Ollama (llama3.2, llava models)
-- **Semantic Search**: Vector-based file search using ChromaDB embeddings
+- **AI-Powered Document Organization**: Local LLM analysis using in-process models (llama, llava)
+- **Semantic Search**: Vector-based file search using Orama embeddings
 - **Smart Folders**: AI-suggested organization with pattern learning
 - **Multi-modal Analysis**: Support for documents (PDF, Word, Excel), images, and code files
 - **Batch Processing**: Organize multiple files simultaneously with progress tracking

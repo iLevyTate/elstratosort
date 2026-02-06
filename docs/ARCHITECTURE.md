@@ -1,12 +1,3 @@
-- ### Learning/feedback persistence flags
-  - `enableChromaLearningSync`: when true, feedback memory is dual-written to ChromaDB and JSON.
-    Default: false (JSON primary).
-  - `enableChromaLearningDryRun`: when true, logs Chroma upserts/deletes without executing them.
-  - Feedback collection: `feedback_memory` in Chroma; JSON files remain in `userData` for
-    backup/export.
-  - These settings can be configured in Settings (Advanced section) or via the service config.
-  - Metrics are exposed via OrganizationSuggestionService.\_getChromaSyncMetrics() for monitoring.
-
 - ### Graph UX notes
   - **Bridge files**: Cross-cluster edges include a small sample of "bridge files" picked by
     similarity to opposing cluster centroids. This is best-effort and not an exhaustive list.
@@ -20,7 +11,7 @@
 ## High-Level Information Flow
 
 This diagram illustrates the flow of data through the application, highlighting the separation
-between the Renderer (UI), the IPC Bridge, and the specialized background services.
+between the Renderer (UI), the IPC Bridge, and the specialized in-process services.
 
 ```mermaid
 graph LR
@@ -48,9 +39,9 @@ graph LR
       Matcher{{Folder Matcher}}
     end
 
-    subgraph Intelligence["AI & Analysis"]
-      Vision["Ollama Vision"]
-      LLM["Ollama Text"]
+    subgraph Intelligence["AI & Analysis (In-Process)"]
+      Vision["Llama Vision"]
+      LLM["Llama Text"]
       Embeddings["Vector Embeddings"]
 
       Watcher --> Vision
@@ -59,16 +50,16 @@ graph LR
     end
 
     subgraph Data["Persistence"]
-      ChromaDB[(ChromaDB)]
+      Orama[(Orama Vector DB)]
       History["Analysis History"]
 
-      Embeddings <--> ChromaDB
+      Embeddings <--> Orama
       Vision --> History
     end
   end
 
   ReduxStore <--> Services
-  GraphView -.-> ChromaDB
+  GraphView -.-> Orama
   Matcher --> Embeddings
 ```
 
@@ -80,15 +71,15 @@ The watcher is the proactive heart of the system. Unlike a standard file watcher
 
 - Monitors configured paths for new/modified files.
 - **Debounces** events to ensure files are fully written.
-- Dispatches files to **Ollama** (Text or Vision) for analysis.
-- Automatically generates embeddings and updates **ChromaDB**.
+- Dispatches files to **LlamaService** (Text or Vision) for analysis.
+- Automatically generates embeddings and updates **Orama Vector DB**.
 - Triggers notifications and auto-organization based on confidence thresholds.
 
 ### 2. Semantic Search & Re-Ranking (`ReRankerService.js`)
 
 Search is a two-stage pipeline designed for accuracy:
 
-1.  **Retrieval**: ChromaDB fetches top candidates using vector similarity.
+1.  **Retrieval**: Orama fetches top candidates using vector similarity.
 2.  **Re-Ranking**: The `ReRankerService` uses a lightweight LLM to evaluate the specific relevance
     of each candidate to the user's query, re-ordering them to bubble up the best matches.
 
@@ -96,7 +87,7 @@ Search is a two-stage pipeline designed for accuracy:
 
 This service acts as the bridge between raw AI analysis and your filesystem. It:
 
-- Manages the **ChromaDB** connection.
+- Manages the **Orama** connection.
 - Generates embeddings for file content.
 - Matches new files against existing folder "clusters" to suggest destinations.
 - Handling deduplication of requests to prevent overloading the local AI.
@@ -126,8 +117,8 @@ To respect local resources, we use a multi-tiered caching strategy:
 
 We maintain separate queues to manage different types of bottlenecks:
 
-- **LLM Queue**: Limits concurrent heavy AI tasks.
-- **DB Queue**: Manages read/write locks for ChromaDB.
+- **LLM Queue**: Limits concurrent heavy AI tasks (via `ModelAccessCoordinator`).
+- **DB Queue**: Manages read/write locks for Orama.
 
 ## Code Standards
 

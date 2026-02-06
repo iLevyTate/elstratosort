@@ -4,7 +4,9 @@ This document describes the dependency injection (DI) patterns used in the Strat
 
 ## Overview
 
-The codebase uses a centralized DI container (`ServiceContainer`) for managing service dependencies. All services should be accessed through the container rather than direct instantiation or `getInstance()` calls.
+The codebase uses a centralized DI container (`ServiceContainer`) for managing service dependencies.
+All services should be accessed through the container rather than direct instantiation or
+`getInstance()` calls.
 
 ## ServiceContainer
 
@@ -24,10 +26,9 @@ All services are registered with unique identifiers in `ServiceIds`:
 const { container, ServiceIds } = require('./ServiceContainer');
 
 // Available service IDs:
-ServiceIds.CHROMA_DB; // ChromaDB vector database
+ServiceIds.ORAMA_VECTOR; // Orama vector database
 ServiceIds.SETTINGS; // Application settings
-ServiceIds.OLLAMA_SERVICE; // Ollama LLM service
-ServiceIds.OLLAMA_CLIENT; // Ollama API client
+ServiceIds.LLAMA_SERVICE; // Llama LLM service
 ServiceIds.PARALLEL_EMBEDDING; // Parallel embedding processor
 ServiceIds.EMBEDDING_CACHE; // Embedding cache
 ServiceIds.FOLDER_MATCHING; // Folder matching service
@@ -46,8 +47,8 @@ ServiceIds.PROCESSING_STATE; // Processing state tracker
 const { container, ServiceIds } = require('./services/ServiceContainer');
 
 // Resolve a service
-const chromaDb = container.resolve(ServiceIds.CHROMA_DB);
-const ollama = container.resolve(ServiceIds.OLLAMA_SERVICE);
+const vectorDb = container.resolve(ServiceIds.ORAMA_VECTOR);
+const llama = container.resolve(ServiceIds.LLAMA_SERVICE);
 ```
 
 ### Legacy: getInstance() (Deprecated)
@@ -56,8 +57,8 @@ Some services still export `getInstance()` for backward compatibility. **Do not 
 
 ```javascript
 // DEPRECATED - avoid in new code
-const { getInstance } = require('./OllamaService');
-const ollama = getInstance();
+const { getInstance } = require('./LlamaService');
+const llama = getInstance();
 ```
 
 ## Registering New Services
@@ -68,8 +69,8 @@ const ollama = getInstance();
 container.registerSingleton(ServiceIds.MY_SERVICE, (c) => {
   // c is the container - use it to resolve dependencies
   return new MyService({
-    chromaDb: c.resolve(ServiceIds.CHROMA_DB),
-    settings: c.resolve(ServiceIds.SETTINGS),
+    vectorDb: c.resolve(ServiceIds.ORAMA_VECTOR),
+    settings: c.resolve(ServiceIds.SETTINGS)
   });
 });
 ```
@@ -100,10 +101,10 @@ const integration = new ServiceIntegration();
 await integration.initialize();
 
 // Access via container (recommended)
-const chromaDb = container.resolve(ServiceIds.CHROMA_DB);
+const vectorDb = container.resolve(ServiceIds.ORAMA_VECTOR);
 
 // Or via integration properties (backward compatible)
-const chromaDb = integration.chromaDbService;
+const vectorDb = integration.oramaVectorService;
 ```
 
 ## Testing
@@ -112,7 +113,7 @@ The DI container makes testing easier by allowing mock injection:
 
 ```javascript
 // In tests, register mocks before resolving
-container.registerInstance(ServiceIds.CHROMA_DB, mockChromaDb);
+container.registerInstance(ServiceIds.ORAMA_VECTOR, mockVectorDb);
 
 // Your service will receive the mock
 const folderMatching = container.resolve(ServiceIds.FOLDER_MATCHING);
@@ -129,17 +130,17 @@ When migrating from `getInstance()` to container resolution:
 ### Before
 
 ```javascript
-const { getInstance } = require('./OllamaService');
-const ollama = getInstance();
-await ollama.generateEmbedding(text);
+const { getInstance } = require('./LlamaService');
+const llama = getInstance();
+await llama.generateEmbedding(text);
 ```
 
 ### After
 
 ```javascript
 const { container, ServiceIds } = require('./ServiceContainer');
-const ollama = container.resolve(ServiceIds.OLLAMA_SERVICE);
-await ollama.generateEmbedding(text);
+const llama = container.resolve(ServiceIds.LLAMA_SERVICE);
+await llama.generateEmbedding(text);
 ```
 
 ## Best Practices

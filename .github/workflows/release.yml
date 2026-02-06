@@ -71,7 +71,7 @@ jobs:
           $notes = @(
             "## Release Notes",
             "",
-            "- Bundled runtimes (Ollama, Python/Chroma, Tesseract) are included in the installer.",
+            "- Tesseract OCR is auto-installed or uses bundled tesseract.js fallback.",
             "- Models are not bundled; use **Download Base Models** after install.",
             ""
           ) + $section

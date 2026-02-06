@@ -2,150 +2,36 @@
 
 This document lists all environment variables and configuration options available in StratoSort.
 
-## Dependency Installation (Beta)
+## Model & OCR Setup
 
-> **⚠️ Beta Notice**: The automatic dependency installation feature (`npm run setup:deps`) is
-> currently in beta and may not work reliably on all systems. For full functionality, we recommend
-> installing dependencies manually via CLI as described below.
+The AI stack runs in-process (node-llama-cpp + Orama). You only need models and OCR:
 
-### Manual Installation via CLI
-
-If the automatic setup scripts fail or you prefer manual installation, follow these steps:
-
-#### 1. Install Ollama
-
-| Platform | Command                                                   |
-| -------- | --------------------------------------------------------- |
-| Windows  | `winget install Ollama.Ollama` or download from ollama.ai |
-| macOS    | `brew install ollama` or download from ollama.ai          |
-| Linux    | `curl -fsSL https://ollama.ai/install.sh \| sh`           |
-
-#### 2. Pull Required AI Models
+### Setup Commands
 
 ```bash
-# Ensure Ollama is running
-ollama serve
-
-# Pull models (choose at least one per type)
-# Defaults used by the app:
-ollama pull llama3.2:latest       # Text analysis (default)
-ollama pull llava:latest          # Vision/image analysis (default)
-ollama pull mxbai-embed-large     # Embedding model (default)
-
-# Optional lightweight alternatives (used by setup:ollama --auto):
-# - Text: qwen3:0.6b, gemma2:2b, phi3:mini
-# - Vision: gemma3:latest, moondream:latest
-# - Embedding: embeddinggemma:latest, nomic-embed-text:latest
-```
-
-#### 3. Install ChromaDB (Requires Python 3.8+)
-
-```bash
-# Windows
-pip install --user chromadb
-
-# macOS/Linux
-pip3 install --user chromadb
-```
-
-#### 4. Install Tesseract OCR
-
-```bash
-# Windows (winget)
-winget install Tesseract-OCR.Tesseract
-
-# macOS
-brew install tesseract
-
-# Linux (Debian/Ubuntu)
-sudo apt-get install tesseract-ocr
-```
-
-#### 5. Verify Installation
-
-```bash
-# Test Ollama
-curl http://127.0.0.1:11434/api/tags
-
-# Test ChromaDB
-python -c "import chromadb; print('ChromaDB OK')"
-```
-
-### Automatic Setup Commands (Beta)
-
-These commands attempt to auto-detect and install dependencies but may not work on all systems:
-
-```bash
-npm run setup:deps            # Install Ollama + ChromaDB + Tesseract
-npm run setup:ollama          # Install Ollama + pull models
-npm run setup:chromadb        # Install ChromaDB Python module
-npm run setup:tesseract       # Install Tesseract OCR (best-effort)
-npm run setup:ollama:check    # Verify Ollama installation
-npm run setup:chromadb:check  # Verify ChromaDB installation
+npm run setup:deps          # Download models (best-effort)
+npm run setup:models        # Download GGUF models
+npm run setup:models:check  # Verify models
 ```
 
 ### Setup Script Flags (Advanced)
 
 These variables affect setup scripts and `postinstall` behavior:
 
-| Variable               | Default | Description                                                         |
-| ---------------------- | ------- | ------------------------------------------------------------------- |
-| `SKIP_APP_DEPS`        | `0`     | Skip `postinstall` native rebuild and all setup scripts             |
-| `SKIP_TESSERACT_SETUP` | `0`     | Skip Tesseract setup (used by setup scripts and background setup)   |
-| `MINIMAL_SETUP`        | `0`     | Skip optional Ollama models during setup (`setup:ollama --minimal`) |
+| Variable               | Default | Description                                                           |
+| ---------------------- | ------- | --------------------------------------------------------------------- |
+| `SKIP_APP_DEPS`        | `0`     | Skip `postinstall` native rebuild and all setup scripts               |
+| `SKIP_TESSERACT_SETUP` | `0`     | Skip Tesseract setup (used by setup scripts and background setup)     |
+| `MINIMAL_SETUP`        | `0`     | Skip optional model downloads during setup (`setup:models --minimal`) |
 
 ## Environment Variables
 
-### Ollama Configuration
-
-| Variable            | Default                  | Description                                 |
-| ------------------- | ------------------------ | ------------------------------------------- |
-| `OLLAMA_BASE_URL`   | `http://127.0.0.1:11434` | Base URL for the Ollama API server          |
-| `OLLAMA_HOST`       | `http://127.0.0.1:11434` | Alternative to `OLLAMA_BASE_URL`            |
-| `OLLAMA_NUM_GPU`    | Auto-detected            | Number of GPU layers to use                 |
-| `OLLAMA_NUM_THREAD` | Auto-detected            | Number of CPU threads for inference         |
-| `OLLAMA_NUM_BATCH`  | Auto-detected            | Batch size for prompt processing            |
-| `OLLAMA_KEEP_ALIVE` | `10m`                    | How long to keep the model loaded in memory |
-
-### ChromaDB Configuration
-
-| Variable                      | Default                 | Description                                                                            |
-| ----------------------------- | ----------------------- | -------------------------------------------------------------------------------------- |
-| `CHROMA_SERVER_URL`           | `http://127.0.0.1:8000` | Full URL for ChromaDB server. If set and reachable, skips local installation/spawning. |
-| `CHROMA_SERVER_PROTOCOL`      | `http`                  | Protocol for ChromaDB connection (used if `CHROMA_SERVER_URL` is not set)              |
-| `CHROMA_SERVER_HOST`          | `127.0.0.1`             | ChromaDB server hostname (used if `CHROMA_SERVER_URL` is not set)                      |
-| `CHROMA_SERVER_PORT`          | `8000`                  | ChromaDB server port (used if `CHROMA_SERVER_URL` is not set)                          |
-| `CHROMA_SERVER_COMMAND`       | -                       | Custom command to spawn ChromaDB server (advanced use only)                            |
-| `CHROMA_DATA_DIR`             | -                       | Override local ChromaDB data directory (useful for containers)                         |
-| `STRATOSORT_DISABLE_CHROMADB` | `0`                     | Set to `1` to disable ChromaDB integration entirely                                    |
-
-**External ChromaDB (Docker/Remote)**:
-
-- Set `CHROMA_SERVER_URL` to point to an external ChromaDB instance (e.g.,
-  `http://192.168.1.100:8000`).
-- The app will verify the server is reachable and skip local Python/pip installation.
-- Useful for Docker deployments or shared ChromaDB instances.
-
-### ChromaDB Cache Tuning
-
-| Variable                         | Default  | Description                                |
-| -------------------------------- | -------- | ------------------------------------------ |
-| `CHROMA_QUERY_CACHE_SIZE`        | `200`    | Maximum number of cached query results     |
-| `CHROMA_QUERY_CACHE_TTL_MS`      | `120000` | Cache entry time-to-live (2 minutes)       |
-| `STRATOSORT_CHROMA_CACHE_SIZE`   | -        | Alternative to `CHROMA_QUERY_CACHE_SIZE`   |
-| `STRATOSORT_CHROMA_CACHE_TTL_MS` | -        | Alternative to `CHROMA_QUERY_CACHE_TTL_MS` |
-
-### ChromaDB Recovery (Advanced)
-
-| Variable                               | Default | Description                                                                                       |
-| -------------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
-| `STRATOSORT_ALLOW_CHROMADB_AUTO_RESET` | `0`     | Allow auto backup + reset when corruption is suspected and server is healthy (local only; risky). |
-
 ### OCR (Tesseract)
 
-| Variable         | Default | Description                                                      |
-| ---------------- | ------- | ---------------------------------------------------------------- |
-| `TESSERACT_PATH` | -       | Override path to the Tesseract binary (skips auto-install logic) |
+| Variable          | Default  | Description                                                      |
+| ----------------- | -------- | ---------------------------------------------------------------- |
+| `TESSERACT_PATH`  | -        | Override path to the Tesseract binary (skips auto-install logic) |
+| `TESSDATA_PREFIX` | Auto-set | Path to tessdata directory; auto-set for embedded runtime        |
 
 ### Performance Tuning
 
@@ -174,7 +60,6 @@ These variables affect setup scripts and `postinstall` behavior:
 
 | Variable                              | Default | Description                                    |
 | ------------------------------------- | ------- | ---------------------------------------------- |
-| `STRATOSORT_DISABLE_CHROMADB`         | `0`     | Disable ChromaDB integration entirely          |
 | `STRATOSORT_DEBUG`                    | `0`     | Enable debug mode with verbose logging         |
 | `STRATOSORT_ENABLE_TELEMETRY`         | `0`     | Enable anonymous telemetry collection          |
 | `STRATOSORT_REDACT_PATHS`             | `0`     | Redact file/folder paths in the UI (demo-safe) |
@@ -202,12 +87,11 @@ These variables affect setup scripts and `postinstall` behavior:
 
 ### Runtime Configuration
 
-| Variable                 | Default | Description                                                      |
-| ------------------------ | ------- | ---------------------------------------------------------------- |
-| `STRATOSORT_RUNTIME_DIR` | -       | Override bundled runtime root (assets/runtime) for local testing |
+| Variable                 | Default | Description                                                                     |
+| ------------------------ | ------- | ------------------------------------------------------------------------------- |
+| `STRATOSORT_RUNTIME_DIR` | -       | Override bundled runtime root (deprecated; only used for embedded OCR binaries) |
 
-Bundled runtime metadata and download URLs are stored in `assets/runtime/runtime-manifest.json`. Run
-`npm run setup:runtime` to stage these assets for packaging.
+The AI stack runs fully in-process. No external runtime staging is required.
 
 ## Performance Constants
 
@@ -235,7 +119,6 @@ organized into categories:
 | `MAX_ATTEMPTS_HIGH`   | 5          | High-priority retry attempts   |
 | `FILE_OPERATION`      | 3 attempts | File operation retry config    |
 | `AI_ANALYSIS`         | 2 attempts | AI analysis retry config       |
-| `OLLAMA_API`          | 3 attempts | Ollama API retry config        |
 
 ### CACHE Limits
 
@@ -307,12 +190,10 @@ Set environment variables before launching the application:
 
 ```bash
 # Linux/macOS
-export OLLAMA_BASE_URL=http://192.168.1.100:11434
 export MAX_IMAGE_CACHE=500
 ./stratosort
 
 # Windows (PowerShell)
-$env:OLLAMA_BASE_URL = "http://192.168.1.100:11434"
 $env:MAX_IMAGE_CACHE = "500"
 .\stratosort.exe
 ```
@@ -331,36 +212,16 @@ If experiencing rendering problems:
 export STRATOSORT_FORCE_SOFTWARE_GPU=1
 ```
 
-### ChromaDB Connection Issues
+### Model Download Issues
 
-**Local ChromaDB (default)**:
-
-- The app auto-installs ChromaDB via `pip install --user chromadb` on first run.
-- Spawns `chroma run --path <data-dir>` automatically when needed.
-- Verify installation: `npm run setup:chromadb:check`
-
-**External ChromaDB (Docker/remote)**:
-
-- Set `CHROMA_SERVER_URL` to your external server:
-  ```bash
-  export CHROMA_SERVER_URL=http://192.168.1.100:8000  # Linux/macOS
-  $env:CHROMA_SERVER_URL = "http://192.168.1.100:8000"  # Windows PowerShell
-  ```
-- Verify it's reachable:
-  ```bash
-  curl http://192.168.1.100:8000/api/v1/heartbeat
-  ```
-
-### Ollama Connection Issues
-
-Verify Ollama is running:
+If AI analysis fails due to missing models:
 
 ```bash
-curl http://127.0.0.1:11434/api/tags
+npm run setup:models
+npm run setup:models:check
 ```
 
-Override the connection URL if needed:
+### Vector DB Issues
 
-```bash
-export OLLAMA_BASE_URL=http://custom-host:11434
-```
+The Orama index is stored locally and rebuilt on demand. If results look stale, re-run analysis or
+trigger a rebuild from the app UI.

@@ -43,7 +43,7 @@ The graph doesn't just show files; it shows _meaning_.
 ### Backend (`Main Process`)
 
 - `GraphService.js`: Handles the heavy lifting of graph construction.
-- `ChromaDB`: Provides the raw vector data and similarity scores.
+- `OramaVectorService`: Provides the raw vector data and similarity scores.
 - `ReRankerService`: Refines connections to ensure high-quality edges.
 
 ## Usage Guide
