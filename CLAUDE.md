@@ -81,16 +81,22 @@ npm run dist:win         # Build Windows installer
 
 These are tracked gaps that the project slash commands help address:
 
-1. **Sandbox disabled** in renderer (`src/main/core/createWindow.js:130`) - preload uses `require()`
-   for shared modules
-2. **CSP allows 'unsafe-eval'** (`src/main/core/createWindow.js:260`)
-3. **No crash reporting** - errors logged locally only, no Sentry/BugSnag
-4. **No code signing** - electron-builder.json has no certificate config
-5. **No macOS notarization** - `@electron/notarize` installed but not configured
-6. **No state schema versioning** - persisted Redux state has no version or migration framework
-7. **Test coverage unknown** - collection configured but thresholds not enforced
-8. **No remote logging** - all logs stay on device
-9. **Accessibility minimal** - some ARIA present but no audit performed
+1. **No crash reporting** - errors logged locally only, no Sentry/BugSnag
+2. **No code signing** - electron-builder.json has no certificate config
+3. **No macOS notarization** - `@electron/notarize` installed but not configured
+4. **Test coverage unknown** - collection configured but thresholds not enforced
+5. **No remote logging** - all logs stay on device
+6. **Accessibility minimal** - some ARIA present but no audit performed
+
+### Resolved Gaps
+
+- ~~Sandbox disabled~~ - Sandbox enabled (`sandbox: true` in `src/main/core/createWindow.js`);
+  preload is webpack-bundled, no runtime `require()`.
+- ~~CSP allows 'unsafe-eval'~~ - CSP uses `script-src 'self'` with no `unsafe-eval`
+  (`src/main/core/createWindow.js`).
+- ~~No state schema versioning~~ - Migration framework implemented in
+  `src/renderer/store/migrations.js` (`CURRENT_STATE_VERSION = 2`) with version stamping in
+  `persistenceMiddleware.js`.
 
 ## Cursor Rules & Commands
 
@@ -100,7 +106,7 @@ specific audit or check in natural language.
 | Request               | Purpose                               | Rule File                               |
 | :-------------------- | :------------------------------------ | :-------------------------------------- |
 | "Run security audit"  | Full Electron security audit          | `.cursor/rules/audit-security.mdc`      |
-| "Harden electron"     | Fix sandbox, CSP, webPreferences      | `.cursor/rules/harden-electron.mdc`     |
+| "Harden electron"     | Verify sandbox, CSP, webPreferences   | `.cursor/rules/harden-electron.mdc`     |
 | "Audit IPC"           | Validate IPC contracts and security   | `.cursor/rules/audit-ipc.mdc`           |
 | "Check test coverage" | Run tests, analyze coverage gaps      | `.cursor/rules/check-coverage.mdc`      |
 | "Pre-release check"   | Pre-release checklist validation      | `.cursor/rules/check-prerelease.mdc`    |
