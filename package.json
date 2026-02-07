@@ -114,6 +114,7 @@
     "@napi-rs/canvas": "^0.1.90",
     "@orama/orama": "^3.0.0",
     "@orama/plugin-data-persistence": "^3.0.0",
+    "@sentry/electron": "^7.7.1",
     "better-sqlite3": "^12.6.2",
     "chokidar": "^5.0.0",
     "electron-updater": "^6.7.3",

@@ -59,6 +59,7 @@ module.exports = (env, argv) => {
       {
         electron: 'commonjs electron',
         sharp: 'commonjs sharp',
+        '@napi-rs/canvas': 'commonjs @napi-rs/canvas',
         'electron-updater': 'commonjs electron-updater',
         'better-sqlite3': 'commonjs better-sqlite3',
         'lz4-napi': 'commonjs lz4-napi',

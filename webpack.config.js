@@ -62,7 +62,19 @@ module.exports = (env, argv) => {
         // FIX: Add asset loader rules for SVG, images, and fonts
         {
           test: /\.svg$/,
-          use: ['@svgr/webpack', 'url-loader']
+          oneOf: [
+            {
+              issuer: /\.[jt]sx?$/,
+              use: ['@svgr/webpack'],
+              type: 'javascript/auto'
+            },
+            {
+              type: 'asset/resource',
+              generator: {
+                filename: 'images/[name][ext]'
+              }
+            }
+          ]
         },
         {
           test: /\.(png|jpg|jpeg|gif|webp)$/i,
@@ -127,20 +139,8 @@ module.exports = (env, argv) => {
       }),
       // FIX: Only extract CSS in production mode (dev uses style-loader for HMR)
       ...(isProduction ? [new MiniCssExtractPlugin({ filename: 'styles.css' })] : []),
-      ...(function getProductionPlugins() {
-        if (isProduction) {
-          return [
-            new webpack.IgnorePlugin({
-              resourceRegExp: /moment\/locale/
-            })
-          ];
-        }
-        // FIX: Use isDevServer variable for consistency
-        if (isDevServer) {
-          return [new ReactRefreshWebpackPlugin({ overlay: false })];
-        }
-        return [];
-      })(),
+      // FIX: Use isDevServer variable for consistency
+      ...(isDevServer ? [new ReactRefreshWebpackPlugin({ overlay: false })] : []),
       ...(isAnalyze ? [new BundleAnalyzerPlugin({ analyzerMode: 'static' })] : [])
     ],
     // Use secure devtool options
