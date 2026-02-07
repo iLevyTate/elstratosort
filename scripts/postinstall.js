@@ -30,19 +30,23 @@ function main(
     }
   }
 
-  // Run remaining setup scripts (best-effort)
-  // In-process AI stack (node-llama-cpp + Orama) requires no external runtime setup.
-  // Only model bootstrap remains (GGUF downloads/registry initialization).
-  const setupScripts = ['scripts/setup-models.js'];
-  for (const script of setupScripts) {
+  // Download recommended GGUF models and vision runtime binary (best-effort).
+  // In-process AI stack (node-llama-cpp + Orama) requires local model files.
+  // Vision analysis requires the llama-server binary (bundled in production builds).
+  const setupScripts = [
+    { script: 'scripts/setup-vision-runtime.js', args: [] },
+    { script: 'scripts/setup-models.js', args: ['--download'] }
+  ];
+  for (const { script, args } of setupScripts) {
     try {
-      // Use node to run the script
-      const result = spawnSyncImpl(process.execPath, [script], {
+      const result = spawnSyncImpl(process.execPath, [script, ...args], {
         stdio: 'inherit',
         env: { ...env, FORCE_COLOR: '1' }
       });
       if (result.status !== 0) {
-        log.warn(`[postinstall] ${script} failed (non-fatal)`);
+        log.warn(
+          `[postinstall] ${script} failed (non-fatal) — models can be downloaded from the app`
+        );
       }
     } catch (e) {
       log.warn(`[postinstall] Failed to run ${script}: ${e.message}`);

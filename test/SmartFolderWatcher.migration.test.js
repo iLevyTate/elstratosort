@@ -91,7 +91,9 @@ jest.mock('../src/shared/fileOperationTracker', () => ({
   getInstance: jest.fn(() => ({
     isBeingProcessed: jest.fn(() => false),
     markProcessing: jest.fn(),
-    clearProcessing: jest.fn()
+    clearProcessing: jest.fn(),
+    recordOperation: jest.fn(),
+    wasRecentlyOperated: jest.fn(() => false)
   }))
 }));
 
@@ -177,7 +179,9 @@ describe('SmartFolderWatcher - Migration Tests', () => {
       },
       notificationService: {
         notify: jest.fn(),
-        notifyWatcherError: jest.fn().mockResolvedValue()
+        notifyWatcherError: jest.fn().mockResolvedValue(),
+        notifyFileAnalyzed: jest.fn().mockResolvedValue(),
+        notifyLowConfidence: jest.fn().mockResolvedValue()
       }
     };
 

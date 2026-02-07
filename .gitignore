@@ -112,3 +112,6 @@ LOCAL_TESTING_CHECKLIST.md
 
 # Legacy documentation (archived reports and session logs)
 docs/.legacy/
+
+# Runtime binaries (downloaded by setup scripts)
+assets/runtime/
