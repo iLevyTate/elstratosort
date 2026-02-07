@@ -285,11 +285,12 @@ class ParallelEmbeddingService {
       if (result && result.embedding) {
         // LlamaService.generateEmbedding() returns {embedding: [...]} without model name.
         // Read model from config so batch model-consistency checks work correctly.
-        const configModel = llamaService.getConfig?.()?.embeddingModel;
+        // Note: getConfig() is async — must await to get the actual config object.
+        const config = await llamaService.getConfig?.();
         const normalized = {
           success: true,
           vector: result.embedding || [],
-          model: result.model || configModel || 'local-model'
+          model: result.model || config?.embeddingModel || 'local-model'
         };
         return normalized;
       }
