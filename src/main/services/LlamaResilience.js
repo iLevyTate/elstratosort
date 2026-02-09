@@ -148,7 +148,7 @@ async function _executeWithRetries(operation, options) {
  * When `modelType` is provided, a per-model-type circuit breaker guards the
  * operation.  After 5 consecutive complete failures (all retries exhausted)
  * the breaker opens and immediately rejects further calls for that model type
- * until the 30 s recovery probe succeeds.
+ * until the 5 min recovery probe succeeds.
  *
  * @param {Function} operation - The async operation to execute
  * @param {Object}   [options]

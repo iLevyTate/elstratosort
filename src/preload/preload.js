@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, crashReporter } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 const { Logger, LOG_LEVELS } = require('../shared/logger');
 const { IpcRateLimiter } = require('./ipcRateLimiter');
 const { createIpcSanitizer } = require('./ipcSanitizer');
@@ -213,16 +213,6 @@ preloadLogger.setContext('Preload');
 preloadLogger.setLevel(
   process?.env?.NODE_ENV === 'development' ? LOG_LEVELS.DEBUG : LOG_LEVELS.INFO
 );
-
-// Initialize Crash Reporter (Scaffolding)
-try {
-  crashReporter.start({
-    uploadToServer: false
-  });
-  preloadLogger.info('[CRASH-REPORTER] Initialized in preload');
-} catch (error) {
-  preloadLogger.warn('[CRASH-REPORTER] Failed to initialize in preload:', error.message);
-}
 
 const log = {
   debug: (message, data) => preloadLogger.debug(message, data),

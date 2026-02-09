@@ -332,9 +332,9 @@ const LLAMA = {
   NUM_PARALLEL_EMBEDDINGS: 1,
   // GPU layers configuration ('auto' = offload all layers to GPU when available)
   GPU_LAYERS_DEFAULT: 'auto',
-  // Context window sizes by task type
+  // Context window sizes by task type (reference defaults; actual sizing is dynamic in LlamaService)
   CONTEXT_EMBEDDINGS: 512,
-  CONTEXT_VISION: 2048,
+  CONTEXT_VISION: 4608, // LLaVA images encode to ~4000 tokens; floor must exceed that
   CONTEXT_TEXT: 8192,
   // Rate limiting (internal, not network-based)
   MAX_REQUESTS_PER_SECOND: 5,

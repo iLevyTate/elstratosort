@@ -66,6 +66,10 @@ async function loadNodeLlamaModule() {
   return _nodeLlamaModule;
 }
 
+// Vision models (LLaVA) encode images into ~4000 tokens. This floor guarantees
+// enough room for image tokens + prompt + response in the vision context.
+const VISION_MIN_CONTEXT = 4608;
+
 // Default model configuration
 const DEFAULT_CONFIG = {
   textModel: AI_DEFAULTS.TEXT?.MODEL || 'Mistral-7B-Instruct-v0.3-Q4_K_M.gguf',
@@ -248,50 +252,46 @@ class LlamaService extends EventEmitter {
     const vramMB = this._detectedGpu?.vramMB || 0;
     const isCpu = this._gpuBackend === 'cpu';
 
-    let recommendedText = 4096;
-    if (isCpu) {
-      recommendedText = 2048;
-    } else if (vramMB >= 12000) {
-      recommendedText = 8192;
-    } else if (vramMB >= 8000) {
-      recommendedText = 6144;
-    } else if (vramMB >= 6000) {
-      recommendedText = 4096;
-    } else {
-      recommendedText = 2048;
-    }
-
+    // Auto-detect a sensible default only when no valid context size is configured.
+    // Never clamp user-configured values; the fallback ladder in _loadModel
+    // handles OOM dynamically by trying progressively smaller sizes.
     if (!Number.isFinite(this._config.contextSize) || this._config.contextSize <= 0) {
-      this._config.contextSize = recommendedText;
-    } else if (this._config.contextSize > recommendedText) {
-      logger.warn('[LlamaService] Context size exceeds recommended budget, clamping', {
-        configured: this._config.contextSize,
-        recommended: recommendedText,
+      let autoSize = 4096;
+      if (isCpu) {
+        autoSize = 2048;
+      } else if (vramMB >= 12000) {
+        autoSize = 8192;
+      } else if (vramMB >= 8000) {
+        autoSize = 6144;
+      }
+      this._config.contextSize = autoSize;
+      logger.info('[LlamaService] Context size auto-configured', {
+        contextSize: autoSize,
         vramMB: vramMB || null,
         backend: this._gpuBackend
       });
-      this._config.contextSize = recommendedText;
     }
 
-    let recommendedVision = 6144;
-    if (isCpu) {
-      recommendedVision = 4096;
-    } else if (vramMB >= 12000) {
-      recommendedVision = 8192;
-    } else if (vramMB > 0 && vramMB < 8000) {
-      recommendedVision = 4096;
-    }
+    // Ensure the vision context is always large enough for image tokens + prompt + response.
+    this._visionContextSize = Math.max(this._config.contextSize, VISION_MIN_CONTEXT);
 
-    const baseContext = Number.isFinite(this._config.contextSize)
-      ? this._config.contextSize
-      : recommendedVision;
-    // Clamp vision context size to the recommended budget.
-    this._visionContextSize = Math.min(recommendedVision, baseContext);
+    logger.debug('[LlamaService] Context sizing resolved', {
+      textContext: this._config.contextSize,
+      visionContext: this._visionContextSize,
+      vramMB: vramMB || null,
+      backend: this._gpuBackend
+    });
   }
 
   _getEffectiveContextSize(type = 'text') {
-    if (type === 'vision' && Number.isFinite(this._visionContextSize)) {
-      return this._visionContextSize;
+    if (type === 'vision') {
+      // Prefer the pre-computed vision context size from _applyContextSizing.
+      // If null (e.g. after updateConfig reset), recompute from current config
+      // with the minimum floor guarantee so image analysis always works.
+      if (Number.isFinite(this._visionContextSize)) {
+        return this._visionContextSize;
+      }
+      return Math.max(this._config.contextSize, VISION_MIN_CONTEXT);
     }
     const preferred = this._preferredContextSize?.[type];
     if (Number.isFinite(preferred) && preferred > 0) {
