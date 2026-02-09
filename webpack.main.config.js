@@ -52,9 +52,14 @@ module.exports = (env, argv) => {
     output: {
       path: path.resolve(__dirname, 'dist'),
       filename: '[name].js',
+      libraryTarget: 'commonjs2',
       clean: false
     },
     target: 'electron-main',
+    node: {
+      __dirname: false,
+      __filename: false
+    },
     externals: [
       {
         electron: 'commonjs electron',
@@ -63,6 +68,8 @@ module.exports = (env, argv) => {
         'electron-updater': 'commonjs electron-updater',
         'better-sqlite3': 'commonjs better-sqlite3',
         'lz4-napi': 'commonjs lz4-napi',
+        'tesseract.js': 'commonjs tesseract.js',
+        'tesseract.js-core': 'commonjs tesseract.js-core',
         // Pino uses thread-stream which spawns Worker threads via __dirname-relative
         // paths. Bundling breaks __dirname resolution, so keep pino ecosystem external.
         pino: 'commonjs pino',

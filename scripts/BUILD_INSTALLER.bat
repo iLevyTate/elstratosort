@@ -13,7 +13,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [1/6] Installing dependencies...
+echo [1/7] Installing dependencies...
 call npm ci
 
 if errorlevel 1 (
@@ -23,7 +23,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/6] Generating assets...
+echo [2/7] Generating assets...
 call npm run generate:assets
 
 if errorlevel 1 (
@@ -33,7 +33,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/6] Building application...
+echo [3/7] Building application...
 call npm run build
 
 if errorlevel 1 (
@@ -43,17 +43,28 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/6] Checking model availability...
-call node scripts/setup-models.js --check >nul 2>&1
+echo [4/7] Downloading vision runtime (llama-server)...
+call node scripts/setup-vision-runtime.js
+
 if errorlevel 1 (
-    echo WARNING: Recommended models are missing. AI features may be limited.
-    echo Run 'npm run setup:models' to download models.
-) else (
-    echo Recommended models are available!
+    echo ERROR: Failed to download vision runtime
+    echo Vision features will not work without llama-server.
+    pause
+    exit /b 1
 )
 
 echo.
-echo [5/6] Creating Windows installer...
+echo [5/7] Checking model availability...
+call node scripts/setup-models.js --check >nul 2>&1
+if errorlevel 1 (
+    echo NOTE: Models are not bundled in the installer.
+    echo Users will download models on first launch via the setup wizard.
+) else (
+    echo Recommended models are available locally.
+)
+
+echo.
+echo [6/7] Creating Windows installer...
 call npx electron-builder --win --publish never --config electron-builder.json
 
 if errorlevel 1 (
@@ -63,7 +74,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [6/6] Build complete!
+echo [7/7] Build complete!
 echo.
 echo ============================================
 echo   SUCCESS! Installer created
