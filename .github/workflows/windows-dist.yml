@@ -40,7 +40,7 @@ jobs:
           $hashes | Out-File release/build/checksums.sha256 -Encoding ASCII
 
       - name: Upload installer artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: stratosort-windows-dist
           path: |
