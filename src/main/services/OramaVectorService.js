@@ -19,6 +19,10 @@ const { AI_DEFAULTS } = require('../../shared/constants');
 const { ERROR_CODES } = require('../../shared/errorCodes');
 const { replaceFileWithRetry } = require('../../shared/atomicFile');
 const { compress, uncompress } = require('lz4-napi');
+const { resolveEmbeddingDimension } = require('../../shared/embeddingDimensions');
+const { getEmbeddingModel, loadLlamaConfig } = require('../llamaUtils');
+const { writeEmbeddingIndexMetadata } = require('./vectorDb/embeddingIndexMetadata');
+const { get: getConfig } = require('../../shared/config/index');
 
 const logger = createLogger('OramaVectorService');
 
@@ -132,6 +136,7 @@ class OramaVectorService extends EventEmitter {
     this._initialized = false;
     this._dataPath = null;
     this._dimension = DEFAULT_EMBEDDING_DIMENSION;
+    this._embeddingModel = null;
     this._schemas = null;
 
     // Persistence state
@@ -185,8 +190,7 @@ class OramaVectorService extends EventEmitter {
         this._dataPath = path.join(app.getPath('userData'), 'vector-db');
         await fs.mkdir(this._dataPath, { recursive: true });
 
-        // Build schemas with default dimension
-        this._schemas = buildSchemas(this._dimension);
+        await this._refreshEmbeddingDimension({ reason: 'initialize' });
 
         // Initialize dimension cache
         const collectionNames = ['files', 'folders', 'fileChunks', 'feedback', 'learningPatterns'];
@@ -208,6 +212,7 @@ class OramaVectorService extends EventEmitter {
         logger.info('[OramaVectorService] Initialized', {
           collections: collectionNames,
           dimension: this._dimension,
+          embeddingModel: this._embeddingModel || AI_DEFAULTS.EMBEDDING?.MODEL || 'unknown',
           counts
         });
 
@@ -224,6 +229,115 @@ class OramaVectorService extends EventEmitter {
     })();
 
     return this._initPromise;
+  }
+
+  async _resolveEmbeddingConfig(modelOverride) {
+    let modelName = modelOverride;
+    if (!modelName) {
+      try {
+        await loadLlamaConfig();
+      } catch (error) {
+        logger.debug('[OramaVectorService] Failed to load Llama config for dimension resolve', {
+          error: error.message
+        });
+      }
+      modelName = getEmbeddingModel();
+    }
+
+    if (!modelName) {
+      modelName = AI_DEFAULTS.EMBEDDING?.MODEL || null;
+    }
+
+    const defaultDimension = getConfig('ANALYSIS.embeddingDimension', DEFAULT_EMBEDDING_DIMENSION);
+    const dimension = resolveEmbeddingDimension(modelName, { defaultDimension });
+
+    return { modelName, dimension };
+  }
+
+  async _refreshEmbeddingDimension({ reason, modelName } = {}) {
+    const { modelName: resolvedModel, dimension } = await this._resolveEmbeddingConfig(modelName);
+    const previousDimension = this._dimension;
+    const previousModel = this._embeddingModel;
+
+    const dimensionChanged =
+      Number.isInteger(dimension) && dimension > 0 && dimension !== this._dimension;
+    const modelChanged = resolvedModel && resolvedModel !== this._embeddingModel;
+
+    if (dimensionChanged) {
+      this._dimension = dimension;
+      this._schemas = buildSchemas(this._dimension);
+    } else if (!this._schemas) {
+      this._schemas = buildSchemas(this._dimension);
+    }
+
+    if (modelChanged) {
+      this._embeddingModel = resolvedModel;
+    } else if (!this._embeddingModel && resolvedModel) {
+      this._embeddingModel = resolvedModel;
+    }
+
+    if ((dimensionChanged || modelChanged) && reason) {
+      logger.info('[OramaVectorService] Embedding config resolved', {
+        reason,
+        model: resolvedModel,
+        dimension,
+        previousDimension,
+        previousModel
+      });
+    }
+
+    return {
+      modelName: resolvedModel,
+      dimension: this._dimension,
+      previousDimension,
+      previousModel,
+      dimensionChanged,
+      modelChanged
+    };
+  }
+
+  async handleEmbeddingModelChange({ previousModel, newModel, source } = {}) {
+    const resolved = await this._refreshEmbeddingDimension({
+      reason: 'model-change',
+      modelName: newModel
+    });
+
+    if (resolved.dimensionChanged) {
+      logger.warn('[OramaVectorService] Embedding dimension changed, resetting collections', {
+        previousModel,
+        newModel: resolved.modelName || newModel,
+        previousDimension: resolved.previousDimension,
+        newDimension: this._dimension
+      });
+      await this.resetAll();
+    }
+
+    try {
+      await writeEmbeddingIndexMetadata({
+        model: resolved.modelName || newModel || previousModel || 'unknown',
+        dims: this._dimension,
+        source: source || 'model-change'
+      });
+    } catch (error) {
+      logger.debug('[OramaVectorService] Failed to update embedding metadata', {
+        error: error.message
+      });
+    }
+
+    this.emit('embedding-model-change', {
+      previousModel,
+      newModel: resolved.modelName || newModel,
+      previousDimension: resolved.previousDimension,
+      newDimension: this._dimension
+    });
+
+    return {
+      previousModel,
+      newModel: resolved.modelName || newModel,
+      previousDimension: resolved.previousDimension,
+      newDimension: this._dimension,
+      dimensionChanged: resolved.dimensionChanged
+    };
   }
 
   /**
@@ -292,6 +406,7 @@ class OramaVectorService extends EventEmitter {
             `[OramaVectorService] Failed to remove stale ${name} persistence file: ${unlinkError.message}`
           );
         }
+        // FIX Bug #35: Return the newly created database instead of falling through
         return await create({ schema });
       }
 
@@ -346,7 +461,15 @@ class OramaVectorService extends EventEmitter {
         clearTimeout(this._persistTimer);
         this._persistTimer = null;
       }
-      this._currentPersistPromise = this._doPersist();
+      // FIX: Only start a new persist if none is running. When _isPersisting is
+      // true, _doPersist() returns a resolved promise (no-op). Assigning that to
+      // _currentPersistPromise would overwrite the reference to the real in-flight
+      // persist, causing cleanup() to skip waiting for it and risk data loss.
+      // Setting _persistPending = true (above) is sufficient: the running persist's
+      // finally block will see the flag and reschedule.
+      if (!this._isPersisting) {
+        this._currentPersistPromise = this._doPersist();
+      }
       return;
     }
 
@@ -356,7 +479,11 @@ class OramaVectorService extends EventEmitter {
     }
 
     this._persistTimer = setTimeout(() => {
-      this._currentPersistPromise = this._doPersist();
+      // FIX: Same guard for the debounced path -- don't clobber the promise ref
+      // if a persist is still running when the timer fires.
+      if (!this._isPersisting) {
+        this._currentPersistPromise = this._doPersist();
+      }
     }, PERSIST_DEBOUNCE_MS);
   }
 
@@ -539,6 +666,16 @@ class OramaVectorService extends EventEmitter {
     return { valid: true };
   }
 
+  _validateEmbeddingValues(vector, _collectionType) {
+    if (!Array.isArray(vector) || vector.length === 0) {
+      return { valid: false, error: 'invalid_vector' };
+    }
+    if (vector.some((v) => !Number.isFinite(v))) {
+      return { valid: false, error: 'invalid_vector_values' };
+    }
+    return { valid: true };
+  }
+
   /**
    * Get collection dimension
    * @param {string} collectionType - Collection name
@@ -683,21 +820,34 @@ class OramaVectorService extends EventEmitter {
     }
 
     let successCount = 0;
+    const failed = [];
     for (const file of files) {
       try {
         const result = await this.upsertFile(file);
         if (result?.success !== false) {
           successCount++;
+        } else {
+          failed.push({
+            id: file.id,
+            error: result?.error || 'upsert_failed',
+            requiresRebuild: result?.requiresRebuild === true
+          });
         }
       } catch (error) {
         logger.warn('[OramaVectorService] Failed to upsert file in batch:', {
           fileId: file.id,
           error: error.message
         });
+        failed.push({ id: file.id, error: error.message });
       }
     }
 
-    return { queued: false, count: successCount };
+    return {
+      queued: false,
+      count: successCount,
+      failed,
+      success: failed.length === 0
+    };
   }
 
   /**
@@ -1038,7 +1188,35 @@ class OramaVectorService extends EventEmitter {
     }
 
     await this.initialize();
-    this._validateEmbedding(folder.vector, 'folders');
+    const valueValidation = this._validateEmbeddingValues(folder.vector, 'folders');
+    if (!valueValidation.valid) {
+      this.emit('embedding-blocked', {
+        type: valueValidation.error,
+        folderId: folder.id,
+        message: 'Embedding vector contains invalid values.'
+      });
+      return {
+        success: false,
+        folderId: folder.id,
+        error: valueValidation.error
+      };
+    }
+    const dimValidation = await this.validateEmbeddingDimension(folder.vector, 'folders');
+    if (!dimValidation.valid) {
+      this.emit('embedding-blocked', {
+        type: 'dimension_mismatch',
+        folderId: folder.id,
+        expectedDim: dimValidation.expectedDim,
+        actualDim: dimValidation.actualDim,
+        message: 'Embedding model changed. Run "Rebuild Embeddings" to fix.'
+      });
+      return {
+        success: false,
+        folderId: folder.id,
+        error: 'dimension_mismatch',
+        requiresRebuild: true
+      };
+    }
 
     // Backward-compatible meta handling:
     // Some callers (legacy services) pass { name, path, description } at the top level.
@@ -1104,17 +1282,33 @@ class OramaVectorService extends EventEmitter {
 
     let successCount = 0;
     const skipped = [];
+    const failed = [];
 
     for (const folder of folders) {
       try {
-        await this.upsertFolder(folder);
-        successCount++;
+        const result = await this.upsertFolder(folder);
+        if (result?.success !== false) {
+          successCount++;
+        } else {
+          failed.push({
+            id: folder.id,
+            error: result?.error || 'upsert_failed',
+            requiresRebuild: result?.requiresRebuild === true
+          });
+        }
       } catch (error) {
         skipped.push({ id: folder.id, error: error.message });
+        failed.push({ id: folder.id, error: error.message });
       }
     }
 
-    return { queued: false, count: successCount, skipped };
+    return {
+      queued: false,
+      count: successCount,
+      skipped,
+      failed,
+      success: failed.length === 0
+    };
   }
 
   /**
@@ -1465,7 +1659,35 @@ class OramaVectorService extends EventEmitter {
     }
 
     await this.initialize();
-    this._validateEmbedding(vector, 'feedback');
+    const valueValidation = this._validateEmbeddingValues(vector, 'feedback');
+    if (!valueValidation.valid) {
+      this.emit('embedding-blocked', {
+        type: valueValidation.error,
+        feedbackId: id,
+        message: 'Embedding vector contains invalid values.'
+      });
+      return {
+        success: false,
+        feedbackId: id,
+        error: valueValidation.error
+      };
+    }
+    const dimValidation = await this.validateEmbeddingDimension(vector, 'feedback');
+    if (!dimValidation.valid) {
+      this.emit('embedding-blocked', {
+        type: 'dimension_mismatch',
+        feedbackId: id,
+        expectedDim: dimValidation.expectedDim,
+        actualDim: dimValidation.actualDim,
+        message: 'Embedding model changed. Run "Rebuild Embeddings" to fix.'
+      });
+      return {
+        success: false,
+        feedbackId: id,
+        error: 'dimension_mismatch',
+        requiresRebuild: true
+      };
+    }
 
     const doc = {
       id,
@@ -1501,12 +1723,23 @@ class OramaVectorService extends EventEmitter {
         limit: topK
       });
 
-      return result.hits.map((hit) => ({
-        id: hit.document.id,
-        score: hit.score,
-        metadata: JSON.parse(hit.document.metadata || '{}'),
-        document: hit.document.text
-      }));
+      return result.hits.map((hit) => {
+        let metadata = {};
+        try {
+          metadata = JSON.parse(hit.document.metadata || '{}');
+        } catch (parseError) {
+          logger.debug('[OramaVectorService] Malformed feedback metadata', {
+            id: hit.document.id,
+            error: parseError.message
+          });
+        }
+        return {
+          id: hit.document.id,
+          score: hit.score,
+          metadata,
+          document: hit.document.text
+        };
+      });
     } catch (error) {
       throw attachErrorCode(error, ERROR_CODES.VECTOR_DB_QUERY_FAILED);
     }
@@ -1703,6 +1936,7 @@ class OramaVectorService extends EventEmitter {
    * Reset all collections
    */
   async resetAll() {
+    await this._refreshEmbeddingDimension({ reason: 'reset-all' });
     await this.resetFiles();
     await this.resetFileChunks();
     await this.resetFolders();
@@ -1831,6 +2065,9 @@ class OramaVectorService extends EventEmitter {
       this._queryCache.delete(key);
       return null;
     }
+    // True LRU: re-insert to move to end of Map iteration order
+    this._queryCache.delete(key);
+    this._queryCache.set(key, entry);
     return entry.data;
   }
 
@@ -1844,8 +2081,14 @@ class OramaVectorService extends EventEmitter {
   }
 
   _invalidateCacheForFile(fileId) {
+    // FIX: Use delimiter-aware matching to avoid substring collisions.
+    // Cache keys use the format "folders:{fileId}:{topK}" so checking for
+    // the fileId bounded by delimiters or at key boundaries prevents
+    // "abc" from matching "abc123".
+    const delimited = `:${fileId}:`;
+    const suffix = `:${fileId}`;
     for (const key of this._queryCache.keys()) {
-      if (key.includes(fileId)) {
+      if (key.includes(delimited) || key.endsWith(suffix) || key === fileId) {
         this._queryCache.delete(key);
       }
     }

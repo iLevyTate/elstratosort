@@ -17,8 +17,8 @@ const _circuitBreakers = new Map();
 const LLAMA_BREAKER_CONFIG = {
   failureThreshold: 5, // Open after 5 consecutive complete failures
   successThreshold: 2, // 2 successes in HALF_OPEN to close
-  timeout: 30000, // 30s before probing recovery
-  resetTimeout: 60000 // Reset failure count after 60s of no failures
+  timeout: 300000, // 300s (5m) before probing recovery (increased for CPU fallback)
+  resetTimeout: 300000 // Reset failure count after 300s of no failures
 };
 
 /**
@@ -38,6 +38,7 @@ function _getCircuitBreaker(modelType) {
  */
 const RETRYABLE_LLAMA_ERRORS = [
   'context allocation failed',
+  'failed to create context',
   'memory allocation failed',
   'gpu memory',
   'vram',
@@ -55,7 +56,10 @@ const GPU_FALLBACK_ERRORS = [
   'metal error',
   'vulkan error',
   'gpu not available',
-  'no metal device'
+  'no metal device',
+  'unable to allocate',
+  'failed to allocate',
+  'buffer allocation failed'
 ];
 
 /**
@@ -99,9 +103,9 @@ async function _executeWithRetries(operation, options) {
       initialDelay,
       maxDelay,
       shouldRetry: isRetryableLlamaError,
-      onRetry: (attempt, error) => {
+      onRetry: (error, attempt) => {
         logger.warn(`[Resilience] Retry attempt ${attempt}`, { error: error.message });
-        if (onRetry) onRetry(attempt, error);
+        if (onRetry) onRetry(error, attempt);
       }
     })();
   } catch (error) {

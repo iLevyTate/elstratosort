@@ -278,6 +278,9 @@ Return ONLY valid JSON:
       'who are you',
       'what can you do'
     ]);
+    // FIX: Truncate before regex to prevent ReDoS on very long untrusted input.
+    // Chat queries shouldn't be conversational if they're over 100 chars.
+    if (query.length > 100) return false;
     const clean = query
       .toLowerCase()
       .replace(/[^\w\s]/g, '')
@@ -372,20 +375,29 @@ Return ONLY valid JSON:
     }
 
     const baseResults = Array.isArray(searchResults.results) ? searchResults.results : [];
-    const chunkResults = await this.searchService.chunkSearch(
-      query,
-      topK,
-      Number.isInteger(chunkTopK) ? chunkTopK : DEFAULTS.chunkTopK,
-      {
-        chunkContext:
-          typeof settingsSnapshot?.chunkContextEnabled === 'boolean'
-            ? settingsSnapshot.chunkContextEnabled
-            : undefined,
-        chunkContextMaxNeighbors: Number.isInteger(settingsSnapshot?.chunkContextMaxNeighbors)
-          ? settingsSnapshot.chunkContextMaxNeighbors
-          : undefined
-      }
-    );
+
+    // FIX Bug #28: Wrap chunkSearch in try/catch to prevent chat crash on index failure
+    let chunkResults = [];
+    try {
+      chunkResults = await this.searchService.chunkSearch(
+        query,
+        topK,
+        Number.isInteger(chunkTopK) ? chunkTopK : DEFAULTS.chunkTopK,
+        {
+          chunkContext:
+            typeof settingsSnapshot?.chunkContextEnabled === 'boolean'
+              ? settingsSnapshot.chunkContextEnabled
+              : undefined,
+          chunkContextMaxNeighbors: Number.isInteger(settingsSnapshot?.chunkContextMaxNeighbors)
+            ? settingsSnapshot.chunkContextMaxNeighbors
+            : undefined
+        }
+      );
+    } catch (chunkError) {
+      logger.warn('[ChatService] Chunk search failed (non-fatal):', chunkError.message);
+      chunkResults = [];
+    }
+
     const chunkMap = new Map();
     chunkResults.forEach((r) => {
       const snippet = r?.matchDetails?.contextSnippet || r?.matchDetails?.bestSnippet;

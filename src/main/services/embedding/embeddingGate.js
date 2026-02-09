@@ -94,9 +94,10 @@ async function shouldEmbed(params) {
   }
 
   if (stage === 'final') {
-    // For both 'during_analysis' and 'after_organize', embedding at the final path is valid.
-    // Deduplication (avoid double-embed) is handled separately via persisted status/model checks.
-    return { shouldEmbed: true, timing, policy };
+    // FIX Bug #16: Prevent double embedding.
+    // If timing is 'during_analysis', we assume it was handled during analysis (or path update handles the move).
+    // Only embed at final stage if timing is explicitly 'after_organize'.
+    return { shouldEmbed: timing === 'after_organize', timing, policy };
   }
 
   // Unknown stage: fail closed

@@ -28,20 +28,37 @@ class GPUMonitor {
   }
 
   /**
-   * Detect GPU and get info
+   * Detect GPU and get info.
+   *
+   * Results are cached after the first successful detection because GPU
+   * hardware does not change during a session.  Pass `{ force: true }` to
+   * re-probe (e.g. after a driver update or hot-plug event).
+   *
+   * @param {Object} [options]
+   * @param {boolean} [options.force=false] - Bypass the cache and re-detect
+   * @returns {Promise<Object>} GPU info
    */
-  async detectGPU() {
+  async detectGPU(options = {}) {
+    if (this._gpuInfo && !options.force) {
+      return this._gpuInfo;
+    }
+
     try {
+      let info;
       if (this._platform === 'darwin') {
-        return this._detectMacGPU();
+        info = await this._detectMacGPU();
       } else if (this._platform === 'win32') {
-        return this._detectWindowsGPU();
+        info = await this._detectWindowsGPU();
       } else {
-        return this._detectLinuxGPU();
+        info = await this._detectLinuxGPU();
       }
+      this._gpuInfo = info;
+      return info;
     } catch (error) {
       logger.warn('[GPU] Detection failed', error);
-      return { type: 'cpu', name: 'CPU (No GPU detected)' };
+      const fallback = { type: 'cpu', name: 'CPU (No GPU detected)' };
+      this._gpuInfo = fallback;
+      return fallback;
     }
   }
 
@@ -97,24 +114,97 @@ class GPUMonitor {
       };
     }
 
-    // Fall back to WMIC
+    // FIX Bug #30: Use PowerShell Get-CimInstance for modern Windows support
+    // wmic is deprecated and often returns empty/malformed data for integrated GPUs
+    const ps = await runCommand('powershell', [
+      '-NoProfile',
+      '-Command',
+      'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Json'
+    ]);
+
+    if (ps) {
+      try {
+        const data = JSON.parse(ps);
+        // Handle single object or array of objects
+        const gpus = Array.isArray(data) ? data : [data];
+
+        let bestGPU = null;
+        let maxRAM = -1;
+
+        for (const gpu of gpus) {
+          // FIX: Win32_VideoController.AdapterRAM is a uint32 WMI property,
+          // capped at ~4GB. Values of 0 or exactly 4294967295 (0xFFFFFFFF)
+          // typically indicate truncation for GPUs with >4GB VRAM. In that
+          // case, fall through to nvidia-smi or report 0 rather than a
+          // misleading number.
+          let ramBytes = parseInt(gpu.AdapterRAM) || 0;
+          if (ramBytes === 4294967295 || ramBytes < 0) {
+            // Truncated uint32 -- treat as unknown
+            ramBytes = 0;
+            logger.debug('[GPUMonitor] AdapterRAM truncated (uint32 overflow), reporting 0', {
+              name: gpu.Name,
+              rawValue: gpu.AdapterRAM
+            });
+          }
+          if (ramBytes > maxRAM) {
+            maxRAM = ramBytes;
+            bestGPU = {
+              type: 'vulkan', // Assume Vulkan/DirectX capable
+              name: gpu.Name || 'Unknown GPU',
+              vramBytes: ramBytes,
+              vramMB: Math.round(ramBytes / 1024 / 1024)
+            };
+          }
+        }
+        if (bestGPU) return bestGPU;
+      } catch (e) {
+        logger.debug('[GPUMonitor] PowerShell JSON parse failed', { error: e.message });
+      }
+    }
+
+    // Fall back to WMIC with CSV format for robust parsing (legacy support)
     const wmic = await runCommand('wmic', [
       'path',
       'win32_VideoController',
       'get',
-      'name,adapterram'
+      'name,adapterram',
+      '/format:csv'
     ]);
+
     if (wmic) {
-      const lines = wmic.trim().split('\n').slice(1);
-      if (lines.length > 0) {
-        const parts = lines[0].trim().split(/\s{2,}/);
-        return {
-          type: 'vulkan',
-          name: parts[1] || 'Unknown GPU',
-          vramBytes: parseInt(parts[0]) || 0,
-          vramMB: Math.round(parseInt(parts[0]) / 1024 / 1024) || 0
-        };
+      // WMIC CSV output: Node,AdapterRAM,Name (alphabetical column order)
+      const lines = wmic
+        .trim()
+        .split(/\r?\n/)
+        .filter((l) => l.trim());
+
+      let bestGPU = null;
+      let maxRAM = -1;
+
+      for (const line of lines) {
+        // Skip header or invalid lines
+        if (!line.includes(',') || line.toLowerCase().includes('adapterram')) continue;
+
+        const parts = line.split(',');
+        // Node, AdapterRAM, Name
+        if (parts.length < 3) continue;
+
+        const ramStr = parts[1];
+        const name = parts.slice(2).join(','); // Name might contain commas
+        const ramBytes = parseInt(ramStr);
+
+        if (!isNaN(ramBytes) && ramBytes > maxRAM) {
+          maxRAM = ramBytes;
+          bestGPU = {
+            type: 'vulkan', // Assume Vulkan/DirectX capable if visible to OS
+            name: name || 'Unknown GPU',
+            vramBytes: ramBytes,
+            vramMB: Math.round(ramBytes / 1024 / 1024)
+          };
+        }
       }
+
+      if (bestGPU) return bestGPU;
     }
 
     return { type: 'cpu', name: 'CPU' };
@@ -176,7 +266,9 @@ class GPUMonitor {
       .split(',')
       .map((s) => parseInt(s.trim()));
 
-    if (!used || !total) return null;
+    // FIX: Use isNaN instead of falsy check -- `!0` is true, so an idle GPU
+    // reporting 0 MB used would incorrectly return null with `!used`.
+    if (isNaN(used) || isNaN(total) || total <= 0) return null;
 
     return {
       usedMB: used,

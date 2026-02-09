@@ -9,16 +9,18 @@ const { app } = require('electron');
 const { createLogger } = require('../../shared/logger');
 const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { resolveRuntimePath } = require('../utils/runtimePaths');
+const { TIMEOUTS } = require('../../shared/performanceConstants');
 
 const logger = createLogger('VisionService');
+let loggedRuntimeVariant = false;
 
 const LLAMA_CPP_RELEASE_TAG = process.env.STRATOSORT_LLAMA_CPP_TAG || 'b7956';
 const LLAMA_CPP_BASE_URL = 'https://github.com/ggml-org/llama.cpp/releases/download';
 const SERVER_BINARY_NAME = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
 
 // Vision models (4-5GB) can take several minutes to load on CPU-only systems
-const DEFAULT_STARTUP_TIMEOUT_MS = 180000;
-const DEFAULT_REQUEST_TIMEOUT_MS = 120000;
+const DEFAULT_STARTUP_TIMEOUT_MS = TIMEOUTS.AI_ANALYSIS_LONG || 300000;
+const DEFAULT_REQUEST_TIMEOUT_MS = TIMEOUTS.AI_ANALYSIS_LONG || 300000;
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -40,39 +42,76 @@ function getAssetConfig(tag = LLAMA_CPP_RELEASE_TAG) {
     if (!archiveType) {
       throw new Error('Unsupported llama.cpp runtime archive format');
     }
-    return {
+    const config = {
       tag: 'custom',
       assetName: path.basename(overrideUrl),
       archiveType,
       url: overrideUrl
     };
+    if (!loggedRuntimeVariant) {
+      loggedRuntimeVariant = true;
+      logger.info('[VisionService] Selected vision runtime (override)', {
+        platform: process.platform,
+        arch: process.arch,
+        assetName: config.assetName
+      });
+    }
+    return config;
   }
 
   const platform = process.platform;
   const arch = process.arch;
 
   if (platform === 'win32') {
+    // Use Vulkan build on x64 - it includes GPU acceleration and falls back to
+    // CPU backends when no Vulkan driver is available.  ARM64 stays CPU-only.
     const assetName =
-      arch === 'arm64' ? `llama-${tag}-bin-win-cpu-arm64.zip` : `llama-${tag}-bin-win-cpu-x64.zip`;
-    return {
+      arch === 'arm64'
+        ? `llama-${tag}-bin-win-cpu-arm64.zip`
+        : `llama-${tag}-bin-win-vulkan-x64.zip`;
+    const config = {
       tag,
       assetName,
       archiveType: 'zip',
       url: `${LLAMA_CPP_BASE_URL}/${tag}/${assetName}`
     };
+    if (!loggedRuntimeVariant) {
+      loggedRuntimeVariant = true;
+      logger.info('[VisionService] Selected vision runtime', {
+        platform,
+        arch,
+        assetName
+      });
+      if (assetName.includes('win-vulkan')) {
+        logger.warn(
+          '[VisionService] Windows vision runtime uses Vulkan build. CUDA is not bundled by default; set STRATOSORT_LLAMA_CPP_URL to a CUDA build to override.'
+        );
+      }
+    }
+    return config;
   }
 
   if (platform === 'darwin') {
+    // macOS builds include Metal GPU support by default
     const assetName =
       arch === 'arm64'
         ? `llama-${tag}-bin-macos-arm64.tar.gz`
         : `llama-${tag}-bin-macos-x64.tar.gz`;
-    return {
+    const config = {
       tag,
       assetName,
       archiveType: 'tar.gz',
       url: `${LLAMA_CPP_BASE_URL}/${tag}/${assetName}`
     };
+    if (!loggedRuntimeVariant) {
+      loggedRuntimeVariant = true;
+      logger.info('[VisionService] Selected vision runtime', {
+        platform,
+        arch,
+        assetName
+      });
+    }
+    return config;
   }
 
   if (platform === 'linux') {
@@ -80,18 +119,28 @@ function getAssetConfig(tag = LLAMA_CPP_RELEASE_TAG) {
       throw new Error(`Unsupported Linux architecture for vision runtime: ${arch}`);
     }
     const assetName = `llama-${tag}-bin-ubuntu-x64.tar.gz`;
-    return {
+    const config = {
       tag,
       assetName,
       archiveType: 'tar.gz',
       url: `${LLAMA_CPP_BASE_URL}/${tag}/${assetName}`
     };
+    if (!loggedRuntimeVariant) {
+      loggedRuntimeVariant = true;
+      logger.info('[VisionService] Selected vision runtime', {
+        platform,
+        arch,
+        assetName
+      });
+    }
+    return config;
   }
 
   throw new Error(`Unsupported platform for vision runtime: ${platform}`);
 }
 
-async function downloadFile(url, destination) {
+async function downloadFile(url, destination, _redirectCount = 0) {
+  const MAX_REDIRECTS = 10;
   await fs.promises.mkdir(path.dirname(destination), { recursive: true });
 
   return new Promise((resolve, reject) => {
@@ -103,7 +152,13 @@ async function downloadFile(url, destination) {
         response.headers.location
       ) {
         response.destroy();
-        downloadFile(response.headers.location, destination).then(resolve).catch(reject);
+        if (_redirectCount >= MAX_REDIRECTS) {
+          reject(new Error(`Too many redirects (${MAX_REDIRECTS}) downloading vision runtime`));
+          return;
+        }
+        downloadFile(response.headers.location, destination, _redirectCount + 1)
+          .then(resolve)
+          .catch(reject);
         return;
       }
 
@@ -120,6 +175,13 @@ async function downloadFile(url, destination) {
         fileStream.close(resolve);
       });
       fileStream.on('error', (error) => {
+        // FIX: Destroy the response stream to stop incoming data on write error
+        response.destroy();
+        fs.unlink(destination, () => reject(error));
+      });
+      // FIX: Handle response errors by cleaning up the write stream
+      response.on('error', (error) => {
+        fileStream.destroy();
         fs.unlink(destination, () => reject(error));
       });
     });
@@ -279,11 +341,7 @@ class VisionService {
       return true;
     }
 
-    const packagedCandidate = resolveRuntimePath(SERVER_BINARY_NAME);
-    if (fs.existsSync(packagedCandidate)) {
-      return true;
-    }
-
+    // Prefer downloaded GPU-enabled runtime over bundled (potentially CPU-only) binary
     try {
       const asset = getAssetConfig();
       const runtimeRoot = getRuntimeRoot(asset.tag);
@@ -298,6 +356,12 @@ class VisionService {
       // ignore availability checks that error
     }
 
+    // Fallback to bundled binary (packaged builds)
+    const packagedCandidate = resolveRuntimePath(SERVER_BINARY_NAME);
+    if (fs.existsSync(packagedCandidate)) {
+      return true;
+    }
+
     return false;
   }
 
@@ -306,6 +370,7 @@ class VisionService {
       return this._binaryPath;
     }
 
+    // 1. Explicit env override
     const envPath = process.env.STRATOSORT_LLAMA_SERVER_PATH;
     if (envPath) {
       try {
@@ -319,21 +384,56 @@ class VisionService {
       }
     }
 
-    const packagedCandidate = resolveRuntimePath(SERVER_BINARY_NAME);
-    if (fs.existsSync(packagedCandidate)) {
-      this._binaryPath = packagedCandidate;
-      return packagedCandidate;
+    // 2. Downloaded GPU-enabled runtime (preferred over bundled binary)
+    try {
+      const asset = getAssetConfig();
+      const runtimeRoot = getRuntimeRoot(asset.tag);
+      const manifestPath = path.join(runtimeRoot, 'runtime.json');
+      if (fs.existsSync(manifestPath)) {
+        const manifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8'));
+        if (
+          manifest?.binaryPath &&
+          fs.existsSync(manifest.binaryPath) &&
+          manifest.assetName === asset.assetName
+        ) {
+          logger.info('[VisionService] Using downloaded runtime', {
+            binaryPath: manifest.binaryPath,
+            asset: manifest.assetName
+          });
+          this._binaryPath = manifest.binaryPath;
+          return manifest.binaryPath;
+        }
+      }
+    } catch {
+      // Fall through to download or bundled fallback
     }
 
+    // 3. Download the correct GPU-enabled runtime
     if (!this._runtimeInit) {
       this._runtimeInit = this._downloadRuntime();
     }
     try {
       await this._runtimeInit;
+      if (this._binaryPath) {
+        return this._binaryPath;
+      }
     } catch (error) {
-      throw new Error(`Vision runtime not found: ${error.message}`);
+      logger.warn('[VisionService] Download failed, checking bundled fallback', {
+        error: error.message
+      });
     }
-    return this._binaryPath;
+
+    // 4. Bundled binary as last resort (packaged builds or download failure)
+    const packagedCandidate = resolveRuntimePath(SERVER_BINARY_NAME);
+    if (fs.existsSync(packagedCandidate)) {
+      logger.info('[VisionService] Using bundled runtime fallback', {
+        binaryPath: packagedCandidate
+      });
+      this._binaryPath = packagedCandidate;
+      return packagedCandidate;
+    }
+
+    throw new Error('Vision runtime not found: no downloaded, bundled, or env binary available');
   }
 
   async _downloadRuntime() {
@@ -344,9 +444,20 @@ class VisionService {
     const manifestPath = path.join(runtimeRoot, 'runtime.json');
     try {
       const existing = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8'));
-      if (existing?.binaryPath && fs.existsSync(existing.binaryPath)) {
+      // Re-download if the asset variant changed (e.g., cpu -> vulkan)
+      if (
+        existing?.binaryPath &&
+        fs.existsSync(existing.binaryPath) &&
+        existing.assetName === asset.assetName
+      ) {
         this._binaryPath = existing.binaryPath;
         return;
+      }
+      if (existing?.assetName && existing.assetName !== asset.assetName) {
+        logger.info('[VisionService] Asset variant changed, re-downloading', {
+          from: existing.assetName,
+          to: asset.assetName
+        });
       }
     } catch {
       // Ignore missing/invalid manifest
@@ -416,20 +527,21 @@ class VisionService {
       args.push('--threads', String(config.threads));
     }
 
-    // Resolve gpuLayers: 'auto' and -1 mean "offload all layers to GPU".
-    // llama-server treats large values as all-layers, so use 9999 as the sentinel.
-    const resolvedGpuLayers =
-      config.gpuLayers === 'auto' || config.gpuLayers === -1 ? 9999 : config.gpuLayers;
-    if (typeof resolvedGpuLayers === 'number' && resolvedGpuLayers >= 0) {
-      args.push('--n-gpu-layers', String(resolvedGpuLayers));
+    // Only set --n-gpu-layers when explicitly configured.
+    // For "auto"/unset, let llama-server fit layers to available VRAM.
+    if (typeof config.gpuLayers === 'number' && config.gpuLayers >= 0) {
+      args.push('--n-gpu-layers', String(config.gpuLayers));
     }
 
     return args;
   }
 
-  async _waitForHealth(port, timeoutMs = DEFAULT_STARTUP_TIMEOUT_MS) {
+  async _waitForHealth(port, timeoutMs = DEFAULT_STARTUP_TIMEOUT_MS, signal) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
+      if (signal?.aborted) {
+        throw new Error('Vision runtime startup aborted (process exited)');
+      }
       try {
         const { status, json } = await requestJson({
           method: 'GET',
@@ -466,14 +578,41 @@ class VisionService {
       }
     });
 
+    const stderrChunks = [];
+
     child.stdout?.on('data', (data) => {
       logger.debug('[VisionService][stdout]', { message: data.toString() });
     });
 
     child.stderr?.on('data', (data) => {
-      logger.debug('[VisionService][stderr]', { message: data.toString() });
+      const text = data.toString();
+      stderrChunks.push(text);
+      logger.debug('[VisionService][stderr]', { message: text });
     });
 
+    // AbortController to cancel health check if process exits early
+    const abortController = new AbortController();
+
+    // Create a promise that rejects if the process exits before health is confirmed.
+    // This prevents _waitForHealth from polling a dead process for 180s.
+    const earlyExitPromise = new Promise((_, reject) => {
+      child.on('exit', (code, signal) => {
+        abortController.abort(); // Signal health check to stop polling
+        const stderr = stderrChunks.join('').slice(-500);
+        reject(
+          new Error(
+            `Vision runtime exited during startup (code=${code}, signal=${signal})${stderr ? ': ' + stderr : ''}`
+          )
+        );
+      });
+    });
+
+    // Handle spawn-level errors (e.g. ENOENT when binary doesn't exist)
+    child.on('error', (err) => {
+      logger.error('[VisionService] Failed to spawn vision runtime', { error: err.message });
+    });
+
+    // Clean up state when the process exits (for both startup failures and runtime crashes)
     child.on('exit', (code, signal) => {
       logger.warn('[VisionService] Vision runtime exited', { code, signal });
       this._process = null;
@@ -485,7 +624,27 @@ class VisionService {
     this._process = child;
     this._port = port;
 
-    await this._waitForHealth(port);
+    // Race health check against early exit -- if the process dies first, fail immediately
+    try {
+      await Promise.race([
+        this._waitForHealth(port, DEFAULT_STARTUP_TIMEOUT_MS, abortController.signal),
+        earlyExitPromise
+      ]);
+    } catch (error) {
+      // Ensure we clean up if health check fails or process exits
+      if (this._process === child) {
+        this._process = null;
+        this._port = null;
+        this._activeConfig = null;
+        this._startPromise = null;
+        try {
+          child.kill();
+        } catch {
+          /* ignore */
+        }
+      }
+      throw error;
+    }
   }
 
   _configMatches(config) {
@@ -538,6 +697,7 @@ class VisionService {
       // We are holding the lock, so it's safe to set _startPromise
       this._startPromise = this._startServer(config).catch((error) => {
         this._startPromise = null;
+        this._activeConfig = null; // Clear stale config so retries can proceed
         throw error;
       });
 
@@ -568,6 +728,11 @@ class VisionService {
     }
 
     await this._ensureServer(config);
+
+    // Validate server is still alive after _ensureServer (process may have died in between)
+    if (!this._port || !this._process) {
+      throw new Error('Vision runtime is not running (server exited after startup)');
+    }
 
     let imageData = imageBase64;
     let mimeType = null;
@@ -642,6 +807,17 @@ class VisionService {
       logger.info('[VisionService] Shutting down vision runtime');
 
       this._shutdownPromise = (async () => {
+        // FIX: Remove all listeners from the child process to prevent leaks.
+        // The 'exit' and 'error' listeners attached in _startServer would
+        // otherwise accumulate if the service is restarted multiple times.
+        try {
+          proc.removeAllListeners();
+          proc.stdout?.removeAllListeners();
+          proc.stderr?.removeAllListeners();
+        } catch {
+          // ignore -- streams may already be closed
+        }
+
         try {
           proc.kill();
         } catch {

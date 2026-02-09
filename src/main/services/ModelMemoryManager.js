@@ -16,7 +16,7 @@ class ModelMemoryManager {
   constructor(llamaService, options = {}) {
     // Bind specific callbacks rather than holding the entire service reference.
     // This makes the contract between ModelMemoryManager and LlamaService explicit.
-    this._loadModelFn = (type) => llamaService._loadModel(type);
+    this._loadModelFn = (type, options) => llamaService._loadModel(type, options);
     this._disposeModelFn = async (type) => {
       if (llamaService._models?.[type]) {
         await llamaService._models[type].dispose();
@@ -54,11 +54,12 @@ class ModelMemoryManager {
 
   /**
    * Calculate maximum memory we can use.
-   * When GPU VRAM info is available, uses the smaller of:
+   * When GPU VRAM info is available, uses the larger of:
    *   - 80% of VRAM (GPU-loaded models live in VRAM)
    *   - 70% of free system RAM, capped at 16GB
-   * This prevents over-allocating VRAM on dedicated GPUs and
-   * over-allocating system RAM on unified memory (Apple Silicon).
+   * On discrete GPUs (e.g. NVIDIA), models are GPU-offloaded into VRAM which is
+   * separate from system RAM. Using Math.min would yield 0 when free RAM is low
+   * even though VRAM is plentiful. Math.max ensures the real constraint is used.
    */
   _calculateMaxMemory() {
     const totalMemory = os.totalmem();
@@ -69,12 +70,14 @@ class ModelMemoryManager {
 
     let maxUsable = ramBudget;
 
-    // When GPU info is available, constrain to VRAM as well.
-    // Models loaded with GPU offload consume VRAM, so VRAM is the real bottleneck.
+    // When GPU info is available, use the larger of RAM and VRAM budgets.
+    // On discrete GPUs, models are loaded into VRAM via GPU offload, so system
+    // RAM free-mem should not constrain the budget. On unified memory (Apple
+    // Silicon), RAM and VRAM are the same pool, so either value works.
     if (this._gpuInfo?.vramMB && this._gpuInfo.vramMB > 0) {
       const vramBytes = this._gpuInfo.vramMB * 1024 * 1024;
       const vramBudget = Math.floor(vramBytes * 0.8); // 80% of VRAM
-      maxUsable = Math.min(ramBudget, vramBudget);
+      maxUsable = Math.max(ramBudget, vramBudget);
 
       logger.info('[Memory] VRAM-aware budget calculated', {
         vramMB: this._gpuInfo.vramMB,
@@ -124,6 +127,23 @@ class ModelMemoryManager {
   }
 
   /**
+   * Get the context for an already-loaded model without acquiring any locks.
+   * Returns null if the model is not currently loaded.
+   * This enables a fast-path in LlamaService._ensureModelLoaded() that avoids
+   * re-acquiring the load lock when the model is already resident.
+   * @param {string} modelType
+   * @returns {Object|null} The model context, or null if not loaded
+   */
+  getLoadedContext(modelType) {
+    const entry = this._loadedModels.get(modelType);
+    if (entry) {
+      entry.lastUsed = Date.now();
+      return entry.context;
+    }
+    return null;
+  }
+
+  /**
    * Check if we can load a model of given type
    */
   canLoadModel(modelType) {
@@ -135,7 +155,7 @@ class ModelMemoryManager {
   /**
    * Ensure model is loaded, unloading others if necessary
    */
-  async ensureModelLoaded(modelType) {
+  async ensureModelLoaded(modelType, options = {}) {
     // Already loaded?
     if (this._loadedModels.has(modelType)) {
       const entry = this._loadedModels.get(modelType);
@@ -162,8 +182,20 @@ class ModelMemoryManager {
       }
     }
 
+    // If we still cannot load after eviction attempts, proceed anyway.
+    // The runtime can still succeed (especially with GPU offload), and
+    // we prefer a real load error over a pre-emptive failure.
+    if (!this.canLoadModel(modelType)) {
+      logger.warn('[Memory] Budget exceeded, attempting load anyway', {
+        requestedType: modelType,
+        estimatedSizeMB: Math.round(estimatedSize / 1024 / 1024),
+        maxUsableMB: Math.round(this._maxMemoryUsage / 1024 / 1024),
+        currentUsageMB: Math.round(this._currentMemoryUsage / 1024 / 1024)
+      });
+    }
+
     // Load the model via the bound callback
-    const context = await this._loadModelFn(modelType);
+    const context = await this._loadModelFn(modelType, options);
 
     this._loadedModels.set(modelType, {
       context,
@@ -218,9 +250,6 @@ class ModelMemoryManager {
     logger.info('[Memory] Unloading model', { type: modelType });
 
     try {
-      if (entry.context?.dispose) {
-        await entry.context.dispose();
-      }
       await this._disposeModelFn(modelType);
     } catch (error) {
       logger.error('[Memory] Error unloading model', error);

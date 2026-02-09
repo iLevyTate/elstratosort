@@ -1,15 +1,16 @@
 // src/main/services/DegradationManager.js
 
 const { createLogger } = require('../../shared/logger');
-const { GPUMonitor } = require('./GPUMonitor');
-const { ModelDownloadManager } = require('./ModelDownloadManager');
+const { getInstance: getGPUMonitor } = require('./GPUMonitor');
+const { getInstance: getModelDownloadManager } = require('./ModelDownloadManager');
 const logger = createLogger('DegradationManager');
 
 class DegradationManager {
   constructor(llamaService) {
     this._llamaService = llamaService;
-    this._gpuMonitor = new GPUMonitor();
-    this._downloadManager = new ModelDownloadManager();
+    // FIX Bug #32: Use singletons to prevent redundant instances
+    this._gpuMonitor = getGPUMonitor();
+    this._downloadManager = getModelDownloadManager();
     this._degradationState = {
       gpuAvailable: true,
       usingCPUFallback: false,
@@ -41,11 +42,14 @@ class DegradationManager {
     const downloadedNames = new Set(downloadedModels.map((m) => m.filename));
 
     const missingRequired = [];
-    if (this._llamaService && this._llamaService._selectedModels) {
-      if (!downloadedNames.has(this._llamaService._selectedModels.embedding)) {
+    // FIX: Guard against null llamaService (singleton getInstance() creates
+    // without arguments). Also guard _selectedModels to avoid TypeError.
+    const selectedModels = this._llamaService?._selectedModels;
+    if (selectedModels) {
+      if (selectedModels.embedding && !downloadedNames.has(selectedModels.embedding)) {
         missingRequired.push('embedding');
       }
-      if (!downloadedNames.has(this._llamaService._selectedModels.text)) {
+      if (selectedModels.text && !downloadedNames.has(selectedModels.text)) {
         missingRequired.push('text');
       }
     }
@@ -180,9 +184,21 @@ class DegradationManager {
 
 // Singleton
 let instance = null;
-function getInstance() {
+/**
+ * Get or create the DegradationManager singleton.
+ *
+ * @param {Object} [llamaService] - LlamaService instance. Required on first
+ *   call so the manager can inspect `_selectedModels` during readiness checks.
+ *   Subsequent calls may omit it; the original reference is preserved.
+ * @returns {DegradationManager}
+ */
+function getInstance(llamaService) {
   if (!instance) {
-    instance = new DegradationManager();
+    instance = new DegradationManager(llamaService);
+  } else if (llamaService && !instance._llamaService) {
+    // FIX: Allow late-binding the llamaService if the singleton was created
+    // before the LlamaService was available (e.g., during startup).
+    instance._llamaService = llamaService;
   }
   return instance;
 }

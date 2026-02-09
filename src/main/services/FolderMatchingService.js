@@ -11,23 +11,10 @@ const { validateEmbeddingDimensions } = require('../../shared/vectorMath');
 const { capEmbeddingInput } = require('../utils/embeddingInput');
 const { chunkText } = require('../utils/textChunking');
 
-const { getModel } = require('../../shared/modelRegistry');
-
-/**
- * Embedding dimension fallbacks for partial model name matching.
- * Primary lookup uses MODEL_CATALOG via getModel() for exact GGUF filenames.
- * These prefixes catch unknown or user-supplied models that aren't in the registry.
- */
-const DIMENSION_FALLBACKS = {
-  'nomic-embed': 768,
-  embeddinggemma: 768,
-  'mxbai-embed-large': 1024,
-  'all-minilm': 384,
-  'bge-large': 1024,
-  'snowflake-arctic-embed': 1024,
-  gte: 768,
-  default: 768
-};
+const {
+  resolveEmbeddingDimension,
+  isKnownEmbeddingModel
+} = require('../../shared/embeddingDimensions');
 
 function meanPoolVectors(vectors, expectedDim) {
   if (!Array.isArray(vectors) || vectors.length === 0) return [];
@@ -43,36 +30,10 @@ function meanPoolVectors(vectors, expectedDim) {
   return sums.map((value) => value / vectors.length);
 }
 
-/**
- * Get the embedding dimension for a model
- * @param {string} modelName - Name of the embedding model
- * @returns {number} The embedding dimension
- */
-function getEmbeddingDimension(modelName) {
-  if (!modelName) return DIMENSION_FALLBACKS.default;
-
-  // Primary: exact lookup in MODEL_CATALOG (handles GGUF filenames)
-  const catalogEntry = getModel(modelName);
-  if (catalogEntry?.dimensions) {
-    return catalogEntry.dimensions;
-  }
-
-  // Secondary: partial match for models not in the catalog
-  // Sort by key length descending so more specific names match first (e.g. "nomic-embed-text" before "gte")
-  // Exclude "default" from partial matching to prevent false positives
-  const normalizedName = modelName.toLowerCase();
-  const partialEntries = Object.entries(DIMENSION_FALLBACKS)
-    .filter(([key]) => key !== 'default')
-    .sort(([a], [b]) => b.length - a.length);
-  for (const [key, dimension] of partialEntries) {
-    if (normalizedName.includes(key.toLowerCase())) {
-      return dimension;
-    }
-  }
-
-  // Use configurable default
-  return getConfig('ANALYSIS.embeddingDimension', DIMENSION_FALLBACKS.default);
-}
+const getEmbeddingDimensionForModel = (modelName) =>
+  resolveEmbeddingDimension(modelName, {
+    defaultDimension: getConfig('ANALYSIS.embeddingDimension', 768)
+  });
 
 /**
  * FolderMatchingService - Handles file-to-folder matching using embeddings
@@ -216,14 +177,21 @@ class FolderMatchingService {
               if (this.vectorDbService) {
                 try {
                   logger.warn(
-                    '[FolderMatchingService] Clearing vector DB collections due to embedding model change',
+                    '[FolderMatchingService] Handling vector DB reset due to embedding model change',
                     {
                       from: previousModel,
                       to: newModel
                     }
                   );
-                  // Reset both file and folder collections to clear old-dimension vectors
-                  await this.vectorDbService.resetAll();
+                  if (typeof this.vectorDbService.handleEmbeddingModelChange === 'function') {
+                    await this.vectorDbService.handleEmbeddingModelChange({
+                      previousModel,
+                      newModel,
+                      source: 'FolderMatchingService'
+                    });
+                  } else {
+                    await this.vectorDbService.resetAll();
+                  }
                   logger.info(
                     '[FolderMatchingService] Vector DB collections reset after model change'
                   );
@@ -384,18 +352,14 @@ class FolderMatchingService {
         emptyError.code = 'EMBEDDING_FAILED';
         throw emptyError;
       }
-      const expectedDim = getEmbeddingDimension(model);
+      const expectedDim = getEmbeddingDimensionForModel(model);
       const actualDim = vector.length;
 
       // Only normalize dimensions when model is in our known lookup table
       // (meaning we're confident about the expected dimension).
       // If the expected dimension came from the fallback default, trust the
       // actual model output to avoid silently destroying vector data.
-      const modelIsKnown =
-        getModel(model)?.dimensions ||
-        Object.keys(DIMENSION_FALLBACKS).some(
-          (key) => key !== 'default' && model.toLowerCase().includes(key.toLowerCase())
-        );
+      const modelIsKnown = isKnownEmbeddingModel(model);
 
       let adjustedVector = vector;
       if (actualDim !== expectedDim && actualDim > 0) {
@@ -470,7 +434,7 @@ class FolderMatchingService {
 
       const pooled = meanPoolVectors(
         vectors.map((entry) => entry.vector),
-        getEmbeddingDimension(model)
+        getEmbeddingDimensionForModel(model)
       );
       const pooledModel = vectors[0].model || model;
       return { vector: pooled, model: pooledModel };
@@ -830,7 +794,7 @@ class FolderMatchingService {
       const { vector, model } = await this.embedText(contentSummary || '');
 
       // Validate dimensions if we have a known model
-      const expectedDim = getEmbeddingDimension(model);
+      const expectedDim = getEmbeddingDimensionForModel(model);
       if (!validateEmbeddingDimensions(vector, expectedDim)) {
         logger.error('[FolderMatchingService] Vector dimension mismatch in upsert, rejecting', {
           id: fileId,
@@ -951,7 +915,7 @@ class FolderMatchingService {
             const originalItem = uncachedFiles.find((f) => f.fileId === result.id);
 
             // FIX: Validate dimensions of batch results
-            const expectedDim = getEmbeddingDimension(result.model);
+            const expectedDim = getEmbeddingDimensionForModel(result.model);
             if (!validateEmbeddingDimensions(result.vector, expectedDim)) {
               logger.warn('[FolderMatchingService] Batch embedding dimension mismatch, skipping', {
                 fileId: result.id,

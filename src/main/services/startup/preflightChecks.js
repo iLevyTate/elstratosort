@@ -125,7 +125,30 @@ async function runPreflightChecks({ reportProgress, errors }) {
       logger.debug('[PREFLIGHT] Starting disk space check...');
       const userDataPath = app.getPath('userData');
       logger.debug(`[PREFLIGHT] User data path resolved to: ${userDataPath}`);
-      return { ok: true };
+
+      // FIX Bug #25: Implement actual disk space check
+      try {
+        const { statfs } = require('fs/promises');
+        if (statfs) {
+          const stats = await statfs(userDataPath);
+          const freeBytes = stats.bavail * stats.bsize;
+          const freeGB = freeBytes / 1024 / 1024 / 1024;
+
+          // Warn if less than 10GB available (models + index overhead)
+          if (freeGB < 10) {
+            return {
+              ok: true, // Don't fail, just warn
+              status: 'warn',
+              message: `Low disk space: ${freeGB.toFixed(1)}GB available (10GB recommended)`
+            };
+          }
+          return { ok: true, freeGB };
+        }
+        return { ok: true, message: 'Disk check skipped (statfs not available)' };
+      } catch (error) {
+        logger.warn('[PREFLIGHT] Disk space check failed:', error);
+        return { ok: true, error: error.message }; // Non-fatal
+      }
     })()
   ]);
 
@@ -179,8 +202,18 @@ async function runPreflightChecks({ reportProgress, errors }) {
 
   // Process disk result
   if (diskResult.status === 'fulfilled') {
-    checks.push({ name: 'Disk Space', status: 'ok' });
-    logger.debug('[PREFLIGHT] Disk space check completed');
+    const disk = diskResult.value || {};
+    // FIX: Honour the inner warn/ok status instead of always reporting 'ok'.
+    // When free space < 10 GB the disk check returns { status: 'warn', message }.
+    const diskStatus = disk.status || 'ok';
+    const diskEntry = { name: 'Disk Space', status: diskStatus };
+    if (disk.message) diskEntry.message = disk.message;
+    if (disk.freeGB !== undefined) diskEntry.freeGB = disk.freeGB;
+    checks.push(diskEntry);
+    if (diskStatus === 'warn') {
+      errors.push({ check: 'disk-space', error: disk.message, critical: false });
+    }
+    logger.debug('[PREFLIGHT] Disk space check completed', { status: diskStatus });
   } else {
     logger.error('[PREFLIGHT] Disk space check failed:', diskResult.reason);
     checks.push({

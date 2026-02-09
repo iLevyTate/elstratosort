@@ -6,6 +6,8 @@ const PQueue = require('p-queue').default;
 const logger = createLogger('ModelAccessCoordinator');
 
 const MAX_INFERENCE_QUEUE = 100;
+const LOAD_LOCK_TIMEOUT_MS = 120000; // 2 minutes: model loads can be slow on HDD/CPU
+const INFERENCE_SLOT_TIMEOUT_MS = 300000; // 5 minutes: vision inference on CPU can be very slow
 const DEFAULT_INFERENCE_CONCURRENCY = (() => {
   const raw = Number(process.env.STRATOSORT_INFERENCE_CONCURRENCY);
   if (Number.isFinite(raw) && raw > 0) {
@@ -13,6 +15,8 @@ const DEFAULT_INFERENCE_CONCURRENCY = (() => {
   }
   return 1;
 })();
+
+const MODEL_TYPES = ['text', 'vision', 'embedding'];
 
 class ModelAccessCoordinator {
   /**
@@ -27,11 +31,18 @@ class ModelAccessCoordinator {
       embedding: new PQueue({ concurrency: 1 })
     };
 
-    // Inference concurrency: prefer explicit option, then env var, then default (1)
+    // Per-model-type inference queues.
+    // This prevents vision operations (which may take minutes to load on CPU) from
+    // starving embedding or text operations that share no GPU memory contention.
     const concurrency = options.inferenceSlots || DEFAULT_INFERENCE_CONCURRENCY;
-    this._inferenceQueue = new PQueue({ concurrency });
-    logger.info('[Coordinator] Inference concurrency', {
+    this._inferenceQueues = {};
+    for (const type of MODEL_TYPES) {
+      this._inferenceQueues[type] = new PQueue({ concurrency });
+    }
+
+    logger.info('[Coordinator] Per-model inference concurrency', {
       concurrency,
+      modelTypes: MODEL_TYPES,
       source: options.inferenceSlots ? 'PerformanceService' : 'default'
     });
 
@@ -40,18 +51,45 @@ class ModelAccessCoordinator {
   }
 
   /**
-   * Acquire exclusive access for model loading
+   * Update inference concurrency limit dynamically
+   * @param {number} concurrency - New concurrency limit
    */
-  async acquireLoadLock(modelType) {
+  updateInferenceConcurrency(concurrency) {
+    if (!Number.isFinite(concurrency) || concurrency < 1) return;
+
+    logger.info('[Coordinator] Updating inference concurrency', { concurrency });
+
+    for (const type of MODEL_TYPES) {
+      if (this._inferenceQueues[type]) {
+        this._inferenceQueues[type].concurrency = concurrency;
+      }
+    }
+  }
+
+  /**
+   * Acquire exclusive access for model loading.
+   *
+   * Includes a timeout to prevent indefinite hangs when the lock holder is
+   * stuck (e.g. frozen GPU driver, blocked disk I/O).
+   *
+   * @param {string} modelType - 'text' | 'vision' | 'embedding'
+   * @param {Object} [options]
+   * @param {number} [options.timeoutMs] - Override the default timeout
+   * @returns {Promise<Function>} Release callback
+   */
+  async acquireLoadLock(modelType, options = {}) {
     const queue = this._loadQueues[modelType];
     if (!queue) {
       throw new Error(`Unknown model type: ${modelType}`);
     }
 
+    const timeoutMs = options.timeoutMs || LOAD_LOCK_TIMEOUT_MS;
     let release;
     let startResolve;
-    const started = new Promise((resolve) => {
+    let startReject;
+    const started = new Promise((resolve, reject) => {
       startResolve = resolve;
+      startReject = reject;
     });
     const held = new Promise((resolve) => {
       release = resolve;
@@ -62,7 +100,23 @@ class ModelAccessCoordinator {
       await held;
     });
 
-    await started;
+    // FIX: Add timeout to prevent indefinite blocking if the lock holder hangs.
+    // CRITICAL: Also release the held promise so the PQueue task completes.
+    // Without this, the queue task awaits `held` forever, permanently jamming
+    // the load queue for this model type.
+    const timer = setTimeout(() => {
+      release(); // Unblock the PQueue task so the queue can continue
+      const error = new Error(`Load lock timeout for ${modelType} after ${timeoutMs}ms`);
+      error.code = 'LOAD_LOCK_TIMEOUT';
+      startReject(error);
+    }, timeoutMs);
+
+    try {
+      await started;
+    } finally {
+      clearTimeout(timer);
+    }
+
     logger.debug(`[Coordinator] Acquired load lock for ${modelType}`);
 
     return () => {
@@ -72,40 +126,80 @@ class ModelAccessCoordinator {
   }
 
   /**
-   * Acquire slot for inference operation
+   * Get the inference queue for a model type (falls back to embedding queue for unknown types)
+   * @private
    */
-  async acquireInferenceSlot(operationId) {
+  _getInferenceQueue(modelType) {
+    return this._inferenceQueues[modelType] || this._inferenceQueues.embedding;
+  }
+
+  /**
+   * Acquire slot for inference operation.
+   *
+   * Includes a timeout to prevent indefinite hangs when the slot holder is
+   * stuck (e.g. frozen GPU driver, hung inference).
+   *
+   * @param {string} operationId - Unique operation identifier
+   * @param {string} [modelType] - Model type for per-type queue routing
+   * @param {Object} [options]
+   * @param {number} [options.timeoutMs] - Override the default timeout
+   */
+  async acquireInferenceSlot(operationId, modelType, options = {}) {
+    const queue = this._getInferenceQueue(modelType);
     const startTime = Date.now();
 
-    if (this._inferenceQueue.size >= MAX_INFERENCE_QUEUE) {
+    // FIX Bug #38: Check total load (queued + pending) against max limit
+    // queue.size only counts waiting items, queue.pending counts active items
+    if (queue.size + queue.pending >= MAX_INFERENCE_QUEUE) {
       const error = new Error('Inference queue full');
       error.code = 'QUEUE_FULL';
       throw error;
     }
 
+    const timeoutMs = options.timeoutMs || INFERENCE_SLOT_TIMEOUT_MS;
     let release;
     let startResolve;
-    const started = new Promise((resolve) => {
+    let startReject;
+    const started = new Promise((resolve, reject) => {
       startResolve = resolve;
+      startReject = reject;
     });
     const held = new Promise((resolve) => {
       release = resolve;
     });
 
-    this._inferenceQueue.add(async () => {
+    queue.add(async () => {
       startResolve();
       await held;
     });
 
-    await started;
+    // FIX: Add timeout to prevent indefinite blocking if a slot is never freed.
+    // Also release the held promise so the PQueue task completes (same pattern
+    // as acquireLoadLock).
+    const timer = setTimeout(() => {
+      release(); // Unblock the PQueue task so the queue can continue
+      const error = new Error(
+        `Inference slot timeout for ${modelType || 'unknown'} (op: ${operationId}) after ${timeoutMs}ms`
+      );
+      error.code = 'INFERENCE_SLOT_TIMEOUT';
+      startReject(error);
+    }, timeoutMs);
+
+    try {
+      await started;
+    } finally {
+      clearTimeout(timer);
+    }
 
     this._activeOperations.set(operationId, {
       startTime,
-      acquiredAt: Date.now()
+      acquiredAt: Date.now(),
+      modelType
     });
 
     logger.debug(`[Coordinator] Acquired inference slot`, {
       operationId,
+      modelType,
       waitTimeMs: Date.now() - startTime
     });
 
@@ -122,8 +216,8 @@ class ModelAccessCoordinator {
   async withModel(modelType, operation, options = {}) {
     const { operationId = `op-${Date.now()}` } = options;
 
-    // Acquire inference slot
-    const releaseSlot = await this.acquireInferenceSlot(operationId);
+    // Acquire inference slot for the specific model type
+    const releaseSlot = await this.acquireInferenceSlot(operationId, modelType);
 
     try {
       return await operation();
@@ -140,6 +234,7 @@ class ModelAccessCoordinator {
       activeOperations: this._activeOperations.size,
       operations: Array.from(this._activeOperations.entries()).map(([id, data]) => ({
         id,
+        modelType: data.modelType,
         runningMs: Date.now() - data.startTime
       }))
     };

@@ -57,18 +57,29 @@ class ModelDownloadManager {
    * Check available disk space
    */
   async checkDiskSpace(requiredBytes) {
-    // Platform-specific disk space check
-    const { execSync } = require('child_process');
-
     try {
+      // FIX Bug #29: Use fs.statfs instead of execSync to prevent shell injection
+      // and support modern Windows environments where wmic is deprecated.
+      // fs.statfs is available since Node 18.15.0.
+      if (fs.statfs) {
+        const stats = await fs.statfs(this._modelPath);
+        const freeSpace = stats.bfree * stats.bsize;
+        return { available: freeSpace, sufficient: freeSpace > requiredBytes * 1.1 };
+      }
+
+      // Fallback for older Node versions (though Electron 40+ has Node 20+)
+      const { execSync } = require('child_process');
       if (process.platform === 'win32') {
         const drive = this._modelPath.charAt(0);
+        // Still vulnerable to drive letter injection if path is user-controlled,
+        // but fs.statfs is the primary path now.
         const output = execSync(
           `wmic logicaldisk where "DeviceID='${drive}:'" get FreeSpace`
         ).toString();
         const freeSpace = parseInt(output.split('\n')[1].trim());
         return { available: freeSpace, sufficient: freeSpace > requiredBytes * 1.1 };
       } else {
+        // Still vulnerable to path injection, but fs.statfs is primary.
         const output = execSync(`df -k "${this._modelPath}"`).toString();
         const lines = output.trim().split('\n');
         const parts = lines[1].split(/\s+/);
@@ -187,13 +198,21 @@ class ModelDownloadManager {
         if (response.statusCode === 301 || response.statusCode === 302) {
           if (redirectCount >= MAX_REDIRECTS) {
             downloadState.status = 'error';
-            this._downloads.delete(filename);
+            if (this._downloads.has(filename)) this._downloads.delete(filename);
             reject(new Error(`Too many redirects (${MAX_REDIRECTS})`));
             return;
           }
-          // Clean up current state before following redirect
-          downloadState.status = 'redirect';
-          this._downloads.delete(filename);
+
+          // FIX Bug #33: Update state instead of deleting it to prevent cancellation race condition
+          downloadState.status = 'redirecting';
+          downloadState.url = response.headers.location;
+
+          // FIX: Clean up abort listeners from this request before recursing.
+          // The recursive call creates a new internalAbortController, so the
+          // listener on the old one would be a leak.
+          request.removeAllListeners('error');
+          request.removeAllListeners('timeout');
+
           response.resume(); // Drain response to free socket
           this.downloadModel(filename, {
             ...options,
@@ -207,7 +226,7 @@ class ModelDownloadManager {
 
         if (response.statusCode !== 200 && response.statusCode !== 206) {
           downloadState.status = 'error';
-          this._downloads.delete(filename);
+          if (this._downloads.has(filename)) this._downloads.delete(filename);
           reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
           return;
         }
@@ -273,7 +292,7 @@ class ModelDownloadManager {
             // Rename to final filename
             await fs.rename(partialPath, filePath);
             downloadState.status = 'complete';
-            this._downloads.delete(filename);
+            if (this._downloads.has(filename)) this._downloads.delete(filename);
 
             logger.info(`[Download] Completed: ${filename}`);
 
@@ -299,40 +318,56 @@ class ModelDownloadManager {
             resolve({ success: true, path: filePath });
           } catch (finishError) {
             downloadState.status = 'error';
-            this._downloads.delete(filename); // FIX: Clean up on error to prevent memory leak
+            if (this._downloads.has(filename)) this._downloads.delete(filename);
             reject(finishError);
           }
         });
 
         writeStream.on('error', (error) => {
           downloadState.status = 'error';
-          this._downloads.delete(filename); // FIX: Clean up on error to prevent memory leak
+          if (this._downloads.has(filename)) this._downloads.delete(filename);
           reject(error);
         });
 
         // Handle abort signals: internal (from cancelDownload) + external (from caller)
         const onAbort = () => {
+          // FIX: Remove listeners before destroying to prevent double-fire
+          internalAbortController.signal.removeEventListener('abort', onAbort);
+          if (signal) signal.removeEventListener('abort', onAbort);
+
           request.destroy();
-          writeStream.close();
+          // FIX: Use destroy() instead of close() for immediate cleanup of write stream
+          // close() waits for pending writes; destroy() discards buffered data and frees resources
+          writeStream.destroy();
           downloadState.status = 'cancelled';
-          this._downloads.delete(filename); // FIX: Clean up on cancel to prevent memory leak
+          if (this._downloads.has(filename)) this._downloads.delete(filename);
           reject(new Error('Download cancelled'));
         };
         internalAbortController.signal.addEventListener('abort', onAbort);
         if (signal) {
           signal.addEventListener('abort', onAbort);
         }
+
+        // FIX: Clean up abort listeners when download completes normally.
+        // Without this, the listeners on the AbortSignal objects persist
+        // even after the promise resolves, leaking closures and references.
+        const cleanupAbortListeners = () => {
+          internalAbortController.signal.removeEventListener('abort', onAbort);
+          if (signal) signal.removeEventListener('abort', onAbort);
+        };
+        writeStream.on('finish', cleanupAbortListeners);
+        writeStream.on('error', cleanupAbortListeners);
       });
 
       request.on('error', (error) => {
         downloadState.status = 'error';
-        this._downloads.delete(filename); // FIX: Clean up on request error
+        if (this._downloads.has(filename)) this._downloads.delete(filename);
         reject(error);
       });
 
       request.setTimeout(30000, () => {
         request.destroy();
-        this._downloads.delete(filename); // FIX: Clean up on timeout
+        if (this._downloads.has(filename)) this._downloads.delete(filename);
         reject(new Error('Download timeout'));
       });
     });

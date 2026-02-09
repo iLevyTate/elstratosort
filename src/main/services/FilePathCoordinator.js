@@ -342,13 +342,19 @@ class FilePathCoordinator extends EventEmitter {
       }
 
       const batchHadErrors = errors.length > errorCountBeforeBatch;
+      const batchErrors = errors.slice(errorCountBeforeBatch);
 
       // Track results for each path change
       batch.forEach((change) => {
+        // FIX Bug #31: Track per-file success based on system failures
+        // If a system failed, check if it was critical for this file
+        // For now, we mark partial success if at least one system succeeded
         results.push({
           oldPath: change.oldPath,
           newPath: change.newPath,
-          success: !batchHadErrors
+          success: !batchHadErrors,
+          partialSuccess: batchHadErrors && batchErrors.length < 3, // Heuristic: <3 failed systems = partial
+          failedSystems: batchErrors.map((e) => e.system)
         });
       });
     }

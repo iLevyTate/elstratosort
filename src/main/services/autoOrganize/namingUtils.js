@@ -204,13 +204,18 @@ function generateSuggestedNameFromAnalysis({
   const project = sanitizeToken(rawProject) || 'Project';
   const category = sanitizeToken(rawCategory) || 'Category';
 
+  // FIX: Consolidated switch -- date-based cases were previously empty with logic
+  // duplicated as if-checks after the switch. Now all cases set `base` directly.
   let base;
   switch (convention) {
     case 'subject-date':
+      base = `${subject}${separator}${formattedDate}`;
       break;
     case 'date-subject':
+      base = `${formattedDate}${separator}${subject}`;
       break;
     case 'project-subject-date':
+      base = `${project}${separator}${subject}${separator}${formattedDate}`;
       break;
     case 'category-subject':
       base = `${category}${separator}${subject}`;
@@ -223,12 +228,6 @@ function generateSuggestedNameFromAnalysis({
       base = subject;
       break;
   }
-
-  // Now that subject/project/category are computed, fill in date-based conventions.
-  if (convention === 'subject-date') base = `${subject}${separator}${formattedDate}`;
-  if (convention === 'date-subject') base = `${formattedDate}${separator}${subject}`;
-  if (convention === 'project-subject-date')
-    base = `${project}${separator}${subject}${separator}${formattedDate}`;
 
   const finalBase = caseConvention ? applyCaseConvention(base, caseConvention) : base;
   const fullName = `${finalBase}${extension}`;

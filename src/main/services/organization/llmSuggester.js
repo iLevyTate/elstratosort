@@ -78,7 +78,6 @@ Return JSON: {
       (abortController) =>
         globalDeduplicator.deduplicate(deduplicationKey, () =>
           llamaService.generateText({
-            model,
             prompt,
             temperature: llmTemperature,
             maxTokens: llmMaxTokens,

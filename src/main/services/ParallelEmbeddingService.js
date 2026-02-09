@@ -4,6 +4,8 @@ const { createLogger } = require('../../shared/logger');
 const { getInstance: getLlamaService } = require('./LlamaService');
 const { getEmbeddingPool } = require('../utils/workerPools');
 const { ERROR_CODES } = require('../../shared/errorCodes');
+const { AI_DEFAULTS } = require('../../shared/constants');
+const { resolveEmbeddingDimension } = require('../../shared/embeddingDimensions');
 
 const logger = createLogger('ParallelEmbeddingService');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
@@ -64,6 +66,57 @@ class ParallelEmbeddingService {
       concurrencyLimit: this.concurrencyLimit,
       maxRetries: this.maxRetries
     });
+
+    // Align initial limit with system recommendation (async).
+    this._syncRecommendedConcurrency('startup').catch(() => {});
+
+    // FIX Bug #14: Listen for LlamaService initialization to upgrade concurrency
+    // Initial calculation often happens before LlamaService has detected GPU
+    this._llamaInitHandler = null;
+    this._llamaServiceRef = null;
+    try {
+      const llamaService = getLlamaService();
+      if (llamaService && typeof llamaService.on === 'function') {
+        // FIX: Store handler reference so we can remove it in shutdown()
+        this._llamaInitHandler = () => {
+          const newLimit = Math.min(this._calculateOptimalConcurrency(), 10);
+          if (newLimit !== this.concurrencyLimit) {
+            this.concurrencyLimit = newLimit;
+            logger.info('[ParallelEmbeddingService] Concurrency updated after LlamaService init', {
+              limit: this.concurrencyLimit
+            });
+          }
+          this._syncRecommendedConcurrency('llama-init').catch(() => {});
+        };
+        this._llamaServiceRef = llamaService;
+        llamaService.on('initialized', this._llamaInitHandler);
+      }
+    } catch {
+      // Ignore errors during listener attachment
+    }
+  }
+
+  async _syncRecommendedConcurrency(source) {
+    try {
+      const { getRecommendedConcurrency } = require('./PerformanceService');
+      const recs = await getRecommendedConcurrency();
+      if (!recs?.maxConcurrent) return;
+      const capped = Math.max(1, Math.min(this.concurrencyLimit, recs.maxConcurrent, 10));
+      if (capped !== this.concurrencyLimit) {
+        this.concurrencyLimit = capped;
+        logger.info('[ParallelEmbeddingService] Concurrency capped by system recommendation', {
+          limit: this.concurrencyLimit,
+          recommended: recs.maxConcurrent,
+          reason: recs.reason,
+          source
+        });
+      }
+    } catch (error) {
+      logger.debug('[ParallelEmbeddingService] Failed to sync system concurrency recommendation', {
+        error: error?.message,
+        source
+      });
+    }
   }
 
   /**
@@ -244,13 +297,28 @@ class ParallelEmbeddingService {
             const result = await pool.run({
               text,
               modelPath,
-              gpuLayers: config?.gpuLayers ?? -1
+              gpuLayers: config?.gpuLayers ?? 'auto'
             });
             if (result?.embedding) {
+              const modelName = config?.embeddingModel || AI_DEFAULTS.EMBEDDING.MODEL;
+              const expectedDim = resolveEmbeddingDimension(modelName);
+              if (result.embedding.length !== expectedDim) {
+                logger.warn(
+                  '[ParallelEmbeddingService] Worker returned embedding with wrong dimension',
+                  {
+                    actual: result.embedding.length,
+                    expected: expectedDim,
+                    model: modelName
+                  }
+                );
+                throw new Error(
+                  `Dimension mismatch: got ${result.embedding.length}, expected ${expectedDim}`
+                );
+              }
               return {
                 success: true,
                 vector: result.embedding,
-                model: config?.embeddingModel || 'local-model'
+                model: modelName
               };
             }
           }
@@ -283,14 +351,16 @@ class ParallelEmbeddingService {
 
       // Normalize shape to { vector, model, success } expected by callers
       if (result && result.embedding) {
-        // LlamaService.generateEmbedding() returns {embedding: [...]} without model name.
-        // Read model from config so batch model-consistency checks work correctly.
-        // Note: getConfig() is async — must await to get the actual config object.
-        const config = await llamaService.getConfig?.();
+        // LlamaService.generateEmbedding() returns {embedding, model}.
+        // Fall back to config lookup if model is missing for any reason.
+        const modelName =
+          result.model ||
+          (await llamaService.getConfig())?.embeddingModel ||
+          AI_DEFAULTS.EMBEDDING.MODEL;
         const normalized = {
           success: true,
           vector: result.embedding || [],
-          model: result.model || config?.embeddingModel || 'local-model'
+          model: modelName
         };
         return normalized;
       }
@@ -334,151 +404,168 @@ class ParallelEmbeddingService {
       };
     }
 
-    // FIX: CRITICAL - Capture model at batch start to prevent dimension mismatches
-    // If the model changes during a batch, different items would have different dimensions,
-    // causing vector store corruption
-    const { AI_DEFAULTS } = require('../../shared/constants');
-    const batchCfg = await getLlamaService().getConfig();
-    const batchModel = batchCfg.embeddingModel || AI_DEFAULTS.EMBEDDING.MODEL;
+    // Pin embedding model to prevent eviction during batch processing.
+    // NOTE: We do NOT use acquireModelLoadLock() here because each item calls
+    // generateEmbedding() which internally calls _ensureModelLoaded(), and that
+    // acquires the same non-reentrant load lock — causing a deadlock.
+    // Instead, pinModel() increments a ref counter that the memory manager
+    // respects during LRU eviction, keeping the model resident without blocking.
+    const llamaService = getLlamaService();
+    llamaService.pinModel?.('embedding');
+    try {
+      // Capture model at batch start to prevent dimension mismatches.
+      // If the model changes during a batch, different items would have different
+      // dimensions, causing vector store corruption.
+      const batchCfg = await llamaService.getConfig();
+      const batchModel = batchCfg.embeddingModel || AI_DEFAULTS.EMBEDDING.MODEL;
 
-    const startTime = Date.now();
-    const results = new Array(items.length);
-    const errors = [];
-    let completedCount = 0;
-    let modelChangedDuringBatch = false;
+      const startTime = Date.now();
+      const results = new Array(items.length);
+      const errors = [];
+      let completedCount = 0;
+      let modelChangedDuringBatch = false;
 
-    logger.info('[ParallelEmbeddingService] Starting batch embedding', {
-      itemCount: items.length,
-      concurrencyLimit: this.concurrencyLimit,
-      model: batchModel
-    });
+      logger.info('[ParallelEmbeddingService] Starting batch embedding', {
+        itemCount: items.length,
+        concurrencyLimit: this.concurrencyLimit,
+        model: batchModel
+      });
 
-    // Process all items with semaphore-controlled concurrency
-    const processItem = async (item, index) => {
-      try {
-        // FIX: Check model before each item to prevent mixed-dimension vectors
-        const currentCfg = await getLlamaService().getConfig();
-        const currentModel = currentCfg.embeddingModel || AI_DEFAULTS.EMBEDDING.MODEL;
-        if (currentModel !== batchModel) {
-          modelChangedDuringBatch = true;
-          const errorMsg = `Model changed during batch operation (started with ${batchModel}, now ${currentModel}). Aborting batch to prevent vector dimension mismatch.`;
-          logger.error('[ParallelEmbeddingService] ' + errorMsg);
-          throw new Error(errorMsg);
-        }
+      // Process all items with semaphore-controlled concurrency
+      const processItem = async (item, index) => {
+        try {
+          // Check model before each item to prevent mixed-dimension vectors
+          const currentCfg = await llamaService.getConfig();
+          const currentModel = currentCfg.embeddingModel || AI_DEFAULTS.EMBEDDING.MODEL;
+          if (currentModel !== batchModel) {
+            modelChangedDuringBatch = true;
+            const errorMsg = `Model changed during batch operation (started with ${batchModel}, now ${currentModel}). Aborting batch to prevent vector dimension mismatch.`;
+            logger.error('[ParallelEmbeddingService] ' + errorMsg);
+            throw new Error(errorMsg);
+          }
 
-        const { vector, model } = await this.embedText(item.text);
+          const { vector, model } = await this.embedText(item.text);
 
-        // FIX: Validate model consistency - warn if model used differs from batch model
-        if (model !== batchModel && model !== 'fallback') {
-          // FIX CRIT-29: Throw on model mismatch to prevent vector space corruption
-          const mismatchMsg = `Model mismatch in batch: expected ${batchModel}, got ${model}. Aborting to protect vector integrity.`;
-          logger.error('[ParallelEmbeddingService] ' + mismatchMsg, {
-            itemId: item.id
-          });
-          throw new Error(mismatchMsg);
-        }
+          // FIX: Validate model consistency - warn if model used differs from batch model
+          if (model !== batchModel && model !== 'fallback') {
+            // FIX CRIT-29: Throw on model mismatch to prevent vector space corruption
+            const mismatchMsg = `Model mismatch in batch: expected ${batchModel}, got ${model}. Aborting to protect vector integrity.`;
+            logger.error('[ParallelEmbeddingService] ' + mismatchMsg, {
+              itemId: item.id
+            });
+            throw new Error(mismatchMsg);
+          }
 
-        const result = {
-          id: item.id,
-          vector,
-          model,
-          batchModel, // FIX: Include batch model for validation by caller
-          meta: item.meta || {},
-          success: true
-        };
-
-        results[index] = result;
-        completedCount++;
-
-        if (onProgress) {
-          onProgress({
-            completed: completedCount,
-            total: items.length,
-            percent: Math.round((completedCount / items.length) * 100),
-            current: item.id,
+          const result = {
+            id: item.id,
+            vector,
+            model,
+            batchModel, // FIX: Include batch model for validation by caller
+            meta: item.meta || {},
             success: true
-          });
+          };
+
+          results[index] = result;
+          completedCount++;
+
+          if (onProgress) {
+            onProgress({
+              completed: completedCount,
+              total: items.length,
+              percent: Math.round((completedCount / items.length) * 100),
+              current: item.id,
+              success: true
+            });
+          }
+
+          return result;
+        } catch (error) {
+          completedCount++;
+
+          // FIX: Enhanced error information with retryable flag and error type
+          const errorMessage = error.message || String(error);
+          const errorType = this._classifyError(error);
+          const retryable = this._isRetryableError(error);
+
+          const errorInfo = {
+            id: item.id,
+            error: errorMessage,
+            errorType,
+            retryable,
+            index
+          };
+
+          errors.push(errorInfo);
+          results[index] = { ...errorInfo, success: false };
+
+          if (onProgress) {
+            onProgress({
+              completed: completedCount,
+              total: items.length,
+              percent: Math.round((completedCount / items.length) * 100),
+              current: item.id,
+              success: false,
+              error: error.message
+            });
+          }
+
+          if (stopOnError) {
+            throw error;
+          }
+
+          return null;
         }
+      };
 
-        return result;
-      } catch (error) {
-        completedCount++;
+      // Process items in chunks to avoid overflowing the semaphore queue
+      // Use a chunk size slightly less than MAX_QUEUE_SIZE to be safe
+      const CHUNK_SIZE = Math.max(1, Math.floor(SEMAPHORE_CONFIG.MAX_QUEUE_SIZE * 0.8));
 
-        // FIX: Enhanced error information with retryable flag and error type
-        const errorMessage = error.message || String(error);
-        const errorType = this._classifyError(error);
-        const retryable = this._isRetryableError(error);
-
-        const errorInfo = {
-          id: item.id,
-          error: errorMessage,
-          errorType,
-          retryable,
-          index
-        };
-
-        errors.push(errorInfo);
-        results[index] = { ...errorInfo, success: false };
-
-        if (onProgress) {
-          onProgress({
-            completed: completedCount,
-            total: items.length,
-            percent: Math.round((completedCount / items.length) * 100),
-            current: item.id,
-            success: false,
-            error: error.message
-          });
+      if (stopOnError) {
+        for (let index = 0; index < items.length; index++) {
+          await processItem(items[index], index);
         }
-
-        if (stopOnError) {
-          throw error;
+      } else {
+        // Process in chunks
+        for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+          const chunk = items.slice(i, i + CHUNK_SIZE);
+          const chunkPromises = chunk.map((item, offset) => processItem(item, i + offset));
+          await Promise.allSettled(chunkPromises);
         }
-
-        return null;
       }
-    };
 
-    if (stopOnError) {
-      for (let index = 0; index < items.length; index++) {
-        await processItem(items[index], index);
-      }
-    } else {
-      // Launch all tasks - the semaphore will control actual concurrency
-      const promises = items.map((item, index) => processItem(item, index));
-      // Wait for all to complete (errors are caught individually unless stopOnError)
-      await Promise.allSettled(promises);
-    }
+      const duration = Date.now() - startTime;
+      const successCount = items.length - errors.length;
 
-    const duration = Date.now() - startTime;
-    const successCount = items.length - errors.length;
-
-    logger.info('[ParallelEmbeddingService] Batch embedding complete', {
-      total: items.length,
-      successful: successCount,
-      failed: errors.length,
-      duration: `${duration}ms`,
-      avgPerItem: `${Math.round(duration / items.length)}ms`,
-      throughput:
-        duration > 0 ? `${(items.length / (duration / 1000)).toFixed(2)} items/sec` : 'instant',
-      modelChangedDuringBatch
-    });
-
-    return {
-      results: results.filter(Boolean),
-      errors,
-      stats: {
+      logger.info('[ParallelEmbeddingService] Batch embedding complete', {
         total: items.length,
         successful: successCount,
         failed: errors.length,
-        duration,
-        avgLatencyMs: Math.round(duration / items.length),
-        throughput: duration > 0 ? items.length / (duration / 1000) : 0,
-        // FIX: Include model info for caller validation
-        model: batchModel,
+        duration: `${duration}ms`,
+        avgPerItem: `${Math.round(duration / items.length)}ms`,
+        throughput:
+          duration > 0 ? `${(items.length / (duration / 1000)).toFixed(2)} items/sec` : 'instant',
         modelChangedDuringBatch
-      }
-    };
+      });
+
+      return {
+        results: results.filter(Boolean),
+        errors,
+        stats: {
+          total: items.length,
+          successful: successCount,
+          failed: errors.length,
+          duration,
+          avgLatencyMs: Math.round(duration / items.length),
+          throughput: duration > 0 ? items.length / (duration / 1000) : 0,
+          // FIX: Include model info for caller validation
+          model: batchModel,
+          modelChangedDuringBatch
+        }
+      };
+    } finally {
+      llamaService.unpinModel?.('embedding');
+    }
   }
 
   /**
@@ -584,6 +671,17 @@ class ParallelEmbeddingService {
 
     this._isShuttingDown = true;
 
+    // FIX: Remove LlamaService listener to prevent memory leak and stale callbacks
+    if (this._llamaServiceRef && this._llamaInitHandler) {
+      try {
+        this._llamaServiceRef.removeListener('initialized', this._llamaInitHandler);
+      } catch {
+        // Ignore -- service may already be destroyed
+      }
+      this._llamaServiceRef = null;
+      this._llamaInitHandler = null;
+    }
+
     // Reject all pending queued requests and clear their timeouts
     const shutdownError = new Error('ParallelEmbeddingService: Service shutting down');
     shutdownError.code = 'SERVICE_SHUTDOWN';
@@ -650,6 +748,10 @@ class ParallelEmbeddingService {
    * Dynamically adjust concurrency based on error rate
    */
   _adjustConcurrency() {
+    // FIX: Don't adjust concurrency during shutdown -- increasing it could
+    // wake queued requests that will immediately fail.
+    if (this._isShuttingDown) return;
+
     const { successfulRequests, failedRequests } = this.stats;
     const totalProcessed = successfulRequests + failedRequests;
 

@@ -1,5 +1,6 @@
 const os = require('os');
 const { spawn } = require('child_process');
+const { setTimeout, clearTimeout } = require('timers');
 const { getNvidiaSmiCommand, isMacOS } = require('../../shared/platformUtils');
 const { createLogger } = require('../../shared/logger');
 

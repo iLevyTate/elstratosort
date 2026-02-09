@@ -172,56 +172,72 @@ class BatchAnalysisService {
     };
 
     const checkBackpressure = async () => {
-      // Acquire lock to serialize queue capacity checks
-      await this.backpressureLock.acquire();
+      // FIX P3-1: Check backpressure using Mutex-guarded check
+      // Release lock between poll iterations to prevent deadlock (Bug #20)
+      let shouldWait = false;
 
+      // First check (hold lock briefly)
+      await this.backpressureLock.acquire();
       try {
         const stats = analysisQueue.getStats();
         if (stats.capacityPercent >= 75) {
+          shouldWait = true;
           logger.warn('[BATCH-ANALYSIS] Backpressure: embedding queue at capacity', {
             capacityPercent: stats.capacityPercent,
             queueLength: stats.queueLength
           });
-
-          const backpressureStart = Date.now();
-          let delay = BACKPRESSURE_INITIAL_DELAY_MS;
-          let iterations = 0;
-
-          // Wait for queue to drain below 50% before resuming, with timeout
-          // NOTE: We hold the lock while waiting! This stops ALL other workers from checking/adding.
-          // This effectively pauses the analysis pipeline until the embedding queue drains.
-          while (analysisQueue.getStats().capacityPercent > 50) {
-            const elapsed = Date.now() - backpressureStart;
-            if (elapsed >= BACKPRESSURE_TIMEOUT_MS) {
-              logger.warn('[BATCH-ANALYSIS] Backpressure timeout reached, continuing anyway', {
-                elapsed,
-                capacityPercent: analysisQueue.getStats().capacityPercent
-              });
-              break;
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, delay));
-            // Exponential backoff with cap
-            delay = Math.min(delay * 1.5, BACKPRESSURE_MAX_DELAY_MS);
-            iterations++;
-
-            if (iterations % 10 === 0) {
-              logger.debug('[BATCH-ANALYSIS] Waiting for embedding queue to drain', {
-                elapsed,
-                capacityPercent: analysisQueue.getStats().capacityPercent,
-                iterations
-              });
-            }
-          }
-
-          if (Date.now() - backpressureStart < BACKPRESSURE_TIMEOUT_MS) {
-            logger.info('[BATCH-ANALYSIS] Embedding queue drained, resuming analysis', {
-              waitTime: Date.now() - backpressureStart
-            });
-          }
         }
       } finally {
         this.backpressureLock.release();
+      }
+
+      if (shouldWait) {
+        const backpressureStart = Date.now();
+        let delay = BACKPRESSURE_INITIAL_DELAY_MS;
+        let iterations = 0;
+
+        while (true) {
+          const elapsed = Date.now() - backpressureStart;
+          if (elapsed >= BACKPRESSURE_TIMEOUT_MS) {
+            logger.warn('[BATCH-ANALYSIS] Backpressure timeout reached, continuing anyway', {
+              elapsed
+            });
+            break;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          // Exponential backoff with cap
+          delay = Math.min(delay * 1.5, BACKPRESSURE_MAX_DELAY_MS);
+          iterations++;
+
+          // Check again (acquire lock briefly)
+          let stillFull = false;
+          await this.backpressureLock.acquire();
+          try {
+            const currentStats = analysisQueue.getStats();
+            if (currentStats.capacityPercent > 50) {
+              stillFull = true;
+              if (iterations % 10 === 0) {
+                logger.debug('[BATCH-ANALYSIS] Waiting for embedding queue to drain', {
+                  elapsed,
+                  capacityPercent: currentStats.capacityPercent,
+                  iterations
+                });
+              }
+            }
+          } finally {
+            this.backpressureLock.release();
+          }
+
+          if (!stillFull) {
+            if (Date.now() - backpressureStart < BACKPRESSURE_TIMEOUT_MS) {
+              logger.info('[BATCH-ANALYSIS] Embedding queue drained, resuming analysis', {
+                waitTime: Date.now() - backpressureStart
+              });
+            }
+            break;
+          }
+        }
       }
     };
 

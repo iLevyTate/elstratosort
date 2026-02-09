@@ -966,10 +966,14 @@ class SearchService {
       };
     }
 
-    const maxWeight = Math.max(
-      SEARCH.MIN_EPSILON,
-      ...edges.map((edge) => (typeof edge.weight === 'number' ? edge.weight : 0))
+    // FIX: Guard against division by zero when all edge weights are 0.
+    // The spread into Math.max with an empty edges array would yield MIN_EPSILON,
+    // but if all weights are literally 0, weightNorm = 0/0 = NaN, corrupting scores.
+    const rawMaxWeight = edges.reduce(
+      (max, edge) => Math.max(max, typeof edge.weight === 'number' ? edge.weight : 0),
+      0
     );
+    const maxWeight = Math.max(SEARCH.MIN_EPSILON, rawMaxWeight);
 
     const neighborScores = new Map();
     const neighborDetails = new Map();
@@ -1247,8 +1251,12 @@ class SearchService {
         return { results, timedOut: false };
       });
 
-      // Absorb rejection if timeout wins the race to prevent unhandled rejection
-      searchPromise.catch(() => {});
+      // Absorb rejection if timeout wins the race; log for observability
+      searchPromise.catch((err) => {
+        logger.debug('[SearchService] Vector search rejected after timeout', {
+          error: err?.message || String(err)
+        });
+      });
 
       const result = await Promise.race([
         searchPromise,
