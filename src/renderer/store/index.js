@@ -220,8 +220,10 @@ const loadState = () => {
         system: {
           metrics: { cpu: 0, memory: 0, uptime: 0 },
           health: {
-            vectorDb: 'unknown',
-            llama: 'unknown'
+            // In-process services (Orama, node-llama-cpp) are always online after init.
+            // No IPC event updates these, so they must match systemSlice initialState.
+            vectorDb: 'online',
+            llama: 'online'
           },
           notifications: [],
           unreadNotificationCount: 0,
@@ -286,8 +288,10 @@ const loadState = () => {
       system: {
         metrics: { cpu: 0, memory: 0, uptime: 0 },
         health: {
-          vectorDb: 'unknown',
-          llama: 'unknown'
+          // In-process services (Orama, node-llama-cpp) are always online after init.
+          // No IPC event updates these, so they must match systemSlice initialState.
+          vectorDb: 'online',
+          llama: 'online'
         },
         notifications: [], // Don't restore notifications - they're transient
         unreadNotificationCount: 0,

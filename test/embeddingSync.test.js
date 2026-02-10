@@ -24,9 +24,15 @@ jest.mock('../src/shared/fileIdUtils', () => ({
   isImagePath: jest.fn(() => false)
 }));
 
-jest.mock('../src/main/utils/fileIdUtils', () => ({
-  getPathVariants: jest.fn((p) => [p])
-}));
+jest.mock('../src/main/utils/fileIdUtils', () => {
+  const getPathVariants = jest.fn((p) => [p]);
+  return {
+    getPathVariants,
+    getAllIdVariants: jest.fn((filePath) => {
+      return [...new Set(getPathVariants(filePath).flatMap((v) => [`file:${v}`, `image:${v}`]))];
+    })
+  };
+});
 
 jest.mock('../src/main/analysis/embeddingSummary', () => ({
   buildEmbeddingSummary: jest.fn(() => ({
@@ -115,12 +121,14 @@ describe('embeddingSync', () => {
     expect(res.removed).toBe(4);
   });
 
-  test('syncEmbeddingForMove removes embeddings when destination is not in a smart folder', async () => {
+  test('syncEmbeddingForMove updates path when destination is not in a smart folder', async () => {
     const analysisHistoryService = {
       updateEmbeddingStateByPath: jest.fn().mockResolvedValue(undefined)
     };
 
     const vectorDbService = {
+      initialize: jest.fn().mockResolvedValue(undefined),
+      updateFilePaths: jest.fn().mockResolvedValue(1),
       batchDeleteFileEmbeddings: jest.fn().mockResolvedValue({ success: true }),
       deleteFileChunks: jest.fn().mockResolvedValue(true)
     };
@@ -140,15 +148,12 @@ describe('embeddingSync', () => {
       operation: 'move'
     });
 
-    expect(res).toEqual({ action: 'removed', reason: 'not-smart-folder' });
-    // dest + source removed (move)
-    expect(vectorDbService.batchDeleteFileEmbeddings).toHaveBeenCalledTimes(2);
-    expect(analysisHistoryService.updateEmbeddingStateByPath).toHaveBeenCalledWith(
-      'C:\\dst\\a.pdf',
-      {
-        status: 'skipped'
-      }
-    );
+    // Embeddings are preserved (path updated) instead of removed — files stay
+    // searchable and visible in the knowledge graph after moves.
+    expect(res).toEqual({ action: 'updated_meta', reason: 'not-smart-folder' });
+    expect(vectorDbService.updateFilePaths).toHaveBeenCalledTimes(1);
+    // No deletions — embedding is kept
+    expect(vectorDbService.batchDeleteFileEmbeddings).not.toHaveBeenCalled();
   });
 
   test('syncEmbeddingForMove updates metadata in-place via vectorDb.updateFilePaths when available', async () => {

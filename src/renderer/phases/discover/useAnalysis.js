@@ -7,7 +7,7 @@
  * @module phases/discover/useAnalysis
  */
 
-import { useCallback, useRef, useEffect, useState } from 'react';
+import { useCallback, useRef, useEffect, useState, useMemo } from 'react';
 import { PHASES, FILE_STATES } from '../../../shared/constants';
 import { TIMEOUTS, CONCURRENCY, RETRY } from '../../../shared/performanceConstants';
 import { createLogger } from '../../../shared/logger';
@@ -280,7 +280,7 @@ export function useAnalysis(options = {}) {
     analysisResults = [],
     isAnalyzing = false,
     analysisProgress = { current: 0, total: 0 },
-    namingSettings = {},
+    namingSettings: rawNamingSettings = {},
     setters: {
       setIsAnalyzing = () => {},
       setAnalysisProgress = () => {},
@@ -293,6 +293,13 @@ export function useAnalysis(options = {}) {
     actions = { setPhaseData: () => {}, advancePhase: () => {} },
     getCurrentPhase = () => {}
   } = options;
+
+  // Stabilize namingSettings reference: only produce a new object when contents change.
+  // This prevents downstream useCallback/useMemo deps from churning on every render
+  // when the parent passes a structurally-identical but referentially-new object.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const namingSettings = useMemo(() => rawNamingSettings, [JSON.stringify(rawNamingSettings)]);
+
   const hasResumedRef = useRef(false);
   const analysisLockRef = useRef(false);
   const [globalAnalysisActive, setGlobalAnalysisActive] = useState(false);

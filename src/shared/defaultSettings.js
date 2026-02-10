@@ -56,6 +56,10 @@ const DEFAULT_SETTINGS = {
   // - web_only: do not embed locally (intended for web-search-only workflows)
   // - skip: do not embed
   defaultEmbeddingPolicy: 'embed',
+  // Embedding scope: which files should be embedded
+  // - all_analyzed: embed every file that passes analysis (broadest search coverage)
+  // - smart_folders_only: only embed files residing in a configured smart folder
+  embeddingScope: 'all_analyzed',
   chatPersona: DEFAULT_CHAT_PERSONA_ID,
   chatResponseMode: 'fast',
   // File Size Limits (in bytes)

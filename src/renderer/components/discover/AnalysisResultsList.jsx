@@ -1,4 +1,14 @@
-import React, { memo, useMemo, useCallback, useState, useEffect, Component } from 'react';
+import React, {
+  memo,
+  useMemo,
+  useCallback,
+  useState,
+  useEffect,
+  useRef,
+  useLayoutEffect,
+  Component
+} from 'react';
+import { createPortal } from 'react-dom';
 import PropTypes from 'prop-types';
 import { useDispatch, useSelector } from 'react-redux';
 import { List } from 'react-window';
@@ -12,7 +22,8 @@ import {
   Database,
   Globe,
   Ban,
-  RefreshCw
+  RefreshCw,
+  MoreVertical
 } from 'lucide-react';
 import { Button, StatusBadge, Card, IconButton, StateMessage } from '../ui';
 import { logger } from '../../../shared/logger';
@@ -85,6 +96,63 @@ const formatConfidence = (value) => {
 
 const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }) {
   const dispatch = useDispatch();
+  const actionButtonRef = useRef(null);
+  const menuRef = useRef(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+
+  const updateMenuPosition = useCallback(() => {
+    if (!actionButtonRef.current) return;
+    const rect = actionButtonRef.current.getBoundingClientRect();
+    setMenuPosition({ top: rect.bottom + 4, left: rect.right - 160 });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    updateMenuPosition();
+    const scheduleUpdate = () => requestAnimationFrame(updateMenuPosition);
+    window.addEventListener('resize', scheduleUpdate);
+    window.addEventListener('scroll', scheduleUpdate, true);
+    return () => {
+      window.removeEventListener('resize', scheduleUpdate);
+      window.removeEventListener('scroll', scheduleUpdate, true);
+    };
+  }, [menuOpen, updateMenuPosition]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClickOutside = (e) => {
+      const target = e.target;
+      if (
+        actionButtonRef.current &&
+        !actionButtonRef.current.contains(target) &&
+        menuRef.current &&
+        !menuRef.current.contains(target)
+      ) {
+        setMenuOpen(false);
+      }
+    };
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside, true);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside, true);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [menuOpen]);
+
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  const stopPropAnd = useCallback(
+    (fn) => (e) => {
+      e.stopPropagation();
+      fn?.();
+      closeMenu();
+    },
+    [closeMenu]
+  );
+
   if (!data || !data.items) return null;
   const {
     items,
@@ -103,6 +171,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
     redact: Boolean(redactPaths),
     segments: 2
   });
+  const pathTooltip = redactPaths ? displayPath : file.path || '';
 
   let stateDisplay = { label: 'Unknown', icon: null, color: '', spinning: false };
   try {
@@ -151,11 +220,81 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
         }
       : style;
 
+  const menuContent =
+    menuOpen &&
+    typeof document !== 'undefined' &&
+    document.body &&
+    createPortal(
+      <div
+        ref={menuRef}
+        role="menu"
+        className="fixed z-overlay bg-white border border-border-soft rounded-lg shadow-lg min-w-[160px] py-1 animate-dropdown-enter"
+        style={{
+          top: `${menuPosition.top}px`,
+          left: `${menuPosition.left}px`
+        }}
+      >
+        <button
+          type="button"
+          role="menuitem"
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-system-gray-700 hover:bg-system-gray-50 disabled:opacity-50"
+          onClick={stopPropAnd(() => handleAction?.('reanalyze', file.path))}
+          disabled={!file.path}
+        >
+          <RefreshCw className="w-4 h-4 shrink-0" />
+          Reanalyze File
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-system-gray-700 hover:bg-system-gray-50"
+          onClick={stopPropAnd(() =>
+            dispatch(setEmbeddingPolicyForFile(file.path, nextEmbeddingPolicy))
+          )}
+        >
+          <PolicyIcon className="w-4 h-4 shrink-0" />
+          {policyLabel === 'Embed locally'
+            ? 'Set: Web-only'
+            : policyLabel === 'Web-only'
+              ? 'Set: Skip'
+              : 'Set: Embed locally'}
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-system-gray-700 hover:bg-system-gray-50"
+          onClick={stopPropAnd(() => handleAction?.('open', file.path))}
+        >
+          <Eye className="w-4 h-4 shrink-0" />
+          Open File
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-system-gray-700 hover:bg-system-gray-50"
+          onClick={stopPropAnd(() => handleAction?.('reveal', file.path))}
+        >
+          <FolderOpen className="w-4 h-4 shrink-0" />
+          Reveal in Folder
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-stratosort-danger hover:bg-stratosort-danger/10"
+          onClick={stopPropAnd(() => handleAction?.('remove', file.path))}
+        >
+          <Trash2 className="w-4 h-4 shrink-0" />
+          Remove from List
+        </button>
+      </div>,
+      document.body
+    );
+
   return (
     <div style={rowStyle} className="px-cozy">
       <Card
         variant="interactive"
-        className="flex items-start p-3 gap-3 h-full group transition-all duration-200 hover:border-stratosort-blue/30 overflow-hidden"
+        className="flex items-start p-3 gap-3 h-full group transition-all duration-200 hover:border-stratosort-blue/30 overflow-visible hover:scale-100"
         onClick={() => handleAction && handleAction('open', file.path)}
       >
         {/* Icon */}
@@ -163,13 +302,10 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
           <FileText className="w-5 h-5" />
         </div>
 
-        {/* Content */}
-        <div className="flex-1 min-w-0 flex flex-col justify-center gap-2">
-          <div className="flex flex-wrap items-start gap-2 sm:gap-3">
-            <Text
-              variant="body"
-              className="font-medium text-system-gray-900 truncate flex-1 min-w-[180px]"
-            >
+        {/* Content - flex-1 min-w-0 allows shrinking, more room for path/keywords */}
+        <div className="flex-1 min-w-0 flex flex-col justify-center gap-1.5 overflow-hidden">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Text variant="body" className="font-medium text-system-gray-900 truncate min-w-0">
               {file.name || 'Unknown File'}
             </Text>
             <div className="flex items-center gap-2 flex-shrink-0 whitespace-nowrap">
@@ -195,7 +331,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
               )}
               <Text
                 variant="tiny"
-                className="text-system-gray-400 font-medium whitespace-nowrap"
+                className="text-system-gray-400 font-medium whitespace-nowrap hidden sm:inline"
                 title={`Embedding policy: ${policyLabel}`}
               >
                 {embeddingPolicy === 'embed'
@@ -207,15 +343,15 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 text-system-gray-500">
-            <Text variant="tiny" className="truncate flex-[2_1_240px] min-w-0" title={displayPath}>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-system-gray-500 min-w-0">
+            <Text variant="tiny" className="truncate min-w-0 flex-1 basis-0" title={pathTooltip}>
               {displayPath}
             </Text>
             {file.analysis?.category && (
               <>
-                <span className="w-1 h-1 rounded-full bg-system-gray-300" />
+                <span className="w-1 h-1 rounded-full bg-system-gray-300 flex-shrink-0" />
                 <span
-                  className="text-[10px] px-1.5 py-0.5 bg-system-gray-100 rounded-md text-system-gray-600 font-medium border border-system-gray-200 whitespace-nowrap"
+                  className="text-[10px] px-1.5 py-0.5 bg-system-gray-100 rounded-md text-system-gray-600 font-medium border border-system-gray-200 whitespace-nowrap flex-shrink-0"
                   title={`Category: ${file.analysis.category}`}
                 >
                   Category: {file.analysis.category}
@@ -224,7 +360,7 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
             )}
             {keywords.length > 0 && (
               <span
-                className="text-[10px] text-system-gray-400 truncate flex-1 min-w-[120px] max-w-full sm:max-w-[200px]"
+                className="text-[10px] text-system-gray-400 truncate min-w-0 max-w-full"
                 title={`Keywords: ${fullKeywords}`}
               >
                 Keywords: {displayKeywords}
@@ -233,73 +369,25 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+        {/* Actions - single overflow menu, no layout shift */}
+        <div ref={actionButtonRef} className="shrink-0 pl-1">
           <IconButton
-            icon={<RefreshCw className="w-4 h-4" />}
-            size="sm"
-            variant="ghost"
-            disabled={!file.path}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleAction && handleAction('reanalyze', file.path);
-            }}
-            title={file.path ? 'Reanalyze File' : 'Reanalyze unavailable'}
-            aria-label="Reanalyze file"
-          />
-          <IconButton
-            icon={<PolicyIcon className="w-4 h-4" />}
+            icon={<MoreVertical className="w-4 h-4" />}
             size="sm"
             variant="ghost"
             onClick={(e) => {
               e.stopPropagation();
-              dispatch(setEmbeddingPolicyForFile(file.path, nextEmbeddingPolicy));
+              setMenuOpen((prev) => !prev);
+              if (!menuOpen) updateMenuPosition();
             }}
-            title={`Embedding policy: ${policyLabel}. Click to set: ${
-              nextEmbeddingPolicy === 'embed'
-                ? 'Embed locally'
-                : nextEmbeddingPolicy === 'web_only'
-                  ? 'Web-only'
-                  : 'Skip'
-            }`}
-            aria-label="Change embedding policy"
-          />
-          <IconButton
-            icon={<Eye className="w-4 h-4" />}
-            size="sm"
-            variant="ghost"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleAction && handleAction('open', file.path);
-            }}
-            title="Open File"
-            aria-label="Open file"
-          />
-          <IconButton
-            icon={<FolderOpen className="w-4 h-4" />}
-            size="sm"
-            variant="ghost"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleAction && handleAction('reveal', file.path);
-            }}
-            title="Reveal in Folder"
-            aria-label="Reveal in folder"
-          />
-          <IconButton
-            icon={<Trash2 className="w-4 h-4" />}
-            size="sm"
-            variant="ghost"
-            className="text-stratosort-danger hover:bg-stratosort-danger/10 hover:text-stratosort-danger"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleAction && handleAction('remove', file.path);
-            }}
-            title="Remove from List"
-            aria-label="Remove from list"
+            title="Actions"
+            aria-label="File actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
           />
         </div>
       </Card>
+      {menuContent}
     </div>
   );
 });

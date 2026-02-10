@@ -81,7 +81,12 @@ function hasInvokeHandler(channel) {
     const { hasHandler } = require('./ipcRegistry');
     return hasHandler(channel);
   } catch {
-    // Fallback to private API if registry unavailable during early startup
+    // Fallback to private API if registry unavailable during early startup.
+    // Log so we know if this path is exercised in production.
+    logger.warn(
+      '[IPC] ipcRegistry unavailable, falling back to ipcMain._invokeHandlers for channel:',
+      channel
+    );
     const map = ipcMain._invokeHandlers;
     if (!map) return false;
     if (typeof map.has === 'function') return map.has(channel);

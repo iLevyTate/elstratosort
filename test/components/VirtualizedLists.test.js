@@ -29,7 +29,12 @@ jest.mock('lucide-react', () => ({
   AlertTriangle: () => <div>Icon</div>,
   Eye: () => <div>Icon</div>,
   FolderOpen: () => <div>Icon</div>,
-  Trash2: () => <div>Icon</div>
+  Trash2: () => <div>Icon</div>,
+  MoreVertical: () => <div>Icon</div>,
+  RefreshCw: () => <div>Icon</div>,
+  Database: () => <div>Icon</div>,
+  Globe: () => <div>Icon</div>,
+  Ban: () => <div>Icon</div>
 }));
 
 jest.mock('../../src/renderer/components/ui/Typography', () => ({

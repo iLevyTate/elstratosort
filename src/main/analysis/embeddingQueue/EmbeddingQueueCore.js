@@ -11,8 +11,8 @@ const { app } = require('electron');
 const { createLogger } = require('../../../shared/logger');
 const { container, ServiceIds } = require('../../services/ServiceContainer');
 const { get: getConfig } = require('../../../shared/config/index');
-const { normalizePathForIndex } = require('../../../shared/pathSanitization');
 const { traceQueueUpdate } = require('../../../shared/pathTraceLogger');
+const { getAllIdVariants, buildPathUpdatePairs } = require('../../utils/fileIdUtils');
 const {
   BATCH,
   LIMITS,
@@ -764,13 +764,7 @@ class EmbeddingQueue {
   removeByFilePath(filePath) {
     if (!filePath) return 0;
 
-    const normalizedPath = normalizePathForIndex(filePath);
-    const fileIds = new Set([
-      `file:${filePath}`,
-      `image:${filePath}`,
-      `file:${normalizedPath}`,
-      `image:${normalizedPath}`
-    ]);
+    const fileIds = new Set(getAllIdVariants(filePath));
     let removedCount = 0;
 
     if (this.isFlushing) {
@@ -828,12 +822,7 @@ class EmbeddingQueue {
   removeByFilePaths(filePaths) {
     if (!Array.isArray(filePaths) || filePaths.length === 0) return 0;
 
-    const fileIds = new Set(
-      filePaths.flatMap((p) => {
-        const normalized = normalizePathForIndex(p);
-        return [`file:${p}`, `image:${p}`, `file:${normalized}`, `image:${normalized}`];
-      })
-    );
+    const fileIds = new Set(filePaths.flatMap((p) => getAllIdVariants(p)));
     let removedCount = 0;
 
     if (this.isFlushing) {
@@ -897,21 +886,7 @@ class EmbeddingQueue {
   _updatePath(oldPath, newPath) {
     if (!oldPath || !newPath) return { queueUpdated: 0, failedUpdated: false };
 
-    const normalizedOld = normalizePathForIndex(oldPath);
-    const normalizedNew = normalizePathForIndex(newPath);
-    const idPairs = [];
-    const addPair = (oldId, newId) => {
-      if (oldId && newId) {
-        idPairs.push({ oldId, newId });
-      }
-    };
-
-    addPair(`file:${oldPath}`, `file:${newPath}`);
-    addPair(`image:${oldPath}`, `image:${newPath}`);
-    if (normalizedOld !== oldPath || normalizedNew !== newPath) {
-      addPair(`file:${normalizedOld}`, `file:${normalizedNew}`);
-      addPair(`image:${normalizedOld}`, `image:${normalizedNew}`);
-    }
+    const idPairs = buildPathUpdatePairs(oldPath, newPath);
 
     let queueUpdated = 0;
     let failedUpdated = false;
@@ -1120,18 +1095,21 @@ class EmbeddingQueue {
     if (this.isFlushing && this._pendingFlush) {
       logger.info('[EmbeddingQueue] Waiting for current flush to complete...');
       const maxWait = 30000;
+      let forceFlushTimer;
       try {
         await Promise.race([
           this._pendingFlush,
           new Promise((_, reject) => {
-            const t = setTimeout(() => {
+            forceFlushTimer = setTimeout(() => {
               const err = new Error('Force flush timeout waiting for current flush');
               err.code = ERROR_CODES.TIMEOUT;
               reject(err);
             }, maxWait);
-            if (t.unref) t.unref();
+            if (forceFlushTimer.unref) forceFlushTimer.unref();
           })
-        ]);
+        ]).finally(() => {
+          if (forceFlushTimer) clearTimeout(forceFlushTimer);
+        });
       } catch (err) {
         if (err.code === ERROR_CODES.TIMEOUT) {
           logger.warn(

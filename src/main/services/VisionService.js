@@ -15,6 +15,40 @@ const { delay } = require('../../shared/promiseUtils');
 const logger = createLogger('VisionService');
 let loggedRuntimeVariant = false;
 
+// Cached result of synchronous NVIDIA GPU probe (null = not yet probed)
+let _nvidiaDetected = null;
+
+/**
+ * Synchronously probe for an NVIDIA GPU via nvidia-smi.
+ * The result is cached for the lifetime of the process so the (slow-ish)
+ * child-process spawn only runs once.
+ */
+function hasNvidiaGPU() {
+  if (_nvidiaDetected !== null) return _nvidiaDetected;
+  if (process.platform !== 'win32') {
+    _nvidiaDetected = false;
+    return false;
+  }
+  try {
+    const { execSync } = require('child_process');
+    const output = execSync('nvidia-smi --query-gpu=name --format=csv,noheader', {
+      timeout: 5000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
+    });
+    const name = output.toString().trim();
+    if (name) {
+      logger.info('[VisionService] NVIDIA GPU detected, preferring CUDA runtime', { gpu: name });
+      _nvidiaDetected = true;
+      return true;
+    }
+  } catch {
+    // nvidia-smi not available or failed — no usable NVIDIA GPU
+  }
+  _nvidiaDetected = false;
+  return false;
+}
+
 const LLAMA_CPP_RELEASE_TAG = process.env.STRATOSORT_LLAMA_CPP_TAG || 'b7956';
 const LLAMA_CPP_BASE_URL = 'https://github.com/ggml-org/llama.cpp/releases/download';
 const SERVER_BINARY_NAME = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
@@ -62,30 +96,44 @@ function getAssetConfig(tag = LLAMA_CPP_RELEASE_TAG) {
   const arch = process.arch;
 
   if (platform === 'win32') {
-    // Use Vulkan build on x64 - it includes GPU acceleration and falls back to
-    // CPU backends when no Vulkan driver is available.  ARM64 stays CPU-only.
-    const assetName =
-      arch === 'arm64'
-        ? `llama-${tag}-bin-win-cpu-arm64.zip`
-        : `llama-${tag}-bin-win-vulkan-x64.zip`;
+    // ARM64 stays CPU-only; x64 prefers CUDA when NVIDIA GPU is detected,
+    // falls back to Vulkan (which itself falls back to CPU when no driver).
+    const cudaVersion = process.env.STRATOSORT_CUDA_VERSION || '12.4';
+    const useNvidiaCuda =
+      arch !== 'arm64' && !process.env.STRATOSORT_PREFER_VULKAN && hasNvidiaGPU();
+
+    let assetName;
+    let cudartAssetName = null;
+    if (arch === 'arm64') {
+      assetName = `llama-${tag}-bin-win-cpu-arm64.zip`;
+    } else if (useNvidiaCuda) {
+      assetName = `llama-${tag}-bin-win-cuda-${cudaVersion}-x64.zip`;
+      cudartAssetName = `cudart-llama-bin-win-cuda-${cudaVersion}-x64.zip`;
+    } else {
+      assetName = `llama-${tag}-bin-win-vulkan-x64.zip`;
+    }
+
     const config = {
       tag,
       assetName,
       archiveType: 'zip',
       url: `${LLAMA_CPP_BASE_URL}/${tag}/${assetName}`
     };
+
+    if (cudartAssetName) {
+      config.cudartAssetName = cudartAssetName;
+      config.cudartUrl = `${LLAMA_CPP_BASE_URL}/${tag}/${cudartAssetName}`;
+    }
+
     if (!loggedRuntimeVariant) {
       loggedRuntimeVariant = true;
       logger.info('[VisionService] Selected vision runtime', {
         platform,
         arch,
-        assetName
+        assetName,
+        ...(cudartAssetName && { cudartAssetName }),
+        backend: useNvidiaCuda ? 'cuda' : assetName.includes('vulkan') ? 'vulkan' : 'cpu'
       });
-      if (assetName.includes('win-vulkan')) {
-        logger.warn(
-          '[VisionService] Windows vision runtime uses Vulkan build. CUDA is not bundled by default; set STRATOSORT_LLAMA_CPP_URL to a CUDA build to override.'
-        );
-      }
     }
     return config;
   }
@@ -474,6 +522,39 @@ class VisionService {
       throw new Error('Vision runtime binary not found after extraction');
     }
 
+    // Download CUDA runtime DLLs alongside the binary when using a CUDA build.
+    // The DLLs must live in the same directory as the binary so the dynamic
+    // linker can find them at spawn time (cwd = binaryDir).
+    if (asset.cudartAssetName && asset.cudartUrl) {
+      const cudartArchive = path.join(runtimeRoot, asset.cudartAssetName);
+      const binaryDir = path.dirname(binaryPath);
+      logger.info('[VisionService] Downloading CUDA runtime DLLs', {
+        asset: asset.cudartAssetName,
+        targetDir: binaryDir
+      });
+      try {
+        await downloadFile(asset.cudartUrl, cudartArchive);
+        await extractArchive(cudartArchive, binaryDir, asset.archiveType);
+        logger.info('[VisionService] CUDA runtime DLLs installed');
+      } catch (cudartError) {
+        // Non-fatal: the system may already have CUDA DLLs via the driver.
+        // Log and continue — the server will fail to start if they're truly missing.
+        logger.warn(
+          '[VisionService] Failed to download CUDA runtime DLLs; ' +
+            'CUDA may still work if the driver provides them',
+          {
+            error: cudartError.message
+          }
+        );
+      } finally {
+        try {
+          await fs.promises.unlink(cudartArchive);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
     if (process.platform !== 'win32') {
       try {
         await fs.promises.chmod(binaryPath, 0o755);
@@ -594,8 +675,12 @@ class VisionService {
 
     // Create a promise that rejects if the process exits before health is confirmed.
     // This prevents _waitForHealth from polling a dead process for 180s.
+    // FIX: Store the exit handler so we can remove it after health check succeeds,
+    // preventing both a stale listener and an unhandled promise rejection when the
+    // process later exits normally.
+    let earlyExitHandler;
     const earlyExitPromise = new Promise((_, reject) => {
-      child.on('exit', (code, signal) => {
+      earlyExitHandler = (code, signal) => {
         abortController.abort(); // Signal health check to stop polling
         const stderr = stderrChunks.join('').slice(-500);
         reject(
@@ -603,8 +688,11 @@ class VisionService {
             `Vision runtime exited during startup (code=${code}, signal=${signal})${stderr ? ': ' + stderr : ''}`
           )
         );
-      });
+      };
+      child.on('exit', earlyExitHandler);
     });
+    // Suppress unhandled rejection if health check wins the race
+    earlyExitPromise.catch(() => {});
 
     // Handle spawn-level errors (e.g. ENOENT when binary doesn't exist)
     child.on('error', (err) => {
@@ -629,8 +717,12 @@ class VisionService {
         this._waitForHealth(port, DEFAULT_STARTUP_TIMEOUT_MS, abortController.signal),
         earlyExitPromise
       ]);
+      // Health check succeeded -- remove the startup exit listener to avoid
+      // spurious rejection when the process later exits normally.
+      child.removeListener('exit', earlyExitHandler);
     } catch (error) {
       // Ensure we clean up if health check fails or process exits
+      child.removeListener('exit', earlyExitHandler);
       if (this._process === child) {
         this._process = null;
         this._port = null;
@@ -859,10 +951,17 @@ const { getInstance, createInstance, registerWithContainer, resetInstance } =
     shutdownMethod: 'shutdown'
   });
 
+/** @internal Reset module-level caches (for testing only). */
+function _resetRuntimeCache() {
+  _nvidiaDetected = null;
+  loggedRuntimeVariant = false;
+}
+
 module.exports = {
   VisionService,
   getInstance,
   createInstance,
   registerWithContainer,
-  resetInstance
+  resetInstance,
+  _resetRuntimeCache
 };

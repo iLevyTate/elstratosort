@@ -384,7 +384,7 @@ describe('Image Analysis Pipeline - Embedding Queue Integration', () => {
     expect(enqueueCall.id).toContain('vacation.jpg');
   });
 
-  test('does not queue embedding when file is not in smart folder', async () => {
+  test('queues embedding even when file is not in smart folder', async () => {
     findContainingSmartFolder.mockReturnValue(null);
 
     mockLlamaService.analyzeImage.mockResolvedValue(
@@ -398,8 +398,12 @@ describe('Image Analysis Pipeline - Embedding Queue Integration', () => {
 
     await analyzeImageFile('/random/photo.jpg');
 
-    // Embedding should not be queued for files outside smart folders
-    expect(mockEnqueue).not.toHaveBeenCalled();
+    // Embedding should be queued for ALL analyzed files, not just smart folder ones.
+    // This ensures files are searchable and visible in the knowledge graph.
+    expect(mockEnqueue).toHaveBeenCalled();
+    const enqueueCall = mockEnqueue.mock.calls[0][0];
+    expect(enqueueCall.meta.smartFolder).toBeNull();
+    expect(enqueueCall.meta.smartFolderPath).toBeNull();
   });
 
   test('respects embedding gate decision', async () => {

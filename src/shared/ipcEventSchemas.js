@@ -158,23 +158,29 @@ const schemas = z
 
       /**
        * Vector DB Status Changed Event
-       * Emitted when Vector DB connection status changes
+       * Emitted when Vector DB connection status changes.
+       * Uses passthrough() so that normalizeServiceHealth() in ipcMiddleware
+       * can read the `health` field without Zod stripping it.
        */
-      const vectorDbStatusChangedSchema = z.object({
-        status: z.enum([
-          'connected',
-          'disconnected',
-          'connecting',
-          'error',
-          'online',
-          'offline',
-          'recovering',
-          'circuit_changed',
-          'operation_queued'
-        ]),
-        timestamp: z.number().optional(),
-        error: z.string().optional()
-      });
+      const vectorDbStatusChangedSchema = z
+        .object({
+          status: z.enum([
+            'connected',
+            'disconnected',
+            'connecting',
+            'error',
+            'online',
+            'offline',
+            'recovering',
+            'circuit_changed',
+            'operation_queued'
+          ]),
+          // Health field used by normalizeServiceHealth() for richer status mapping
+          health: z.string().optional(),
+          timestamp: z.number().optional(),
+          error: z.string().optional()
+        })
+        .passthrough();
 
       /**
        * Menu Action Event

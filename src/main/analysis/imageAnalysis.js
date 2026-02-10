@@ -46,6 +46,23 @@ function setImageCache(signature, value) {
   getImageAnalysisCache().set(signature, value);
 }
 
+/**
+ * Create a vision-unavailable fallback analysis with optional extracted text.
+ * Consolidates the repeated pattern of building a fallback + attaching text.
+ *
+ * @param {Object} params - Parameters matching createFallbackAnalysis
+ * @param {string|null} extractedText - Raw extracted text (will be normalized)
+ * @returns {Object} Fallback analysis result
+ */
+function createVisionUnavailableFallback(params, extractedText) {
+  const fallback = createFallbackAnalysis(params);
+  const extractedTextForStorage = normalizeExtractedTextForStorage(extractedText);
+  if (extractedTextForStorage) {
+    fallback.extractedText = extractedTextForStorage;
+  }
+  return fallback;
+}
+
 // App configuration for image analysis - Optimized for speed
 const AppConfig = {
   ai: {
@@ -1034,19 +1051,17 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
         if (fallbackAnalysis) {
           analysis = fallbackAnalysis;
         } else {
-          const fallback = createFallbackAnalysis({
-            fileName,
-            fileExtension,
-            reason: `Vision model '${visionModelName}' not loaded`,
-            smartFolders,
-            confidence: 55,
-            type: 'image'
-          });
-          const extractedTextForStorage = normalizeExtractedTextForStorage(extractedText);
-          if (extractedTextForStorage) {
-            fallback.extractedText = extractedTextForStorage;
-          }
-          return fallback;
+          return createVisionUnavailableFallback(
+            {
+              fileName,
+              fileExtension,
+              reason: `Vision model '${visionModelName}' not loaded`,
+              smartFolders,
+              confidence: 55,
+              type: 'image'
+            },
+            extractedText
+          );
         }
       } else {
         analysis = await analyzeImageWithLlama(
@@ -1067,39 +1082,35 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
         if (fallbackAnalysis) {
           analysis = fallbackAnalysis;
         } else {
-          const fallback = createFallbackAnalysis({
-            fileName,
-            fileExtension,
-            reason: `Vision model '${visionModelName}' not loaded`,
-            smartFolders,
-            confidence: 55,
-            type: 'image'
-          });
-          const extractedTextForStorage = normalizeExtractedTextForStorage(extractedText);
-          if (extractedTextForStorage) {
-            fallback.extractedText = extractedTextForStorage;
-          }
-          return fallback;
+          return createVisionUnavailableFallback(
+            {
+              fileName,
+              fileExtension,
+              reason: `Vision model '${visionModelName}' not loaded`,
+              smartFolders,
+              confidence: 55,
+              type: 'image'
+            },
+            extractedText
+          );
         }
       } else {
         logger.error('[IMAGE] Error calling analyzeImageWithLlama', {
           error: error.message,
           filePath
         });
-        const fallback = createFallbackAnalysis({
-          fileName,
-          fileExtension,
-          reason: 'analysis error',
-          smartFolders,
-          confidence: 55,
-          type: 'image',
-          options: { error: error.message }
-        });
-        const extractedTextForStorage = normalizeExtractedTextForStorage(extractedText);
-        if (extractedTextForStorage) {
-          fallback.extractedText = extractedTextForStorage;
-        }
-        return fallback;
+        return createVisionUnavailableFallback(
+          {
+            fileName,
+            fileExtension,
+            reason: 'analysis error',
+            smartFolders,
+            confidence: 55,
+            type: 'image',
+            options: { error: error.message }
+          },
+          extractedText
+        );
       }
     }
 
@@ -1111,19 +1122,17 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       if (fallbackAnalysis) {
         analysis = fallbackAnalysis;
       } else {
-        const fallback = createFallbackAnalysis({
-          fileName,
-          fileExtension,
-          reason: `Vision model '${visionModelName}' not loaded`,
-          smartFolders,
-          confidence: 55,
-          type: 'image'
-        });
-        const extractedTextForStorage = normalizeExtractedTextForStorage(extractedText);
-        if (extractedTextForStorage) {
-          fallback.extractedText = extractedTextForStorage;
-        }
-        return fallback;
+        return createVisionUnavailableFallback(
+          {
+            fileName,
+            fileExtension,
+            reason: `Vision model '${visionModelName}' not loaded`,
+            smartFolders,
+            confidence: 55,
+            type: 'image'
+          },
+          extractedText
+        );
       }
     }
 
@@ -1190,8 +1199,11 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       // Explicitly queue embedding for images to ensure they are searchable
       // even if they don't have OCR text (using keywords/description instead)
       const { matcher } = getServices();
-      const gate = await shouldEmbed({ stage: 'analysis' });
-      if (matcher && analysis && isInSmartFolder && gate.shouldEmbed) {
+      const gate = await shouldEmbed({ stage: 'analysis', isInSmartFolder });
+      if (matcher && analysis && gate.shouldEmbed) {
+        // Embedding scope is controlled by the embeddingScope setting:
+        // - 'all_analyzed' (default): embed every analyzed image
+        // - 'smart_folders_only': only embed images in a configured smart folder
         const textParts = [
           analysis.suggestedName,
           analysis.summary,
@@ -1236,11 +1248,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
             logger.debug('[IMAGE] Queued embedding for persistence', { path: filePath });
           }
         }
-      } else if (matcher && analysis && !isInSmartFolder) {
-        logger.debug('[IMAGE] Skipping embedding persistence (not in smart folder)', {
-          path: filePath
-        });
-      } else if (matcher && analysis && isInSmartFolder && !gate.shouldEmbed) {
+      } else if (matcher && analysis && !gate.shouldEmbed) {
         logger.debug('[IMAGE] Skipping embedding persistence by policy/timing gate', {
           path: filePath,
           timing: gate.timing,

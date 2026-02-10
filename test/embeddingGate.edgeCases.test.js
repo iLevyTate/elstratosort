@@ -116,6 +116,100 @@ describe('embeddingGate edge cases', () => {
   });
 });
 
+describe('embeddingGate scope', () => {
+  test('smart_folders_only scope blocks embedding for non-smart-folder files', async () => {
+    jest.resetModules();
+
+    jest.doMock('../src/main/services/ServiceContainer', () => ({
+      container: {
+        tryResolve: () => ({
+          load: async () => ({
+            embeddingTiming: 'during_analysis',
+            defaultEmbeddingPolicy: 'embed',
+            embeddingScope: 'smart_folders_only'
+          })
+        })
+      },
+      ServiceIds: { SETTINGS: 'SETTINGS' }
+    }));
+
+    const { shouldEmbed } = require('../src/main/services/embedding/embeddingGate');
+
+    const result = await shouldEmbed({ stage: 'analysis', isInSmartFolder: false });
+    expect(result.shouldEmbed).toBe(false);
+    expect(result.scope).toBe('smart_folders_only');
+  });
+
+  test('smart_folders_only scope allows embedding for smart-folder files', async () => {
+    jest.resetModules();
+
+    jest.doMock('../src/main/services/ServiceContainer', () => ({
+      container: {
+        tryResolve: () => ({
+          load: async () => ({
+            embeddingTiming: 'during_analysis',
+            defaultEmbeddingPolicy: 'embed',
+            embeddingScope: 'smart_folders_only'
+          })
+        })
+      },
+      ServiceIds: { SETTINGS: 'SETTINGS' }
+    }));
+
+    const { shouldEmbed } = require('../src/main/services/embedding/embeddingGate');
+
+    const result = await shouldEmbed({ stage: 'analysis', isInSmartFolder: true });
+    expect(result.shouldEmbed).toBe(true);
+    expect(result.scope).toBe('smart_folders_only');
+  });
+
+  test('all_analyzed scope allows embedding regardless of smart folder', async () => {
+    jest.resetModules();
+
+    jest.doMock('../src/main/services/ServiceContainer', () => ({
+      container: {
+        tryResolve: () => ({
+          load: async () => ({
+            embeddingTiming: 'during_analysis',
+            defaultEmbeddingPolicy: 'embed',
+            embeddingScope: 'all_analyzed'
+          })
+        })
+      },
+      ServiceIds: { SETTINGS: 'SETTINGS' }
+    }));
+
+    const { shouldEmbed } = require('../src/main/services/embedding/embeddingGate');
+
+    const result = await shouldEmbed({ stage: 'analysis', isInSmartFolder: false });
+    expect(result.shouldEmbed).toBe(true);
+    expect(result.scope).toBe('all_analyzed');
+  });
+
+  test('scope gate skipped when isInSmartFolder is undefined (backward compat)', async () => {
+    jest.resetModules();
+
+    jest.doMock('../src/main/services/ServiceContainer', () => ({
+      container: {
+        tryResolve: () => ({
+          load: async () => ({
+            embeddingTiming: 'during_analysis',
+            defaultEmbeddingPolicy: 'embed',
+            embeddingScope: 'smart_folders_only'
+          })
+        })
+      },
+      ServiceIds: { SETTINGS: 'SETTINGS' }
+    }));
+
+    const { shouldEmbed } = require('../src/main/services/embedding/embeddingGate');
+
+    // When isInSmartFolder is not provided, scope gate should not block
+    const result = await shouldEmbed({ stage: 'analysis' });
+    expect(result.shouldEmbed).toBe(true);
+  });
+});
+
 describe('embeddingGate normalizers', () => {
   test('normalizeTiming returns default for invalid values', () => {
     jest.resetModules();
@@ -127,7 +221,8 @@ describe('embeddingGate normalizers', () => {
 
     const {
       normalizeTiming,
-      normalizePolicy
+      normalizePolicy,
+      normalizeScope
     } = require('../src/main/services/embedding/embeddingGate');
 
     expect(normalizeTiming('invalid')).toBe('during_analysis');
@@ -162,6 +257,25 @@ describe('embeddingGate normalizers', () => {
     expect(normalizePolicy('web_only')).toBe('web_only');
   });
 
+  test('normalizeScope returns default for invalid values', () => {
+    jest.resetModules();
+
+    jest.doMock('../src/main/services/ServiceContainer', () => ({
+      container: { tryResolve: () => null },
+      ServiceIds: { SETTINGS: 'SETTINGS' }
+    }));
+
+    const { normalizeScope } = require('../src/main/services/embedding/embeddingGate');
+
+    expect(normalizeScope('invalid')).toBe('all_analyzed');
+    expect(normalizeScope(null)).toBe('all_analyzed');
+    expect(normalizeScope(undefined)).toBe('all_analyzed');
+
+    // Valid values pass through
+    expect(normalizeScope('all_analyzed')).toBe('all_analyzed');
+    expect(normalizeScope('smart_folders_only')).toBe('smart_folders_only');
+  });
+
   test('shouldEmbed gracefully handles settings service failure', async () => {
     jest.resetModules();
 
@@ -178,10 +292,11 @@ describe('embeddingGate normalizers', () => {
 
     const { shouldEmbed } = require('../src/main/services/embedding/embeddingGate');
 
-    // Should fall back to defaults (during_analysis + embed) and not throw
+    // Should fall back to defaults (during_analysis + embed + all_analyzed) and not throw
     const result = await shouldEmbed({ stage: 'analysis' });
     expect(result.shouldEmbed).toBe(true);
     expect(result.timing).toBe('during_analysis');
     expect(result.policy).toBe('embed');
+    expect(result.scope).toBe('all_analyzed');
   });
 });

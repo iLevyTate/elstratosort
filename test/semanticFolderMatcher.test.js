@@ -51,7 +51,7 @@ jest.mock('../src/main/analysis/embeddingSummary', () => ({
 
 jest.mock('../src/shared/pathSanitization', () => ({
   normalizePathForIndex: (p) => p,
-  getCanonicalFileId: (p) => `image:${p}`
+  getCanonicalFileId: (p, isImage) => `${isImage ? 'image' : 'file'}:${p}`
 }));
 
 jest.mock('../src/shared/promiseUtils', () => ({

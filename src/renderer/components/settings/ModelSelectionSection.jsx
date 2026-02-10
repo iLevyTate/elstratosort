@@ -309,11 +309,11 @@ function ModelSelectionSection({
           </div>
 
           {stats &&
-            (stats.files > 0 || stats.chunks > 0 || stats.analysisHistory?.totalFiles > 0) && (
+            (stats.files > 0 || stats.fileChunks > 0 || stats.analysisHistory?.totalFiles > 0) && (
               <div className="flex items-center gap-2 p-3 bg-system-gray-50 rounded-lg border border-system-gray-100">
                 <FileText className="w-4 h-4" />
                 <Text as="span" variant="small" className="text-system-gray-600">
-                  {stats.files || 0} files ({stats.chunks || 0} chunks) currently indexed.
+                  {stats.files || 0} files ({stats.fileChunks || 0} chunks) currently indexed.
                   {stats.analysisHistory?.totalFiles > 0 &&
                     ` (~${stats.analysisHistory.totalFiles} files in history)`}
                 </Text>

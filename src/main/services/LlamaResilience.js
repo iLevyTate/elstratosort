@@ -59,7 +59,8 @@ const GPU_FALLBACK_ERRORS = [
   'no metal device',
   'unable to allocate',
   'failed to allocate',
-  'buffer allocation failed'
+  'buffer allocation failed',
+  'not enough vram'
 ];
 
 /**

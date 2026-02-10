@@ -373,10 +373,10 @@ function createMainWindow() {
     const meta = { line, sourceId: sourceId ? sourceId.split('/').pop() : '' };
 
     // Pino's browser logger calls console.* with structured objects which serialise
-    // as "[object Object]" through Electron's console-message event. These are high
-    // volume and low value here — demote to debug so they don't clutter log files.
+    // as "[object Object]" through Electron's console-message event. The real
+    // structured data is already forwarded via window.electronAPI.system.log, so
+    // these duplicates are pure noise — drop them silently.
     if (message === '[object Object]') {
-      logger.debug(`${prefix} (structured log)`, meta);
       return;
     }
 

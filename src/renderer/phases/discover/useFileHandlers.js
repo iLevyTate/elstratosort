@@ -118,13 +118,20 @@ export function useFileHandlers({
 
       const getStatsWithRetry = async (filePath) => {
         const fetchStats = () => window.electronAPI.files.getStats(filePath);
-        const withTimeout = (promise) =>
-          Promise.race([
+        const withTimeout = (promise) => {
+          let timeoutId;
+          return Promise.race([
             promise,
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('File metadata timeout')), TIMEOUTS.FILE_READ)
-            )
-          ]);
+            new Promise((_, reject) => {
+              timeoutId = setTimeout(
+                () => reject(new Error('File metadata timeout')),
+                TIMEOUTS.FILE_READ
+              );
+            })
+          ]).finally(() => {
+            if (timeoutId) clearTimeout(timeoutId);
+          });
+        };
 
         try {
           const stats = await withTimeout(fetchStats());

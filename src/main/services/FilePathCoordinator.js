@@ -17,8 +17,11 @@
 
 const path = require('path');
 const { logger: baseLogger, createLogger } = require('../../shared/logger');
-const { normalizePathForIndex } = require('../../shared/pathSanitization');
-const { getPathVariants } = require('../utils/fileIdUtils');
+const {
+  getAllIdVariants,
+  getFileEmbeddingId,
+  buildPathUpdatePairs
+} = require('../utils/fileIdUtils');
 const { EventEmitter } = require('events');
 const {
   traceCoordinatorStart,
@@ -613,37 +616,7 @@ class FilePathCoordinator extends EventEmitter {
    * @private
    */
   async _updateVectorDbPath(oldPath, newPath) {
-    const normalizedNew = normalizePathForIndex(newPath);
-    const newMeta = {
-      path: newPath,
-      name: path.basename(newPath)
-    };
-
-    // Build all possible ID variants for Windows case-insensitivity
-    const buildIdVariants = (filePath) => {
-      const normalized = normalizePathForIndex(filePath);
-      const normalizedCase = path.normalize(filePath).replace(/\\/g, '/');
-      const platformNormalized = path.normalize(filePath);
-      const variants = new Set([normalized, normalizedCase, platformNormalized, filePath]);
-      return Array.from(variants).filter(Boolean);
-    };
-
-    const sourceVariants = buildIdVariants(oldPath);
-    const pathUpdates = [];
-
-    sourceVariants.forEach((variant) => {
-      const fileOldId = `file:${variant}`;
-      const imageOldId = `image:${variant}`;
-      const fileNewId = `file:${normalizedNew}`;
-      const imageNewId = `image:${normalizedNew}`;
-
-      if (fileOldId !== fileNewId) {
-        pathUpdates.push({ oldId: fileOldId, newId: fileNewId, newMeta });
-      }
-      if (imageOldId !== imageNewId) {
-        pathUpdates.push({ oldId: imageOldId, newId: imageNewId, newMeta });
-      }
-    });
+    const pathUpdates = buildPathUpdatePairs(oldPath, newPath);
 
     if (pathUpdates.length > 0 && this._vectorDbService.updateFilePaths) {
       await this._vectorDbService.updateFilePaths(pathUpdates);
@@ -655,44 +628,10 @@ class FilePathCoordinator extends EventEmitter {
    * @private
    */
   async _batchUpdateVectorDbPaths(changes) {
-    const pathUpdates = [];
-    const seenUpdates = new Set();
-
-    for (const change of changes) {
-      const normalizedNew = normalizePathForIndex(change.newPath);
-      const newMeta = {
-        path: change.newPath,
-        name: path.basename(change.newPath)
-      };
-
-      const buildIdVariants = (filePath) => {
-        const normalized = normalizePathForIndex(filePath);
-        const normalizedCase = path.normalize(filePath).replace(/\\/g, '/');
-        const platformNormalized = path.normalize(filePath);
-        const variants = new Set([normalized, normalizedCase, platformNormalized, filePath]);
-        return Array.from(variants).filter(Boolean);
-      };
-
-      const sourceVariants = buildIdVariants(change.oldPath);
-      sourceVariants.forEach((variant) => {
-        const fileOldId = `file:${variant}`;
-        const imageOldId = `image:${variant}`;
-        const fileNewId = `file:${normalizedNew}`;
-        const imageNewId = `image:${normalizedNew}`;
-
-        const fileKey = `${fileOldId}->${fileNewId}`;
-        if (fileOldId !== fileNewId && !seenUpdates.has(fileKey)) {
-          pathUpdates.push({ oldId: fileOldId, newId: fileNewId, newMeta });
-          seenUpdates.add(fileKey);
-        }
-
-        const imageKey = `${imageOldId}->${imageNewId}`;
-        if (imageOldId !== imageNewId && !seenUpdates.has(imageKey)) {
-          pathUpdates.push({ oldId: imageOldId, newId: imageNewId, newMeta });
-          seenUpdates.add(imageKey);
-        }
-      });
-    }
+    // buildPathUpdatePairs already deduplicates internally via seen-set
+    const pathUpdates = changes.flatMap((change) =>
+      buildPathUpdatePairs(change.oldPath, change.newPath)
+    );
 
     if (pathUpdates.length > 0 && this._vectorDbService.updateFilePaths) {
       await this._vectorDbService.updateFilePaths(pathUpdates);
@@ -704,15 +643,7 @@ class FilePathCoordinator extends EventEmitter {
    * @private
    */
   async _deleteFromVectorDb(filePath) {
-    const pathVariants = getPathVariants(filePath);
-    const idsToDelete = new Set();
-
-    for (const variant of pathVariants) {
-      idsToDelete.add(`file:${variant}`);
-      idsToDelete.add(`image:${variant}`);
-    }
-
-    const ids = Array.from(idsToDelete);
+    const ids = getAllIdVariants(filePath);
     if (typeof this._vectorDbService.batchDeleteFileEmbeddings === 'function') {
       await this._vectorDbService.batchDeleteFileEmbeddings(ids);
     } else {
@@ -723,11 +654,10 @@ class FilePathCoordinator extends EventEmitter {
       }
     }
 
-    // Also delete associated chunks
+    // Also delete associated chunks (need raw path variants as parent ID prefixes)
     if (typeof this._vectorDbService.deleteFileChunks === 'function') {
-      for (const variant of pathVariants) {
-        await this._vectorDbService.deleteFileChunks(`file:${variant}`);
-        await this._vectorDbService.deleteFileChunks(`image:${variant}`);
+      for (const id of ids) {
+        await this._vectorDbService.deleteFileChunks(id);
       }
     }
   }
@@ -737,31 +667,21 @@ class FilePathCoordinator extends EventEmitter {
    * @private
    */
   async _cloneVectorDbEntry(sourcePath, destPath) {
-    const normalizedSource = normalizePathForIndex(sourcePath);
-    const normalizedDest = normalizePathForIndex(destPath);
+    const sourceId = getFileEmbeddingId(sourcePath, 'file');
+    const destId = getFileEmbeddingId(destPath, 'file');
+    const destMeta = {
+      path: destPath,
+      name: path.basename(destPath)
+    };
 
     if (this._vectorDbService.cloneFileEmbedding) {
-      await this._vectorDbService.cloneFileEmbedding(
-        `file:${normalizedSource}`,
-        `file:${normalizedDest}`,
-        {
-          path: destPath,
-          name: path.basename(destPath)
-        }
-      );
+      await this._vectorDbService.cloneFileEmbedding(sourceId, destId, destMeta);
     } else {
       throw new Error('Vector DB cloneFileEmbedding not available');
     }
 
     if (typeof this._vectorDbService.cloneFileChunks === 'function') {
-      await this._vectorDbService.cloneFileChunks(
-        `file:${normalizedSource}`,
-        `file:${normalizedDest}`,
-        {
-          path: destPath,
-          name: path.basename(destPath)
-        }
-      );
+      await this._vectorDbService.cloneFileChunks(sourceId, destId, destMeta);
     } else {
       throw new Error('Vector DB cloneFileChunks not available');
     }

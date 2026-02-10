@@ -29,6 +29,7 @@ function clampNumber(value, min, max, fallback) {
 function GraphRetrievalSection({ settings, setSettings }) {
   const [stats, setStats] = useState(null);
   const [historyStats, setHistoryStats] = useState(null);
+  const [embeddingStats, setEmbeddingStats] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const isMountedRef = useRef(true);
 
@@ -96,12 +97,14 @@ function GraphRetrievalSection({ settings, setSettings }) {
   const refreshStats = useCallback(async () => {
     const getRelationshipStats = window?.electronAPI?.knowledge?.getRelationshipStats;
     const getHistoryStats = window?.electronAPI?.analysisHistory?.getStatistics;
+    const getEmbeddingStats = window?.electronAPI?.embeddings?.getStats;
     if (typeof getRelationshipStats !== 'function') return;
     if (isMountedRef.current) setIsLoading(true);
     try {
-      const [response, historyResponse] = await Promise.all([
+      const [response, historyResponse, embeddingResponse] = await Promise.all([
         getRelationshipStats(),
-        typeof getHistoryStats === 'function' ? getHistoryStats() : Promise.resolve(null)
+        typeof getHistoryStats === 'function' ? getHistoryStats() : Promise.resolve(null),
+        typeof getEmbeddingStats === 'function' ? getEmbeddingStats() : Promise.resolve(null)
       ]);
       if (isMountedRef.current) {
         if (response?.success) {
@@ -113,6 +116,9 @@ function GraphRetrievalSection({ settings, setSettings }) {
           setHistoryStats(null);
         } else if (historyResponse) {
           setHistoryStats(historyResponse);
+        }
+        if (embeddingResponse?.success) {
+          setEmbeddingStats(embeddingResponse);
         }
       }
     } catch (error) {
@@ -260,15 +266,16 @@ function GraphRetrievalSection({ settings, setSettings }) {
               </Button>
             </div>
             <Text variant="tiny" className="text-system-gray-500">
-              Concepts: {stats?.conceptCount ?? '—'} • Documents: {stats?.docCount ?? '—'}
+              Concepts: {stats?.conceptCount ?? '—'} • Graph documents: {stats?.docCount ?? '—'}
             </Text>
             <Text variant="tiny" className="text-system-gray-500">
-              Analysis history files: {historyStats?.totalFiles ?? '—'} • History updated:{' '}
-              {formattedHistoryUpdatedAt}
+              Searchable files: {embeddingStats?.files ?? '—'} • Analysis history:{' '}
+              {historyStats?.totalFiles ?? '—'} • Updated: {formattedHistoryUpdatedAt}
             </Text>
             <Text variant="tiny" className="text-system-gray-500">
-              Graph documents count includes only files with extracted concepts (may be lower than
-              total analyzed files).
+              Graph documents count only includes files with extracted concepts (tags, keywords,
+              entities). Searchable files are stored in the vector database for search and graph
+              visualization.
             </Text>
             <Text variant="tiny" className="text-system-gray-500">
               Last built: {formattedUpdatedAt}

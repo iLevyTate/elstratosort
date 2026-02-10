@@ -1577,13 +1577,12 @@ class SmartFolderWatcher {
     try {
       // Remove from vector DB (both file: and image: prefixes)
       if (this.vectorDbService) {
-        const normalizedPath = normalizePathForIndex(filePath);
-        const filePrefix = `file:${normalizedPath}`;
-        const imagePrefix = `image:${normalizedPath}`;
+        const filePrefix = getCanonicalFileId(filePath, false);
+        const imagePrefix = getCanonicalFileId(filePath, true);
         const legacyFilePrefix = `file:${filePath}`;
         const legacyImagePrefix = `image:${filePath}`;
         const idsToDelete =
-          normalizedPath === filePath
+          filePrefix === `file:${filePath}`
             ? [filePrefix, imagePrefix]
             : [filePrefix, imagePrefix, legacyFilePrefix, legacyImagePrefix];
 

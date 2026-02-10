@@ -279,8 +279,19 @@ ${truncated}`;
         });
         truncated = truncated.slice(0, safeContentLen);
         contentMeta = `${truncated.length} chars (re-truncated for ${effectiveCtx} ctx)`;
-        // Rebuild prompt with truncated content
-        prompt = `${prompt.slice(0, prompt.lastIndexOf('Document content ('))}Document content (${contentMeta}):\n${truncated}`;
+        // Rebuild prompt with truncated content (guard against missing marker)
+        const insertionPoint = prompt.lastIndexOf('Document content (');
+        if (insertionPoint !== -1) {
+          prompt = `${prompt.slice(0, insertionPoint)}Document content (${contentMeta}):\n${truncated}`;
+        } else {
+          logger.warn(
+            '[documentLlm] Could not find content insertion point for re-truncation; using truncated content as-is',
+            {
+              fileName: originalFileName,
+              promptLength: prompt.length
+            }
+          );
+        }
       }
     }
 

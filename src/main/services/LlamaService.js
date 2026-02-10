@@ -883,6 +883,66 @@ class LlamaService extends EventEmitter {
   }
 
   /**
+   * Determine the optimal GPU layer strategy based on available VRAM and the
+   * actual GGUF model file size. Returns:
+   *   - 999  → VRAM clearly sufficient for full offload (model + KV cache + overhead)
+   *   - undefined → VRAM is tight; let node-llama-cpp auto-detect optimal layers
+   *
+   * Uses the real file size from disk (most accurate proxy for GPU memory) when
+   * available, with a type-based estimate as fallback.
+   *
+   * The 60% VRAM threshold reserves ~40% for KV cache, OS/driver compositor,
+   * and safety margin — suitable for laptops (shared thermal/power budgets)
+   * through desktop GPUs with 4-24GB+ VRAM.
+   *
+   * @param {string} modelPath - Path to the GGUF model file
+   * @param {string} type - Model type ('text', 'vision', 'embedding')
+   * @returns {number|undefined} GPU layers value (999 = max, undefined = auto)
+   * @private
+   */
+  _resolveGpuLayerStrategy(modelPath, type) {
+    const vramMB = this._detectedGpu?.vramMB || 0;
+    if (vramMB <= 0) {
+      // No GPU info available — let node-llama-cpp decide
+      return undefined;
+    }
+
+    // Best effort: read the actual GGUF file size (most accurate proxy for
+    // model weight memory). Falls back to rough per-type estimates.
+    let modelSizeMB;
+    try {
+      const stats = require('fs').statSync(modelPath);
+      modelSizeMB = Math.ceil(stats.size / (1024 * 1024));
+    } catch {
+      const TYPE_ESTIMATES_MB = { embedding: 500, text: 4096, vision: 5120 };
+      modelSizeMB = TYPE_ESTIMATES_MB[type] || 4096;
+    }
+
+    // If model file size is under 60% of VRAM, full offloading should be safe.
+    // The remaining 40% covers KV cache, context buffers, OS compositor, and
+    // driver overhead — conservative enough for laptop GPUs with tight VRAM.
+    const maxSafeModelMB = Math.floor(vramMB * 0.6);
+
+    if (modelSizeMB < maxSafeModelMB) {
+      logger.debug('[LlamaService] VRAM sufficient for full GPU offload', {
+        type,
+        modelSizeMB,
+        vramMB,
+        headroomMB: maxSafeModelMB - modelSizeMB
+      });
+      return 999;
+    }
+
+    logger.debug('[LlamaService] VRAM tight, using auto GPU layer detection', {
+      type,
+      modelSizeMB,
+      vramMB,
+      deficitMB: modelSizeMB - maxSafeModelMB
+    });
+    return undefined;
+  }
+
+  /**
    * ACTUAL model loading logic called by ModelMemoryManager
    * @param {string} type - Model type ('text', 'vision', 'embedding')
    * @param {Object} [options={}] - Loading options
@@ -939,8 +999,13 @@ class LlamaService extends EventEmitter {
     logger.info(`[LlamaService] Loading ${type} model: ${modelName}`);
 
     try {
-      // Resolve gpuLayers: leave undefined for auto so node-llama-cpp can fit to VRAM.
-      // gpuLayersOverride takes precedence (used by forceCPU fallback).
+      // Resolve gpuLayers with a three-tier fallback strategy:
+      //   1. Max offload (gpuLayers: 999) — request all layers on GPU.
+      //      node-llama-cpp clamps to the model's actual layer count.
+      //   2. Auto (gpuLayers: undefined) — let node-llama-cpp conservatively
+      //      pick layers that fit in available VRAM.
+      //   3. CPU only (gpuLayers: 0) — no GPU offloading.
+      // gpuLayersOverride takes precedence (set by CPU fallback retries).
       let gpuLayers;
       if (typeof options.gpuLayersOverride === 'number') {
         gpuLayers = options.gpuLayersOverride;
@@ -948,14 +1013,21 @@ class LlamaService extends EventEmitter {
           override: gpuLayers,
           reason: gpuLayers === 0 ? 'CPU fallback' : 'explicit'
         });
+      } else if (options._gpuAutoFallback) {
+        // Tier 2: intermediate fallback — let node-llama-cpp auto-detect
+        gpuLayers = undefined;
+        logger.info(`[LlamaService] GPU layers auto-detection for ${type} (fallback from max)`);
       } else {
         const configLayers = this._config.gpuLayers;
-        if (configLayers === -1) {
-          gpuLayers = undefined;
-        } else if (typeof configLayers === 'number') {
+        if (typeof configLayers === 'number' && configLayers >= 0) {
+          // Explicit numeric configuration from user (e.g., 20)
           gpuLayers = configLayers;
-        } else if (configLayers === 'auto' || configLayers == null) {
-          gpuLayers = undefined;
+        } else {
+          // 'auto', -1, null, undefined: use VRAM-aware strategy.
+          // Compares actual model file size against available VRAM to decide
+          // between max offloading (999) and auto-detection (undefined).
+          // The three-tier fallback chain (max → auto → CPU) is the safety net.
+          gpuLayers = this._resolveGpuLayerStrategy(modelPath, type);
         }
       }
 
@@ -967,21 +1039,32 @@ class LlamaService extends EventEmitter {
         }
         model = await this._llama.loadModel(modelOptions);
       } catch (err) {
-        if (!options._cpuFallbackTried && gpuLayers !== 0 && shouldFallbackToCPU(err)) {
-          logger.warn('[LlamaService] Model load failed on GPU, retrying on CPU', {
-            error: err?.message || String(err)
-          });
-          return this._loadModel(type, {
-            ...options,
-            gpuLayersOverride: 0,
-            _cpuFallbackTried: true
-          });
+        if (shouldFallbackToCPU(err)) {
+          // Tier 2: max failed → try auto-detection
+          if (!options._gpuAutoFallback && !options._cpuFallbackTried && gpuLayers > 0) {
+            logger.warn('[LlamaService] Max GPU offload failed, falling back to auto-detection', {
+              error: err?.message || String(err)
+            });
+            return this._loadModel(type, { ...options, _gpuAutoFallback: true });
+          }
+          // Tier 3: auto failed → try CPU only
+          if (!options._cpuFallbackTried) {
+            logger.warn('[LlamaService] GPU offload failed, falling back to CPU', {
+              error: err?.message || String(err)
+            });
+            return this._loadModel(type, {
+              ...options,
+              gpuLayersOverride: 0,
+              _cpuFallbackTried: true
+            });
+          }
         }
         throw err;
       }
 
       logger.info(`[LlamaService] Model ${type} GPU offload`, {
-        requestedLayers: typeof gpuLayers === 'number' ? gpuLayers : 'auto',
+        requestedLayers:
+          gpuLayers === 999 ? 'max' : typeof gpuLayers === 'number' ? gpuLayers : 'auto',
         actualGpuLayers: model.gpuLayers ?? 'unknown',
         backend: this._gpuBackend
       });
@@ -996,18 +1079,36 @@ class LlamaService extends EventEmitter {
           lastError = err;
           logger.warn(`[LlamaService] Failed to create embedding context: ${err.message}`);
 
-          if (!options._cpuFallbackTried && gpuLayers !== 0 && shouldFallbackToCPU(err)) {
-            logger.warn('[LlamaService] Embedding context failed on GPU, retrying on CPU');
-            try {
-              await model.dispose?.();
-            } catch {
-              /* ignore */
+          if (shouldFallbackToCPU(err)) {
+            // Tier 2: max → auto
+            if (
+              !options._gpuAutoFallback &&
+              !options._cpuFallbackTried &&
+              typeof gpuLayers === 'number' &&
+              gpuLayers > 0
+            ) {
+              logger.warn('[LlamaService] Embedding context failed, falling back to auto GPU');
+              try {
+                await model.dispose?.();
+              } catch {
+                /* ignore */
+              }
+              return this._loadModel(type, { ...options, _gpuAutoFallback: true });
             }
-            return this._loadModel(type, {
-              ...options,
-              gpuLayersOverride: 0,
-              _cpuFallbackTried: true
-            });
+            // Tier 3: auto → CPU
+            if (!options._cpuFallbackTried && gpuLayers !== 0) {
+              logger.warn('[LlamaService] Embedding context failed on GPU, retrying on CPU');
+              try {
+                await model.dispose?.();
+              } catch {
+                /* ignore */
+              }
+              return this._loadModel(type, {
+                ...options,
+                gpuLayersOverride: 0,
+                _cpuFallbackTried: true
+              });
+            }
           }
         }
       } else {
@@ -1069,18 +1170,36 @@ class LlamaService extends EventEmitter {
                 `[LlamaService] Failed to create ${type} context with size ${size} and sequences ${sequences}: ${err.message}`
               );
 
-              if (!options._cpuFallbackTried && gpuLayers !== 0 && shouldFallbackToCPU(err)) {
-                logger.warn('[LlamaService] Context failed on GPU, retrying on CPU');
-                try {
-                  await model.dispose?.();
-                } catch {
-                  /* ignore */
+              if (shouldFallbackToCPU(err)) {
+                // Tier 2: max → auto
+                if (
+                  !options._gpuAutoFallback &&
+                  !options._cpuFallbackTried &&
+                  typeof gpuLayers === 'number' &&
+                  gpuLayers > 0
+                ) {
+                  logger.warn('[LlamaService] Context failed, falling back to auto GPU');
+                  try {
+                    await model.dispose?.();
+                  } catch {
+                    /* ignore */
+                  }
+                  return this._loadModel(type, { ...options, _gpuAutoFallback: true });
                 }
-                return this._loadModel(type, {
-                  ...options,
-                  gpuLayersOverride: 0,
-                  _cpuFallbackTried: true
-                });
+                // Tier 3: auto → CPU
+                if (!options._cpuFallbackTried && gpuLayers !== 0) {
+                  logger.warn('[LlamaService] Context failed on GPU, retrying on CPU');
+                  try {
+                    await model.dispose?.();
+                  } catch {
+                    /* ignore */
+                  }
+                  return this._loadModel(type, {
+                    ...options,
+                    gpuLayersOverride: 0,
+                    _cpuFallbackTried: true
+                  });
+                }
               }
             }
           }
@@ -1311,12 +1430,10 @@ class LlamaService extends EventEmitter {
     try {
       let gpuLayers;
       const configLayers = this._config.gpuLayers;
-      if (configLayers === -1) {
-        gpuLayers = undefined;
-      } else if (typeof configLayers === 'number') {
+      if (typeof configLayers === 'number' && configLayers >= 0) {
         gpuLayers = configLayers;
-      } else if (configLayers === 'auto' || configLayers == null) {
-        gpuLayers = undefined;
+      } else {
+        gpuLayers = this._resolveGpuLayerStrategy(modelPath, 'embedding');
       }
 
       const modelOptions = { modelPath };
@@ -1902,8 +2019,8 @@ class LlamaService extends EventEmitter {
     this._initPromise = null;
     this._configLoaded = false; // FIX: Reset so re-initialization loads fresh config
     this._llama = null;
-    this._models = {};
-    this._contexts = {};
+    this._models = { text: null, vision: null, embedding: null };
+    this._contexts = { text: null, vision: null, embedding: null };
     this._modelChangeCallbacks.clear();
     this._coordinator = null;
     this._degradationManager = null;

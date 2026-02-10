@@ -296,10 +296,11 @@ describe('EmbeddingQueueCore', () => {
 
     const updated = q.updateByFilePath('C:\\Old\\a.pdf', 'C:\\New\\b.pdf');
     expect(updated).toBe(1);
-    expect(q.queue[0].id).toBe('file:C:\\New\\b.pdf');
+    // buildPathUpdatePairs normalizes destination IDs to canonical form (forward slashes)
+    expect(q.queue[0].id).toBe('file:C:/New/b.pdf');
     expect(q.queue[0].meta.path).toBe('C:\\New\\b.pdf');
     expect(q.queue[0].meta.name).toBe('b.pdf');
-    expect(mockFailedHandler.failedItems.has('file:C:\\New\\b.pdf')).toBe(true);
+    expect(mockFailedHandler.failedItems.has('file:C:/New/b.pdf')).toBe(true);
     expect(mockFailedHandler.failedItems.has('file:C:\\Old\\a.pdf')).toBe(false);
 
     // Persistence is scheduled async; allow microtasks to run
@@ -327,7 +328,8 @@ describe('EmbeddingQueueCore', () => {
     ]);
 
     expect(count).toBe(2);
-    expect(q.queue.map((i) => i.id)).toEqual(['file:C:\\New\\a.pdf', 'file:C:\\New\\c.pdf']);
+    // buildPathUpdatePairs normalizes destination IDs to canonical form (forward slashes)
+    expect(q.queue.map((i) => i.id)).toEqual(['file:C:/New/a.pdf', 'file:C:/New/c.pdf']);
     await flushMicrotasks();
     expect(persistQueueData).toHaveBeenCalledTimes(1);
     expect(mockFailedHandler.persistAll).not.toHaveBeenCalled(); // no failed items updated

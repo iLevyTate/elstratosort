@@ -24,9 +24,39 @@ jest.mock('../src/shared/pathSanitization', () => ({
   normalizePathForIndex: (p) => String(p).replace(/\\/g, '/')
 }));
 
-jest.mock('../src/main/utils/fileIdUtils', () => ({
-  getPathVariants: jest.fn((p) => [p, String(p).toLowerCase()])
-}));
+jest.mock('../src/main/utils/fileIdUtils', () => {
+  const path = require('path');
+  const normalize = (p) => String(p).replace(/\\/g, '/');
+  const getPathVariants = jest.fn((p) => [p, String(p).toLowerCase()]);
+  return {
+    getPathVariants,
+    getAllIdVariants: jest.fn((filePath) => {
+      return [...new Set(getPathVariants(filePath).flatMap((v) => [`file:${v}`, `image:${v}`]))];
+    }),
+    getFileEmbeddingId: jest.fn((filePath, type = 'file') => {
+      const prefix = type === 'image' ? 'image:' : type === 'chunk' ? 'chunk:' : 'file:';
+      return `${prefix}${normalize(filePath)}`;
+    }),
+    buildPathUpdatePairs: jest.fn((oldPath, newPath) => {
+      const normalizedNew = normalize(newPath);
+      const newMeta = { path: newPath, name: path.basename(newPath) };
+      const updates = [];
+      const seen = new Set();
+      for (const variant of getPathVariants(oldPath)) {
+        for (const type of ['file', 'image']) {
+          const oldId = `${type}:${variant}`;
+          const newId = `${type}:${normalizedNew}`;
+          const key = `${oldId}->${newId}`;
+          if (oldId !== newId && !seen.has(key)) {
+            updates.push({ oldId, newId, newMeta });
+            seen.add(key);
+          }
+        }
+      }
+      return updates;
+    })
+  };
+});
 
 jest.mock('../src/shared/pathTraceLogger', () => ({
   traceCoordinatorStart: jest.fn(),

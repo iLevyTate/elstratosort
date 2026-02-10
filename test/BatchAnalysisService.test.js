@@ -140,8 +140,10 @@ describe('BatchAnalysisService', () => {
       expect(customService.concurrency).toBe(4);
     });
 
-    test('initializes parallel embedding service', () => {
-      expect(service.parallelEmbeddingService).toBeDefined();
+    test('initializes parallel embedding service config', () => {
+      // Embedding service accessed via live singleton getter, config stored for initialization
+      expect(service._embeddingServiceConfig).toBeDefined();
+      expect(service._embeddingServiceConfig.concurrencyLimit).toBeGreaterThan(0);
     });
   });
 

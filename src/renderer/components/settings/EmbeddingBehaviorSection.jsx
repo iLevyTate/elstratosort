@@ -8,6 +8,7 @@ import { Text } from '../ui/Typography';
 function EmbeddingBehaviorSection({ settings, setSettings }) {
   const timing = settings?.embeddingTiming || 'during_analysis';
   const policy = settings?.defaultEmbeddingPolicy || 'embed';
+  const scope = settings?.embeddingScope || 'all_analyzed';
 
   return (
     <Card variant="default" className="space-y-5">
@@ -16,12 +17,25 @@ function EmbeddingBehaviorSection({ settings, setSettings }) {
           Embedding behavior
         </Text>
         <Text variant="small" className="text-system-gray-600">
-          Control when local embeddings are created, and set the default opt-out behavior for new
-          files.
+          Control when and which files get local embeddings for search, graph, and similarity.
         </Text>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <SettingRow
+          layout="col"
+          label="Embedding scope"
+          description="Which analyzed files should be embedded and made searchable."
+        >
+          <Select
+            value={scope}
+            onChange={(e) => setSettings((prev) => ({ ...prev, embeddingScope: e.target.value }))}
+          >
+            <option value="all_analyzed">All analyzed files (recommended)</option>
+            <option value="smart_folders_only">Smart folder files only</option>
+          </Select>
+        </SettingRow>
+
         <SettingRow
           layout="col"
           label="Embedding timing"

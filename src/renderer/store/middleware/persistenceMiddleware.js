@@ -179,6 +179,74 @@ function getFileStatesRef(fileStates) {
 // Track beforeunload handler for cleanup
 let persistenceUnloadHandler = null;
 
+/**
+ * Build the serializable state snapshot for persistence.
+ * Centralizes the shape so the debounced save and cleanupPersistence
+ * produce identical output — preventing drift between the two paths.
+ *
+ * @param {Object} freshState - Current Redux state from store.getState()
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.prioritizeFileStates=true] - Use priority-based file state slicing
+ * @returns {Object} Serializable state object ready for localStorage
+ */
+function buildStateSnapshot(freshState, options = {}) {
+  const { prioritizeFileStates = true } = options;
+  const MAX_FILES = 200;
+  const MAX_STATES = 100;
+
+  const stateToSave = {
+    _version: CURRENT_STATE_VERSION,
+    ui: {
+      currentPhase: freshState.ui.currentPhase,
+      sidebarOpen: freshState.ui.sidebarOpen
+    },
+    files: {
+      selectedFiles: freshState.files.selectedFiles.slice(0, MAX_FILES),
+      smartFolders: freshState.files.smartFolders,
+      organizedFiles: freshState.files.organizedFiles,
+      namingConvention: freshState.files.namingConvention,
+      fileStates: {}
+    },
+    analysis: {
+      results: freshState.analysis.results.slice(0, MAX_FILES),
+      isAnalyzing: freshState.analysis.isAnalyzing,
+      analysisProgress: freshState.analysis.analysisProgress,
+      currentAnalysisFile: freshState.analysis.currentAnalysisFile
+    },
+    timestamp: Date.now()
+  };
+
+  // Persist fileStates with size limits
+  const fileStatesEntries = Object.entries(freshState.files.fileStates || {});
+  if (fileStatesEntries.length > 0) {
+    if (fileStatesEntries.length <= MAX_STATES) {
+      stateToSave.files.fileStates = Object.fromEntries(fileStatesEntries);
+    } else if (prioritizeFileStates) {
+      // Priority-based: in-progress/error states are more important than completed
+      const priorityStates = [];
+      const completedStates = [];
+      for (const [path, stateInfo] of fileStatesEntries) {
+        const stateType = stateInfo?.state || '';
+        if (stateType === 'analyzing' || stateType === 'error' || stateType === 'pending') {
+          priorityStates.push([path, stateInfo]);
+        } else {
+          completedStates.push([path, stateInfo]);
+        }
+      }
+      const remainingSlots = MAX_STATES - priorityStates.length;
+      const recentCompleted = completedStates.slice(-Math.max(0, remainingSlots));
+      stateToSave.files.fileStates = Object.fromEntries(
+        [...priorityStates, ...recentCompleted].slice(-MAX_STATES)
+      );
+    } else {
+      // Simple tail slice (used by cleanup path where priority sort is less important)
+      stateToSave.files.fileStates = Object.fromEntries(fileStatesEntries.slice(-MAX_STATES));
+    }
+  }
+
+  return stateToSave;
+}
+
 const persistenceMiddleware = (store) => {
   // Register a beforeunload handler to force a final save when the window closes.
   // Without this, up to 5s of debounced state changes could be lost on close.
@@ -260,29 +328,6 @@ const persistenceMiddleware = (store) => {
           // may be significantly outdated by the time this callback fires.
           const freshState = store.getState();
 
-          const stateToSave = {
-            _version: CURRENT_STATE_VERSION,
-            ui: {
-              currentPhase: freshState.ui.currentPhase,
-              sidebarOpen: freshState.ui.sidebarOpen
-            },
-            files: {
-              selectedFiles: freshState.files.selectedFiles.slice(0, 200), // Limit size
-              smartFolders: freshState.files.smartFolders,
-              organizedFiles: freshState.files.organizedFiles,
-              namingConvention: freshState.files.namingConvention,
-              fileStates: {}
-            },
-            analysis: {
-              // Analysis results
-              results: freshState.analysis.results.slice(0, 200),
-              isAnalyzing: freshState.analysis.isAnalyzing,
-              analysisProgress: freshState.analysis.analysisProgress,
-              currentAnalysisFile: freshState.analysis.currentAnalysisFile
-            },
-            timestamp: Date.now()
-          };
-
           // IMPORTANT: Naming conventions are now separated into two independent systems:
           // 1. Discover phase (Redux state.files.namingConvention) - Session-based, UI-only
           // 2. Settings (persisted settings.namingConvention) - Persistent, used by watchers/reanalysis
@@ -290,40 +335,8 @@ const persistenceMiddleware = (store) => {
           // We do NOT sync Discover phase naming to Settings anymore. This ensures:
           // - Settings naming conventions control: DownloadWatcher, SmartFolderWatcher, Reanalyze
           // - Discover naming conventions control: Manual file analysis in Discover phase only
-          //
-          // Previous behavior synced Redux → Settings, which caused Discover choices to
-          // overwrite the user's Settings, breaking the intended separation.
 
-          // Persist fileStates separately or limited
-          // FIX: Prioritize in-progress and error states over completed ones
-          // This prevents losing important state information on restart
-          const fileStatesEntries = Object.entries(freshState.files.fileStates);
-          if (fileStatesEntries.length > 0) {
-            const MAX_STATES = 100;
-            if (fileStatesEntries.length <= MAX_STATES) {
-              stateToSave.files.fileStates = Object.fromEntries(fileStatesEntries);
-            } else {
-              // Separate by priority: in-progress/error states are more important
-              const priorityStates = [];
-              const completedStates = [];
-
-              for (const [path, stateInfo] of fileStatesEntries) {
-                const stateType = stateInfo?.state || '';
-                if (stateType === 'analyzing' || stateType === 'error' || stateType === 'pending') {
-                  priorityStates.push([path, stateInfo]);
-                } else {
-                  completedStates.push([path, stateInfo]);
-                }
-              }
-
-              // Take all priority states, then fill remaining slots with recent completed
-              const remainingSlots = MAX_STATES - priorityStates.length;
-              const recentCompleted = completedStates.slice(-Math.max(0, remainingSlots));
-              const combinedStates = [...priorityStates, ...recentCompleted].slice(-MAX_STATES);
-
-              stateToSave.files.fileStates = Object.fromEntries(combinedStates);
-            }
-          }
+          const stateToSave = buildStateSnapshot(freshState, { prioritizeFileStates: true });
 
           // FIX #1: Use graceful quota handling instead of silent data loss
           const saveResult = saveWithQuotaHandling('stratosort_redux_state', stateToSave);
@@ -394,29 +407,9 @@ export const cleanupPersistence = (store) => {
     if (store && firstPendingRequestTime > 0) {
       try {
         const freshState = store.getState();
-        const stateToSave = {
-          _version: CURRENT_STATE_VERSION,
-          ui: {
-            currentPhase: freshState.ui.currentPhase,
-            sidebarOpen: freshState.ui.sidebarOpen
-          },
-          files: {
-            selectedFiles: freshState.files.selectedFiles.slice(0, 200),
-            smartFolders: freshState.files.smartFolders,
-            organizedFiles: freshState.files.organizedFiles,
-            namingConvention: freshState.files.namingConvention,
-            fileStates: Object.fromEntries(
-              Object.entries(freshState.files.fileStates || {}).slice(-100)
-            )
-          },
-          analysis: {
-            results: freshState.analysis.results.slice(0, 200),
-            isAnalyzing: freshState.analysis.isAnalyzing,
-            analysisProgress: freshState.analysis.analysisProgress,
-            currentAnalysisFile: freshState.analysis.currentAnalysisFile
-          },
-          timestamp: Date.now()
-        };
+        // Use shared builder with simple file-state slicing (no priority sort
+        // needed at shutdown — speed is more important here).
+        const stateToSave = buildStateSnapshot(freshState, { prioritizeFileStates: false });
         saveWithQuotaHandling('stratosort_redux_state', stateToSave);
       } catch (err) {
         logger.error('Failed to save state during cleanup:', { error: err?.message });

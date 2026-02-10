@@ -18,7 +18,7 @@ const { recordAnalysisResult } = require('../ipc/analysisUtils');
 const { deriveWatcherConfidencePercent } = require('./confidence/watcherConfidence');
 const { getSemanticFileId, isImagePath } = require('../../shared/fileIdUtils');
 const { findContainingSmartFolder } = require('../../shared/folderUtils');
-const { normalizePathForIndex } = require('../../shared/pathSanitization');
+const { getCanonicalFileId } = require('../../shared/pathSanitization');
 const { getInstance: getFileOperationTracker } = require('../../shared/fileOperationTracker');
 const { isUNCPath } = require('../../shared/crossPlatformUtils');
 const { isTemporaryFile, RETRY } = require('../../shared/performanceConstants');
@@ -1253,17 +1253,13 @@ class DownloadWatcher {
     try {
       // Remove from vector DB (both file: and image: prefixes)
       if (this.vectorDbService) {
-        // Use batch delete for atomicity when available
-        const normalizedPath = normalizePathForIndex(filePath);
+        // Use canonical file ID source of truth + legacy raw-path IDs for backward compat
+        const canonicalFileId = getCanonicalFileId(filePath, false);
+        const canonicalImageId = getCanonicalFileId(filePath, true);
         const idsToDelete =
-          normalizedPath === filePath
-            ? [`file:${normalizedPath}`, `image:${normalizedPath}`]
-            : [
-                `file:${normalizedPath}`,
-                `image:${normalizedPath}`,
-                `file:${filePath}`,
-                `image:${filePath}`
-              ];
+          canonicalFileId === `file:${filePath}`
+            ? [canonicalFileId, canonicalImageId]
+            : [canonicalFileId, canonicalImageId, `file:${filePath}`, `image:${filePath}`];
 
         if (typeof this.vectorDbService.batchDeleteFileEmbeddings === 'function') {
           await this.vectorDbService.batchDeleteFileEmbeddings(idsToDelete);

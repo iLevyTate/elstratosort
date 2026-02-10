@@ -3,7 +3,7 @@ const { logger: baseLogger, createLogger } = require('../../../shared/logger');
 const { getSemanticFileId, isImagePath } = require('../../../shared/fileIdUtils');
 const { buildEmbeddingSummary } = require('../../analysis/embeddingSummary');
 const { findContainingSmartFolder } = require('../../../shared/folderUtils');
-const { getPathVariants } = require('../../utils/fileIdUtils');
+const { getAllIdVariants } = require('../../utils/fileIdUtils');
 const { organizeQueue } = require('../../analysis/embeddingQueue/stageQueues');
 const embeddingQueueManager = require('../../analysis/embeddingQueue/queueManager');
 const { shouldEmbed } = require('../../services/embedding/embeddingGate');
@@ -128,14 +128,7 @@ async function removeEmbeddingsForPath(filePath, services, log = logger) {
   }
 
   try {
-    const pathVariants = getPathVariants(filePath);
-    const idsToDelete = new Set();
-    for (const variant of pathVariants) {
-      idsToDelete.add(`file:${variant}`);
-      idsToDelete.add(`image:${variant}`);
-    }
-
-    const ids = Array.from(idsToDelete);
+    const ids = getAllIdVariants(filePath);
     let dbRemovedCount = 0;
 
     if (typeof vectorDbService.batchDeleteFileEmbeddings === 'function') {
@@ -161,10 +154,7 @@ async function removeEmbeddingsForPath(filePath, services, log = logger) {
 
     // PERF: Batch deleteFileChunks calls in parallel instead of sequential
     if (typeof vectorDbService.deleteFileChunks === 'function') {
-      const chunkDeletePromises = pathVariants.flatMap((variant) => [
-        vectorDbService.deleteFileChunks(`file:${variant}`),
-        vectorDbService.deleteFileChunks(`image:${variant}`)
-      ]);
+      const chunkDeletePromises = ids.map((id) => vectorDbService.deleteFileChunks(id));
       const chunkResults = await Promise.allSettled(chunkDeletePromises);
       const failures = chunkResults.filter((result) => result.status === 'rejected');
       if (failures.length > 0) {
@@ -203,22 +193,67 @@ async function syncEmbeddingForMove({
   const services = resolveServices();
   const smartFolder = getSmartFolderForPath(destPath, services, smartFolders);
 
+  // When destination is NOT in a smart folder, behavior depends on the
+  // embeddingScope setting:
+  // - 'all_analyzed': preserve embedding but update its path metadata
+  // - 'smart_folders_only': remove embedding (file left the monitored scope)
   if (!smartFolder) {
-    await removeEmbeddingsForPath(destPath, services, log);
-    // IMPORTANT: For copies, never remove the source file's embeddings.
-    if (operation !== 'copy' && sourcePath && sourcePath !== destPath) {
-      await removeEmbeddingsForPath(sourcePath, services, log);
-    }
-    // Persist embedding state: file is not eligible for local embeddings outside smart folders.
-    try {
-      const hs = services.analysisHistoryService;
-      if (hs?.updateEmbeddingStateByPath) {
-        await hs.updateEmbeddingStateByPath(destPath, { status: 'skipped' });
+    // Check the scope setting to decide whether to preserve or remove
+    const gate = await shouldEmbed({ stage: 'final', isInSmartFolder: false });
+
+    if (gate.scope === 'smart_folders_only') {
+      // User chose to only embed smart-folder files — clean up
+      await removeEmbeddingsForPath(destPath, services, log);
+      if (operation !== 'copy' && sourcePath && sourcePath !== destPath) {
+        await removeEmbeddingsForPath(sourcePath, services, log);
       }
-    } catch {
-      // Non-fatal
+      try {
+        const hs = services.analysisHistoryService;
+        await hs?.updateEmbeddingStateByPath?.(destPath, { status: 'skipped' });
+      } catch {
+        // non-fatal
+      }
+      return { action: 'removed', reason: 'not-smart-folder' };
     }
-    return { action: 'removed', reason: 'not-smart-folder' };
+
+    // Scope is 'all_analyzed' — preserve embedding, just update path metadata
+    const vectorDbService = services.vectorDbService;
+    const sourceId = sourcePath ? getSemanticFileId(sourcePath) : null;
+    const destId = getSemanticFileId(destPath);
+
+    if (vectorDbService?.updateFilePaths && sourceId && operation !== 'copy') {
+      try {
+        await vectorDbService.initialize?.();
+        const updated = await vectorDbService.updateFilePaths([
+          {
+            oldId: sourceId,
+            newId: destId,
+            newMeta: {
+              path: destPath,
+              name: path.basename(destPath),
+              smartFolder: null,
+              smartFolderPath: null
+            }
+          }
+        ]);
+        if (updated > 0) {
+          log.debug('[EmbeddingSync] Updated embedding path for non-smart-folder move', {
+            sourcePath,
+            destPath
+          });
+          return { action: 'updated_meta', reason: 'not-smart-folder' };
+        }
+      } catch (err) {
+        log.debug('[EmbeddingSync] Path update failed for non-smart-folder move (non-fatal)', {
+          error: err?.message
+        });
+      }
+    }
+
+    // For copies to non-smart-folder locations, source stays indexed — nothing to do.
+    // For moves where path update failed, the old ID is stale but we don't delete
+    // the embedding to preserve searchability. It will self-heal on next analysis.
+    return { action: 'skipped', reason: 'not-smart-folder' };
   }
 
   const analysisHistoryService = services.analysisHistoryService;

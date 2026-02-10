@@ -22,7 +22,8 @@ const logger = createLogger('EmbeddingGate');
 
 const DEFAULTS = Object.freeze({
   timing: 'during_analysis',
-  policy: 'embed'
+  policy: 'embed',
+  scope: 'all_analyzed'
 });
 
 function normalizeTiming(value) {
@@ -35,20 +36,26 @@ function normalizePolicy(value) {
   return DEFAULTS.policy;
 }
 
+function normalizeScope(value) {
+  if (value === 'all_analyzed' || value === 'smart_folders_only') return value;
+  return DEFAULTS.scope;
+}
+
 async function loadEmbeddingConfigFromSettings() {
   try {
     const settingsService = container.tryResolve(ServiceIds.SETTINGS);
     if (!settingsService?.load) {
-      return { timing: DEFAULTS.timing, defaultPolicy: DEFAULTS.policy };
+      return { timing: DEFAULTS.timing, defaultPolicy: DEFAULTS.policy, scope: DEFAULTS.scope };
     }
     const settings = await settingsService.load();
     return {
       timing: normalizeTiming(settings?.embeddingTiming),
-      defaultPolicy: normalizePolicy(settings?.defaultEmbeddingPolicy)
+      defaultPolicy: normalizePolicy(settings?.defaultEmbeddingPolicy),
+      scope: normalizeScope(settings?.embeddingScope)
     };
   } catch (error) {
     logger.debug('[EmbeddingGate] Failed to load settings (non-fatal)', { error: error?.message });
-    return { timing: DEFAULTS.timing, defaultPolicy: DEFAULTS.policy };
+    return { timing: DEFAULTS.timing, defaultPolicy: DEFAULTS.policy, scope: DEFAULTS.scope };
   }
 }
 
@@ -68,12 +75,14 @@ function resolveEffectivePolicy({ defaultPolicy, policyOverride }) {
  * @param {'analysis'|'final'} params.stage
  * @param {string} [params.embeddingTiming] - optional override
  * @param {string} [params.policyOverride] - optional override
- * @returns {Promise<{shouldEmbed: boolean, timing: string, policy: string}>}
+ * @param {boolean} [params.isInSmartFolder] - whether the file resides in a smart folder
+ * @returns {Promise<{shouldEmbed: boolean, timing: string, policy: string, scope: string}>}
  */
 async function shouldEmbed(params) {
-  const { stage, embeddingTiming, policyOverride } = params || {};
+  const { stage, embeddingTiming, policyOverride, isInSmartFolder } = params || {};
   const config = await loadEmbeddingConfigFromSettings();
   const timing = normalizeTiming(embeddingTiming || config.timing);
+  const scope = normalizeScope(config.scope);
   const policy = resolveEffectivePolicy({
     defaultPolicy: config.defaultPolicy || DEFAULTS.policy,
     policyOverride
@@ -81,31 +90,38 @@ async function shouldEmbed(params) {
 
   // Policy gate
   if (policy !== 'embed') {
-    return { shouldEmbed: false, timing, policy };
+    return { shouldEmbed: false, timing, policy, scope };
+  }
+
+  // Scope gate: when set to 'smart_folders_only', skip files outside smart folders.
+  // Only apply when the caller provides explicit smart-folder context (isInSmartFolder !== undefined).
+  if (scope === 'smart_folders_only' && isInSmartFolder === false) {
+    return { shouldEmbed: false, timing, policy, scope };
   }
 
   // Timing gate
   if (timing === 'manual') {
-    return { shouldEmbed: false, timing, policy };
+    return { shouldEmbed: false, timing, policy, scope };
   }
 
   if (stage === 'analysis') {
-    return { shouldEmbed: timing === 'during_analysis', timing, policy };
+    return { shouldEmbed: timing === 'during_analysis', timing, policy, scope };
   }
 
   if (stage === 'final') {
     // FIX Bug #16: Prevent double embedding.
     // If timing is 'during_analysis', we assume it was handled during analysis (or path update handles the move).
     // Only embed at final stage if timing is explicitly 'after_organize'.
-    return { shouldEmbed: timing === 'after_organize', timing, policy };
+    return { shouldEmbed: timing === 'after_organize', timing, policy, scope };
   }
 
   // Unknown stage: fail closed
-  return { shouldEmbed: false, timing, policy };
+  return { shouldEmbed: false, timing, policy, scope };
 }
 
 module.exports = {
   shouldEmbed,
   normalizeTiming,
-  normalizePolicy
+  normalizePolicy,
+  normalizeScope
 };

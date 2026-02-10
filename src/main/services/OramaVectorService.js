@@ -452,7 +452,9 @@ class OramaVectorService extends EventEmitter {
 
           // Only cache real embeddings (non-zero placeholder) in sidecar for clustering.
           // A zero-filled placeholder has every element === 0; real embeddings never do.
-          const isZeroPlaceholder = doc.embedding.every((v) => v === 0);
+          // Short-circuit: real embeddings virtually never start with exactly 0,
+          // so check [0] first to avoid O(dimension) scan for every document.
+          const isZeroPlaceholder = doc.embedding[0] === 0 && doc.embedding.every((v) => v === 0);
           if (!isZeroPlaceholder) {
             embeddingStore.set(doc.id, doc.embedding);
           }
@@ -467,6 +469,16 @@ class OramaVectorService extends EventEmitter {
       }
 
       this._embeddingStore[name] = embeddingStore;
+
+      // Warn if many documents had zero-placeholder embeddings that couldn't be cached.
+      // This indicates the Orama v3.1.x vector-loss bug affected these documents;
+      // they won't appear in clustering/diagnostics until re-embedded.
+      const lostEmbeddings = insertedCount - embeddingStore.size;
+      if (lostEmbeddings > 0) {
+        logger.warn(
+          `[OramaVectorService] ${name}: ${lostEmbeddings} document(s) restored with zero-placeholder embeddings (Orama v3.1.x vector-loss). Re-embed to restore vector search.`
+        );
+      }
 
       logger.info(`[OramaVectorService] Restored ${name} database`, {
         method: 'insert',
@@ -1203,25 +1215,18 @@ class OramaVectorService extends EventEmitter {
 
     // fileChunks schema has no isOrphaned flag, so we find orphans by checking
     // whether each chunk's fileId still exists in the files database.
-    const allChunks = await search(this._databases.fileChunks, {
-      term: '',
-      limit: 10000
-    });
+    // FIX: Build a Set of known file IDs first (O(n+m) instead of O(n*m) getByID calls).
+    const [allChunks, allFiles] = await Promise.all([
+      search(this._databases.fileChunks, { term: '', limit: 10000 }),
+      search(this._databases.files, { term: '', limit: 10000 })
+    ]);
+
+    const knownFileIds = new Set((allFiles.hits || []).map((hit) => hit.document.id));
 
     const orphaned = [];
     for (const hit of allChunks.hits || []) {
       const fileId = hit.document.fileId;
-      if (!fileId) {
-        orphaned.push(hit.document.id);
-        continue;
-      }
-      try {
-        const parent = await getByID(this._databases.files, fileId);
-        if (!parent) {
-          orphaned.push(hit.document.id);
-        }
-      } catch {
-        // getByID throws if not found in some Orama versions
+      if (!fileId || !knownFileIds.has(fileId)) {
         orphaned.push(hit.document.id);
       }
     }

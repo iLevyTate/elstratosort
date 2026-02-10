@@ -21,7 +21,7 @@
 
 const { createLogger } = require('../../shared/logger');
 const { THRESHOLDS, TIMEOUTS } = require('../../shared/performanceConstants');
-const { normalizePathForIndex, getCanonicalFileId } = require('../../shared/pathSanitization');
+const { getCanonicalFileId } = require('../../shared/pathSanitization');
 const { findContainingSmartFolder } = require('../../shared/folderUtils');
 const { buildEmbeddingSummary } = require('./embeddingSummary');
 const { container, ServiceIds } = require('../services/ServiceContainer');
@@ -212,11 +212,8 @@ async function applySemanticFolderMatching(params) {
       'folder matcher matchVectorToFolders'
     );
 
-    // Generate file ID based on type
-    const fileId =
-      type === 'image'
-        ? getCanonicalFileId(filePath, true)
-        : `file:${normalizePathForIndex(filePath)}`;
+    // Generate file ID using canonical source of truth
+    const fileId = getCanonicalFileId(filePath, type === 'image');
 
     // Process candidates and potentially override category
     if (Array.isArray(candidates) && candidates.length > 0) {
@@ -363,11 +360,15 @@ async function applySemanticFolderMatching(params) {
       baseMeta.has_text = analysis.has_text === true;
     }
 
-    if (resolvedSmartFolder && type !== 'image') {
-      // Queue embedding for batch persistence only once file is in a smart folder,
-      // and only when embedding is enabled for this stage.
-      // Per-file overrides may be set after analysis; during analysis we only apply global settings.
-      const gate = await shouldEmbed({ stage: 'analysis' });
+    if (type !== 'image') {
+      // Queue embedding for batch persistence.
+      // Scope is controlled by the embeddingScope setting:
+      // - 'all_analyzed' (default): embed every analyzed file
+      // - 'smart_folders_only': only embed files in a configured smart folder
+      const gate = await shouldEmbed({
+        stage: 'analysis',
+        isInSmartFolder: !!resolvedSmartFolder
+      });
       if (gate.shouldEmbed) {
         await analysisQueue.enqueue({
           id: fileId,
@@ -383,12 +384,9 @@ async function applySemanticFolderMatching(params) {
           filePath
         });
       }
-    } else if (resolvedSmartFolder && type === 'image') {
-      logger.debug('[FolderMatcher] Skipping image enqueue (handled by image pipeline)', {
-        filePath
-      });
     } else {
-      logger.debug('[FolderMatcher] Skipping embedding persistence (not in smart folder)', {
+      // Images handle their own embedding in the image analysis pipeline
+      logger.debug('[FolderMatcher] Skipping image enqueue (handled by image pipeline)', {
         filePath
       });
     }

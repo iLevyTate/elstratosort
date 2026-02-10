@@ -74,7 +74,6 @@ class FolderMatchingService {
     const cacheOptions = options.maxCacheSize || options.cacheTtl ? options : {};
 
     this.vectorDbService = vectorDbService;
-    this.llamaService = getLlamaService(); // Use LlamaService directly
     this.modelName = '';
     this._upsertedFolderIds = new Set();
     // FIX: Maximum size for upsertedFolderIds to prevent unbounded memory growth
@@ -88,13 +87,14 @@ class FolderMatchingService {
     const concurrencyLimit = options.concurrencyLimit ?? getConfig('ANALYSIS.maxConcurrency', 5);
     const maxRetries = options.maxRetries ?? getConfig('ANALYSIS.retryAttempts', 3);
 
-    // Use injected parallel embedding service or get singleton with configurable values
-    this.parallelEmbeddingService =
-      options.parallelEmbeddingService ||
-      getParallelEmbeddingService({
-        concurrencyLimit,
-        maxRetries
-      });
+    // FIX: If a parallelEmbeddingService is explicitly injected, use it directly.
+    // Otherwise, access the live singleton via getter to avoid holding a stale
+    // reference if the service is reset/recreated (same pattern as BatchAnalysisService).
+    this._injectedEmbeddingService = options.parallelEmbeddingService || null;
+    if (!this._injectedEmbeddingService) {
+      // Ensure singleton is created with initial config
+      getParallelEmbeddingService({ concurrencyLimit, maxRetries });
+    }
 
     // Store limits for reference/debugging
     this._concurrencyLimit = concurrencyLimit;
@@ -108,6 +108,15 @@ class FolderMatchingService {
     // FIX: Subscribe to cache invalidation bus for coordinated cleanup
     this._invalidationUnsubscribe = null;
     this._subscribeToInvalidationBus();
+  }
+
+  /**
+   * Get the parallel embedding service (injected or live singleton).
+   * @returns {Object} ParallelEmbeddingService instance
+   * @private
+   */
+  _getEmbeddingService() {
+    return this._injectedEmbeddingService || getParallelEmbeddingService();
   }
 
   /**
@@ -421,7 +430,7 @@ class FolderMatchingService {
         id: `chunk-${index}`,
         text: chunk.text
       }));
-      const batch = await this.parallelEmbeddingService.batchEmbedTexts(items, {
+      const batch = await this._getEmbeddingService().batchEmbedTexts(items, {
         stopOnError: false
       });
       const vectors = batch.results
@@ -612,7 +621,7 @@ class FolderMatchingService {
 
       // FIX: Use ParallelEmbeddingService for uncached folders
       if (uncachedFolders.length > 0) {
-        const { results, errors, stats } = await this.parallelEmbeddingService.batchEmbedFolders(
+        const { results, errors, stats } = await this._getEmbeddingService().batchEmbedFolders(
           uncachedFolders.map((folder) => ({
             id: folder.id || this.generateFolderId(folder),
             name: folder.name,
@@ -889,7 +898,7 @@ class FolderMatchingService {
           results: embedResults,
           errors,
           stats
-        } = await this.parallelEmbeddingService.batchEmbedFileSummaries(
+        } = await this._getEmbeddingService().batchEmbedFileSummaries(
           uncachedFiles.map((item) => ({
             fileId: item.fileId,
             summary: item.summary || '',

@@ -33,11 +33,15 @@ class BatchAnalysisService {
     this.batchProcessor = globalBatchProcessor;
     this.batchProcessor.concurrencyLimit = this.concurrency;
 
-    // FIX: Initialize parallel embedding service for batch embedding operations
-    this.parallelEmbeddingService = getParallelEmbeddingService({
-      concurrencyLimit: Math.min(this.concurrency, 5), // Embedding concurrency capped at 5
+    // FIX: Initialize parallel embedding service for batch embedding operations.
+    // Store the initial config but always access the live singleton via getter
+    // to avoid holding a stale reference if the service is reset/recreated.
+    this._embeddingServiceConfig = {
+      concurrencyLimit: Math.min(this.concurrency, 5),
       maxRetries: configRetryAttempts
-    });
+    };
+    // Ensure singleton is created with initial config
+    getParallelEmbeddingService(this._embeddingServiceConfig);
 
     // FIX: Mutex for embedding backpressure checks
     // Ensures only one worker checks the queue capacity at a time, preventing "check-then-act" races
@@ -48,7 +52,7 @@ class BatchAnalysisService {
 
     logger.info('[BATCH-ANALYSIS] Service initialized', {
       concurrency: this.concurrency,
-      embeddingConcurrency: this.parallelEmbeddingService.concurrencyLimit,
+      embeddingConcurrency: this._embeddingServiceConfig.concurrencyLimit,
       cpuCores: os.cpus().length
     });
   }
@@ -360,7 +364,7 @@ class BatchAnalysisService {
 
     // FIX: Get final embedding stats
     const finalQueueStats = analysisQueue.getStats();
-    const embeddingServiceStats = this.parallelEmbeddingService.getStats();
+    const embeddingServiceStats = getParallelEmbeddingService().getStats();
 
     // Aggregate error details for better debugging
     const errorDetails = batchResult.results
@@ -527,7 +531,7 @@ class BatchAnalysisService {
    */
   getStats() {
     const queueStats = analysisQueue.getStats();
-    const embeddingServiceStats = this.parallelEmbeddingService.getStats();
+    const embeddingServiceStats = getParallelEmbeddingService().getStats();
 
     return {
       concurrency: this.concurrency,
@@ -552,7 +556,7 @@ class BatchAnalysisService {
    * @returns {Object} Service statistics
    */
   getEmbeddingServiceStats() {
-    return this.parallelEmbeddingService.getStats();
+    return getParallelEmbeddingService().getStats();
   }
 
   /**
@@ -560,9 +564,9 @@ class BatchAnalysisService {
    * @param {number} limit - New concurrency limit (1-10)
    */
   setEmbeddingConcurrency(limit) {
-    this.parallelEmbeddingService.setConcurrencyLimit(limit);
+    getParallelEmbeddingService().setConcurrencyLimit(limit);
     logger.info('[BATCH-ANALYSIS] Embedding concurrency updated', {
-      embeddingConcurrency: this.parallelEmbeddingService.concurrencyLimit
+      embeddingConcurrency: getParallelEmbeddingService().concurrencyLimit
     });
   }
 
