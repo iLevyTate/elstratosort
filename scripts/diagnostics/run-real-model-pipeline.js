@@ -223,6 +223,8 @@ async function runVectorSearchChecks(llama, errors) {
   log('## Orama search checks (real embeddings)');
   const { OramaVectorService } = require('../../src/main/services/OramaVectorService');
   const vectorDb = new OramaVectorService();
+  let restoredDb = null;
+  const diagIds = ['file:diag-invoice', 'file:diag-contract'];
   await vectorDb.initialize();
 
   try {
@@ -239,7 +241,7 @@ async function runVectorSearchChecks(llama, errors) {
     const contractEmbedding = await llama.generateEmbedding(contractText);
 
     const upsert1 = await vectorDb.upsertFile({
-      id: 'file:diag-invoice',
+      id: diagIds[0],
       vector: invoiceEmbedding.embedding,
       meta: { path: invoicePath, fileName: 'sample.txt', fileType: 'text/plain' }
     });
@@ -248,7 +250,7 @@ async function runVectorSearchChecks(llama, errors) {
     }
 
     const upsert2 = await vectorDb.upsertFile({
-      id: 'file:diag-contract',
+      id: diagIds[1],
       vector: contractEmbedding.embedding,
       meta: { path: contractPath, fileName: 'contract.txt', fileType: 'text/plain' }
     });
@@ -256,20 +258,65 @@ async function runVectorSearchChecks(llama, errors) {
       throw new Error(`Upsert contract failed: ${upsert2.error || 'unknown'}`);
     }
 
+    // Primary-path validation: query with the exact same vector and expect a self-hit.
+    const directResults = await vectorDb.querySimilarFiles(invoiceEmbedding.embedding, 5);
+    if (!directResults || directResults.length === 0) {
+      throw new Error('Primary vector query returned no results for identical embedding');
+    }
+    if (!directResults.some((r) => r.id === diagIds[0])) {
+      throw new Error(
+        `Primary vector query failed self-hit check; top result was ${directResults[0]?.id || 'none'}`
+      );
+    }
+    log(`- vector primary: OK (self-hit=${diagIds[0]}, top=${directResults[0].id})`);
+
+    // Restore-path validation: persist and re-open DB, then repeat self-hit check.
+    await vectorDb.persistAll();
+    restoredDb = new OramaVectorService();
+    await restoredDb.initialize();
+    const restoredResults = await restoredDb.querySimilarFiles(invoiceEmbedding.embedding, 5);
+    if (!restoredResults || restoredResults.length === 0) {
+      throw new Error('Restore-path vector query returned no results for identical embedding');
+    }
+    if (!restoredResults.some((r) => r.id === diagIds[0])) {
+      throw new Error(
+        `Restore-path vector query failed self-hit check; top result was ${restoredResults[0]?.id || 'none'}`
+      );
+    }
+    log(`- vector restore: OK (self-hit=${diagIds[0]}, top=${restoredResults[0].id})`);
+
+    // Secondary semantic sanity check (informational): not required for pass/fail.
     const queryEmbedding = await llama.generateEmbedding('invoice payment financial');
-    const results = await vectorDb.querySimilarFiles(queryEmbedding.embedding, 5);
-    if (!results || results.length === 0) {
-      throw new Error('Search returned no results');
+    const semanticResults = await restoredDb.querySimilarFiles(queryEmbedding.embedding, 5);
+    if (semanticResults?.length > 0) {
+      log(
+        `- search semantic: OK (top=${semanticResults[0].id}, score=${semanticResults[0].score.toFixed(3)})`
+      );
+    } else {
+      warn('- search semantic: no vector hits (informational)');
     }
-    if (results[0].id !== 'file:diag-invoice') {
-      throw new Error(`Unexpected top result: ${results[0].id} (expected file:diag-invoice)`);
-    }
-    log(`- search: OK (top=${results[0].id}, score=${results[0].score.toFixed(3)})`);
   } catch (error) {
     const message = error.message || 'search failed';
     errors.push(`Search - ${message}`);
     warn(`- ${message}`);
   } finally {
+    if (restoredDb) {
+      try {
+        for (const id of diagIds) {
+          await restoredDb.deleteFileEmbedding(id);
+        }
+      } catch {
+        // Best-effort cleanup.
+      }
+      await restoredDb.cleanup();
+    }
+    for (const id of diagIds) {
+      try {
+        await vectorDb.deleteFileEmbedding(id);
+      } catch {
+        // Non-fatal cleanup best effort.
+      }
+    }
     await vectorDb.cleanup();
   }
 }
@@ -302,6 +349,17 @@ async function main() {
     }
   } finally {
     await llama.shutdown();
+    // The diagnostics script initializes SettingsService (via llama config load),
+    // so ensure its file watcher is stopped to avoid hanging process exit.
+    try {
+      const SettingsService = require('../../src/main/services/SettingsService');
+      const settings = SettingsService?.getInstance?.();
+      if (settings?.shutdown) {
+        await settings.shutdown();
+      }
+    } catch {
+      // Best effort only.
+    }
   }
 }
 

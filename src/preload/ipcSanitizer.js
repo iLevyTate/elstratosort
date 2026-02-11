@@ -22,6 +22,17 @@ function createIpcSanitizer({ log }) {
     return output;
   };
 
+  const looksLikeSimpleText = (str) => {
+    if (typeof str !== 'string' || str.length === 0) return true;
+    // Fast-path common plain text payloads to avoid regex-heavy URL/path detection.
+    if (str.includes('<') || str.includes('>') || str.includes('&')) return false;
+    if (str.includes('\\') || str.includes('/')) return false;
+    if (str.includes('://')) return false;
+    if (str.includes(':') && /^[A-Za-z]:/.test(str)) return false;
+    if (/^localhost(:\d+)?/i.test(str)) return false;
+    return true;
+  };
+
   /**
    * Check if a string looks like a file path
    * File paths typically contain drive letters (Windows) or start with / (Unix)
@@ -136,7 +147,11 @@ function createIpcSanitizer({ log }) {
     }
 
     if (typeof obj === 'string') {
-      if (isFilePath || looksLikeFilePath(obj)) {
+      const stripped = stripControlChars(obj);
+      if (!isFilePath && looksLikeSimpleText(stripped)) {
+        return stripped;
+      }
+      if (isFilePath || looksLikeFilePath(stripped)) {
         // Only strip ? and * on Windows where they are invalid in filenames.
         // process.platform may be undefined in bundled preload (process/browser polyfill),
         // so fall back to navigator.platform which is always available in Electron's renderer context.
@@ -144,7 +159,7 @@ function createIpcSanitizer({ log }) {
           (typeof navigator !== 'undefined' && /^Win/i.test(navigator.platform)) ||
           (typeof process !== 'undefined' && process.platform === 'win32');
         const invalidCharsPattern = isWin ? /[<>"|?*]/g : /[<>"]/g;
-        let sanitized = stripControlChars(obj).replace(invalidCharsPattern, '');
+        let sanitized = stripped.replace(invalidCharsPattern, '');
         const parts = sanitized.split(/[\\/]+/).filter((segment) => segment.length > 0);
         const hasTraversal = parts.some((segment) => segment === '..');
         if (hasTraversal) {
@@ -155,10 +170,10 @@ function createIpcSanitizer({ log }) {
         }
         return sanitized;
       }
-      if (looksLikeUrl(obj)) {
-        return stripControlChars(obj).replace(/[<>"|*]/g, '');
+      if (looksLikeUrl(stripped)) {
+        return stripped.replace(/[<>"|*]/g, '');
       }
-      return basicSanitizeHtml(obj);
+      return basicSanitizeHtml(stripped);
     }
 
     if (Array.isArray(obj)) {
@@ -176,7 +191,11 @@ function createIpcSanitizer({ log }) {
         }
 
         const isPathKey = key.toLowerCase().includes('path') || key.toLowerCase().includes('file');
-        const cleanKey = isPathKey ? key : basicSanitizeHtml(key);
+        const cleanKey = isPathKey
+          ? key
+          : looksLikeSimpleText(key)
+            ? stripControlChars(key)
+            : basicSanitizeHtml(key);
 
         if (dangerousKeys.includes(cleanKey)) {
           log.warn(`Blocked dangerous sanitized key: ${cleanKey}`);

@@ -49,7 +49,8 @@ describe('UndoRedoService', () => {
     service = new UndoRedoService({
       maxActions: 10,
       maxMemoryMB: 1,
-      maxBatchSize: 100
+      maxBatchSize: 100,
+      saveDebounceMs: 0
     });
   });
 

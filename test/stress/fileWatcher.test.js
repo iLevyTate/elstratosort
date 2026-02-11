@@ -335,14 +335,14 @@ describe('File Watcher Stress Tests', () => {
     it('should recover from file access errors', async () => {
       let callCount = 0;
 
-      mockFs.access.mockImplementation(async () => {
+      mockFs.stat.mockImplementation(async () => {
         callCount++;
         if (callCount === 1) {
           const error = new Error('EBUSY: resource busy');
           error.code = 'EBUSY';
           throw error;
         }
-        return undefined;
+        return { isDirectory: () => true, size: 1024 };
       });
 
       // First call should fail gracefully
@@ -353,7 +353,7 @@ describe('File Watcher Stress Tests', () => {
     });
 
     it('should skip non-existent files gracefully', async () => {
-      mockFs.access.mockImplementation(async () => {
+      mockFs.stat.mockImplementation(async () => {
         const error = new Error('ENOENT: no such file');
         error.code = 'ENOENT';
         throw error;

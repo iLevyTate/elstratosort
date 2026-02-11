@@ -362,6 +362,21 @@ async function syncEmbeddingForMove({
     return { action: 'skipped', reason: 'no-vector' };
   }
 
+  const queueCapacity =
+    typeof embeddingQueueManager.waitForOrganizeQueueCapacity === 'function'
+      ? await embeddingQueueManager.waitForOrganizeQueueCapacity({
+          highWatermarkPercent: 75,
+          releasePercent: 50,
+          maxWaitMs: 60000
+        })
+      : { timedOut: false, capacityPercent: null };
+  if (queueCapacity.timedOut) {
+    log.warn('[EmbeddingSync] Organize embedding queue remained saturated before enqueue', {
+      destPath,
+      capacityPercent: queueCapacity.capacityPercent
+    });
+  }
+
   await organizeQueue.enqueue({
     id: destId,
     vector: embedding.vector,

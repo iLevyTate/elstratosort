@@ -26,10 +26,50 @@ const { findContainingSmartFolder } = require('../../shared/folderUtils');
 const { buildEmbeddingSummary } = require('./embeddingSummary');
 const { container, ServiceIds } = require('../services/ServiceContainer');
 const { analysisQueue } = require('./embeddingQueue/stageQueues');
+const embeddingQueueManager = require('./embeddingQueue/queueManager');
 const { withTimeout } = require('../../shared/promiseUtils');
 const { shouldEmbed } = require('../services/embedding/embeddingGate');
 
 const logger = createLogger('SemanticFolderMatcher');
+const SMART_FOLDER_UPSERT_CACHE_MS = 30000;
+const matcherFolderUpsertCache = new WeakMap();
+
+function createSmartFolderFingerprint(folders) {
+  if (!Array.isArray(folders) || folders.length === 0) return '';
+  return folders
+    .map((folder) => ({
+      id: String(folder?.id || '').trim(),
+      name: String(folder?.name || '').trim(),
+      path: String(folder?.path || '').trim(),
+      description: String(folder?.description || '').trim()
+    }))
+    .sort((a, b) =>
+      `${a.id}|${a.name}|${a.path}|${a.description}`.localeCompare(
+        `${b.id}|${b.name}|${b.path}|${b.description}`
+      )
+    )
+    .map((folder) => `${folder.id}|${folder.name}|${folder.path}|${folder.description}`)
+    .join('||');
+}
+
+function shouldUpsertSmartFolders(matcher, folderFingerprint, now = Date.now()) {
+  if (!folderFingerprint) return true;
+  const cached = matcherFolderUpsertCache.get(matcher);
+  return !(
+    cached &&
+    cached.fingerprint === folderFingerprint &&
+    Number.isFinite(cached.expiresAt) &&
+    cached.expiresAt > now
+  );
+}
+
+function rememberSmartFolderUpsert(matcher, folderFingerprint, now = Date.now()) {
+  if (!folderFingerprint) return;
+  matcherFolderUpsertCache.set(matcher, {
+    fingerprint: folderFingerprint,
+    expiresAt: now + SMART_FOLDER_UPSERT_CACHE_MS
+  });
+}
 /**
  * Get or initialize vector DB and FolderMatchingService
  * Uses lazy initialization to prevent startup failures
@@ -146,10 +186,18 @@ async function applySemanticFolderMatching(params) {
         (f) => f && typeof f === 'object' && (f.name || f.id || f.path)
       );
       if (validFolders.length > 0) {
-        await matcher.batchUpsertFolders(validFolders);
-        logger.debug('[FolderMatcher] Upserted folder embeddings', {
-          folderCount: validFolders.length
-        });
+        const fingerprint = createSmartFolderFingerprint(validFolders);
+        if (shouldUpsertSmartFolders(matcher, fingerprint)) {
+          await matcher.batchUpsertFolders(validFolders);
+          rememberSmartFolderUpsert(matcher, fingerprint);
+          logger.debug('[FolderMatcher] Upserted folder embeddings', {
+            folderCount: validFolders.length
+          });
+        } else {
+          logger.debug('[FolderMatcher] Skipped repeated smart-folder upsert', {
+            folderCount: validFolders.length
+          });
+        }
       }
     } catch (upsertError) {
       logger.warn('[FolderMatcher] Folder embedding upsert error:', upsertError.message);
@@ -370,6 +418,23 @@ async function applySemanticFolderMatching(params) {
         isInSmartFolder: !!resolvedSmartFolder
       });
       if (gate.shouldEmbed) {
+        const queueCapacity =
+          typeof embeddingQueueManager.waitForAnalysisQueueCapacity === 'function'
+            ? await embeddingQueueManager.waitForAnalysisQueueCapacity({
+                highWatermarkPercent: 75,
+                releasePercent: 50,
+                maxWaitMs: 60000
+              })
+            : { timedOut: false, capacityPercent: null };
+        if (queueCapacity.timedOut) {
+          logger.warn(
+            '[FolderMatcher] Analysis embedding queue remained saturated before enqueue',
+            {
+              filePath,
+              capacityPercent: queueCapacity.capacityPercent
+            }
+          );
+        }
         await analysisQueue.enqueue({
           id: fileId,
           vector,

@@ -18,6 +18,8 @@ module.exports = {
       }
     ]
   },
+  // Some runtime deps used by stress paths ship ESM; allow Babel transform for them.
+  transformIgnorePatterns: ['/node_modules/(?!(p-queue|p-timeout|eventemitter3)/)'],
 
   // Stress tests need more time
   testTimeout: 120000,

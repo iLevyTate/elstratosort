@@ -11,6 +11,7 @@ const embeddingQueueManager = require('../analysis/embeddingQueue/queueManager')
 const path = require('path');
 const os = require('os');
 const { get: getConfig } = require('../../shared/config/index');
+const { getInstance: getLlamaService } = require('./LlamaService');
 
 const { getFileTypeCategory } = require('./autoOrganize/fileTypeUtils');
 
@@ -49,6 +50,7 @@ class BatchAnalysisService {
 
     // FIX: Track embedding progress for comprehensive reporting
     this._embeddingProgressUnsubscribe = null;
+    this._backpressureWaitPromise = null;
 
     logger.info('[BATCH-ANALYSIS] Service initialized', {
       concurrency: this.concurrency,
@@ -133,6 +135,12 @@ class BatchAnalysisService {
     });
 
     const startTime = Date.now();
+    const imageCount = filePaths.filter((filePath) =>
+      this.isImageFile(path.extname(filePath).toLowerCase())
+    ).length;
+    const visionBatchModeEnabled = options.enableVisionBatchMode ?? process.env.NODE_ENV !== 'test';
+    const shouldUseVisionBatchMode = visionBatchModeEnabled && imageCount > 1;
+    let visionBatchModeEntered = false;
 
     // Subscribe to embedding queue progress if callback provided
     // Use local variable to avoid race condition with concurrent analyzeFiles calls
@@ -142,6 +150,18 @@ class BatchAnalysisService {
     }
 
     try {
+      if (shouldUseVisionBatchMode) {
+        try {
+          await getLlamaService().enterVisionBatchMode();
+          visionBatchModeEntered = true;
+          logger.info('[BATCH-ANALYSIS] Entered vision batch mode', { imageCount });
+        } catch (error) {
+          logger.warn('[BATCH-ANALYSIS] Failed to enter vision batch mode, continuing', {
+            error: error?.message
+          });
+        }
+      }
+
       return await this._executeAnalysis(filePaths, smartFolders, {
         concurrency,
         onProgress,
@@ -149,6 +169,16 @@ class BatchAnalysisService {
         startTime
       });
     } finally {
+      if (visionBatchModeEntered) {
+        try {
+          await getLlamaService().exitVisionBatchMode();
+          logger.info('[BATCH-ANALYSIS] Exited vision batch mode');
+        } catch (error) {
+          logger.warn('[BATCH-ANALYSIS] Failed to exit vision batch mode', {
+            error: error?.message
+          });
+        }
+      }
       // Always unsubscribe from embedding progress, even on error
       if (embeddingProgressUnsubscribe) {
         embeddingProgressUnsubscribe();
@@ -196,52 +226,58 @@ class BatchAnalysisService {
       }
 
       if (shouldWait) {
-        const backpressureStart = Date.now();
-        let backpressureDelay = BACKPRESSURE_INITIAL_DELAY_MS;
-        let iterations = 0;
+        // Coalesce waiters so only one worker polls queue capacity.
+        if (!this._backpressureWaitPromise) {
+          this._backpressureWaitPromise = (async () => {
+            const backpressureStart = Date.now();
+            let backpressureDelay = BACKPRESSURE_INITIAL_DELAY_MS;
+            let iterations = 0;
 
-        while (true) {
-          const elapsed = Date.now() - backpressureStart;
-          if (elapsed >= BACKPRESSURE_TIMEOUT_MS) {
-            logger.warn('[BATCH-ANALYSIS] Backpressure timeout reached, continuing anyway', {
-              elapsed
-            });
-            break;
-          }
-
-          await delay(backpressureDelay);
-          // Exponential backoff with cap
-          backpressureDelay = Math.min(backpressureDelay * 1.5, BACKPRESSURE_MAX_DELAY_MS);
-          iterations++;
-
-          // Check again (acquire lock briefly)
-          let stillFull = false;
-          await this.backpressureLock.acquire();
-          try {
-            const currentStats = analysisQueue.getStats();
-            if (currentStats.capacityPercent > 50) {
-              stillFull = true;
-              if (iterations % 10 === 0) {
-                logger.debug('[BATCH-ANALYSIS] Waiting for embedding queue to drain', {
-                  elapsed,
-                  capacityPercent: currentStats.capacityPercent,
-                  iterations
+            while (true) {
+              const elapsed = Date.now() - backpressureStart;
+              if (elapsed >= BACKPRESSURE_TIMEOUT_MS) {
+                logger.warn('[BATCH-ANALYSIS] Backpressure timeout reached, continuing anyway', {
+                  elapsed
                 });
+                break;
+              }
+
+              await delay(backpressureDelay);
+              // Exponential backoff with cap
+              backpressureDelay = Math.min(backpressureDelay * 1.5, BACKPRESSURE_MAX_DELAY_MS);
+              iterations++;
+
+              // Check again (acquire lock briefly)
+              let stillFull = false;
+              await this.backpressureLock.acquire();
+              try {
+                const currentStats = analysisQueue.getStats();
+                if (currentStats.capacityPercent > 50) {
+                  stillFull = true;
+                  if (iterations % 10 === 0) {
+                    logger.debug('[BATCH-ANALYSIS] Waiting for embedding queue to drain', {
+                      elapsed,
+                      capacityPercent: currentStats.capacityPercent,
+                      iterations
+                    });
+                  }
+                }
+              } finally {
+                this.backpressureLock.release();
+              }
+
+              if (!stillFull) {
+                logger.info('[BATCH-ANALYSIS] Embedding queue drained, resuming analysis', {
+                  waitTime: Date.now() - backpressureStart
+                });
+                break;
               }
             }
-          } finally {
-            this.backpressureLock.release();
-          }
-
-          if (!stillFull) {
-            if (Date.now() - backpressureStart < BACKPRESSURE_TIMEOUT_MS) {
-              logger.info('[BATCH-ANALYSIS] Embedding queue drained, resuming analysis', {
-                waitTime: Date.now() - backpressureStart
-              });
-            }
-            break;
-          }
+          })().finally(() => {
+            this._backpressureWaitPromise = null;
+          });
         }
+        await this._backpressureWaitPromise;
       }
     };
 
@@ -434,10 +470,19 @@ class BatchAnalysisService {
   async analyzeFilesGrouped(filePaths, smartFolders = [], options = {}) {
     // Group files by extension for better caching
     const groups = this.groupFilesByType(filePaths);
+    const groupEntries = Object.entries(groups);
+    const rawGroupConcurrency = Number.isFinite(options.groupConcurrency)
+      ? options.groupConcurrency
+      : 1;
+    const groupConcurrency = Math.max(
+      1,
+      Math.min(Math.floor(rawGroupConcurrency), groupEntries.length || 1)
+    );
 
     logger.info('[BATCH-ANALYSIS] Analyzing files in groups', {
       totalFiles: filePaths.length,
-      groups: Object.keys(groups).length
+      groups: Object.keys(groups).length,
+      groupConcurrency
     });
 
     const allResults = {
@@ -447,23 +492,26 @@ class BatchAnalysisService {
       total: filePaths.length
     };
 
-    // Process all groups in parallel -- concurrency is controlled within analyzeFiles
-    const groupEntries = Object.entries(groups);
-    const groupResults = await Promise.allSettled(
-      groupEntries.map(([type, files]) => {
-        logger.info(`[BATCH-ANALYSIS] Processing ${type} group`, { count: files.length });
-        return this.analyzeFiles(files, smartFolders, options);
-      })
-    );
+    for (let i = 0; i < groupEntries.length; i += groupConcurrency) {
+      const groupSlice = groupEntries.slice(i, i + groupConcurrency);
+      const groupResults = await Promise.allSettled(
+        groupSlice.map(([type, files]) => {
+          logger.info(`[BATCH-ANALYSIS] Processing ${type} group`, { count: files.length });
+          return this.analyzeFiles(files, smartFolders, options);
+        })
+      );
 
-    // Merge results from all groups
-    for (const result of groupResults) {
-      if (result.status === 'fulfilled') {
-        allResults.results.push(...result.value.results);
-        allResults.errors.push(...result.value.errors);
-        allResults.successful += result.value.successful;
-      } else {
-        logger.error('[BATCH-ANALYSIS] Group processing failed', { error: result.reason?.message });
+      // Merge results from this bounded-concurrency slice
+      for (const result of groupResults) {
+        if (result.status === 'fulfilled') {
+          allResults.results.push(...result.value.results);
+          allResults.errors.push(...result.value.errors);
+          allResults.successful += result.value.successful;
+        } else {
+          logger.error('[BATCH-ANALYSIS] Group processing failed', {
+            error: result.reason?.message
+          });
+        }
       }
     }
 

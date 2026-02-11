@@ -90,7 +90,10 @@ const TIMEOUTS = {
   EMBEDDING_CHECK: 1000, // Delay before checking embeddings status
   STUCK_ANALYSIS_CHECK: 2 * 60 * 1000, // 2 minutes - analysis considered stuck
   VISION_STARTUP: 120000, // 2 min — vision model loading can be slow
-  VISION_REQUEST: 90000 // 90s — most images complete in 30-60s; cuts timeout from 5min
+  VISION_REQUEST: 90000, // 90s — most images complete in 30-60s; cuts timeout from 5min
+  // Keep vision runtime alive briefly between requests to avoid costly cold starts.
+  // Set to 0 to disable keep-alive and force immediate shutdown behavior.
+  VISION_IDLE_KEEPALIVE: 60000
 };
 
 const RETRY = {

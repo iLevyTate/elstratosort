@@ -72,14 +72,14 @@ const AppConfig = {
       // doesn't get "stuck" for minutes when vision calls hang.
       timeout: TIMEOUTS.AI_ANALYSIS_LONG,
       temperature: AI_DEFAULTS?.IMAGE?.TEMPERATURE || 0.2,
-      maxTokens: AI_DEFAULTS?.IMAGE?.MAX_TOKENS || 1024
+      maxTokens: AI_DEFAULTS?.IMAGE?.MAX_TOKENS || 512
     }
   }
 };
 
 const OCR_DEFAULTS = {
   timeoutMs: TIMEOUTS.AI_ANALYSIS_MEDIUM,
-  maxTokens: 1000,
+  maxTokens: 400,
   maxRetries: 1
 };
 
@@ -96,6 +96,10 @@ const OCR_FILENAME_HINTS = [
   'statement',
   'tax'
 ];
+const OCR_GROUNDING_MAX_CHARS = 600;
+const OCR_POST_PASS_CONFIDENCE_SKIP_THRESHOLD = 88;
+const OCR_POST_PASS_STRICT_SKIP_THRESHOLD = 92;
+const IMAGE_PREFLIGHT_TTL_MS = Number(process.env.STRATOSORT_IMAGE_PREFLIGHT_TTL_MS) || 15000;
 
 const MODEL_NOT_AVAILABLE_PATTERNS = [
   'model not found',
@@ -112,6 +116,13 @@ const MODEL_NOT_AVAILABLE_PATTERNS = [
   'failed to start'
 ];
 
+function stripJsonCodeFence(text) {
+  if (typeof text !== 'string') return text;
+  const trimmed = text.trim();
+  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fencedMatch ? fencedMatch[1].trim() : text;
+}
+
 function isModelNotAvailableError(errorLike) {
   const message = String(errorLike?.message || errorLike || '').toLowerCase();
   return MODEL_NOT_AVAILABLE_PATTERNS.some((pattern) => message.includes(pattern));
@@ -119,6 +130,109 @@ function isModelNotAvailableError(errorLike) {
 
 function hasTextNameHint(fileNameLower) {
   return OCR_FILENAME_HINTS.some((hint) => fileNameLower.includes(hint));
+}
+
+function isRecoverableVisionResultError(errorLike) {
+  const message =
+    typeof errorLike === 'string'
+      ? errorLike.toLowerCase()
+      : String(errorLike?.message || errorLike || '').toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes('timeout') ||
+    message.includes('timed out') ||
+    message.includes('empty response') ||
+    message.includes('no response') ||
+    message.includes('failed to parse') ||
+    message.includes('json') ||
+    message.includes('undefined result')
+  );
+}
+
+function shouldRunPostVisionOcr(analysis, hasTextHint) {
+  if (!analysis || analysis.error) return false;
+
+  const contentType = String(analysis.content_type || '').toLowerCase();
+  const contentSuggestsText =
+    contentType.includes('text') ||
+    contentType.includes('document') ||
+    contentType.includes('screenshot');
+  const hasTextSignal = analysis.has_text === true || contentSuggestsText;
+  if (!hasTextSignal) return false;
+
+  const confidence = Number(analysis.confidence) || 0;
+  const hasSuggestedName =
+    typeof analysis.suggestedName === 'string' && analysis.suggestedName.trim().length > 0;
+  const keywordCount = Array.isArray(analysis.keywords)
+    ? analysis.keywords.filter(Boolean).length
+    : 0;
+  const missingCoreFields = !hasSuggestedName || keywordCount < 2;
+
+  if (confidence >= OCR_POST_PASS_STRICT_SKIP_THRESHOLD && !missingCoreFields) return false;
+  if (!hasTextHint && confidence >= OCR_POST_PASS_CONFIDENCE_SKIP_THRESHOLD && !missingCoreFields) {
+    return false;
+  }
+
+  return true;
+}
+
+const preflightCache = {
+  value: null,
+  expiresAt: 0,
+  pending: null,
+  serviceRef: null
+};
+
+async function getImagePreflight(llamaService, { forceRefresh = false } = {}) {
+  const now = Date.now();
+  const sameService = preflightCache.serviceRef === llamaService;
+  if (!forceRefresh && sameService && preflightCache.value && preflightCache.expiresAt > now) {
+    return preflightCache.value;
+  }
+  if (!forceRefresh && sameService && preflightCache.pending) {
+    return preflightCache.pending;
+  }
+
+  preflightCache.pending = (async () => {
+    let health = { success: true, status: 'healthy' };
+    if (typeof llamaService?.testConnection === 'function') {
+      try {
+        health = await llamaService.testConnection();
+      } catch (error) {
+        health = { success: false, status: 'error', error: error?.message || 'preflight_failed' };
+      }
+    }
+    const isHealthy = Boolean(health?.success) || health?.status === 'healthy';
+    const cfg =
+      typeof llamaService?.getConfig === 'function'
+        ? await Promise.resolve(llamaService.getConfig()).catch(() => ({}))
+        : {};
+    const availableModels =
+      typeof llamaService?.listModels === 'function'
+        ? await Promise.resolve(llamaService.listModels()).catch(() => [])
+        : [];
+    const modelNames = Array.isArray(availableModels)
+      ? availableModels.map((m) => m.name || m.filename || '')
+      : [];
+    const preflight = {
+      health,
+      isHealthy,
+      cfg,
+      modelNames,
+      visionModelName:
+        cfg?.visionModel ||
+        AppConfig.ai.imageAnalysis.defaultModel ||
+        'llava-v1.6-mistral-7b-Q4_K_M.gguf'
+    };
+    preflightCache.serviceRef = llamaService;
+    preflightCache.value = preflight;
+    preflightCache.expiresAt = Date.now() + IMAGE_PREFLIGHT_TTL_MS;
+    return preflight;
+  })().finally(() => {
+    preflightCache.pending = null;
+  });
+
+  return preflightCache.pending;
 }
 
 // JSON repair constants and function consolidated to ../utils/llmJsonRepair.js
@@ -152,7 +266,7 @@ async function analyzeImageWithLlama(
         .slice(0, 3)
         .map((n) => `"${n}"`)
         .join(', ');
-      namingContextStr = `\n\nNAMING PATTERNS FROM SIMILAR FILES:\nConsistent naming is important. The following are names of semantically similar files in the system. If they follow a clear pattern, TRY to adapt your 'suggestedName' to match their style (e.g., specific date format, separator style), while describing THIS image's content:\n${examples}`;
+      namingContextStr = `\nNaming examples from similar files: ${examples}. Reuse style only when it fits this image.`;
     }
 
     // Build folder categories string for the prompt (include descriptions)
@@ -170,58 +284,43 @@ async function analyzeImageWithLlama(
           .map((f, i) => `${i + 1}. "${f.name}" — ${f.description || 'no description provided'}`)
           .join('\n');
 
-        folderCategoriesStr = `\n\nAVAILABLE SMART FOLDERS (name — description):\n${folderListDetailed}\n\nSELECTION RULES (CRITICAL):\n- Choose the category by comparing BOTH the image content AND the filename to folder DESCRIPTIONS.\n- You MUST read the description of each folder to understand what belongs there.\n- Output the category EXACTLY as one of the folder names above (verbatim).\n- Fill the 'reasoning' field with a brief explanation of why the visual content matches that specific folder's description.\n- Do NOT invent new categories.\n- If the filename suggests a category (e.g., "financial-report" → Finance folder), PRIORITIZE that match.`;
+        folderCategoriesStr = `\nAvailable smart folders (name — description):\n${folderListDetailed}\nUse category EXACTLY as one folder name above. Do not invent categories.`;
       }
     }
 
     // Build OCR grounding context if text was extracted
     const ocrGroundingStr =
       extractedText && extractedText.length > 20
-        ? `\n\nEXTRACTED TEXT FROM IMAGE (GROUND TRUTH - your analysis MUST be consistent with this):\n${extractedText.slice(0, 1500)}\n\nIMPORTANT: The text above was extracted from the image via OCR. Your analysis MUST reflect this text content. If the text mentions financial terms, budgets, invoices, or reports, your analysis MUST identify these themes.`
+        ? `\nOCR text from image (ground truth):\n${extractedText.slice(0, OCR_GROUNDING_MAX_CHARS)}`
         : '';
 
-    const prompt = `You are an expert image analyzer for an automated file organization system. Analyze this image named "${originalFileName}" and extract structured information.
-
-CRITICAL FILENAME VALIDATION:
-The original filename is "${originalFileName}". Use it as a context hint, but prioritize VISUAL CONTENT for analysis.
-- If the filename suggests a specific topic, verify it against the image content.
+    const prompt = `Analyze image "${originalFileName}" for automated file organization.
+Prioritize visible content; use filename only as a weak hint.
 ${folderCategoriesStr}
 ${ocrGroundingStr}
 ${namingContextStr}
+Return ONLY valid raw JSON (no markdown/code fences) matching this schema exactly:
+${JSON.stringify(IMAGE_ANALYSIS_SCHEMA)}
+Rules:
+- category must be one of the available folder names when provided.
+- reasoning must briefly justify the category choice.
+- keywords: 3-7 terms from visual/OCR content.
+- suggestedName: concise snake_case, no file extension.
+- If uncertain, use null.`;
 
-Your response MUST be a valid JSON object matching this schema exactly.
-Always include "keyEntities" as an array (use [] if none are found).
-Output ONLY raw JSON. Do NOT wrap in markdown code fences (no triple backticks). Do NOT include any text before or after the JSON object:
-${JSON.stringify(IMAGE_ANALYSIS_SCHEMA, null, 2)}
-
-IMPORTANT FOR category:
-- Verify that your selected 'category' matches the folder description provided above.
-- Use the 'reasoning' field to explain the link between the visual content and the folder description.
-
-IMPORTANT FOR keywords:
-- Extract 3-7 keywords based on the VISUAL CONTENT and any visible text.
-- Do NOT just copy the filename. Look at what is actually in the image.
-
-IMPORTANT FOR suggestedName:
-- Generate a short, concise name (1-3 words) based on the IMAGE TOPIC.
-- Example: "budget_report", "sunset_beach", "project_diagram".
-- Use underscores instead of spaces.
-- Do NOT include the file extension.
-- REFER to "NAMING PATTERNS" above for style consistency if available.
-
-If you cannot determine a field with confidence, use null.
-Analyze this image:`;
-
-    let cfg = {};
-    try {
-      cfg = await getLlamaService().getConfig();
-    } catch (e) {
-      logger.warn('[IMAGE] Failed to get Llama config, using defaults', { error: e.message });
+    let modelToUse = options?.visionModel;
+    if (!modelToUse) {
+      let cfg = {};
+      try {
+        cfg = await getLlamaService().getConfig();
+      } catch (e) {
+        logger.warn('[IMAGE] Failed to get Llama config, using defaults', { error: e.message });
+      }
+      modelToUse =
+        cfg.visionModel ||
+        AppConfig.ai.imageAnalysis.defaultModel ||
+        'llava-v1.6-mistral-7b-Q4_K_M.gguf';
     }
-    const modelToUse =
-      cfg.visionModel ||
-      AppConfig.ai.imageAnalysis.defaultModel ||
-      'llava-v1.6-mistral-7b-Q4_K_M.gguf';
 
     // Use deduplicator to prevent duplicate LLM calls for identical images
     // Include 'type' to prevent cross-file cache contamination with document analysis
@@ -281,8 +380,9 @@ Analyze this image:`;
 
     if (response.response) {
       try {
+        const normalizedResponse = stripJsonCodeFence(response.response);
         // Use robust JSON extraction with repair for malformed LLM responses
-        let parsedJson = extractAndParseJSON(response.response, null, {
+        let parsedJson = extractAndParseJSON(normalizedResponse, null, {
           source: 'imageAnalysis',
           fileName: originalFileName,
           model: modelToUse
@@ -291,7 +391,7 @@ Analyze this image:`;
         if (!parsedJson) {
           const repairedResponse = await attemptJsonRepairWithLlama(
             llamaService,
-            response.response,
+            normalizedResponse,
             {
               schema: IMAGE_ANALYSIS_SCHEMA,
               maxTokens: AppConfig.ai.imageAnalysis.maxTokens,
@@ -339,11 +439,14 @@ Analyze this image:`;
           logger.debug('[IMAGE-ANALYSIS] Fallback keywords generated', { keywords: finalKeywords });
         }
 
-        // Ensure confidence is a reasonable number
-        // Use fixed default instead of random value
-        if (!parsedJson.confidence || parsedJson.confidence < 60 || parsedJson.confidence > 100) {
+        // Ensure confidence is numeric and within expected range.
+        // Some models return confidence as strings like "85" or "85%".
+        const parsedConfidence = Number.parseFloat(String(parsedJson.confidence ?? ''));
+        if (!Number.isFinite(parsedConfidence) || parsedConfidence < 60 || parsedConfidence > 100) {
           parsedJson.confidence = 75; // Fixed default when AI engine returns invalid confidence
           logger.debug('[IMAGE-ANALYSIS] Invalid confidence from AI engine, using default: 75');
+        } else {
+          parsedJson.confidence = Math.round(parsedConfidence);
         }
 
         return {
@@ -745,14 +848,22 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
     };
   }
 
-  // Proactive graceful degradation - check AI engine availability before processing
   try {
     const llamaService = getLlamaService();
-    const health = await llamaService.testConnection();
-    const isHealthy = Boolean(health?.success) || health?.status === 'healthy';
-    if (!isHealthy) {
+    let preflight = await getImagePreflight(llamaService, {
+      forceRefresh: bypassCache
+    });
+    if (!preflight.isHealthy) {
+      logger.warn('[IMAGE] Preflight unhealthy, retrying once with forced refresh', {
+        status: preflight.health?.status
+      });
+      preflight = await getImagePreflight(llamaService, {
+        forceRefresh: true
+      });
+    }
+    if (!preflight.isHealthy) {
       logger.warn('[ANALYSIS-FALLBACK] AI engine unavailable, using filename-based analysis', {
-        status: health?.status
+        status: preflight.health?.status
       });
       return createFallbackAnalysis({
         fileName,
@@ -763,53 +874,13 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
         type: 'image'
       });
     }
-  } catch (error) {
-    logger.error('[IMAGE] Pre-flight verification failed', {
-      error: error.message
-    });
-    return createFallbackAnalysis({
-      fileName,
-      fileExtension,
-      reason: error.message,
-      smartFolders,
-      confidence: 55,
-      type: 'image'
-    });
-  }
-
-  try {
     // Resolve vision model for cache signatures
-    let visionModelName = AppConfig.ai.imageAnalysis.defaultModel;
-    try {
-      const cfgModel = await getLlamaService().getConfig();
-      visionModelName =
-        cfgModel.visionModel ||
-        AppConfig.ai.imageAnalysis.defaultModel ||
-        'llava-v1.6-mistral-7b-Q4_K_M.gguf';
-    } catch (err) {
-      logger.debug('[IMAGE] Config load failed, using default model:', err.message);
-      visionModelName =
-        AppConfig.ai.imageAnalysis.defaultModel || 'llava-v1.6-mistral-7b-Q4_K_M.gguf';
-    }
-
-    // Verify required vision model is loaded before proceeding
-    // Log if missing, but do not block analysis — the model may still be loadable.
-    let visionModelListed = null;
-    try {
-      const llamaService = getLlamaService();
-      const availableModels = await llamaService.listModels();
-      const modelNames = availableModels.map((m) => m.name || m.filename || '');
-      visionModelListed = modelNames.includes(visionModelName);
-      if (!visionModelListed) {
-        logger.warn('[IMAGE] Vision model not listed; will attempt vision analysis anyway', {
-          requiredModel: visionModelName,
-          availableModels: modelNames.slice(0, 5)
-        });
-      }
-    } catch (modelCheckError) {
-      // If model check fails, log but continue - the analysis may still work
-      logger.debug('[IMAGE] Model availability check failed, proceeding anyway', {
-        error: modelCheckError.message
+    const visionModelName = preflight.visionModelName;
+    const visionModelListed = preflight.modelNames.includes(visionModelName);
+    if (!visionModelListed) {
+      logger.warn('[IMAGE] Vision model not listed; will attempt vision analysis anyway', {
+        requiredModel: visionModelName,
+        availableModels: preflight.modelNames.slice(0, 5)
       });
     }
 
@@ -897,15 +968,16 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
         path: filePath,
         error: preErr.message
       });
-      return createFallbackAnalysis({
+      const preprocessingFallback = createFallbackAnalysis({
         fileName,
         fileExtension,
         reason: 'image preprocessing failed',
         smartFolders,
         confidence: 40,
-        type: 'image',
-        options: { error: preErr.message }
+        type: 'image'
       });
+      preprocessingFallback.analysisWarning = preErr.message;
+      return preprocessingFallback;
     }
 
     // Validate buffer is not empty
@@ -920,6 +992,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
     }
 
     logger.debug(`Image buffer size`, { bytes: imageBuffer.length });
+    const ocrSourceBuffer = imageBuffer;
     const imageBase64 = imageBuffer.toString('base64');
     // Release image buffer immediately after base64 conversion
     // This prevents holding potentially large (10MB+) buffers in memory during
@@ -947,7 +1020,12 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       if (hasTextHint) {
         logger.debug('[IMAGE] Filename suggests document content, attempting OCR pre-extraction');
         ocrAttempted = true;
-        extractedText = await extractTextFromImage(filePath, { allowVisionOcr: true });
+        extractedText = await extractTextFromImage(filePath, {
+          allowVisionOcr: true,
+          buffer: ocrSourceBuffer,
+          fileExtension,
+          preprocessed: true
+        });
         if (extractedText && extractedText.length > 20) {
           logger.info('[IMAGE] OCR pre-extraction successful', {
             textLength: extractedText.length,
@@ -999,7 +1077,10 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
         ocrAttempted = true;
         ocrText = await extractTextFromImage(filePath, {
           allowVisionOcr: false,
-          preferTesseract: true
+          preferTesseract: true,
+          buffer: ocrSourceBuffer,
+          fileExtension,
+          preprocessed: true
         });
       }
       if (!ocrText || ocrText.length < 20) {
@@ -1027,7 +1108,6 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
 
     let analysis;
     try {
-      const llamaService = getLlamaService();
       let visionSupported = true;
       try {
         visionSupported = await llamaService.supportsVisionInput();
@@ -1063,7 +1143,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
           smartFolders,
           extractedText,
           namingContext,
-          { bypassCache }
+          { bypassCache, visionModel: visionModelName }
         );
       }
     } catch (error) {
@@ -1090,32 +1170,47 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
           analysis._isFallback = true;
         }
       } else {
+        const recoverable = isRecoverableVisionResultError(error);
         logger.error('[IMAGE] Error calling analyzeImageWithLlama', {
           error: error.message,
-          filePath
+          filePath,
+          recoverable
         });
-        analysis = createVisionUnavailableFallback(
-          {
-            fileName,
-            fileExtension,
-            reason: 'analysis error',
-            smartFolders,
-            confidence: 55,
-            type: 'image',
-            options: { error: error.message }
-          },
-          extractedText
-        );
-        analysis._isFallback = true;
+        if (recoverable) {
+          const fallbackAnalysis = await attemptTextFallback();
+          if (fallbackAnalysis) {
+            fallbackAnalysis.analysisWarning = error.message;
+            analysis = fallbackAnalysis;
+          }
+        }
+        if (!analysis) {
+          analysis = createVisionUnavailableFallback(
+            {
+              fileName,
+              fileExtension,
+              reason: 'analysis error',
+              smartFolders,
+              confidence: 55,
+              type: 'image'
+            },
+            extractedText
+          );
+          analysis.analysisWarning = error.message;
+          analysis._isFallback = true;
+        }
       }
     }
 
-    if (analysis?.error && isModelNotAvailableError(analysis.error)) {
-      logger.warn('[IMAGE] Vision analysis reported missing model, falling back', {
+    if (
+      analysis?.error &&
+      (isModelNotAvailableError(analysis.error) || isRecoverableVisionResultError(analysis.error))
+    ) {
+      logger.warn('[IMAGE] Vision analysis reported recoverable error, falling back to OCR/text', {
         error: analysis.error
       });
       const fallbackAnalysis = await attemptTextFallback();
       if (fallbackAnalysis) {
+        fallbackAnalysis.analysisWarning = analysis.error;
         analysis = fallbackAnalysis;
       } else {
         analysis = createVisionUnavailableFallback(
@@ -1156,17 +1251,17 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
         !analysis.error &&
         !ocrAttempted
       ) {
-        const contentType = String(analysis.content_type || '').toLowerCase();
-        const contentSuggestsText =
-          contentType.includes('text') ||
-          contentType.includes('document') ||
-          contentType.includes('screenshot');
-        const wantsOcr = analysis.has_text === true || (contentSuggestsText && hasTextHint);
+        const wantsOcr = shouldRunPostVisionOcr(analysis, hasTextHint);
         if (wantsOcr) {
           try {
             logger.debug('[IMAGE] Analysis indicates text content, attempting OCR post-extraction');
             ocrAttempted = true;
-            extractedText = await extractTextFromImage(filePath, { allowVisionOcr: true });
+            extractedText = await extractTextFromImage(filePath, {
+              allowVisionOcr: true,
+              buffer: ocrSourceBuffer,
+              fileExtension,
+              preprocessed: true
+            });
             if (extractedText && extractedText.length > 20) {
               logger.info('[IMAGE] OCR post-extraction successful', {
                 textLength: extractedText.length,
@@ -1177,6 +1272,11 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
           } catch (ocrError) {
             logger.debug('[IMAGE] OCR post-extraction failed (non-fatal):', ocrError.message);
           }
+        } else {
+          logger.debug('[IMAGE] Skipping OCR post-extraction (analysis already sufficient)', {
+            confidence: analysis?.confidence,
+            hasTextHint
+          });
         }
       }
     }
@@ -1202,51 +1302,115 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       const { matcher } = getServices();
       const gate = await shouldEmbed({ stage: 'analysis', isInSmartFolder });
       if (matcher && analysis && gate.shouldEmbed) {
-        // Embedding scope is controlled by the embeddingScope setting:
-        // - 'all_analyzed' (default): embed every analyzed image
-        // - 'smart_folders_only': only embed images in a configured smart folder
-        const textParts = [
-          analysis.suggestedName,
-          analysis.summary,
-          analysis.category,
-          ...(analysis.keywords || [])
-        ].filter(Boolean);
-
-        // Include OCR text if available to boost search relevance
-        if (extractedTextForStorage) {
-          textParts.push(extractedTextForStorage.slice(0, 1000));
+        const persistedEmbedding = analysis?._embeddingForPersistence;
+        let usedPrecomputedEmbedding = false;
+        if (
+          persistedEmbedding &&
+          Array.isArray(persistedEmbedding.vector) &&
+          persistedEmbedding.vector.length > 0
+        ) {
+          const queueCapacity =
+            typeof embeddingQueueManager.waitForAnalysisQueueCapacity === 'function'
+              ? await embeddingQueueManager.waitForAnalysisQueueCapacity({
+                  highWatermarkPercent: 75,
+                  releasePercent: 50,
+                  maxWaitMs: 60000
+                })
+              : { timedOut: false, capacityPercent: null };
+          if (queueCapacity.timedOut) {
+            logger.warn('[IMAGE] Analysis embedding queue remained saturated before enqueue', {
+              path: filePath,
+              capacityPercent: queueCapacity.capacityPercent
+            });
+          }
+          await embeddingQueueManager.removeByFilePath?.(filePath);
+          await analysisQueue.enqueue({
+            id: getSemanticFileId(filePath),
+            path: filePath,
+            text:
+              persistedEmbedding.meta?.summary || analysis.summary || analysis.suggestedName || '',
+            vector: persistedEmbedding.vector,
+            model: persistedEmbedding.model,
+            meta: {
+              ...persistedEmbedding.meta,
+              path: filePath,
+              filePath,
+              fileName,
+              name: fileName,
+              fileSize: stats?.size,
+              fileExtension,
+              fileType: 'image',
+              analysis,
+              type: 'image',
+              smartFolder: resolvedSmartFolder?.name || null,
+              smartFolderPath: resolvedSmartFolder?.path || null
+            }
+          });
+          logger.debug('[IMAGE] Queued precomputed embedding for persistence', { path: filePath });
+          usedPrecomputedEmbedding = true;
         }
 
-        const textToEmbed = textParts.join(' ');
-        if (textToEmbed.length > 0) {
-          // Initialize if needed
-          if (!matcher.embeddingCache?.initialized) {
-            await matcher.initialize();
+        if (!usedPrecomputedEmbedding) {
+          // Embedding scope is controlled by the embeddingScope setting:
+          // - 'all_analyzed' (default): embed every analyzed image
+          // - 'smart_folders_only': only embed images in a configured smart folder
+          const textParts = [
+            analysis.suggestedName,
+            analysis.summary,
+            analysis.category,
+            ...(analysis.keywords || [])
+          ].filter(Boolean);
+
+          // Include OCR text if available to boost search relevance
+          if (extractedTextForStorage) {
+            textParts.push(extractedTextForStorage.slice(0, 1000));
           }
 
-          const { vector } = await matcher.embedText(textToEmbed);
-          if (vector) {
-            await embeddingQueueManager.removeByFilePath?.(filePath);
-            await analysisQueue.enqueue({
-              id: getSemanticFileId(filePath),
-              path: filePath,
-              text: textToEmbed,
-              vector,
-              meta: {
-                path: filePath,
-                filePath,
-                fileName,
-                name: fileName,
-                fileSize: stats?.size,
-                fileExtension,
-                fileType: 'image',
-                analysis,
-                type: 'image',
-                smartFolder: resolvedSmartFolder?.name || null,
-                smartFolderPath: resolvedSmartFolder?.path || null
+          const textToEmbed = textParts.join(' ');
+          if (textToEmbed.length > 0) {
+            // Initialize if needed
+            if (!matcher.embeddingCache?.initialized) {
+              await matcher.initialize();
+            }
+
+            const { vector } = await matcher.embedText(textToEmbed);
+            if (vector) {
+              const queueCapacity =
+                typeof embeddingQueueManager.waitForAnalysisQueueCapacity === 'function'
+                  ? await embeddingQueueManager.waitForAnalysisQueueCapacity({
+                      highWatermarkPercent: 75,
+                      releasePercent: 50,
+                      maxWaitMs: 60000
+                    })
+                  : { timedOut: false, capacityPercent: null };
+              if (queueCapacity.timedOut) {
+                logger.warn('[IMAGE] Analysis embedding queue remained saturated before enqueue', {
+                  path: filePath,
+                  capacityPercent: queueCapacity.capacityPercent
+                });
               }
-            });
-            logger.debug('[IMAGE] Queued embedding for persistence', { path: filePath });
+              await embeddingQueueManager.removeByFilePath?.(filePath);
+              await analysisQueue.enqueue({
+                id: getSemanticFileId(filePath),
+                path: filePath,
+                text: textToEmbed,
+                vector,
+                meta: {
+                  path: filePath,
+                  filePath,
+                  fileName,
+                  name: fileName,
+                  fileSize: stats?.size,
+                  fileExtension,
+                  fileType: 'image',
+                  analysis,
+                  type: 'image',
+                  smartFolder: resolvedSmartFolder?.name || null,
+                  smartFolderPath: resolvedSmartFolder?.path || null
+                }
+              });
+              logger.debug('[IMAGE] Queued embedding for persistence', { path: filePath });
+            }
           }
         }
       } else if (matcher && analysis && !gate.shouldEmbed) {
@@ -1268,6 +1432,13 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       logger.warn('[IMAGE] analyzeImageWithLlama returned undefined', {
         filePath
       });
+      const recoveredAnalysis = await attemptTextFallback();
+      if (recoveredAnalysis) {
+        recoveredAnalysis.analysisWarning = 'Vision analysis returned undefined';
+        analysis = recoveredAnalysis;
+      }
+    }
+    if (!analysis) {
       const result = createFallbackAnalysis({
         fileName,
         fileExtension,
@@ -1348,9 +1519,12 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       reason: 'AI engine failed',
       smartFolders,
       confidence: 60,
-      type: 'image',
-      options: { error: analysis?.error || 'AI image analysis failed.' }
+      type: 'image'
     });
+    result.isFallback = true;
+    if (analysis?.error) {
+      result.analysisWarning = analysis.error;
+    }
     // Add null check before accessing analysis.keywords
     // Preserve keywords from partial analysis if available
     if (analysis && Array.isArray(analysis.keywords)) {
@@ -1381,14 +1555,17 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       throw error;
     }
     logger.error('Error processing image', { filePath, error: error.message });
-    return {
-      error: `Failed to process image: ${error.message}`,
-      category: 'error',
-      project: fileName,
-      keywords: [],
-      confidence: 0,
-      extractionMethod: 'failed'
-    };
+    const fallback = createFallbackAnalysis({
+      fileName,
+      fileExtension,
+      reason: error.message || 'image processing failed',
+      smartFolders,
+      confidence: 55,
+      type: 'image'
+    });
+    fallback.analysisWarning = error.message;
+    fallback.isFallback = true;
+    return fallback;
   }
 }
 
@@ -1401,6 +1578,7 @@ async function extractTextFromImage(filePath, options = {}) {
     let imageBuffer = options.buffer;
     const allowVisionOcr = options.allowVisionOcr !== false;
     const preferTesseract = options.preferTesseract !== false;
+    const preprocessed = options.preprocessed === true;
 
     // Check file size before reading to prevent memory exhaustion
     if (imageBuffer) {
@@ -1425,15 +1603,17 @@ async function extractTextFromImage(filePath, options = {}) {
       imageBuffer = await fs.readFile(filePath);
     }
 
-    // Preprocess image for model compatibility (resize/convert)
-    try {
-      imageBuffer = await preprocessImageBuffer(imageBuffer, fileExtension);
-    } catch (preprocessError) {
-      logger.warn('[IMAGE-OCR] Preprocessing failed, skipping OCR', {
-        filePath,
-        error: preprocessError.message
-      });
-      return null;
+    // Preprocess image for model compatibility (resize/convert) unless already preprocessed.
+    if (!preprocessed) {
+      try {
+        imageBuffer = await preprocessImageBuffer(imageBuffer, fileExtension);
+      } catch (preprocessError) {
+        logger.warn('[IMAGE-OCR] Preprocessing failed, skipping OCR', {
+          filePath,
+          error: preprocessError.message
+        });
+        return null;
+      }
     }
 
     // Prefer Tesseract OCR for text extraction when available
@@ -1537,6 +1717,10 @@ async function flushAllEmbeddings() {
 function resetSingletons() {
   // Clear local image analysis cache (matcher singletons managed by DI container)
   getImageAnalysisCache().clear();
+  preflightCache.value = null;
+  preflightCache.expiresAt = 0;
+  preflightCache.pending = null;
+  preflightCache.serviceRef = null;
 }
 
 module.exports = {

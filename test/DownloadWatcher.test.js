@@ -155,7 +155,10 @@ describe('DownloadWatcher', () => {
         processNewFile: jest.fn().mockResolvedValue({
           destination: '/custom/docs/test.txt',
           confidence: 0.95
-        })
+        }),
+        undoRedo: {
+          recordAction: jest.fn().mockResolvedValue('undo-id-1')
+        }
       },
       settingsService: {
         load: jest.fn().mockResolvedValue({
@@ -384,6 +387,47 @@ describe('DownloadWatcher', () => {
 
       expect(result.handled).toBe(true);
       expect(mockFs.rename).not.toHaveBeenCalled();
+    });
+
+    test('records undo action using explicit type and data arguments', async () => {
+      mockDependencies.autoOrganizeService.processNewFile.mockResolvedValueOnce({
+        destination: '/custom/docs/test.txt',
+        confidence: 0.95,
+        undoAction: {
+          type: 'FILE_MOVE',
+          data: {
+            originalPath: '/downloads/test.pdf',
+            newPath: '/custom/docs/test.txt'
+          }
+        }
+      });
+
+      await watcher._attemptAutoOrganize('/downloads/test.pdf');
+
+      expect(mockDependencies.autoOrganizeService.undoRedo.recordAction).toHaveBeenCalledWith(
+        'FILE_MOVE',
+        expect.objectContaining({
+          originalPath: '/downloads/test.pdf',
+          newPath: '/custom/docs/test.txt'
+        })
+      );
+    });
+
+    test('skips undo record when undo payload shape is invalid', async () => {
+      mockDependencies.autoOrganizeService.processNewFile.mockResolvedValueOnce({
+        destination: '/custom/docs/test.txt',
+        confidence: 0.95,
+        undoAction: {
+          data: {
+            originalPath: '/downloads/test.pdf',
+            newPath: '/custom/docs/test.txt'
+          }
+        }
+      });
+
+      await watcher._attemptAutoOrganize('/downloads/test.pdf');
+
+      expect(mockDependencies.autoOrganizeService.undoRedo.recordAction).not.toHaveBeenCalled();
     });
   });
 

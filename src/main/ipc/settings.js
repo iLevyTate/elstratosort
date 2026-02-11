@@ -91,7 +91,7 @@ async function applySettingsToServices(merged, { logger }) {
   // Apply all Llama config changes through LlamaService to trigger proper notifications
   // skipSave: true because we're already in a save operation (settings are saved by the caller)
   if (Object.keys(llamaConfig).length > 0) {
-    await llamaService.updateConfig(llamaConfig);
+    await llamaService.updateConfig(llamaConfig, { skipSave: true });
   }
 
   if (typeof merged.launchOnStartup === 'boolean') {

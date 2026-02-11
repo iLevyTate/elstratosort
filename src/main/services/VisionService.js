@@ -56,6 +56,15 @@ const SERVER_BINARY_NAME = process.platform === 'win32' ? 'llama-server.exe' : '
 // Vision models (4-5GB) can take several minutes to load on CPU-only systems
 const DEFAULT_STARTUP_TIMEOUT_MS = TIMEOUTS.VISION_STARTUP || 120000;
 const DEFAULT_REQUEST_TIMEOUT_MS = TIMEOUTS.VISION_REQUEST || 90000;
+const DEFAULT_IDLE_KEEPALIVE_MS =
+  typeof TIMEOUTS.VISION_IDLE_KEEPALIVE === 'number' ? TIMEOUTS.VISION_IDLE_KEEPALIVE : 0;
+
+function parseKeepAliveMs(value, fallbackMs) {
+  if (value == null || value === '') return fallbackMs;
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallbackMs;
+  return parsed;
+}
 
 function getRuntimeRoot(tag = LLAMA_CPP_RELEASE_TAG) {
   return path.join(app.getPath('userData'), 'runtime', 'llama.cpp', tag);
@@ -384,6 +393,45 @@ class VisionService {
     this._startPromise = null;
     this._shutdownPromise = null; // FIX: Track shutdown to prevent race conditions
     this._serverLock = Promise.resolve(); // FIX: Mutex for server state changes
+    this._idleShutdownTimer = null;
+    this._idleKeepAliveMs = parseKeepAliveMs(
+      process.env.STRATOSORT_VISION_KEEPALIVE_MS,
+      DEFAULT_IDLE_KEEPALIVE_MS
+    );
+  }
+
+  isIdleKeepAliveEnabled() {
+    return this._idleKeepAliveMs > 0;
+  }
+
+  _clearIdleShutdownTimer() {
+    if (!this._idleShutdownTimer) return;
+    clearTimeout(this._idleShutdownTimer);
+    this._idleShutdownTimer = null;
+  }
+
+  scheduleIdleShutdown(reason = 'idle') {
+    this._clearIdleShutdownTimer();
+    if (!this.isIdleKeepAliveEnabled() || !this._process) return;
+
+    this._idleShutdownTimer = setTimeout(() => {
+      this._idleShutdownTimer = null;
+      this.shutdown().catch((error) => {
+        logger.warn('[VisionService] Idle shutdown failed', {
+          reason,
+          error: error?.message
+        });
+      });
+    }, this._idleKeepAliveMs);
+
+    if (typeof this._idleShutdownTimer.unref === 'function') {
+      this._idleShutdownTimer.unref();
+    }
+
+    logger.debug('[VisionService] Scheduled idle shutdown', {
+      reason,
+      keepAliveMs: this._idleKeepAliveMs
+    });
   }
 
   async isAvailable() {
@@ -617,6 +665,14 @@ class VisionService {
       args.push('--n-gpu-layers', String(config.gpuLayers));
     }
 
+    // Reduce decode/KV pressure on constrained VRAM profiles when provided by caller.
+    if (typeof config.batchSize === 'number' && config.batchSize > 0) {
+      args.push('-b', String(config.batchSize));
+    }
+    if (typeof config.ubatchSize === 'number' && config.ubatchSize > 0) {
+      args.push('-ub', String(config.ubatchSize));
+    }
+
     return args;
   }
 
@@ -650,7 +706,10 @@ class VisionService {
 
     logger.info('[VisionService] Starting vision runtime', {
       binaryPath,
-      port
+      port,
+      contextSize: config.contextSize,
+      batchSize: config.batchSize || null,
+      ubatchSize: config.ubatchSize || null
     });
 
     const child = spawn(binaryPath, args, {
@@ -760,7 +819,9 @@ class VisionService {
       this._activeConfig.mmprojPath === config.mmprojPath &&
       this._activeConfig.contextSize === config.contextSize &&
       this._activeConfig.threads === config.threads &&
-      this._activeConfig.gpuLayers === config.gpuLayers
+      this._activeConfig.gpuLayers === config.gpuLayers &&
+      this._activeConfig.batchSize === config.batchSize &&
+      this._activeConfig.ubatchSize === config.ubatchSize
     );
   }
 
@@ -833,6 +894,7 @@ class VisionService {
       throw new Error('Vision model not found: missing multimodal projector');
     }
 
+    this._clearIdleShutdownTimer();
     await this._ensureServer(config);
 
     // Validate server is still alive after _ensureServer (process may have died in between)
@@ -858,44 +920,49 @@ class VisionService {
     }
 
     const dataUrl = `data:${mimeType};base64,${imageData}`;
-    const response = await requestJson({
-      method: 'POST',
-      port: this._port,
-      path: '/v1/chat/completions',
-      body: {
-        model: path.basename(config.modelPath),
-        messages: [
-          systemPrompt
-            ? { role: 'system', content: systemPrompt }
-            : { role: 'system', content: 'You are a helpful vision assistant.' },
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt || 'Describe this image.' },
-              { type: 'image_url', image_url: { url: dataUrl } }
-            ]
-          }
-        ],
-        max_tokens: maxTokens,
-        temperature
-      },
-      timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
-      signal
-    });
+    try {
+      const response = await requestJson({
+        method: 'POST',
+        port: this._port,
+        path: '/v1/chat/completions',
+        body: {
+          model: path.basename(config.modelPath),
+          messages: [
+            systemPrompt
+              ? { role: 'system', content: systemPrompt }
+              : { role: 'system', content: 'You are a helpful vision assistant.' },
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: prompt || 'Describe this image.' },
+                { type: 'image_url', image_url: { url: dataUrl } }
+              ]
+            }
+          ],
+          max_tokens: maxTokens,
+          temperature
+        },
+        timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+        signal
+      });
 
-    if (response?.json?.error) {
-      throw new Error(response.json.error.message || 'Vision runtime error');
+      if (response?.json?.error) {
+        throw new Error(response.json.error.message || 'Vision runtime error');
+      }
+
+      const content = response?.json?.choices?.[0]?.message?.content;
+      if (!content) {
+        throw new Error('Vision runtime returned empty response');
+      }
+
+      return { response: content };
+    } finally {
+      this.scheduleIdleShutdown('analyzeImage');
     }
-
-    const content = response?.json?.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new Error('Vision runtime returned empty response');
-    }
-
-    return { response: content };
   }
 
   async shutdown() {
+    this._clearIdleShutdownTimer();
     // If already shutting down, return the existing promise
     if (this._shutdownPromise) {
       return this._shutdownPromise;

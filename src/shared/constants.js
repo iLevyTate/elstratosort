@@ -226,7 +226,7 @@ const AI_DEFAULTS = {
     MODEL: DEFAULT_AI_MODELS.IMAGE_ANALYSIS,
     GPU_LAYERS: -1, // -1 = auto → resolved to Infinity by LlamaService
     TEMPERATURE: 0.2,
-    MAX_TOKENS: 1024
+    MAX_TOKENS: 512
   },
   EMBEDDING: {
     MODEL: DEFAULT_AI_MODELS.EMBEDDING,

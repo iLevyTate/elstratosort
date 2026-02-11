@@ -361,6 +361,9 @@ function DiscoverPhase() {
     };
   }, []);
 
+  const analysisProgressRef = useRef(analysisProgress);
+  analysisProgressRef.current = analysisProgress;
+
   useEffect(() => {
     if (initialStuckCheckRef.current) return;
     initialStuckCheckRef.current = true;
@@ -381,10 +384,11 @@ function DiscoverPhase() {
     if (!isAnalyzing) return;
 
     const checkStalled = () => {
-      const lastActivity = analysisProgress?.lastActivity || Date.now();
+      const progress = analysisProgressRef.current;
+      const lastActivity = progress?.lastActivity || Date.now();
       const timeSinceActivity = Date.now() - lastActivity;
-      const current = analysisProgress?.current || 0;
-      const total = analysisProgress?.total || 0;
+      const current = progress?.current || 0;
+      const total = progress?.total || 0;
 
       if (current === 0 && total > 0 && timeSinceActivity > TIMEOUTS.STUCK_ANALYSIS_CHECK) {
         addNotification('Analysis paused. Restarting...', 'info', 3000, 'analysis-stalled');
@@ -404,7 +408,7 @@ function DiscoverPhase() {
     // Also check periodically in case dependencies stop updating (the exact stall scenario)
     const intervalId = setInterval(checkStalled, 30000);
     return () => clearInterval(intervalId);
-  }, [isAnalyzing, analysisProgress, addNotification, resetAnalysisState]);
+  }, [isAnalyzing, addNotification, resetAnalysisState]);
 
   const fileStatesRef = useRef(fileStates);
   fileStatesRef.current = fileStates;

@@ -617,11 +617,16 @@ describe('UnifiedSearchModal', () => {
 
   describe('File Operation Events', () => {
     test('should set up file operation listener when modal opens', () => {
+      const addEventListenerSpy = jest.spyOn(window, 'addEventListener');
       renderWithRedux(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} />);
 
-      // FIX: Verify the file operation listener was registered
-      expect(mockElectronAPI.events.onFileOperationComplete).toHaveBeenCalled();
+      // UnifiedSearchModal now listens to middleware-dispatched DOM events.
+      expect(addEventListenerSpy).toHaveBeenCalledWith(
+        'file-operation-complete',
+        expect.any(Function)
+      );
       expect(screen.getByTestId('modal')).toBeInTheDocument();
+      addEventListenerSpy.mockRestore();
     });
 
     test('should not set up listener when modal is closed', () => {

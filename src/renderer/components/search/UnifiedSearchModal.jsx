@@ -55,6 +55,7 @@ import {
 import { useGraphState, useGraphKeyboardNav, useFileActions } from '../../hooks';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { toggleSettings } from '../../store/slices/uiSlice';
+import { embeddingsIpc } from '../../services/ipc';
 import { NODE_TYPES, EDGE_TYPES } from './graphTypes';
 import SearchAutocomplete from './SearchAutocomplete';
 import ClusterLegend from './ClusterLegend';
@@ -1900,13 +1901,12 @@ export default function UnifiedSearchModal({
   // Shared: Stats & Rebuild
   // ============================================================================
 
-  const refreshStats = useCallback(async () => {
-    const getStats = window?.electronAPI?.embeddings?.getStats;
-    if (typeof getStats !== 'function') return;
+  const refreshStats = useCallback(async (options = {}) => {
+    const forceRefresh = options === true || options?.force === true;
     if (isMountedRef.current) setIsLoadingStats(true);
     try {
       const [statsResult, settingsResult] = await Promise.allSettled([
-        getStats(),
+        embeddingsIpc.getStatsCached({ forceRefresh }),
         window.electronAPI?.settings?.get?.()
       ]);
       const res = statsResult.status === 'fulfilled' ? statsResult.value : null;
@@ -1962,11 +1962,8 @@ export default function UnifiedSearchModal({
   // Listen for file operation events (move/delete) to refresh search results
   useEffect(() => {
     if (!isOpen) return undefined;
-    // Guard: Exit early if API not available to prevent unnecessary effect re-runs
-    const api = window.electronAPI?.events?.onFileOperationComplete;
-    if (!api) return undefined;
-
-    const cleanup = api((data) => {
+    const handleFileOperation = (event) => {
+      const data = event?.detail;
       if (data?.operation === 'move' || data?.operation === 'delete') {
         logger.debug('[Search] File operation detected, refreshing search', {
           operation: data.operation,
@@ -1975,10 +1972,14 @@ export default function UnifiedSearchModal({
         // Trigger search refresh by incrementing counter
         setSearchRefreshTrigger((prev) => prev + 1);
         // Also refresh stats
-        refreshStats();
+        refreshStats(true);
       }
-    });
-    return typeof cleanup === 'function' ? cleanup : undefined;
+    };
+
+    window.addEventListener('file-operation-complete', handleFileOperation);
+    return () => {
+      window.removeEventListener('file-operation-complete', handleFileOperation);
+    };
   }, [isOpen, refreshStats]);
 
   const rebuildFolders = useCallback(async () => {
@@ -1991,7 +1992,7 @@ export default function UnifiedSearchModal({
     try {
       const res = await rebuild();
       if (!res?.success) throw new Error(res?.error || 'Folder rebuild failed');
-      await refreshStats();
+      await refreshStats(true);
     } catch (e) {
       if (isMountedRef.current) setError(getErrorMessage(e, 'Folder rebuild'));
     } finally {
@@ -2009,7 +2010,7 @@ export default function UnifiedSearchModal({
     try {
       const res = await rebuild();
       if (!res?.success) throw new Error(res?.error || 'File rebuild failed');
-      await refreshStats();
+      await refreshStats(true);
     } catch (e) {
       if (isMountedRef.current) setError(getErrorMessage(e, 'File rebuild'));
     } finally {
@@ -4943,7 +4944,11 @@ export default function UnifiedSearchModal({
                 label="Relate"
               />
             </div>
-            <StatsDisplay stats={stats} isLoadingStats={isLoadingStats} onRefresh={refreshStats} />
+            <StatsDisplay
+              stats={stats}
+              isLoadingStats={isLoadingStats}
+              onRefresh={() => refreshStats(true)}
+            />
           </div>
         ) : (
           <Text
@@ -4955,7 +4960,7 @@ export default function UnifiedSearchModal({
               {hasLoadedStats ? `${stats?.files || 0} files indexed` : 'Loading index...'}
             </span>
             <IconButton
-              onClick={refreshStats}
+              onClick={() => refreshStats(true)}
               disabled={isLoadingStats}
               size="sm"
               variant="ghost"

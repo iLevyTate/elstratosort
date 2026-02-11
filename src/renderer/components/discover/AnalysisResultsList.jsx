@@ -30,7 +30,7 @@ import { logger } from '../../../shared/logger';
 import { UI_VIRTUALIZATION } from '../../../shared/constants';
 import { formatDisplayPath } from '../../utils/pathDisplay';
 import { Text } from '../ui/Typography';
-import { selectRedactPaths } from '../../store/selectors';
+import { selectRedactPaths, selectDefaultEmbeddingPolicy } from '../../store/selectors';
 import { setEmbeddingPolicyForFile } from '../../store/thunks/fileThunks';
 
 class AnalysisResultsErrorBoundary extends Component {
@@ -408,13 +408,7 @@ AnalysisResultRow.propTypes = {
 function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }) {
   // PERF: Use memoized selector instead of inline Boolean coercion
   const redactPaths = useSelector(selectRedactPaths);
-  const settings = useSelector((state) => state.ui?.settings);
-  const defaultEmbeddingPolicy = useMemo(() => {
-    const candidate = settings?.defaultEmbeddingPolicy;
-    return candidate === 'embed' || candidate === 'skip' || candidate === 'web_only'
-      ? candidate
-      : 'embed';
-  }, [settings]);
+  const defaultEmbeddingPolicy = useSelector(selectDefaultEmbeddingPolicy);
   const safeResults = useMemo(() => {
     if (!Array.isArray(results)) return [];
     return results.filter((r) => r && typeof r === 'object' && (r.path || r.name));

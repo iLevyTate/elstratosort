@@ -5,6 +5,7 @@
  * Used by FilePathCoordinator so pending embeddings remain consistent after moves/renames/deletes.
  */
 const { analysisQueue, organizeQueue } = require('./stageQueues');
+const { delay } = require('../../../shared/promiseUtils');
 
 function safeCallOptional(queue, method, ...args) {
   const fn = queue && typeof queue[method] === 'function' ? queue[method] : null;
@@ -22,6 +23,41 @@ function safeCallRequired(queue, method, ...args) {
 }
 
 const queues = [analysisQueue, organizeQueue];
+
+async function waitForQueueCapacity(
+  queue,
+  {
+    highWatermarkPercent = 75,
+    releasePercent = 50,
+    maxWaitMs = 60000,
+    initialDelayMs = 250,
+    maxDelayMs = 2000
+  } = {}
+) {
+  if (!queue || typeof queue.getStats !== 'function') {
+    return { waited: false, timedOut: false, capacityPercent: null };
+  }
+
+  const start = Date.now();
+  const firstStats = queue.getStats() || {};
+  let capacityPercent = Number(firstStats.capacityPercent) || 0;
+  if (capacityPercent < highWatermarkPercent) {
+    return { waited: false, timedOut: false, capacityPercent };
+  }
+
+  let waitMs = Math.max(50, initialDelayMs);
+  while (Date.now() - start < maxWaitMs) {
+    await delay(waitMs);
+    const stats = queue.getStats() || {};
+    capacityPercent = Number(stats.capacityPercent) || 0;
+    if (capacityPercent <= releasePercent) {
+      return { waited: true, timedOut: false, capacityPercent };
+    }
+    waitMs = Math.min(maxDelayMs, Math.round(waitMs * 1.5));
+  }
+
+  return { waited: true, timedOut: true, capacityPercent };
+}
 
 module.exports = {
   analysisQueue,
@@ -56,6 +92,14 @@ module.exports = {
       analysis: analysisQueue?.getStats ? analysisQueue.getStats() : null,
       organize: organizeQueue?.getStats ? organizeQueue.getStats() : null
     };
+  },
+
+  waitForAnalysisQueueCapacity(options = {}) {
+    return waitForQueueCapacity(analysisQueue, options);
+  },
+
+  waitForOrganizeQueueCapacity(options = {}) {
+    return waitForQueueCapacity(organizeQueue, options);
   },
 
   async forceFlush() {

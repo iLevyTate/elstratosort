@@ -14,6 +14,7 @@ const { systemIpc } = require('../src/renderer/services/ipc/systemIpc');
 describe('ipc services', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    embeddingsIpc.invalidateStatsCache();
   });
 
   test('filesIpc calls underlying file methods', () => {
@@ -81,6 +82,49 @@ describe('ipc services', () => {
 
     expect(embeddingsIpc.getStats()).toEqual({ size: 10 });
     expect(embeddingsIpc.rebuildFiles()).toEqual({ success: true });
+  });
+
+  test('embeddingsIpc.getStatsCached coalesces concurrent requests', async () => {
+    const api = {
+      embeddings: {
+        getStats: jest.fn(() =>
+          Promise.resolve({
+            success: true,
+            files: 10
+          })
+        )
+      }
+    };
+    requireElectronAPI.mockReturnValue(api);
+
+    const [a, b] = await Promise.all([
+      embeddingsIpc.getStatsCached(),
+      embeddingsIpc.getStatsCached()
+    ]);
+
+    expect(api.embeddings.getStats).toHaveBeenCalledTimes(1);
+    expect(a).toEqual(b);
+    expect(a.files).toBe(10);
+  });
+
+  test('embeddingsIpc.invalidateStatsCache forces a fresh fetch', async () => {
+    const api = {
+      embeddings: {
+        getStats: jest
+          .fn()
+          .mockResolvedValueOnce({ success: true, files: 1 })
+          .mockResolvedValueOnce({ success: true, files: 2 })
+      }
+    };
+    requireElectronAPI.mockReturnValue(api);
+
+    await embeddingsIpc.getStatsCached({ forceRefresh: true });
+    await embeddingsIpc.getStatsCached();
+    embeddingsIpc.invalidateStatsCache();
+    const latest = await embeddingsIpc.getStatsCached();
+
+    expect(api.embeddings.getStats).toHaveBeenCalledTimes(2);
+    expect(latest.files).toBe(2);
   });
 
   test('eventsIpc registers progress handler', () => {

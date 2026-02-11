@@ -475,13 +475,16 @@ class SettingsService {
         if (this._internalChangeTimer) {
           clearTimeout(this._internalChangeTimer);
         }
+        // Keep internal-change suppression active slightly longer than watcher debounce.
+        // This prevents our own atomic save from being misclassified as external change.
+        const internalChangeResetDelayMs = this._debounceDelay + 200;
         this._internalChangeTimer = setTimeout(() => {
           // FIX CRIT-33: Check shutdown state before executing callback
           if (!this._isShuttingDown) {
             this._isInternalChange = false;
           }
           this._internalChangeTimer = null;
-        }, 100);
+        }, internalChangeResetDelayMs);
       }
 
       return {

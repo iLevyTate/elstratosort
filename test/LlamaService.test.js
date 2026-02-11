@@ -65,6 +65,7 @@ jest.mock('../src/main/services/LlamaResilience', () => ({
 const { LlamaService } = require('../src/main/services/LlamaService');
 const { AI_DEFAULTS } = require('../src/shared/constants');
 const { ERROR_CODES } = require('../src/shared/errorCodes');
+const fs = require('fs').promises;
 
 describe('LlamaService', () => {
   beforeEach(() => {
@@ -203,6 +204,18 @@ describe('LlamaService', () => {
   });
 
   describe('generateEmbedding', () => {
+    test('throws INVALID_INPUT for non-string input', async () => {
+      const service = new LlamaService();
+      service._initialized = true;
+      service._ensureConfigLoaded = jest.fn().mockResolvedValue(undefined);
+      service._metrics = { recordEmbedding: jest.fn() };
+      service._coordinator = { withModel: (_type, fn) => fn() };
+
+      await expect(service.generateEmbedding({ text: 'nope' })).rejects.toEqual(
+        expect.objectContaining({ code: ERROR_CODES.INVALID_INPUT })
+      );
+    });
+
     test('throws with LLAMA_INFERENCE_FAILED code when embedding fails', async () => {
       const service = new LlamaService();
       service._initialized = true;
@@ -381,6 +394,56 @@ describe('LlamaService', () => {
 
       expect(result.embedding).toEqual([9]);
       expect(service._selectedModels.embedding).toBe('missing-embed.gguf');
+    });
+
+    test('retries fallback model on CPU when initial GPU load fails', async () => {
+      const { shouldFallbackToCPU } = require('../src/main/services/LlamaResilience');
+      shouldFallbackToCPU.mockImplementation((error) => /gpu/i.test(error?.message || ''));
+
+      const service = createServiceForFallback('missing-embed.gguf');
+      service._modelsPath = '/mock/models';
+      service._llama = {
+        loadModel: jest
+          .fn()
+          .mockRejectedValueOnce(new Error('GPU allocation failed'))
+          .mockResolvedValueOnce({
+            createEmbeddingContext: jest.fn().mockResolvedValue({
+              getEmbeddingFor: jest.fn().mockResolvedValue({
+                vector: Float32Array.from([0.1, 0.2, 0.3])
+              }),
+              dispose: jest.fn().mockResolvedValue(undefined)
+            }),
+            dispose: jest.fn().mockResolvedValue(undefined)
+          })
+      };
+      service._config.gpuLayers = 24;
+      const accessSpy = jest.spyOn(fs, 'access').mockResolvedValue(undefined);
+
+      try {
+        const result = await service._executeEmbeddingInferenceWithModel(
+          'hello world',
+          'nomic-embed-text-v1.5-Q8_0.gguf'
+        );
+
+        expect(result.embedding).toHaveLength(3);
+        expect(result.embedding[0]).toBeCloseTo(0.1, 5);
+        expect(result.embedding[1]).toBeCloseTo(0.2, 5);
+        expect(result.embedding[2]).toBeCloseTo(0.3, 5);
+        expect(service._llama.loadModel).toHaveBeenNthCalledWith(
+          1,
+          expect.objectContaining({
+            gpuLayers: 24
+          })
+        );
+        expect(service._llama.loadModel).toHaveBeenNthCalledWith(
+          2,
+          expect.objectContaining({
+            gpuLayers: 0
+          })
+        );
+      } finally {
+        accessSpy.mockRestore();
+      }
     });
   });
 

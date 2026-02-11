@@ -104,6 +104,29 @@ describe('documentLlm – extended', () => {
     }
   });
 
+  test('performs strict JSON retry before returning fallback parse error', async () => {
+    mockLlamaService.generateText
+      // Initial analysis response
+      .mockResolvedValueOnce({ response: '{ malformed json' })
+      // JSON repair helper response
+      .mockResolvedValueOnce({ response: '{ still malformed' })
+      // Strict retry response
+      .mockResolvedValueOnce({
+        response: JSON.stringify({
+          category: 'documents',
+          keywords: ['retry'],
+          confidence: 82,
+          suggestedName: 'strict_retry_ok'
+        })
+      });
+
+    const result = await analyzeTextWithLlama('Retry content', 'retry.pdf', []);
+
+    expect(mockLlamaService.generateText).toHaveBeenCalledTimes(3);
+    expect(result.error).toBeUndefined();
+    expect(result.suggestedName).toBe('strict_retry_ok.pdf');
+  });
+
   // ─── Empty/null response ───────────────────────────────────
 
   test('returns error object when LLM returns no response content', async () => {

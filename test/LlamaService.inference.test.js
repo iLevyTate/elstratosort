@@ -375,6 +375,14 @@ describe('LlamaService – inference methods', () => {
   });
 
   describe('batchGenerateEmbeddings', () => {
+    test('throws INVALID_INPUT when texts is not an array', async () => {
+      const service = createTestService();
+
+      await expect(service.batchGenerateEmbeddings('not-an-array')).rejects.toEqual(
+        expect.objectContaining({ code: ERROR_CODES.INVALID_INPUT })
+      );
+    });
+
     test('processes texts with bounded concurrency', async () => {
       const service = createTestService();
       let callCount = 0;

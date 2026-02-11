@@ -408,15 +408,47 @@ ${truncated}`;
           }
 
           if (!parsedJson) {
-            logger.warn('[documentLlm] JSON repair failed, using fallback', {
-              fileName: originalFileName,
-              model: modelToUse
-            });
-            return {
-              error: 'Failed to parse document analysis JSON from AI engine.',
-              keywords: [],
-              confidence: 65
-            };
+            // One strict retry before fallback to reduce avoidable AI fallbacks.
+            try {
+              const strictPrompt = `${prompt}\n\nSTRICT OUTPUT REQUIREMENT:\n- Return ONLY one valid JSON object.\n- Do NOT include markdown fences, prose, or extra tokens.\n- Ensure all keys required by the schema are present.`;
+              const strictRetryTokens = Math.max(128, Math.floor(usedMaxTokens * 0.85));
+              const strictRetryKey = globalDeduplicator.generateKey({
+                type: 'document',
+                fileName: originalFileName,
+                contentLength: truncated.length,
+                text: truncated,
+                model: modelToUse,
+                retry: 'strict-json'
+              });
+              const strictResponse = await generateDocumentText(
+                strictPrompt,
+                strictRetryTokens,
+                strictRetryKey
+              );
+              parsedJson = extractAndParseJSON(strictResponse?.response, null, {
+                source: 'documentLlm.strict-retry',
+                fileName: originalFileName,
+                model: modelToUse
+              });
+            } catch (strictRetryError) {
+              logger.debug('[documentLlm] Strict JSON retry failed', {
+                fileName: originalFileName,
+                model: modelToUse,
+                error: strictRetryError?.message
+              });
+            }
+
+            if (!parsedJson) {
+              logger.warn('[documentLlm] JSON repair and strict retry failed, using fallback', {
+                fileName: originalFileName,
+                model: modelToUse
+              });
+              return {
+                error: 'Failed to parse document analysis JSON from AI engine.',
+                keywords: [],
+                confidence: 65
+              };
+            }
           }
 
           // CRITICAL FIX: Validate schema to prevent crashes from malformed responses

@@ -1544,6 +1544,10 @@ class SearchService {
         undefined,
         { precomputedEmbedding }
       );
+      const vectorHealth =
+        typeof this.vectorDb?.getVectorHealth === 'function'
+          ? this.vectorDb.getVectorHealth()
+          : null;
       const chunkResults =
         safeChunkWeight > 0 && resolvedChunkTopK > 0
           ? await this.chunkSearch(normalizedQuery, topK * 2, resolvedChunkTopK, {
@@ -1762,23 +1766,27 @@ class SearchService {
       const diagnosticWarnings = [];
 
       // CRITICAL: Vector search returning 0 results when BM25 has results indicates dimension mismatch
-      if (vectorResults.length === 0 && bm25Results.length > 0) {
+      if (
+        vectorResults.length === 0 &&
+        bm25Results.length > 0 &&
+        vectorHealth?.primaryHealthy === false
+      ) {
         diagnosticWarnings.push({
           type: 'VECTOR_SEARCH_EMPTY',
           severity: 'critical',
           message:
-            'Vector search returned 0 results but BM25 has results. This strongly indicates an embedding dimension mismatch. Run "Rebuild Embeddings" to fix.'
+            'Vector search returned 0 results while primary vector path is degraded. Run "Rebuild Embeddings" to restore semantic search quality.'
         });
-        logger.warn(
-          '[SearchService] Vector search empty but BM25 has results - likely dimension mismatch',
-          {
-            bm25Count: bm25Results.length,
-            query: query.substring(0, 50)
-          }
-        );
+        logger.warn('[SearchService] Vector search empty and vector path degraded', {
+          bm25Count: bm25Results.length,
+          query: query.substring(0, 50),
+          vectorHealth
+        });
 
         // Auto-run full diagnostics when critical issue detected
-        this._autoRunDiagnostics('Vector search returned 0 results with BM25 having results');
+        this._autoRunDiagnostics(
+          'Vector search returned 0 results while vector health is degraded'
+        );
       }
 
       // Vector + BM25 both empty: check if embeddings exist but are orphaned or unavailable
@@ -1858,7 +1866,10 @@ class SearchService {
       }
 
       // Detect if vector search effectively failed (dimension mismatch or other issue)
-      const vectorSearchFailed = vectorResults.length === 0 && bm25Results.length > 0;
+      const vectorSearchFailed =
+        vectorResults.length === 0 &&
+        bm25Results.length > 0 &&
+        vectorHealth?.primaryHealthy === false;
 
       // Log the complete search journey for operational observability
       logger.info('[SearchService] Search complete', {
@@ -1897,10 +1908,11 @@ class SearchService {
           graphExpansion: graphExpansionResult.meta,
           reranked,
           queryExpanded: processedQuery !== query,
+          vectorHealth,
           // Signal fallback when vector search effectively unavailable
           ...(vectorSearchFailed && {
             fallback: true,
-            fallbackReason: 'dimension mismatch or model unavailable',
+            fallbackReason: 'primary vector path degraded',
             originalMode: 'hybrid'
           }),
           // Include warnings if any issues detected

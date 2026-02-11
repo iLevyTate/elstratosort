@@ -8,6 +8,7 @@ import SettingsCard from './SettingsCard';
 import SettingsGroup from './SettingsGroup';
 import { Text } from '../ui/Typography';
 import { logger } from '../../../shared/logger';
+import { embeddingsIpc } from '../../services/ipc';
 
 const DEFAULT_WEIGHT = 0.2;
 const WEIGHT_MIN = 0;
@@ -94,10 +95,11 @@ function GraphRetrievalSection({ settings, setSettings }) {
     }
   }, [historyStats?.lastUpdated]);
 
-  const refreshStats = useCallback(async () => {
+  const refreshStats = useCallback(async (options = {}) => {
+    const forceRefresh = options === true || options?.force === true;
     const getRelationshipStats = window?.electronAPI?.knowledge?.getRelationshipStats;
     const getHistoryStats = window?.electronAPI?.analysisHistory?.getStatistics;
-    const getEmbeddingStats = window?.electronAPI?.embeddings?.getStats;
+    const getEmbeddingStats = () => embeddingsIpc.getStatsCached({ forceRefresh });
     if (typeof getRelationshipStats !== 'function') return;
     if (isMountedRef.current) setIsLoading(true);
     try {
@@ -116,16 +118,24 @@ function GraphRetrievalSection({ settings, setSettings }) {
           setHistoryStats(null);
         } else if (historyResponse) {
           setHistoryStats(historyResponse);
+        } else {
+          setHistoryStats(null);
         }
         if (embeddingResponse?.success) {
           setEmbeddingStats(embeddingResponse);
+        } else {
+          setEmbeddingStats(null);
         }
       }
     } catch (error) {
       logger.debug('[GraphRetrievalSection] Failed to fetch graph stats', {
         error: error?.message
       });
-      if (isMountedRef.current) setStats(null);
+      if (isMountedRef.current) {
+        setStats(null);
+        setHistoryStats(null);
+        setEmbeddingStats(null);
+      }
     } finally {
       if (isMountedRef.current) setIsLoading(false);
     }
@@ -254,7 +264,7 @@ function GraphRetrievalSection({ settings, setSettings }) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={refreshStats}
+              onClick={() => refreshStats(true)}
               disabled={isLoading || !window?.electronAPI?.knowledge?.getRelationshipStats}
             >
               {isLoading ? 'Refreshing…' : 'Refresh'}

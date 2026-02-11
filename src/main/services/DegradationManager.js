@@ -92,14 +92,15 @@ class DegradationManager {
   async handleError(error, context = {}) {
     const message = (error.message || '').toLowerCase();
 
-    // GPU memory error
-    if (
+    // Persistent GPU memory pressure errors should switch to CPU fallback.
+    const persistentGpuPressure =
       message.includes('cuda out of memory') ||
-      message.includes('metal error') ||
-      message.includes('metal device') ||
-      message.includes('no metal') ||
-      message.includes('vram')
-    ) {
+      message.includes('not enough vram') ||
+      message.includes('unable to allocate') ||
+      message.includes('failed to allocate') ||
+      message.includes('buffer allocation failed') ||
+      message.includes('vram');
+    if (persistentGpuPressure) {
       logger.warn('[Degradation] GPU memory error, attempting recovery');
 
       // Update state so attemptRecovery() knows to try re-enabling GPU later
@@ -110,6 +111,23 @@ class DegradationManager {
         action: 'retry_with_cpu',
         message: 'GPU memory exhausted. Switching to CPU mode.',
         shouldNotifyUser: true
+      };
+    }
+
+    // Transient backend faults should retry primary backend first.
+    if (
+      message.includes('metal error') ||
+      message.includes('metal device') ||
+      message.includes('no metal') ||
+      message.includes('vulkan error') ||
+      message.includes('vk_error') ||
+      message.includes('cuda error')
+    ) {
+      logger.warn('[Degradation] Transient GPU backend error; retrying primary path first');
+      return {
+        action: 'retry_same_backend',
+        message: 'Transient GPU backend error detected. Retrying primary path.',
+        shouldNotifyUser: false
       };
     }
 

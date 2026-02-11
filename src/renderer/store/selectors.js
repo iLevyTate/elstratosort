@@ -284,6 +284,15 @@ export const selectRedactPaths = createSelector(
   (redactPaths) => Boolean(redactPaths)
 );
 
+/**
+ * Get default embedding policy from UI settings with safe fallback.
+ * Keeps list components subscribed to one field instead of the full settings object.
+ */
+export const selectDefaultEmbeddingPolicy = createSelector(
+  [(state) => state?.ui?.settings?.defaultEmbeddingPolicy],
+  (policy) => (policy === 'embed' || policy === 'skip' || policy === 'web_only' ? policy : 'embed')
+);
+
 // Re-export base selectors and constants for convenience
 export {
   selectSelectedFiles,

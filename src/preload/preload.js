@@ -297,6 +297,7 @@ const THROTTLED_CHANNELS = new Map([
   // Avoid request bursts on large folder scans.
   [IPC_CHANNELS.FILES.GET_FILE_STATS, 25]
 ]);
+const EMBEDDINGS_STATS_CACHE_MS = 5000;
 
 /**
  * Enhanced IPC validation with security checks
@@ -314,6 +315,7 @@ class SecureIPCManager {
     });
     this.channelQueues = new Map();
     this._channelQueueTimestamps = new Map(); // Track when each queue entry was created
+    this._embeddingsStatsCache = { value: null, expiresAt: 0, pending: null };
     this.sanitizer = createIpcSanitizer({ log });
     this.validator = createIpcValidator({ log });
   }
@@ -554,6 +556,21 @@ class SecureIPCManager {
       // Rate limiting
       this.checkRateLimit(channel);
 
+      // Coalesce frequent stats polling across renderer surfaces.
+      if (channel === IPC_CHANNELS.EMBEDDINGS.GET_STATS) {
+        const now = Date.now();
+        if (
+          this._embeddingsStatsCache.value &&
+          typeof this._embeddingsStatsCache.expiresAt === 'number' &&
+          this._embeddingsStatsCache.expiresAt > now
+        ) {
+          return this._embeddingsStatsCache.value;
+        }
+        if (this._embeddingsStatsCache.pending) {
+          return this._embeddingsStatsCache.pending;
+        }
+      }
+
       // Argument sanitization
       const sanitizedArgs = this.sanitizer.sanitizeArguments(args);
 
@@ -568,6 +585,22 @@ class SecureIPCManager {
       }
 
       const timeout = this._getInvokeTimeout(channel);
+      if (channel === IPC_CHANNELS.EMBEDDINGS.GET_STATS) {
+        this._embeddingsStatsCache.pending = this._invokeWithRetries(
+          channel,
+          sanitizedArgs,
+          timeout
+        )
+          .then((result) => {
+            this._embeddingsStatsCache.value = result;
+            this._embeddingsStatsCache.expiresAt = Date.now() + EMBEDDINGS_STATS_CACHE_MS;
+            return result;
+          })
+          .finally(() => {
+            this._embeddingsStatsCache.pending = null;
+          });
+        return await this._embeddingsStatsCache.pending;
+      }
       return await this._invokeWithRetries(channel, sanitizedArgs, timeout);
     } catch (error) {
       log.error(`IPC invoke error for ${channel}: ${error.message}`);

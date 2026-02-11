@@ -7,6 +7,95 @@ const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceConte
 const { createHandler, createErrorResponse, safeHandle } = require('./ipcWrappers');
 const { dump: dumpConfig, validate: validateConfig } = require('../../shared/config/index');
 
+const MAX_LOG_MESSAGE_CHARS = 8192;
+const MAX_LOG_CONTEXT_CHARS = 120;
+const MAX_LOG_SERIALIZED_DATA_BYTES = 16384;
+const MAX_LOG_DATA_DEPTH = 4;
+const MAX_LOG_DATA_KEYS = 100;
+const MAX_LOG_ARRAY_ITEMS = 100;
+const BLOCKED_LOG_DATA_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_CONFIG_PATH_CHARS = 120;
+const SAFE_CONFIG_PATH_PATTERN = /^[A-Za-z0-9_.-]+$/;
+const BLOCKED_CONFIG_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function truncateString(value, maxChars) {
+  const str = typeof value === 'string' ? value : String(value ?? '');
+  if (str.length <= maxChars) return str;
+  return `${str.slice(0, maxChars)}...[truncated]`;
+}
+
+function sanitizeLogData(value, depth = 0) {
+  if (value == null) return value;
+  if (depth >= MAX_LOG_DATA_DEPTH) return '[Truncated: max depth reached]';
+  if (Array.isArray(value)) {
+    return value.slice(0, MAX_LOG_ARRAY_ITEMS).map((entry) => sanitizeLogData(entry, depth + 1));
+  }
+  if (typeof value !== 'object') return value;
+
+  const sanitized = Object.create(null);
+  let count = 0;
+  for (const [key, nested] of Object.entries(value)) {
+    if (BLOCKED_LOG_DATA_KEYS.has(String(key).toLowerCase())) {
+      sanitized.__blockedKeys = true;
+      continue;
+    }
+    if (count >= MAX_LOG_DATA_KEYS) {
+      sanitized.__truncatedKeys = true;
+      break;
+    }
+    sanitized[key] = sanitizeLogData(nested, depth + 1);
+    count += 1;
+  }
+  return sanitized;
+}
+
+function clampLogDataSize(value) {
+  const sanitized = sanitizeLogData(value);
+  try {
+    const serialized = JSON.stringify(sanitized);
+    const bytes = Buffer.byteLength(serialized, 'utf8');
+    if (bytes <= MAX_LOG_SERIALIZED_DATA_BYTES) return sanitized;
+    return {
+      truncated: true,
+      reason: 'payload_too_large',
+      sizeBytes: bytes,
+      maxBytes: MAX_LOG_SERIALIZED_DATA_BYTES
+    };
+  } catch {
+    return {
+      truncated: true,
+      reason: 'payload_not_serializable'
+    };
+  }
+}
+
+function validateConfigPathInput(configPath) {
+  if (typeof configPath !== 'string') {
+    return 'Config path must be a non-empty string';
+  }
+  const normalized = configPath.trim();
+  if (!normalized) {
+    return 'Config path must be a non-empty string';
+  }
+  if (normalized.length > MAX_CONFIG_PATH_CHARS) {
+    return `Config path exceeds ${MAX_CONFIG_PATH_CHARS} characters`;
+  }
+  if (!SAFE_CONFIG_PATH_PATTERN.test(normalized)) {
+    return 'Config path contains invalid characters';
+  }
+  if (normalized.includes('..')) {
+    return 'Config path contains invalid traversal segments';
+  }
+  const segments = normalized.split('.');
+  if (segments.some((segment) => !segment)) {
+    return 'Config path contains invalid empty segments';
+  }
+  if (segments.some((segment) => BLOCKED_CONFIG_SEGMENTS.has(segment.toLowerCase()))) {
+    return 'Config path contains blocked segment';
+  }
+  return null;
+}
+
 function registerSystemIpc(servicesOrParams) {
   let container;
   if (servicesOrParams instanceof IpcServiceContext) {
@@ -125,18 +214,20 @@ function registerSystemIpc(servicesOrParams) {
       context,
       handler: async (_event, configPath) => {
         try {
-          // FIX 86: Validate input and block access to sensitive config keys
-          if (typeof configPath !== 'string' || configPath.length === 0) {
-            return createErrorResponse({ message: 'Config path must be a non-empty string' });
+          const pathError = validateConfigPathInput(configPath);
+          if (pathError) {
+            return createErrorResponse({ message: pathError });
           }
+          // FIX 86: Validate input and block access to sensitive config keys
           const { SENSITIVE_KEYS } = require('../../shared/config/configSchema');
-          const pathLower = configPath.toLowerCase();
+          const normalizedPath = configPath.trim();
+          const pathLower = normalizedPath.toLowerCase();
           if (SENSITIVE_KEYS.some((key) => pathLower.includes(key.toLowerCase()))) {
             return createErrorResponse({ message: 'Cannot access sensitive configuration values' });
           }
           const { get: getConfig } = require('../../shared/config/index');
-          const value = getConfig(configPath);
-          return { success: true, path: configPath, value };
+          const value = getConfig(normalizedPath);
+          return { success: true, path: normalizedPath, value };
         } catch (error) {
           logger.error('Failed to get config value:', error);
           return createErrorResponse(error);
@@ -181,16 +272,22 @@ function registerSystemIpc(servicesOrParams) {
           // Validate log level to prevent arbitrary method invocation
           const ALLOWED_LOG_LEVELS = new Set(['trace', 'debug', 'info', 'warn', 'error', 'fatal']);
           const safeLevel = ALLOWED_LOG_LEVELS.has(level) ? level : 'info';
+          const safeMessage = truncateString(message, MAX_LOG_MESSAGE_CHARS);
+          const safeData = clampLogDataSize(data || {});
 
           // Route to main logger (which writes to the file)
           // We use a prefix to distinguish renderer logs
-          const rendererContext = `Renderer${data?.context ? `:${data.context}` : ''}`;
+          const safeContext =
+            typeof safeData?.context === 'string'
+              ? truncateString(safeData.context, MAX_LOG_CONTEXT_CHARS)
+              : '';
+          const rendererContext = `Renderer${safeContext ? `:${safeContext}` : ''}`;
           const loggerWithContext = logger.pino.child({ context: rendererContext });
 
           // Call the validated level
           const logMethod = loggerWithContext[safeLevel];
           if (typeof logMethod === 'function') {
-            logMethod.call(loggerWithContext, data || {}, message);
+            logMethod.call(loggerWithContext, safeData, safeMessage);
           }
 
           return { success: true };

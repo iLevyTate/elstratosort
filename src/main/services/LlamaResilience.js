@@ -90,12 +90,25 @@ const GPU_FALLBACK_ERRORS = [
   'cuda out of memory',
   'metal error',
   'vulkan error',
+  'vk_error',
+  'cuda error',
   'gpu not available',
   'no metal device',
   'unable to allocate',
   'failed to allocate',
   'buffer allocation failed',
-  'not enough vram'
+  'not enough vram',
+  'available vram',
+  'context size of'
+];
+
+const TRANSIENT_GPU_ERROR_PATTERNS = [
+  'metal error',
+  'vulkan error',
+  'vk_error',
+  'cuda error',
+  'driver',
+  'busy'
 ];
 
 /**
@@ -112,6 +125,11 @@ function isRetryableLlamaError(error) {
 function shouldFallbackToCPU(error) {
   const message = (error.message || '').toLowerCase();
   return GPU_FALLBACK_ERRORS.some((pattern) => message.includes(pattern));
+}
+
+function isTransientGpuError(error) {
+  const message = (error?.message || '').toLowerCase();
+  return TRANSIENT_GPU_ERROR_PATTERNS.some((pattern) => message.includes(pattern));
 }
 
 /**
@@ -149,9 +167,38 @@ async function _executeWithRetries(operation, options) {
 
     // Check if we should fall back to CPU
     if (allowCPUFallback && shouldFallbackToCPU(error)) {
-      logger.warn('[Resilience] GPU error, falling back to CPU', { error: error.message });
+      const cpuFallbackRequestedByDegradation = error?._degradationAction === 'retry_with_cpu';
+      const transientGpuError = isTransientGpuError(error);
 
-      if (onFallback) onFallback(error);
+      // Transient backend faults should retry on the primary backend before
+      // escalating to CPU fallback.
+      if (!cpuFallbackRequestedByDegradation && transientGpuError) {
+        try {
+          logger.warn('[Resilience] Transient GPU error, retrying primary backend', {
+            error: error.message
+          });
+          return await withRetry(operation, {
+            maxRetries: 2,
+            initialDelay: 500,
+            maxDelay: 2000,
+            shouldRetry: isRetryableLlamaError,
+            onRetry: (retryErr, attempt) => {
+              logger.warn(`[Resilience] Primary-backend retry attempt ${attempt}`, {
+                error: retryErr.message
+              });
+              if (onRetry) onRetry(retryErr, attempt);
+            }
+          })();
+        } catch (transientRetryError) {
+          lastError = transientRetryError;
+        }
+      }
+
+      logger.warn('[Resilience] GPU error, falling back to CPU', {
+        error: lastError?.message || error.message
+      });
+
+      if (onFallback) onFallback(lastError || error);
       usedCPUFallback = true;
 
       // Retry with CPU

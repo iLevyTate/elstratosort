@@ -332,6 +332,30 @@ describe('BatchAnalysisService', () => {
 
       expect(result.results.length).toBe(2);
     });
+
+    test('respects groupConcurrency to avoid amplified parallel batches', async () => {
+      const files = ['/path/to/doc.pdf', '/path/to/image.jpg', '/path/to/sheet.csv'];
+      let activeGroups = 0;
+      let maxActiveGroups = 0;
+
+      jest.spyOn(service, 'analyzeFiles').mockImplementation(async (groupFiles) => {
+        activeGroups += 1;
+        maxActiveGroups = Math.max(maxActiveGroups, activeGroups);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        activeGroups -= 1;
+        return {
+          success: true,
+          results: groupFiles.map((filePath) => ({ filePath, success: true })),
+          errors: [],
+          total: groupFiles.length,
+          successful: groupFiles.length
+        };
+      });
+
+      await service.analyzeFilesGrouped(files, [], { groupConcurrency: 1 });
+
+      expect(maxActiveGroups).toBe(1);
+    });
   });
 
   describe('groupFilesByType', () => {

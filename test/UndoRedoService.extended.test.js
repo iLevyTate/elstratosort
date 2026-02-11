@@ -46,6 +46,10 @@ jest.mock('../src/shared/atomicFileOperations', () => ({
   crossDeviceMove: jest.fn().mockResolvedValue()
 }));
 
+jest.mock('../src/shared/pathSanitization', () => ({
+  validateFileOperationPath: jest.fn()
+}));
+
 jest.mock('../src/main/services/ServiceContainer', () => ({
   container: {
     tryResolve: jest.fn(() => null),
@@ -60,12 +64,17 @@ jest.mock('../src/main/services/ServiceContainer', () => ({
 
 const fs = require('fs').promises;
 const UndoRedoService = require('../src/main/services/UndoRedoService');
+const { validateFileOperationPath } = require('../src/shared/pathSanitization');
 
 describe('UndoRedoService - Extended Tests', () => {
   let service;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    validateFileOperationPath.mockImplementation(async (candidate) => ({
+      valid: true,
+      normalizedPath: String(candidate)
+    }));
 
     // Default: no existing actions file
     const enoent = new Error('ENOENT');
@@ -76,7 +85,70 @@ describe('UndoRedoService - Extended Tests', () => {
     service = new UndoRedoService({
       maxActions: 5,
       maxMemoryMB: 1,
-      maxBatchSize: 10
+      maxBatchSize: 10,
+      saveDebounceMs: 0
+    });
+  });
+
+  describe('Save coalescing', () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    test('coalesces burst recordAction writes into one scheduled save', async () => {
+      jest.useFakeTimers();
+      const debouncedService = new UndoRedoService({
+        maxActions: 5,
+        maxMemoryMB: 1,
+        maxBatchSize: 10,
+        saveDebounceMs: 25
+      });
+      debouncedService.initialized = true;
+      const saveSpy = jest.spyOn(debouncedService, 'saveActions').mockResolvedValue(undefined);
+
+      await debouncedService.recordAction('FILE_MOVE', {
+        originalPath: '/a.txt',
+        newPath: '/b.txt'
+      });
+      await debouncedService.recordAction('FILE_MOVE', {
+        originalPath: '/c.txt',
+        newPath: '/d.txt'
+      });
+      await debouncedService.recordAction('FILE_MOVE', {
+        originalPath: '/e.txt',
+        newPath: '/f.txt'
+      });
+
+      expect(saveSpy).toHaveBeenCalledTimes(0);
+
+      await jest.advanceTimersByTimeAsync(30);
+
+      expect(saveSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('undo forces immediate save and cancels pending scheduled save', async () => {
+      jest.useFakeTimers();
+      const debouncedService = new UndoRedoService({
+        maxActions: 5,
+        maxMemoryMB: 1,
+        maxBatchSize: 10,
+        saveDebounceMs: 50
+      });
+      debouncedService.initialized = true;
+      debouncedService.executeReverseAction = jest.fn().mockResolvedValue(undefined);
+      const saveSpy = jest.spyOn(debouncedService, 'saveActions').mockResolvedValue(undefined);
+
+      await debouncedService.recordAction('FILE_MOVE', {
+        originalPath: '/x.txt',
+        newPath: '/y.txt'
+      });
+      expect(saveSpy).toHaveBeenCalledTimes(0);
+
+      await debouncedService.undo();
+      expect(saveSpy).toHaveBeenCalledTimes(1);
+
+      await jest.advanceTimersByTimeAsync(100);
+      expect(saveSpy).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -143,6 +215,42 @@ describe('UndoRedoService - Extended Tests', () => {
       await service.initialize();
 
       await expect(service.redo()).rejects.toThrow('No actions to redo');
+    });
+
+    test('blocks undo when persisted action path fails validation', async () => {
+      service.initialized = true;
+      service.actions = [
+        {
+          id: 'action-unsafe',
+          type: 'FILE_MOVE',
+          data: {
+            originalPath: '/safe/original.txt',
+            newPath: '/unsafe/blocked.txt'
+          },
+          timestamp: new Date().toISOString(),
+          description: 'Move original.txt'
+        }
+      ];
+      service.currentIndex = 0;
+
+      validateFileOperationPath.mockImplementation(async (candidate) => {
+        const value = String(candidate);
+        if (value.includes('/unsafe/')) {
+          return {
+            valid: false,
+            normalizedPath: '',
+            error: 'Invalid path: access to system directories is not allowed'
+          };
+        }
+        return { valid: true, normalizedPath: value };
+      });
+
+      await expect(service.undo()).rejects.toThrow('Unsafe action path blocked');
+
+      const unsafeRename = fs.rename.mock.calls.find(([source]) =>
+        String(source).includes('/unsafe/blocked.txt')
+      );
+      expect(unsafeRename).toBeUndefined();
     });
   });
 

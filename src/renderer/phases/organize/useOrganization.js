@@ -36,7 +36,7 @@ export function useProgressTracking() {
   // Ref for cleanup
   const progressUnsubscribeRef = useRef(null);
   // FIX CRIT-2: Ref for chunk listener cleanup
-  const chunkUnsubscribeRef = useRef(null);
+  const chunkEventCleanupRef = useRef(null);
 
   // Progress listener setup
   useEffect(() => {
@@ -115,13 +115,9 @@ export function useProgressTracking() {
     const setupChunkListener = () => {
       if (abortController.signal.aborted) return;
 
-      if (!window.electronAPI?.events?.onBatchResultsChunk) {
-        logger.debug('Batch results chunk listener not available');
-        return;
-      }
-
       try {
-        chunkUnsubscribeRef.current = window.electronAPI.events.onBatchResultsChunk((payload) => {
+        const onBatchChunk = (event) => {
+          const payload = event?.detail;
           if (abortController.signal.aborted) return;
 
           try {
@@ -151,7 +147,11 @@ export function useProgressTracking() {
               error: error.message
             });
           }
-        });
+        };
+        window.addEventListener('batch-results-chunk', onBatchChunk);
+        chunkEventCleanupRef.current = () => {
+          window.removeEventListener('batch-results-chunk', onBatchChunk);
+        };
       } catch (error) {
         logger.error('Failed to subscribe to batch-results-chunk events', {
           error: error.message
@@ -177,10 +177,10 @@ export function useProgressTracking() {
       }
 
       // FIX CRIT-2: Cleanup chunk listener
-      if (typeof chunkUnsubscribeRef.current === 'function') {
+      if (typeof chunkEventCleanupRef.current === 'function') {
         try {
-          chunkUnsubscribeRef.current();
-          chunkUnsubscribeRef.current = null;
+          chunkEventCleanupRef.current();
+          chunkEventCleanupRef.current = null;
         } catch (error) {
           logger.error('Error unsubscribing from chunk events', {
             error: error.message
@@ -955,13 +955,22 @@ export function useOrganization({
           resultsCount: result?.results?.length ?? 0
         });
 
-        const successCount = Array.isArray(result?.results)
-          ? result.results.filter((r) => r.success).length
-          : 0;
+        const successCount = Number.isInteger(result?.successCount)
+          ? result.successCount
+          : Array.isArray(result?.results)
+            ? result.results.filter((r) => r.success).length
+            : result?.chunkedResults
+              ? chunkedResultsRef.current.filter((r) => r?.success).length
+              : 0;
+        const totalResultCount = Number.isInteger(result?.completedOperations)
+          ? result.completedOperations
+          : Array.isArray(result?.results)
+            ? result.results.length
+            : chunkedResultsRef.current.length;
 
         logger.info('[ORGANIZE] Final result:', {
           successCount,
-          totalResults: result?.results?.length ?? 0,
+          totalResults: totalResultCount,
           willAdvancePhase: successCount > 0
         });
 

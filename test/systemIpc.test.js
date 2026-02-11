@@ -35,6 +35,7 @@ describe('registerSystemIpc', () => {
   let mockSystemAnalytics;
   let mockServiceIntegration;
   let handlers;
+  let mockChildLogger;
 
   const { IPC_CHANNELS } = require('../src/shared/constants');
   const SYSTEM_CHANNELS = IPC_CHANNELS.SYSTEM;
@@ -55,6 +56,17 @@ describe('registerSystemIpc', () => {
       debug: jest.fn(),
       warn: jest.fn(),
       error: jest.fn()
+    };
+    mockChildLogger = {
+      trace: jest.fn(),
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      fatal: jest.fn()
+    };
+    mockLogger.pino = {
+      child: jest.fn(() => mockChildLogger)
     };
 
     mockSystemAnalytics = {
@@ -114,6 +126,7 @@ describe('registerSystemIpc', () => {
         SYSTEM_CHANNELS.GET_CONFIG_VALUE,
         expect.any(Function)
       );
+      expect(mockIpcMain.handle).toHaveBeenCalledWith(SYSTEM_CHANNELS.LOG, expect.any(Function));
     });
   });
 
@@ -323,6 +336,65 @@ describe('registerSystemIpc', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Path not found');
+    });
+
+    test('rejects blocked prototype segments', async () => {
+      const handler = handlers[SYSTEM_CHANNELS.GET_CONFIG_VALUE];
+      const result = await handler(null, '__proto__.polluted');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('blocked segment');
+    });
+
+    test('rejects traversal-like or invalid characters', async () => {
+      const handler = handlers[SYSTEM_CHANNELS.GET_CONFIG_VALUE];
+
+      const traversal = await handler(null, 'ENV..nodeEnv');
+      expect(traversal.success).toBe(false);
+      expect(traversal.error).toContain('invalid');
+
+      const invalidChars = await handler(null, 'ENV.nodeEnv;$');
+      expect(invalidChars.success).toBe(false);
+      expect(invalidChars.error).toContain('invalid characters');
+    });
+  });
+
+  describe('SYSTEM.LOG handler', () => {
+    test('returns success false for invalid payload', async () => {
+      const handler = handlers[SYSTEM_CHANNELS.LOG];
+      const result = await handler(null, null);
+      expect(result).toEqual({ success: false });
+    });
+
+    test('sanitizes large payloads and defaults invalid log level', async () => {
+      const handler = handlers[SYSTEM_CHANNELS.LOG];
+      const veryLargeMessage = 'm'.repeat(9000);
+      const veryLargeData = {
+        context: 'ctx'.repeat(200),
+        blob: 'x'.repeat(200000)
+      };
+
+      const result = await handler(null, {
+        level: 'not-a-level',
+        message: veryLargeMessage,
+        data: veryLargeData
+      });
+
+      expect(result).toEqual({ success: true });
+      expect(mockLogger.pino.child).toHaveBeenCalledWith({
+        context: expect.stringMatching(/^Renderer/)
+      });
+      expect(mockChildLogger.info).toHaveBeenCalledTimes(1);
+
+      const [loggedData, loggedMessage] = mockChildLogger.info.mock.calls[0];
+      expect(typeof loggedMessage).toBe('string');
+      expect(loggedMessage.length).toBeLessThanOrEqual(8208);
+      expect(loggedData).toEqual(
+        expect.objectContaining({
+          truncated: true,
+          reason: 'payload_too_large'
+        })
+      );
     });
   });
 });

@@ -96,7 +96,11 @@ const systemSlice = createSlice({
   initialState,
   reducers: {
     updateMetrics: (state, action) => {
-      state.metrics = { ...state.metrics, ...action.payload };
+      const payload = action.payload || {};
+      const changed = Object.keys(payload).some((key) => state.metrics[key] !== payload[key]);
+      if (changed) {
+        state.metrics = { ...state.metrics, ...payload };
+      }
     },
     updateHealth: (state, action) => {
       const payload = action.payload;

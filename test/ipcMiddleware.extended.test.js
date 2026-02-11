@@ -272,6 +272,41 @@ describe('ipcMiddleware extended coverage', () => {
       );
     });
 
+    test('normalizes single-file move payload (oldPath/newPath)', () => {
+      ipcMiddleware(mockStore);
+      markStoreReady();
+
+      handlers.fileOperationComplete({
+        operation: 'move',
+        oldPath: '/old/single.pdf',
+        newPath: '/new/single.pdf'
+      });
+
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'files/atomicUpdatePaths',
+          payload: { oldPaths: ['/old/single.pdf'], newPaths: ['/new/single.pdf'] }
+        })
+      );
+    });
+
+    test('normalizes single-file delete payload (oldPath)', () => {
+      ipcMiddleware(mockStore);
+      markStoreReady();
+
+      handlers.fileOperationComplete({
+        operation: 'delete',
+        oldPath: '/single/deleted.pdf'
+      });
+
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'files/atomicRemoveFiles',
+          payload: ['/single/deleted.pdf']
+        })
+      );
+    });
+
     test('dispatches DOM event for file operations', () => {
       ipcMiddleware(mockStore);
       markStoreReady();

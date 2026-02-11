@@ -761,7 +761,17 @@ class DownloadWatcher {
         // Record undo action AFTER the move succeeds to avoid phantom undo entries
         if (result.undoAction && this.autoOrganizeService?.undoRedo) {
           try {
-            await this.autoOrganizeService.undoRedo.recordAction(result.undoAction);
+            const undoType = result.undoAction?.type;
+            const undoData = result.undoAction?.data;
+            if (typeof undoType === 'string' && undoData && typeof undoData === 'object') {
+              await this.autoOrganizeService.undoRedo.recordAction(undoType, undoData);
+            } else {
+              logger.warn('[DOWNLOAD-WATCHER] Invalid undo action payload from auto-organize', {
+                filePath,
+                hasType: typeof undoType === 'string',
+                hasData: Boolean(undoData)
+              });
+            }
           } catch (undoErr) {
             logger.debug('[DOWNLOAD-WATCHER] Failed to record undo action:', undoErr.message);
           }

@@ -6,12 +6,9 @@ const { createLogger } = require('../../shared/logger');
 const { buildPathUpdatePairs } = require('../utils/fileIdUtils');
 const { RETRY } = require('../../shared/performanceConstants');
 const { crossDeviceMove } = require('../../shared/atomicFileOperations');
+const { validateFileOperationPath } = require('../../shared/pathSanitization');
 
 const logger = createLogger('UndoRedoService');
-const normalizePath = (filePath) => {
-  if (typeof filePath !== 'string') return filePath;
-  return path.resolve(filePath);
-};
 
 const { container, ServiceIds } = require('./ServiceContainer');
 
@@ -57,17 +54,50 @@ class UndoRedoService {
 
     // Promise-based mutex to serialize undo/redo/recordAction operations
     this._mutex = Promise.resolve();
+
+    // Coalesce frequent recordAction writes to reduce burst disk I/O.
+    // Undo/redo/clear paths still force an immediate flush.
+    this._saveDebounceMs =
+      Number.isFinite(options.saveDebounceMs) && options.saveDebounceMs >= 0
+        ? options.saveDebounceMs
+        : 250;
+    this._pendingSaveTimer = null;
+    this._pendingSavePromise = null;
+    this._pendingSaveResolve = null;
+    this._pendingSaveReject = null;
+  }
+
+  async _validateActionPath(filePath, fieldName = 'path') {
+    const candidate = typeof filePath === 'string' ? filePath.trim() : filePath;
+    const validation = await validateFileOperationPath(candidate, {
+      requireAbsolute: true,
+      checkSymlinks: false,
+      disallowUrlSchemes: true,
+      allowFileUrl: false
+    });
+    if (!validation.valid) {
+      throw new Error(
+        `Unsafe action path blocked (${fieldName}): ${validation.error || 'Path validation failed'}`
+      );
+    }
+    return validation.normalizedPath;
   }
 
   async ensureParentDirectory(filePath) {
-    const normalizedPath = normalizePath(filePath);
-    const parentDirectory = path.dirname(normalizedPath);
+    const normalizedPath = await this._validateActionPath(filePath, 'parent-target');
+    const parentDirectory = await this._validateActionPath(
+      path.dirname(normalizedPath),
+      'parent-directory'
+    );
     await fs.mkdir(parentDirectory, { recursive: true });
   }
 
   async safeMove(sourcePath, destinationPath) {
-    const normalizedSource = normalizePath(sourcePath);
-    const normalizedDestination = normalizePath(destinationPath);
+    const normalizedSource = await this._validateActionPath(sourcePath, 'move-source');
+    const normalizedDestination = await this._validateActionPath(
+      destinationPath,
+      'move-destination'
+    );
     await this.ensureParentDirectory(normalizedDestination);
     try {
       // Try rename first (atomic operation)
@@ -189,6 +219,71 @@ class UndoRedoService {
       }
       throw error;
     }
+  }
+
+  _clearPendingSaveState() {
+    this._pendingSaveTimer = null;
+    this._pendingSavePromise = null;
+    this._pendingSaveResolve = null;
+    this._pendingSaveReject = null;
+  }
+
+  _cancelScheduledSave() {
+    if (!this._pendingSaveTimer) {
+      return false;
+    }
+    clearTimeout(this._pendingSaveTimer);
+    const resolve = this._pendingSaveResolve;
+    this._clearPendingSaveState();
+    if (typeof resolve === 'function') {
+      // Resolve any waiters since a caller is about to perform an immediate save.
+      resolve();
+    }
+    return true;
+  }
+
+  _scheduleSaveActions() {
+    if (this._saveDebounceMs <= 0) {
+      return this.saveActions();
+    }
+    if (this._pendingSavePromise) {
+      return this._pendingSavePromise;
+    }
+
+    this._pendingSavePromise = new Promise((resolve, reject) => {
+      this._pendingSaveResolve = resolve;
+      this._pendingSaveReject = reject;
+    });
+
+    this._pendingSaveTimer = setTimeout(async () => {
+      const resolve = this._pendingSaveResolve;
+      const reject = this._pendingSaveReject;
+      this._pendingSaveTimer = null;
+      try {
+        await this.saveActions();
+        if (typeof resolve === 'function') resolve();
+      } catch (error) {
+        if (typeof reject === 'function') reject(error);
+      } finally {
+        this._clearPendingSaveState();
+      }
+    }, this._saveDebounceMs);
+
+    return this._pendingSavePromise;
+  }
+
+  async _saveActionsNow() {
+    const canceledPendingTimer = this._cancelScheduledSave();
+    if (!canceledPendingTimer && this._pendingSavePromise) {
+      try {
+        await this._pendingSavePromise;
+      } catch (error) {
+        logger.warn('[UndoRedoService] Pending scheduled save failed before forced flush', {
+          error: error.message
+        });
+      }
+    }
+    await this.saveActions();
   }
 
   /**
@@ -333,7 +428,15 @@ class UndoRedoService {
       this.currentMemoryEstimate = 0;
     }
 
-    await this.saveActions();
+    if (this._saveDebounceMs <= 0) {
+      await this.saveActions();
+    } else {
+      this._scheduleSaveActions().catch((error) => {
+        logger.error('[UndoRedoService] Failed to persist scheduled undo/redo state', {
+          error: error.message
+        });
+      });
+    }
     return action.id;
   }
 
@@ -358,7 +461,7 @@ class UndoRedoService {
       const operationResults = action._operationResults;
       delete action._operationResults;
       this.currentIndex--;
-      await this.saveActions();
+      await this._saveActionsNow();
 
       // Build response with operation results for batch operations
       const response = {
@@ -411,7 +514,7 @@ class UndoRedoService {
       const operationResults = action._operationResults;
       delete action._operationResults;
       this.currentIndex++;
-      await this.saveActions();
+      await this._saveActionsNow();
 
       // Build response with operation results for batch operations
       const response = {
@@ -512,7 +615,11 @@ class UndoRedoService {
       case 'FOLDER_CREATE':
         // Remove the created folder (if empty)
         try {
-          await fs.rmdir(action.data.folderPath);
+          const folderPath = await this._validateActionPath(
+            action.data.folderPath,
+            'folder-create-path'
+          );
+          await fs.rmdir(folderPath);
         } catch (error) {
           // Folder might not be empty, try to restore to original state
           logger.warn(
@@ -598,13 +705,20 @@ class UndoRedoService {
         if (action.data.createBackup) {
           await this.safeMove(action.data.originalPath, action.data.backupPath);
         } else {
-          await fs.unlink(action.data.originalPath);
+          const originalPath = await this._validateActionPath(
+            action.data.originalPath,
+            'file-delete-path'
+          );
+          await fs.unlink(originalPath);
         }
         break;
 
       case 'FOLDER_CREATE':
         // Create the folder again
-        await fs.mkdir(action.data.folderPath, { recursive: true });
+        await fs.mkdir(
+          await this._validateActionPath(action.data.folderPath, 'folder-create-path'),
+          { recursive: true }
+        );
         break;
 
       case 'BATCH_ORGANIZE':
@@ -705,14 +819,18 @@ class UndoRedoService {
         if (operation.createBackup) {
           await this.safeMove(operation.originalPath, operation.backupPath);
         } else {
-          await fs.unlink(operation.originalPath);
+          const originalPath = await this._validateActionPath(
+            operation.originalPath,
+            'batch-delete-path'
+          );
+          await fs.unlink(originalPath);
         }
         break;
     }
   }
 
   async fileExists(filePath) {
-    const normalizedPath = normalizePath(filePath);
+    const normalizedPath = await this._validateActionPath(filePath, 'exists-check-path');
     try {
       await fs.access(normalizedPath);
       return true;
@@ -757,7 +875,7 @@ class UndoRedoService {
         if (searchService?.invalidateAndRebuild) {
           searchService
             .invalidateAndRebuild({
-              immediate: true,
+              immediate: false,
               reason: 'undo-redo-move',
               oldPath,
               newPath
@@ -817,7 +935,7 @@ class UndoRedoService {
         if (searchService?.invalidateAndRebuild) {
           searchService
             .invalidateAndRebuild({
-              immediate: true,
+              immediate: false,
               reason: 'undo-redo-batch'
             })
             .catch((err) => {
@@ -845,8 +963,11 @@ class UndoRedoService {
    * @returns {Promise<string>} Path to backup file
    */
   async createBackup(filePath) {
-    const normalizedPath = normalizePath(filePath);
-    const backupDir = normalizePath(path.join(this.userDataPath, 'undo-backups'));
+    const normalizedPath = await this._validateActionPath(filePath, 'backup-source-path');
+    const backupDir = await this._validateActionPath(
+      path.join(this.userDataPath, 'undo-backups'),
+      'backup-directory'
+    );
     await this.ensureParentDirectory(path.join(backupDir, 'dummy'));
 
     // Create unique backup filename with timestamp and secure random component
@@ -854,7 +975,10 @@ class UndoRedoService {
     const timestamp = Date.now();
     const randomId = crypto.randomBytes(4).toString('hex');
     const backupName = `${timestamp}_${randomId}_${originalName}`;
-    const backupPath = normalizePath(path.join(backupDir, backupName));
+    const backupPath = await this._validateActionPath(
+      path.join(backupDir, backupName),
+      'backup-target-path'
+    );
 
     // Verify source file exists before attempting backup
     if (!(await this.fileExists(normalizedPath))) {
@@ -891,7 +1015,7 @@ class UndoRedoService {
 
       // CRITICAL: Immediately persist the backup path to disk BEFORE deleting the original
       // This ensures we can recover even if the process crashes
-      await this.saveActions();
+      await this._saveActionsNow();
 
       return backupPath;
     } catch (error) {
@@ -1038,7 +1162,7 @@ class UndoRedoService {
     this.actions = [];
     this.currentIndex = -1;
     this.currentMemoryEstimate = 0; // Fixed: Reset memory estimate
-    await this.saveActions();
+    await this._saveActionsNow();
   }
 
   /**

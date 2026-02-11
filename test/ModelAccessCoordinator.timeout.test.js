@@ -2,8 +2,8 @@
  * Tests for ModelAccessCoordinator timeout behavior.
  *
  * Verifies that:
- * - acquireLoadLock times out and unblocks the PQueue task
- * - acquireInferenceSlot times out and unblocks the PQueue task
+ * - acquireLoadLock times out while preserving lock-holder safety
+ * - acquireInferenceSlot times out while preserving slot-holder safety
  * - The queue is usable again after a timeout
  *
  * Uses a concurrency-aware PQueue mock that actually queues tasks
@@ -126,14 +126,21 @@ describe('ModelAccessCoordinator timeout behavior', () => {
       }
     });
 
-    test('force-releases held load lock after timeout', async () => {
+    test('does not force-release held load lock after timeout', async () => {
       const coordinator = new ModelAccessCoordinator();
-      await coordinator.acquireLoadLock('text', { timeoutMs: 80 });
+      const releaseHeld = await coordinator.acquireLoadLock('text', { timeoutMs: 80 });
 
-      // Wait until watchdog forces release
+      // Wait until watchdog timeout warning would fire.
       await new Promise((resolve) => setTimeout(resolve, 130));
 
-      const releaseNext = await coordinator.acquireLoadLock('text', { timeoutMs: 500 });
+      // Lock should still be held, so a new acquire should time out.
+      await expect(coordinator.acquireLoadLock('text', { timeoutMs: 120 })).rejects.toThrow(
+        /Load lock timeout/
+      );
+
+      // After explicit release, lock should be acquirable again.
+      releaseHeld();
+      const releaseNext = await coordinator.acquireLoadLock('text', { timeoutMs: 1000 });
       expect(typeof releaseNext).toBe('function');
       releaseNext();
     });
@@ -192,15 +199,24 @@ describe('ModelAccessCoordinator timeout behavior', () => {
       release3();
     });
 
-    test('force-releases held inference slot after timeout', async () => {
+    test('does not force-release held inference slot after timeout', async () => {
       const coordinator = new ModelAccessCoordinator({ inferenceSlots: 1 });
-      await coordinator.acquireInferenceSlot('op-held-timeout', 'vision', { timeoutMs: 80 });
+      const releaseHeld = await coordinator.acquireInferenceSlot('op-held-timeout', 'vision', {
+        timeoutMs: 80
+      });
 
-      // Wait until watchdog forces release
+      // Wait until watchdog timeout warning would fire.
       await new Promise((resolve) => setTimeout(resolve, 130));
 
+      // Slot should still be held, so a new acquire should time out.
+      await expect(
+        coordinator.acquireInferenceSlot('op-next-timeout', 'vision', { timeoutMs: 120 })
+      ).rejects.toThrow(/Inference slot timeout/);
+
+      // After explicit release, slot should be acquirable again.
+      releaseHeld();
       const releaseNext = await coordinator.acquireInferenceSlot('op-next', 'vision', {
-        timeoutMs: 500
+        timeoutMs: 1000
       });
       expect(typeof releaseNext).toBe('function');
       releaseNext();

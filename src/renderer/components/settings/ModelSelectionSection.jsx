@@ -10,6 +10,7 @@ import Button from '../ui/Button';
 import StateMessage from '../ui/StateMessage';
 import { Text } from '../ui/Typography';
 import { logger } from '../../../shared/logger';
+import { embeddingsIpc } from '../../services/ipc';
 
 const { getModel } = require('../../../shared/modelRegistry');
 
@@ -68,11 +69,10 @@ function ModelSelectionSection({
     };
   }, []);
 
-  const fetchStats = useCallback(() => {
-    if (!window.electronAPI?.embeddings?.getStats) return;
+  const fetchStats = useCallback((forceRefresh = false) => {
     const requestId = ++statsRequestIdRef.current;
-    window.electronAPI.embeddings
-      .getStats()
+    embeddingsIpc
+      .getStatsCached({ forceRefresh })
       .then((s) => {
         if (isMountedRef.current && requestId === statsRequestIdRef.current) {
           setStats(s);
@@ -86,7 +86,7 @@ function ModelSelectionSection({
   }, []);
 
   useEffect(() => {
-    fetchStats();
+    fetchStats(true);
   }, [settings.embeddingModel, fetchStats]);
 
   const handleEmbeddingModelChange = (e) => {
@@ -94,7 +94,7 @@ function ModelSelectionSection({
     if (newModel !== settings.embeddingModel) {
       setPendingModel(newModel);
       setShowConfirmDialog(true);
-      fetchStats();
+      fetchStats(true);
     }
   };
 

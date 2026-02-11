@@ -352,22 +352,39 @@ const ipcMiddleware = (store) => {
 
         // FIX: Wrap dispatches in try-catch to prevent silent failures
         try {
-          if (
-            validatedData.operation === 'move' &&
-            validatedData.files &&
-            validatedData.destinations
-          ) {
-            // FIX CRIT-1: Use atomic action to update BOTH filesSlice AND analysisSlice
-            // in a single dispatch, preventing path desync from race conditions
-            const pathUpdate = {
-              oldPaths: validatedData.files,
-              newPaths: validatedData.destinations
-            };
-            safeDispatch(atomicUpdateFilePathsAfterMove, pathUpdate);
-          } else if (validatedData.operation === 'delete' && validatedData.files) {
-            // FIX HIGH-7: Use atomic action to remove files from BOTH filesSlice AND analysisSlice
-            // This prevents orphaned analysis results from accumulating
-            safeDispatch(atomicRemoveFilesWithCleanup, validatedData.files);
+          if (validatedData.operation === 'move') {
+            // Support both batch payloads (files/destinations) and single-file payloads
+            // (oldPath/newPath) emitted by main file operation handlers.
+            const oldPaths =
+              Array.isArray(validatedData.files) && validatedData.files.length > 0
+                ? validatedData.files
+                : validatedData.oldPath
+                  ? [validatedData.oldPath]
+                  : [];
+            const newPaths =
+              Array.isArray(validatedData.destinations) && validatedData.destinations.length > 0
+                ? validatedData.destinations
+                : validatedData.newPath
+                  ? [validatedData.newPath]
+                  : [];
+
+            if (oldPaths.length > 0 && newPaths.length > 0) {
+              // Use atomic action to update BOTH filesSlice AND analysisSlice
+              // in a single dispatch, preventing path desync from race conditions.
+              safeDispatch(atomicUpdateFilePathsAfterMove, { oldPaths, newPaths });
+            }
+          } else if (validatedData.operation === 'delete') {
+            // Support both batch payloads (files) and single-file payloads (oldPath).
+            const removedPaths =
+              Array.isArray(validatedData.files) && validatedData.files.length > 0
+                ? validatedData.files
+                : validatedData.oldPath
+                  ? [validatedData.oldPath]
+                  : [];
+            if (removedPaths.length > 0) {
+              // Use atomic action to remove files from BOTH filesSlice AND analysisSlice.
+              safeDispatch(atomicRemoveFilesWithCleanup, removedPaths);
+            }
           }
 
           // FIX: Dispatch DOM event for components that need to react to file operations
@@ -419,15 +436,38 @@ const ipcMiddleware = (store) => {
       const batchChunkCleanup = window.electronAPI.events.onBatchResultsChunk((data) => {
         const { valid, data: validatedData } = validateIncomingEvent('batch-results-chunk', data);
         if (!valid) return;
+        const chunkItems = Array.isArray(validatedData?.chunk)
+          ? validatedData.chunk
+          : Array.isArray(validatedData?.results)
+            ? validatedData.results
+            : [];
+        const chunkIndex = Number.isInteger(validatedData?.chunkIndex)
+          ? validatedData.chunkIndex
+          : Number.isInteger(validatedData?.chunk)
+            ? validatedData.chunk
+            : 0;
+        const totalChunks = Number.isInteger(validatedData?.totalChunks)
+          ? validatedData.totalChunks
+          : Number.isInteger(validatedData?.total)
+            ? validatedData.total
+            : 0;
+        const normalizedPayload = {
+          ...validatedData,
+          chunk: chunkItems,
+          chunkIndex,
+          totalChunks
+        };
         logger.debug('[IPC] Batch results chunk received', {
-          chunk: validatedData?.chunk,
-          total: validatedData?.total,
-          resultCount: validatedData?.results?.length
+          chunkIndex: normalizedPayload.chunkIndex,
+          totalChunks: normalizedPayload.totalChunks,
+          resultCount: normalizedPayload.chunk.length
         });
 
         // Emit custom event for components that need progressive batch updates
         try {
-          window.dispatchEvent(new CustomEvent('batch-results-chunk', { detail: validatedData }));
+          window.dispatchEvent(
+            new CustomEvent('batch-results-chunk', { detail: normalizedPayload })
+          );
         } catch (e) {
           logger.warn('[IPC Middleware] Failed to dispatch batch-results-chunk event:', e.message);
         }

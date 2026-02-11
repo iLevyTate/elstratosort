@@ -138,8 +138,17 @@ class ModelDownloadManager {
     let startByte = 0;
     try {
       const partialStats = await fs.stat(partialPath);
-      startByte = partialStats.size;
-      logger.info(`[Download] Resuming from byte ${startByte}`);
+      if (partialStats.size >= modelInfo.size) {
+        // Stale/invalid partial (equal or larger than target size) can cause
+        // bad range requests and unrecoverable retry loops. Restart cleanly.
+        await this._cleanupPartialFile(partialPath);
+        logger.warn(
+          `[Download] Discarded stale partial for ${filename} (${partialStats.size} bytes), restarting`
+        );
+      } else {
+        startByte = partialStats.size;
+        logger.info(`[Download] Resuming from byte ${startByte}`);
+      }
     } catch {
       // No partial file, start fresh
     }
@@ -168,6 +177,28 @@ class ModelDownloadManager {
     return new Promise((resolve, reject) => {
       const url = new URL(downloadUrl);
       const protocol = url.protocol === 'https:' ? https : http;
+      let settled = false;
+
+      const finalizeSuccess = (result) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+
+      const finalizeFailure = (error, status = 'error', cleanupPartial = false) => {
+        if (settled) return;
+        settled = true;
+        downloadState.status = status;
+        if (this._downloads.has(filename)) this._downloads.delete(filename);
+        const cleanup = cleanupPartial ? this._cleanupPartialFile(partialPath) : Promise.resolve();
+        cleanup.finally(() => reject(error));
+      };
+
+      // Honor already-aborted external signals before opening sockets/streams.
+      if (signal?.aborted) {
+        finalizeFailure(new Error('Download cancelled'), 'cancelled');
+        return;
+      }
 
       const requestOptions = {
         hostname: url.hostname,
@@ -182,15 +213,20 @@ class ModelDownloadManager {
         // Handle redirects with loop protection
         if (response.statusCode === 301 || response.statusCode === 302) {
           if (redirectCount >= MAX_REDIRECTS) {
-            downloadState.status = 'error';
-            if (this._downloads.has(filename)) this._downloads.delete(filename);
-            reject(new Error(`Too many redirects (${MAX_REDIRECTS})`));
+            finalizeFailure(new Error(`Too many redirects (${MAX_REDIRECTS})`));
             return;
           }
 
           // FIX Bug #33: Update state instead of deleting it to prevent cancellation race condition
+          const redirectLocation = response.headers.location;
+          if (!redirectLocation) {
+            finalizeFailure(new Error('Redirect response missing Location header'));
+            return;
+          }
+          const resolvedRedirectUrl = new URL(redirectLocation, url).toString();
+
           downloadState.status = 'redirecting';
-          downloadState.url = response.headers.location;
+          downloadState.url = resolvedRedirectUrl;
 
           // FIX: Clean up abort listeners from this request before recursing.
           // The recursive call creates a new internalAbortController, so the
@@ -201,18 +237,16 @@ class ModelDownloadManager {
           response.resume(); // Drain response to free socket
           this.downloadModel(filename, {
             ...options,
-            _redirectUrl: response.headers.location,
+            _redirectUrl: resolvedRedirectUrl,
             _redirectCount: redirectCount + 1
           })
-            .then(resolve)
-            .catch(reject);
+            .then(finalizeSuccess)
+            .catch((err) => finalizeFailure(err));
           return;
         }
 
         if (response.statusCode !== 200 && response.statusCode !== 206) {
-          downloadState.status = 'error';
-          if (this._downloads.has(filename)) this._downloads.delete(filename);
-          reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
+          finalizeFailure(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
           return;
         }
 
@@ -257,8 +291,11 @@ class ModelDownloadManager {
             // Verify file size
             const stats = await fs.stat(partialPath);
             if (stats.size !== modelInfo.size) {
-              downloadState.status = 'incomplete';
-              reject(new Error('Download incomplete - file size mismatch'));
+              finalizeFailure(
+                new Error('Download incomplete - file size mismatch'),
+                'incomplete',
+                true
+              );
               return;
             }
 
@@ -267,9 +304,11 @@ class ModelDownloadManager {
             if (expectedChecksum) {
               const isValid = await this._verifyChecksum(partialPath, expectedChecksum);
               if (!isValid) {
-                downloadState.status = 'corrupted';
-                await fs.unlink(partialPath);
-                reject(new Error('Download corrupted - checksum mismatch'));
+                finalizeFailure(
+                  new Error('Download corrupted - checksum mismatch'),
+                  'corrupted',
+                  true
+                );
                 return;
               }
             }
@@ -300,18 +339,14 @@ class ModelDownloadManager {
               }
             }
 
-            resolve({ success: true, path: filePath });
+            finalizeSuccess({ success: true, path: filePath });
           } catch (finishError) {
-            downloadState.status = 'error';
-            if (this._downloads.has(filename)) this._downloads.delete(filename);
-            reject(finishError);
+            finalizeFailure(finishError);
           }
         });
 
         writeStream.on('error', (error) => {
-          downloadState.status = 'error';
-          if (this._downloads.has(filename)) this._downloads.delete(filename);
-          reject(error);
+          finalizeFailure(error);
         });
 
         // Handle abort signals: internal (from cancelDownload) + external (from caller)
@@ -324,9 +359,7 @@ class ModelDownloadManager {
           // FIX: Use destroy() instead of close() for immediate cleanup of write stream
           // close() waits for pending writes; destroy() discards buffered data and frees resources
           writeStream.destroy();
-          downloadState.status = 'cancelled';
-          if (this._downloads.has(filename)) this._downloads.delete(filename);
-          reject(new Error('Download cancelled'));
+          finalizeFailure(new Error('Download cancelled'), 'cancelled');
         };
         internalAbortController.signal.addEventListener('abort', onAbort);
         if (signal) {
@@ -345,15 +378,12 @@ class ModelDownloadManager {
       });
 
       request.on('error', (error) => {
-        downloadState.status = 'error';
-        if (this._downloads.has(filename)) this._downloads.delete(filename);
-        reject(error);
+        finalizeFailure(error);
       });
 
       request.setTimeout(30000, () => {
         request.destroy();
-        if (this._downloads.has(filename)) this._downloads.delete(filename);
-        reject(new Error('Download timeout'));
+        finalizeFailure(new Error('Download timeout'));
       });
     });
   }
@@ -477,6 +507,14 @@ class ModelDownloadManager {
       });
       stream.on('error', reject);
     });
+  }
+
+  async _cleanupPartialFile(partialPath) {
+    try {
+      await fs.unlink(partialPath);
+    } catch {
+      // Best-effort cleanup: file may not exist if write failed before creation.
+    }
   }
 }
 

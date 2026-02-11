@@ -119,6 +119,18 @@ describe('OramaVectorService', () => {
 
       expect(stats.dimension).toBe(1024);
     });
+
+    test('reports vector health in stats', async () => {
+      await service.initialize();
+      const stats = await service.getStats();
+
+      expect(stats.vectorHealth).toEqual(
+        expect.objectContaining({
+          primaryHealthy: true,
+          lastValidatedAt: expect.any(Number)
+        })
+      );
+    });
   });
 
   describe('file operations', () => {
@@ -156,6 +168,24 @@ describe('OramaVectorService', () => {
       expect(results).toHaveLength(1);
       expect(results[0].id).toBe('file-1');
       expect(results[0].score).toBeGreaterThan(0.9); // Should be very close to 1
+    });
+
+    test('excludes placeholder vectors from primary similarity queries', async () => {
+      await service.upsertFile(testFile);
+      await service.upsertFile({
+        id: 'file-zero',
+        vector: new Array(768).fill(0),
+        meta: {
+          path: '/docs/placeholder.txt',
+          fileName: 'placeholder.txt',
+          fileType: 'text/plain',
+          analyzedAt: new Date().toISOString()
+        }
+      });
+
+      const results = await service.querySimilarFiles(testFile.vector, 10);
+      expect(results.some((r) => r.id === 'file-zero')).toBe(false);
+      expect(results.some((r) => r.id === 'file-1')).toBe(true);
     });
 
     test('deletes file embedding', async () => {
@@ -202,6 +232,62 @@ describe('OramaVectorService', () => {
       expect(results).toHaveLength(1);
       expect(results[0].id).toBe('folder-1');
       expect(results[0].metadata.folderName).toBe('Documents');
+    });
+  });
+
+  describe('batch upsert operations', () => {
+    beforeEach(async () => {
+      await service.initialize();
+    });
+
+    test('batchUpsertFiles uses bounded worker concurrency', async () => {
+      service._batchUpsertConcurrency = 2;
+      let active = 0;
+      let maxActive = 0;
+      jest.spyOn(service, 'upsertFile').mockImplementation(async (file) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active -= 1;
+        return { success: true, fileId: file.id };
+      });
+
+      const files = Array.from({ length: 5 }, (_, idx) => ({
+        id: `file-${idx}`,
+        vector: new Array(768).fill(0.1),
+        meta: { path: `/docs/file-${idx}.txt` }
+      }));
+
+      const result = await service.batchUpsertFiles(files);
+
+      expect(result.success).toBe(true);
+      expect(result.count).toBe(5);
+      expect(maxActive).toBeLessThanOrEqual(2);
+    });
+
+    test('batchUpsertFolders uses bounded worker concurrency', async () => {
+      service._batchUpsertConcurrency = 2;
+      let active = 0;
+      let maxActive = 0;
+      jest.spyOn(service, 'upsertFolder').mockImplementation(async (folder) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active -= 1;
+        return { success: true, folderId: folder.id };
+      });
+
+      const folders = Array.from({ length: 4 }, (_, idx) => ({
+        id: `folder-${idx}`,
+        vector: new Array(768).fill(0.2),
+        meta: { path: `/folders/${idx}`, name: `Folder ${idx}` }
+      }));
+
+      const result = await service.batchUpsertFolders(folders);
+
+      expect(result.success).toBe(true);
+      expect(result.count).toBe(4);
+      expect(maxActive).toBeLessThanOrEqual(2);
     });
   });
 

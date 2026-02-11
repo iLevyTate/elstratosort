@@ -137,14 +137,12 @@ class ModelAccessCoordinator {
         }
         return;
       }
-      // Phase 2: lock acquired but never released; force release to unblock queue.
-      releaseLock('forced-timeout');
-      const error = new Error(`Load lock timeout for ${modelType} after ${timeoutMs}ms`);
-      error.code = 'LOAD_LOCK_TIMEOUT';
-      logger.warn('[Coordinator] Force-released load lock after timeout', {
+      // Phase 2: lock acquired but still running.
+      // Do not force release here: the holder may still be mutating model state.
+      logger.warn('[Coordinator] Load lock held past timeout; waiting for holder to release', {
         modelType,
         timeoutMs,
-        code: error.code
+        safetyMode: 'no-force-release'
       });
     }, timeoutMs);
 
@@ -252,11 +250,13 @@ class ModelAccessCoordinator {
         return;
       }
       // Phase 2: slot acquired but not released
-      releaseSlot('forced-timeout');
-      logger.warn('[Coordinator] Force-released inference slot after timeout', {
+      // Do not force release here: the inference may still be running and
+      // releasing early can allow unsafe concurrent use of model resources.
+      logger.warn('[Coordinator] Inference slot held past timeout; waiting for holder to release', {
         operationId,
         modelType,
-        timeoutMs
+        timeoutMs,
+        safetyMode: 'no-force-release'
       });
     }, timeoutMs);
 

@@ -59,6 +59,21 @@ const isSequenceExhaustedError = (error) => {
   return message.includes('no sequences left');
 };
 
+const normalizeEmbeddingInput = (text, operationName = 'embedding') => {
+  if (typeof text !== 'string') {
+    const error = new TypeError(
+      `[LlamaService] ${operationName} expects "text" to be a string; received ${typeof text}`
+    );
+    throw attachErrorCode(error, ERROR_CODES.INVALID_INPUT);
+  }
+  const normalized = text.trim();
+  if (!normalized) {
+    const error = new TypeError(`[LlamaService] ${operationName} requires non-empty text input`);
+    throw attachErrorCode(error, ERROR_CODES.INVALID_INPUT);
+  }
+  return normalized;
+};
+
 let _nodeLlamaModule = null;
 let _nodeLlamaLoadPromise = null;
 async function loadNodeLlamaModule() {
@@ -84,6 +99,13 @@ async function loadNodeLlamaModule() {
 // Vision models (LLaVA) encode images into ~4000 tokens. This floor guarantees
 // enough room for image tokens + prompt + response in the vision context.
 const VISION_MIN_CONTEXT = 4608;
+const LOW_VRAM_TEXT_CONTEXT = 4096;
+const LOW_VRAM_VISION_CONTEXT = 4608;
+const LOW_VRAM_VISION_BATCH_SIZE = 1024;
+const LOW_VRAM_VISION_UBATCH_SIZE = 256;
+const LOW_VRAM_VISION_RETRY_BATCH_SIZE = 512;
+const LOW_VRAM_VISION_RETRY_UBATCH_SIZE = 128;
+const LOW_VRAM_VISION_RETRY_MAX_TOKENS = 256;
 
 // Default model configuration
 const DEFAULT_CONFIG = {
@@ -94,6 +116,11 @@ const DEFAULT_CONFIG = {
   contextSize: 8192,
   threads: 0 // 0 = auto-detect
 };
+
+function parsePositiveInt(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
 
 // Allowed embedding models for validation (must match MODEL_CATALOG in modelRegistry.js)
 const ALLOWED_EMBED_MODELS = [
@@ -159,6 +186,8 @@ class LlamaService extends EventEmitter {
 
     // Vision batch mode — keeps vision server alive across multiple images
     this._visionBatchMode = false;
+    this._visionBatchModeRefs = 0;
+    this._visionBatchModeLock = Promise.resolve();
   }
 
   _createGate() {
@@ -171,6 +200,20 @@ class LlamaService extends EventEmitter {
 
   _generateOperationId(prefix) {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  async _withVisionBatchModeLock(fn) {
+    const previous = this._visionBatchModeLock;
+    let release;
+    this._visionBatchModeLock = new Promise((resolve) => {
+      release = resolve;
+    });
+    try {
+      await previous;
+      return await fn();
+    } finally {
+      release();
+    }
   }
 
   _beginConfigChangeGate() {
@@ -317,7 +360,39 @@ class LlamaService extends EventEmitter {
     }
 
     // Ensure the vision context is always large enough for image tokens + prompt + response.
-    this._visionContextSize = Math.max(this._config.contextSize, VISION_MIN_CONTEXT);
+    // On lower-VRAM GPUs, cap vision context to a safe floor to avoid decode/KV pressure.
+    const configuredVisionContext = Math.max(this._config.contextSize, VISION_MIN_CONTEXT);
+    this._visionContextSize =
+      !isCpu && vramMB > 0 && vramMB < 8000
+        ? Math.min(configuredVisionContext, LOW_VRAM_VISION_CONTEXT)
+        : configuredVisionContext;
+
+    // On lower-VRAM GPUs, avoid repeatedly attempting oversized contexts first.
+    // Keep the configured value unchanged, but bias first-attempt context selection
+    // via preferred sizes to reduce avoidable retries and KV-cache pressure.
+    if (!isCpu && vramMB > 0 && vramMB < 8000) {
+      this._preferredContextSize.text = Math.min(
+        Math.max(this._config.contextSize, 1024),
+        LOW_VRAM_TEXT_CONTEXT
+      );
+      this._preferredContextSize.vision = Math.min(
+        Math.max(this._visionContextSize, VISION_MIN_CONTEXT),
+        LOW_VRAM_VISION_CONTEXT
+      );
+      this._preferredContextSequences.text = 1;
+      this._preferredContextSequences.vision = 1;
+      logger.info('[LlamaService] Applied low-VRAM context preferences', {
+        vramMB,
+        preferredTextContext: this._preferredContextSize.text,
+        preferredVisionContext: this._preferredContextSize.vision,
+        preferredSequences: 1
+      });
+    } else {
+      this._preferredContextSize.text = null;
+      this._preferredContextSize.vision = null;
+      this._preferredContextSequences.text = null;
+      this._preferredContextSequences.vision = null;
+    }
 
     logger.debug('[LlamaService] Context sizing resolved', {
       textContext: this._config.contextSize,
@@ -342,6 +417,64 @@ class LlamaService extends EventEmitter {
       return preferred;
     }
     return this._config.contextSize;
+  }
+
+  _isLowVramProfile() {
+    const vramMB = this._detectedGpu?.vramMB || 0;
+    return this._gpuBackend !== 'cpu' && vramMB > 0 && vramMB < 8000;
+  }
+
+  _isUnknownVramGpuProfile() {
+    const vramMB = this._detectedGpu?.vramMB || 0;
+    return this._gpuBackend !== 'cpu' && vramMB <= 0;
+  }
+
+  _shouldUseConservativeVisionProfile() {
+    return this._isLowVramProfile() || this._isUnknownVramGpuProfile();
+  }
+
+  _buildVisionRuntimeProfile({ maxTokens, retryDegraded = false } = {}) {
+    const effectiveContextSize = this._getEffectiveContextSize('vision');
+    const envBatchSize = parsePositiveInt(process.env.STRATOSORT_VISION_BATCH_SIZE);
+    const envUbatchSize = parsePositiveInt(process.env.STRATOSORT_VISION_UBATCH_SIZE);
+    const useConservativeProfile = this._shouldUseConservativeVisionProfile();
+
+    const defaultBatchSize = retryDegraded
+      ? LOW_VRAM_VISION_RETRY_BATCH_SIZE
+      : LOW_VRAM_VISION_BATCH_SIZE;
+    const defaultUbatchSize = retryDegraded
+      ? LOW_VRAM_VISION_RETRY_UBATCH_SIZE
+      : LOW_VRAM_VISION_UBATCH_SIZE;
+
+    const profile = {
+      contextSize: effectiveContextSize,
+      batchSize: envBatchSize || (useConservativeProfile ? defaultBatchSize : null),
+      ubatchSize: envUbatchSize || (useConservativeProfile ? defaultUbatchSize : null),
+      maxTokens:
+        retryDegraded && useConservativeProfile
+          ? Math.max(
+              64,
+              Math.min(
+                Number(maxTokens) || LOW_VRAM_VISION_RETRY_MAX_TOKENS,
+                LOW_VRAM_VISION_RETRY_MAX_TOKENS
+              )
+            )
+          : maxTokens
+    };
+
+    return profile;
+  }
+
+  _isVisionDecodePressureError(errorLike) {
+    const message = String(errorLike?.message || errorLike || '').toLowerCase();
+    return (
+      message.includes('failed to process image') ||
+      message.includes('failed to decode image') ||
+      message.includes('failed to find a memory slot') ||
+      message.includes('kv cache') ||
+      message.includes('out of memory') ||
+      message.includes('mtmd_helper_eval failed')
+    );
   }
 
   _getContextSequences(type = 'text') {
@@ -1201,41 +1334,41 @@ class LlamaService extends EventEmitter {
               logger.warn(
                 `[LlamaService] Failed to create ${type} context with size ${size} and sequences ${sequences}: ${err.message}`
               );
-
-              if (shouldFallbackToCPU(err)) {
-                // Tier 2: max → auto
-                if (
-                  !options._gpuAutoFallback &&
-                  !options._cpuFallbackTried &&
-                  typeof gpuLayers === 'number' &&
-                  gpuLayers > 0
-                ) {
-                  logger.warn('[LlamaService] Context failed, falling back to auto GPU');
-                  try {
-                    await model.dispose?.();
-                  } catch {
-                    /* ignore */
-                  }
-                  return this._loadModel(type, { ...options, _gpuAutoFallback: true });
-                }
-                // Tier 3: auto → CPU
-                if (!options._cpuFallbackTried && gpuLayers !== 0) {
-                  logger.warn('[LlamaService] Context failed on GPU, retrying on CPU');
-                  try {
-                    await model.dispose?.();
-                  } catch {
-                    /* ignore */
-                  }
-                  return this._loadModel(type, {
-                    ...options,
-                    gpuLayersOverride: 0,
-                    _cpuFallbackTried: true
-                  });
-                }
-              }
             }
           }
           if (contextCreated) break;
+        }
+
+        if (!context && shouldFallbackToCPU(lastError)) {
+          // Exhausted all context candidates on the current backend profile.
+          // Only now escalate to auto GPU / CPU fallback.
+          if (
+            !options._gpuAutoFallback &&
+            !options._cpuFallbackTried &&
+            typeof gpuLayers === 'number' &&
+            gpuLayers > 0
+          ) {
+            logger.warn('[LlamaService] Context candidates exhausted, falling back to auto GPU');
+            try {
+              await model.dispose?.();
+            } catch {
+              /* ignore */
+            }
+            return this._loadModel(type, { ...options, _gpuAutoFallback: true });
+          }
+          if (!options._cpuFallbackTried && gpuLayers !== 0) {
+            logger.warn('[LlamaService] Context candidates exhausted on GPU, retrying on CPU');
+            try {
+              await model.dispose?.();
+            } catch {
+              /* ignore */
+            }
+            return this._loadModel(type, {
+              ...options,
+              gpuLayersOverride: 0,
+              _cpuFallbackTried: true
+            });
+          }
         }
       }
 
@@ -1358,6 +1491,7 @@ class LlamaService extends EventEmitter {
    * fallback behavior of the old OllamaService.
    */
   async generateEmbedding(text, _options = {}) {
+    const normalizedText = normalizeEmbeddingInput(text, 'generateEmbedding');
     const operationId = `embed-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await this._awaitModelReady('embedding');
 
@@ -1367,9 +1501,9 @@ class LlamaService extends EventEmitter {
         this._modelMemoryManager?.acquireRef('embedding');
         try {
           try {
-            return await this._executeEmbeddingInference(text, { operationId });
+            return await this._executeEmbeddingInference(normalizedText, { operationId });
           } catch (error) {
-            return await this._tryEmbeddingFallback(text, error);
+            return await this._tryEmbeddingFallback(normalizedText, error);
           }
         } finally {
           this._modelMemoryManager?.releaseRef('embedding');
@@ -1460,55 +1594,107 @@ class LlamaService extends EventEmitter {
       throw notFoundError;
     }
 
-    let model = null;
-    let context = null;
-    const startTime = Date.now();
+    const normalizedText = normalizeEmbeddingInput(text, '_executeEmbeddingInferenceWithModel');
 
-    try {
-      let gpuLayers;
-      const configLayers = this._config.gpuLayers;
-      if (typeof configLayers === 'number' && configLayers >= 0) {
-        gpuLayers = configLayers;
-      } else {
-        gpuLayers = this._resolveGpuLayerStrategy(modelPath, 'embedding');
-      }
+    const inferWithOptions = async (loadOptions = {}) => {
+      let model = null;
+      let context = null;
+      const startTime = Date.now();
 
-      const modelOptions = { modelPath };
-      if (typeof gpuLayers === 'number') {
-        modelOptions.gpuLayers = gpuLayers;
-      }
-      model = await this._llama.loadModel(modelOptions);
-      context = await model.createEmbeddingContext();
+      try {
+        let gpuLayers;
+        const configLayers = this._config.gpuLayers;
+        if (loadOptions.forceCPU || loadOptions._cpuFallbackTried) {
+          gpuLayers = 0;
+        } else if (loadOptions._gpuAutoFallback) {
+          gpuLayers = undefined;
+        } else if (typeof configLayers === 'number' && configLayers >= 0) {
+          gpuLayers = configLayers;
+        } else {
+          gpuLayers = this._resolveGpuLayerStrategy(modelPath, 'embedding');
+        }
 
-      const embedding = await context.getEmbeddingFor(text);
-      const vector = Array.from(embedding.vector);
-      this._metrics.recordEmbedding(Date.now() - startTime, true);
-      return { embedding: vector, model: resolvedName };
-    } catch (error) {
-      this._metrics.recordEmbedding(Date.now() - startTime, false);
-      if (isOutOfMemoryError(error)) {
-        throw attachErrorCode(error, ERROR_CODES.LLAMA_OOM);
-      }
-      if (error?.code === ERROR_CODES.LLAMA_MODEL_NOT_FOUND) {
-        throw error;
-      }
-      throw attachErrorCode(error, ERROR_CODES.LLAMA_MODEL_LOAD_FAILED);
-    } finally {
-      if (context?.dispose) {
+        const modelOptions = { modelPath };
+        if (typeof gpuLayers === 'number') {
+          modelOptions.gpuLayers = gpuLayers;
+        }
+        model = await this._llama.loadModel(modelOptions);
+
         try {
-          await context.dispose();
-        } catch {
-          /* ignore */
+          context = await model.createEmbeddingContext();
+        } catch (contextError) {
+          if (shouldFallbackToCPU(contextError)) {
+            // Tier 2: explicit GPU layers -> auto GPU
+            if (
+              !loadOptions._gpuAutoFallback &&
+              !loadOptions._cpuFallbackTried &&
+              typeof gpuLayers === 'number' &&
+              gpuLayers > 0
+            ) {
+              logger.warn(
+                '[LlamaService] Fallback embedding context failed, retrying with auto GPU layers',
+                { model: resolvedName }
+              );
+              return inferWithOptions({ ...loadOptions, _gpuAutoFallback: true });
+            }
+            // Tier 3: auto/explicit GPU -> CPU
+            if (!loadOptions._cpuFallbackTried && gpuLayers !== 0) {
+              logger.warn(
+                '[LlamaService] Fallback embedding context failed on GPU, retrying on CPU',
+                {
+                  model: resolvedName
+                }
+              );
+              return inferWithOptions({ ...loadOptions, _cpuFallbackTried: true, forceCPU: true });
+            }
+          }
+          throw contextError;
+        }
+
+        const embedding = await context.getEmbeddingFor(normalizedText);
+        const vector = Array.from(embedding.vector);
+        this._metrics.recordEmbedding(Date.now() - startTime, true);
+        return { embedding: vector, model: resolvedName };
+      } catch (error) {
+        this._metrics.recordEmbedding(Date.now() - startTime, false);
+        if (shouldFallbackToCPU(error) && !loadOptions._cpuFallbackTried) {
+          logger.warn('[LlamaService] Fallback embedding load failed on GPU, retrying on CPU', {
+            model: resolvedName
+          });
+          return inferWithOptions({ ...loadOptions, _cpuFallbackTried: true, forceCPU: true });
+        }
+        if (isOutOfMemoryError(error)) {
+          throw attachErrorCode(error, ERROR_CODES.LLAMA_OOM);
+        }
+        if (error?.code === ERROR_CODES.LLAMA_MODEL_NOT_FOUND) {
+          throw error;
+        }
+        throw attachErrorCode(error, ERROR_CODES.LLAMA_MODEL_LOAD_FAILED);
+      } finally {
+        if (context?.dispose) {
+          try {
+            await context.dispose();
+          } catch {
+            /* ignore */
+          }
+        }
+        if (model?.dispose) {
+          try {
+            await model.dispose();
+          } catch {
+            /* ignore */
+          }
         }
       }
-      if (model?.dispose) {
-        try {
-          await model.dispose();
-        } catch {
-          /* ignore */
-        }
-      }
-    }
+    };
+
+    return withLlamaResilience(
+      async (retryOptions = {}) => {
+        const forceCPU = retryOptions?.forceCPU === true;
+        return inferWithOptions(forceCPU ? { _cpuFallbackTried: true, forceCPU: true } : {});
+      },
+      { modelType: 'embedding' }
+    );
   }
 
   /**
@@ -1592,6 +1778,12 @@ class LlamaService extends EventEmitter {
    * Batch generate embeddings
    */
   async batchGenerateEmbeddings(texts, options = {}) {
+    if (!Array.isArray(texts)) {
+      const error = new TypeError(
+        '[LlamaService] batchGenerateEmbeddings expects an array of texts'
+      );
+      throw attachErrorCode(error, ERROR_CODES.INVALID_INPUT);
+    }
     const { onProgress } = options;
 
     // FIX Bug #10: Run embeddings in parallel but with bounded concurrency
@@ -1839,14 +2031,34 @@ class LlamaService extends EventEmitter {
    * when the batch is done.
    */
   async enterVisionBatchMode() {
-    this._visionBatchMode = true;
-    if (this._modelMemoryManager) {
-      await this._modelMemoryManager.unloadModel('text');
-      await this._modelMemoryManager.unloadModel('embedding');
-      // Brief delay for CUDA driver to release VRAM back to the OS
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    logger.info('[LlamaService] Entered vision batch mode');
+    return this._withVisionBatchModeLock(async () => {
+      this._visionBatchModeRefs += 1;
+      if (this._visionBatchModeRefs > 1) {
+        this._visionBatchMode = true;
+        logger.debug('[LlamaService] Joined existing vision batch mode', {
+          refs: this._visionBatchModeRefs
+        });
+        return;
+      }
+
+      this._visionBatchMode = true;
+      try {
+        if (this._modelMemoryManager) {
+          await this._modelMemoryManager.unloadModel('text');
+          await this._modelMemoryManager.unloadModel('embedding');
+          // Brief delay for CUDA driver to release VRAM back to the OS
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      } catch (error) {
+        this._visionBatchModeRefs = Math.max(0, this._visionBatchModeRefs - 1);
+        this._visionBatchMode = this._visionBatchModeRefs > 0;
+        throw error;
+      }
+
+      logger.info('[LlamaService] Entered vision batch mode', {
+        refs: this._visionBatchModeRefs
+      });
+    });
   }
 
   /**
@@ -1854,23 +2066,44 @@ class LlamaService extends EventEmitter {
    * then pre-loads text model for subsequent inference.
    */
   async exitVisionBatchMode() {
-    this._visionBatchMode = false;
-    try {
-      const visionService = getVisionService();
-      await visionService.shutdown();
-    } catch {
-      /* ignore — server may already be gone */
-    }
-    // Wait for CUDA VRAM release before reloading text model
-    await new Promise((r) => setTimeout(r, 500));
-    // Reset embedding circuit breaker — fire-and-forget embeddings that hit the
-    // unloaded model during vision batch are expected failures, not real faults.
-    const { resetLlamaCircuit: resetCircuit } = require('./LlamaResilience');
-    resetCircuit('embedding');
-    this._ensureModelLoaded('text').catch((err) => {
-      logger.warn('[LlamaService] Text model preload after vision batch failed:', err?.message);
+    return this._withVisionBatchModeLock(async () => {
+      if (this._visionBatchModeRefs <= 0) {
+        this._visionBatchMode = false;
+        logger.warn('[LlamaService] exitVisionBatchMode called without active batch mode');
+        return;
+      }
+
+      this._visionBatchModeRefs -= 1;
+      if (this._visionBatchModeRefs > 0) {
+        this._visionBatchMode = true;
+        logger.debug('[LlamaService] Deferred vision batch mode exit; active owners remain', {
+          refs: this._visionBatchModeRefs
+        });
+        return;
+      }
+
+      this._visionBatchMode = false;
+      try {
+        const visionService = getVisionService();
+        await visionService.shutdown();
+      } catch {
+        /* ignore — server may already be gone */
+      }
+      // Wait for CUDA VRAM release before reloading text model
+      await new Promise((r) => setTimeout(r, 500));
+      this._ensureModelLoaded('text')
+        .catch((err) => {
+          logger.warn('[LlamaService] Text model preload after vision batch failed:', err?.message);
+          return null;
+        })
+        .then((result) => {
+          if (!result) return;
+          // Reset embedding circuit breaker only after text/embedding path is healthy again.
+          const { resetLlamaCircuit: resetCircuit } = require('./LlamaResilience');
+          resetCircuit('embedding');
+        });
+      logger.info('[LlamaService] Exited vision batch mode');
     });
-    logger.info('[LlamaService] Exited vision batch mode');
   }
 
   /**
@@ -1887,7 +2120,7 @@ class LlamaService extends EventEmitter {
     imagePath,
     imageBase64,
     prompt = 'Describe this image.',
-    maxTokens = 1024,
+    maxTokens = 512,
     temperature = 0.2,
     signal
   } = {}) {
@@ -1949,24 +2182,55 @@ class LlamaService extends EventEmitter {
 
                 const visionService = getVisionService();
                 logger.info('[LlamaService] Using local vision runtime for image analysis');
-                const result = await visionService.analyzeImage({
+                const baseRuntimeProfile = this._buildVisionRuntimeProfile({ maxTokens });
+                const buildVisionRequest = (runtimeProfile) => ({
                   imageBase64,
                   imagePath,
                   prompt,
                   systemPrompt:
                     'You are a vision assistant that analyzes images based on provided descriptions and OCR text.',
-                  maxTokens,
+                  maxTokens: runtimeProfile.maxTokens,
                   temperature,
                   signal,
                   config: {
                     modelPath: path.join(this._modelsPath, modelName),
                     mmprojPath: this._visionProjectorStatus.projectorPath,
                     mmprojRequired: this._visionProjectorStatus.required,
-                    contextSize: this._getEffectiveContextSize('vision'),
+                    contextSize: runtimeProfile.contextSize,
                     threads: this._config.threads,
-                    gpuLayers: this._config.gpuLayers
+                    gpuLayers: this._config.gpuLayers,
+                    batchSize: runtimeProfile.batchSize,
+                    ubatchSize: runtimeProfile.ubatchSize
                   }
                 });
+
+                let result;
+                try {
+                  result = await visionService.analyzeImage(buildVisionRequest(baseRuntimeProfile));
+                } catch (visionError) {
+                  const shouldRetryDegraded =
+                    this._shouldUseConservativeVisionProfile() &&
+                    !this._visionBatchMode &&
+                    this._isVisionDecodePressureError(visionError);
+                  if (!shouldRetryDegraded) {
+                    throw visionError;
+                  }
+                  const degradedProfile = this._buildVisionRuntimeProfile({
+                    maxTokens,
+                    retryDegraded: true
+                  });
+                  logger.warn(
+                    '[LlamaService] Vision request failed under memory pressure; retrying with reduced runtime profile',
+                    {
+                      contextSize: degradedProfile.contextSize,
+                      batchSize: degradedProfile.batchSize,
+                      ubatchSize: degradedProfile.ubatchSize,
+                      maxTokens: degradedProfile.maxTokens,
+                      error: visionError?.message
+                    }
+                  );
+                  result = await visionService.analyzeImage(buildVisionRequest(degradedProfile));
+                }
 
                 const visionDuration = Date.now() - startTime;
                 const visionChars = result?.response?.length || 0;
@@ -1986,26 +2250,39 @@ class LlamaService extends EventEmitter {
 
                 // In batch mode, exitVisionBatchMode() handles shutdown + reload
                 if (!this._visionBatchMode) {
-                  // Shut down vision server to release VRAM before reloading text model
-                  try {
-                    await visionService.shutdown();
-                  } catch {
-                    /* ignore — server may already be gone */
+                  const keepAliveEnabled =
+                    typeof visionService.isIdleKeepAliveEnabled === 'function' &&
+                    visionService.isIdleKeepAliveEnabled();
+
+                  if (keepAliveEnabled) {
+                    visionService.scheduleIdleShutdown?.('single-image-complete');
+                  } else {
+                    // Shut down vision server to release VRAM before reloading text model
+                    try {
+                      await visionService.shutdown();
+                    } catch {
+                      /* ignore — server may already be gone */
+                    }
+                    // Wait for CUDA VRAM release before reloading text model
+                    await new Promise((r) => setTimeout(r, 500));
                   }
-                  // Wait for CUDA VRAM release before reloading text model
-                  await new Promise((r) => setTimeout(r, 500));
-                  // Reset text and embedding circuit breakers — fire-and-forget
-                  // operations that hit unloaded models during vision are expected failures.
-                  const { resetLlamaCircuit: resetCircuitSingle } = require('./LlamaResilience');
-                  resetCircuitSingle('text');
-                  resetCircuitSingle('embedding');
+
                   // Vision done — pre-load text model for next inference
-                  this._ensureModelLoaded('text').catch((err) => {
-                    logger.warn(
-                      '[LlamaService] Text model preload after single-image vision failed:',
-                      err?.message
-                    );
-                  });
+                  this._ensureModelLoaded('text')
+                    .then(() => {
+                      // Reset breakers once text path is healthy after vision handoff.
+                      const {
+                        resetLlamaCircuit: resetCircuitSingle
+                      } = require('./LlamaResilience');
+                      resetCircuitSingle('text');
+                      resetCircuitSingle('embedding');
+                    })
+                    .catch((err) => {
+                      logger.warn(
+                        '[LlamaService] Text model preload after single-image vision failed:',
+                        err?.message
+                      );
+                    });
                 }
 
                 return { response: result.response };

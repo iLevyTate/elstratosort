@@ -734,9 +734,14 @@ export function useAnalysis(options = {}) {
         }
       }, TIMEOUTS.HEARTBEAT_INTERVAL);
 
-      // Global timeout
-      analysisTimeoutRef.current = setTimeout(() => {
-        logger.warn('Global analysis timeout (10 min)');
+      // Global analysis watchdog:
+      // - inactivity timeout: reset only when there is no progress for GLOBAL_ANALYSIS window
+      // - hard cap timeout: absolute upper bound to avoid runaway background loops
+      const analysisStartedAt = Date.now();
+      const hardCapMs = Math.max(TIMEOUTS.GLOBAL_ANALYSIS * 3, 30 * 60 * 1000);
+      const windowLabel = `${Math.round(TIMEOUTS.GLOBAL_ANALYSIS / 60000)} min`;
+      const stopAnalysisForTimeout = (reason) => {
+        logger.warn('Global analysis timeout', { reason, windowLabel });
         if (analysisRunIdRef.current === runId) {
           analysisRunIdRef.current += 1;
         }
@@ -762,12 +767,46 @@ export function useAnalysis(options = {}) {
         setCurrentAnalysisFile('');
         actions.setPhaseData('currentAnalysisFile', '');
         addNotification(
-          'Analysis took too long and was stopped.',
+          'Analysis was stopped due to inactivity. If processing is still progressing, restart and monitor logs.',
           'warning',
           5000,
           'analysis-timeout'
         );
-      }, TIMEOUTS.GLOBAL_ANALYSIS);
+      };
+      const scheduleGlobalTimeoutCheck = () => {
+        analysisTimeoutRef.current = setTimeout(() => {
+          if (!isActiveRun()) {
+            analysisTimeoutRef.current = null;
+            return;
+          }
+          const elapsedMs = Date.now() - analysisStartedAt;
+          const lastProgressAt = Number.isFinite(lastProgressAtRef.current)
+            ? lastProgressAtRef.current
+            : 0;
+          const inactivityMs = lastProgressAt ? Date.now() - lastProgressAt : Infinity;
+          const progressState = analysisProgressRef.current || {};
+          const hasCompleted =
+            Number(progressState.total) > 0 &&
+            Number(progressState.current) >= Number(progressState.total);
+
+          if (hasCompleted) {
+            analysisTimeoutRef.current = null;
+            return;
+          }
+          if (elapsedMs >= hardCapMs) {
+            stopAnalysisForTimeout('hard_cap');
+            analysisTimeoutRef.current = null;
+            return;
+          }
+          if (inactivityMs >= TIMEOUTS.GLOBAL_ANALYSIS) {
+            stopAnalysisForTimeout('inactivity');
+            analysisTimeoutRef.current = null;
+            return;
+          }
+          scheduleGlobalTimeoutCheck();
+        }, TIMEOUTS.GLOBAL_ANALYSIS);
+      };
+      scheduleGlobalTimeoutCheck();
 
       batchResultsRef.current = [];
       pendingResultsRef.current = [];

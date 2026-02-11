@@ -243,14 +243,14 @@ describe('SettingsService.save (mutex/backups/retries)', () => {
     await service.save({ confidenceThreshold: 0.6 });
     expect(service._isInternalChange).toBe(true);
 
-    await advance(120);
+    await advance(service._debounceDelay + 220);
     expect(service._isInternalChange).toBe(false);
 
     // if shutting down before the timer fires, callback should not clear internal change
     await service.save({ confidenceThreshold: 0.7 });
     expect(service._isInternalChange).toBe(true);
     service._isShuttingDown = true;
-    await advance(120);
+    await advance(service._debounceDelay + 220);
     expect(service._isInternalChange).toBe(true);
 
     jest.useRealTimers();

@@ -8,6 +8,7 @@ import SettingsGroup from './SettingsGroup';
 import { createLogger } from '../../../shared/logger';
 import { useAppSelector } from '../../store/hooks';
 import { Text } from '../ui/Typography';
+import { embeddingsIpc } from '../../services/ipc';
 
 const { DEFAULT_AI_MODELS } = require('../../../shared/constants');
 const logger = createLogger('EmbeddingRebuildSection');
@@ -34,11 +35,11 @@ function EmbeddingRebuildSection({ addNotification }) {
   const isAnalyzing = useAppSelector((state) => Boolean(state?.analysis?.isAnalyzing));
   const analysisProgress = useAppSelector((state) => state?.analysis?.analysisProgress);
 
-  const refreshStats = useCallback(async () => {
-    if (!window?.electronAPI?.embeddings?.getStats) return;
+  const refreshStats = useCallback(async (options = {}) => {
+    const forceRefresh = options === true || options?.force === true;
     if (isMountedRef.current) setIsLoadingStats(true);
     try {
-      const res = await window.electronAPI.embeddings.getStats();
+      const res = await embeddingsIpc.getStatsCached({ forceRefresh });
       if (isMountedRef.current) {
         if (res && res.success) {
           setStats({
@@ -188,7 +189,7 @@ function EmbeddingRebuildSection({ addNotification }) {
       addNotification('Full rebuild failed. Check AI engine status.', 'error');
     } finally {
       if (isMountedRef.current) setIsFullRebuilding(false);
-      refreshStats();
+      refreshStats({ force: true });
     }
   }, [addNotification, refreshStats]);
 
@@ -240,7 +241,7 @@ function EmbeddingRebuildSection({ addNotification }) {
       addNotification('Reanalyze failed. Check AI engine status.', 'error');
     } finally {
       if (isMountedRef.current) setIsReanalyzingAll(false);
-      refreshStats();
+      refreshStats({ force: true });
     }
   }, [addNotification, refreshStats, applyNamingOnReanalyze]);
 

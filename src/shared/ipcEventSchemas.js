@@ -222,8 +222,14 @@ const schemas = z
        * Emitted during batch operations to stream results progressively
        */
       const batchResultsChunkSchema = z.object({
+        // Current payload shape emitted by main batchProgressReporter.
+        batchId: z.string().optional(),
+        chunk: z.array(z.any()).optional(),
+        chunkIndex: z.number().int().nonnegative().optional(),
+        totalChunks: z.number().int().nonnegative().optional(),
+        isLast: z.boolean().optional(),
+        // Legacy compatibility fields (older emitters / tests).
         results: z.array(z.any()).optional(),
-        chunk: z.number().optional(),
         total: z.number().optional(),
         operationType: z.string().optional()
       });

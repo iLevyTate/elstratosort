@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  */
-const { analyzeImageFile } = require('../src/main/analysis/imageAnalysis');
+const { analyzeImageFile, resetSingletons } = require('../src/main/analysis/imageAnalysis');
 
 // Mock dependencies
 jest.mock('fs', () => ({
@@ -34,6 +34,15 @@ jest.mock('../src/shared/logger', () => {
 
 jest.mock('../src/main/services/LlamaService', () => ({
   getInstance: jest.fn()
+}));
+
+jest.mock('../src/main/analysis/documentLlm', () => ({
+  analyzeTextWithLlama: jest.fn().mockResolvedValue({
+    category: 'General',
+    keywords: ['text'],
+    confidence: 80,
+    suggestedName: 'ocr_analysis'
+  })
 }));
 
 jest.mock('../src/main/services/FolderMatchingService', () => ({
@@ -126,6 +135,7 @@ describe('Image Analysis Behavior', () => {
 
   beforeEach(() => {
     jest.clearAllMocks(); // Use clearAllMocks to preserve factory implementations
+    resetSingletons();
 
     // Get fresh mock references
     mockCacheInstance =
@@ -201,6 +211,52 @@ describe('Image Analysis Behavior', () => {
     expect(result.confidence).toBe(60);
     expect(result.reason).toBe('AI engine unavailable');
     expect(mockLlamaService.analyzeImage).not.toHaveBeenCalled();
+  });
+
+  test('retries image preflight once before fallback', async () => {
+    mockLlamaService.testConnection
+      .mockResolvedValueOnce({ success: false, status: 'warming_up' })
+      .mockResolvedValueOnce({ success: true });
+    mockLlamaService.analyzeImage.mockResolvedValue({
+      response: JSON.stringify({
+        category: 'Finance',
+        keywords: ['invoice'],
+        confidence: 85,
+        suggestedName: 'invoice_scan'
+      })
+    });
+
+    const result = await analyzeImageFile('/path/to/image.png');
+
+    expect(mockLlamaService.testConnection).toHaveBeenCalledTimes(2);
+    expect(mockLlamaService.analyzeImage).toHaveBeenCalled();
+    expect(result.error).toBeUndefined();
+    expect(result.category).toBe('Finance');
+  });
+
+  test('routes recoverable vision errors through OCR/text fallback before filename fallback', async () => {
+    mockLlamaService.analyzeImage.mockRejectedValue(
+      new Error('Failed to parse JSON from vision response (empty response)')
+    );
+    const { recognizeIfAvailable } = require('../src/main/utils/tesseractUtils');
+    recognizeIfAvailable.mockResolvedValueOnce({
+      success: true,
+      text: 'Invoice #123 total amount due'
+    });
+    const { analyzeTextWithLlama } = require('../src/main/analysis/documentLlm');
+    analyzeTextWithLlama.mockResolvedValueOnce({
+      category: 'Financial',
+      keywords: ['invoice', 'amount'],
+      confidence: 84,
+      suggestedName: 'invoice_scan'
+    });
+
+    const result = await analyzeImageFile('/path/to/invoice_scan.png');
+
+    expect(analyzeTextWithLlama).toHaveBeenCalled();
+    expect(result.category).toBe('Financial');
+    expect(result.analysisWarning).toMatch(/parse json|empty response/i);
+    expect(result.reason).not.toBe('AI engine failed');
   });
 
   test('detects hallucination (financial doc -> landscape)', async () => {

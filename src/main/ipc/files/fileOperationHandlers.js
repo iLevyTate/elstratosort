@@ -387,44 +387,23 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
             });
           }
 
-          // FIX P1-1: Await the rebuild with timeout and retry to ensure search consistency
-          // This ensures search results show the new name/path immediately
+          // Defer BM25 rebuild so file operations are not blocked by index work.
           try {
             const { getSearchServiceInstance } = require('../semantic');
             const searchService = getSearchServiceInstance?.();
             if (searchService) {
-              // Use invalidateAndRebuild for immediate consistency with retry
-              const REBUILD_TIMEOUT_MS = 5000; // 5 second max wait per attempt
-              const MAX_REBUILD_ATTEMPTS = 2;
-
-              for (let attempt = 1; attempt <= MAX_REBUILD_ATTEMPTS; attempt++) {
-                try {
-                  await withTimeout(
-                    searchService.invalidateAndRebuild({
-                      immediate: true,
-                      reason: 'file-move',
-                      oldPath: moveValidation.source,
-                      newPath: moveValidation.destination
-                    }),
-                    REBUILD_TIMEOUT_MS,
-                    'BM25 rebuild after move'
-                  );
-                  break; // Successfully rebuilt
-                } catch (rebuildErr) {
-                  const isTimeout = rebuildErr?.message?.includes('timed out');
-                  if (attempt < MAX_REBUILD_ATTEMPTS && isTimeout) {
-                    log.debug('[FILE-OPS] BM25 rebuild timed out, retrying', {
-                      attempt,
-                      maxAttempts: MAX_REBUILD_ATTEMPTS
-                    });
-                  } else if (attempt === MAX_REBUILD_ATTEMPTS) {
-                    log.warn('[FILE-OPS] BM25 rebuild failed after retries', {
-                      error: rebuildErr?.message,
-                      attempts: attempt
-                    });
-                  }
-                }
-              }
+              searchService
+                .invalidateAndRebuild({
+                  immediate: false,
+                  reason: 'file-move',
+                  oldPath: moveValidation.source,
+                  newPath: moveValidation.destination
+                })
+                .catch((rebuildErr) => {
+                  log.warn('[FILE-OPS] Background BM25 rebuild failed after move', {
+                    error: rebuildErr?.message
+                  });
+                });
             }
           } catch (invalidateErr) {
             log.warn('[FILE-OPS] Failed to trigger search index rebuild', {
@@ -532,14 +511,14 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
             );
           }
 
-          // Invalidate and rebuild search index to include the copy
+          // Invalidate search index in background to include the copy
           try {
             const { getSearchServiceInstance } = require('../semantic');
             const searchService = getSearchServiceInstance?.();
             if (searchService) {
               searchService
                 .invalidateAndRebuild({
-                  immediate: true,
+                  immediate: false,
                   reason: 'file-copy',
                   newPath: copyValidation.destination
                 })
@@ -625,17 +604,15 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
             });
           }
 
-          // Invalidate and immediately rebuild search index after file delete
-          // This ensures deleted files don't appear in search results
+          // Invalidate search index in background after file delete
           try {
             const { getSearchServiceInstance } = require('../semantic');
             const searchService = getSearchServiceInstance?.();
             if (searchService) {
-              // Use invalidateAndRebuild for immediate consistency
               // Don't await - let it run in background to not block the response
               searchService
                 .invalidateAndRebuild({
-                  immediate: true,
+                  immediate: false,
                   reason: 'file-delete',
                   oldPath: deleteValidation.source
                 })
@@ -923,7 +900,7 @@ function registerFileOperationHandlers(servicesOrParams) {
             if (searchService) {
               searchService
                 .invalidateAndRebuild({
-                  immediate: true,
+                  immediate: false,
                   reason: 'file-copy',
                   newPath: normalizedDestination
                 })
@@ -1066,14 +1043,14 @@ function registerFileOperationHandlers(servicesOrParams) {
                       }
                     );
 
-                    // Rebuild search indexes after alignment (best effort)
+                    // Invalidate search indexes after alignment (best effort)
                     try {
                       const { getSearchServiceInstance } = require('../semantic');
                       const searchService = getSearchServiceInstance?.();
                       if (searchService) {
                         searchService
                           .invalidateAndRebuild({
-                            immediate: true,
+                            immediate: false,
                             reason: 'analysis-alignment',
                             oldPath: validatedPath,
                             newPath: actualPath
@@ -1168,14 +1145,14 @@ function registerFileOperationHandlers(servicesOrParams) {
             log.warn('[FILE-OPS] FilePathCoordinator unavailable for cleanup');
           }
 
-          // Invalidate and rebuild search index after cleanup
+          // Invalidate search index after cleanup
           try {
             const { getSearchServiceInstance } = require('../semantic');
             const searchService = getSearchServiceInstance?.();
             if (searchService) {
               searchService
                 .invalidateAndRebuild({
-                  immediate: true,
+                  immediate: false,
                   reason: 'analysis-remove',
                   oldPath: validatedPath
                 })

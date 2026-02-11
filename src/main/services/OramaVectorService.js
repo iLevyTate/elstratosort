@@ -63,6 +63,21 @@ const DEFAULT_EMBEDDING_DIMENSION = AI_DEFAULTS.EMBEDDING?.DIMENSIONS || 768;
 // Persistence settings
 const PERSIST_DEBOUNCE_MS = 5000; // Debounce persistence writes
 const MAX_PERSIST_WAIT_MS = 30000; // Max wait before forcing persistence
+const DEFAULT_BATCH_UPSERT_CONCURRENCY = 3;
+const MAX_BATCH_UPSERT_CONCURRENCY = 6;
+const VECTOR_PRIMARY_VALIDATION_INTERVAL_MS = 60000;
+const VECTOR_PRIMARY_MAX_REPAIR_ATTEMPTS = 2;
+
+function resolveBatchUpsertConcurrency() {
+  const configured =
+    process.env.STRATOSORT_ORAMA_BATCH_UPSERT_CONCURRENCY ??
+    getConfig('VECTOR_DB.batchUpsertConcurrency', DEFAULT_BATCH_UPSERT_CONCURRENCY);
+  const parsed = Number.parseInt(String(configured), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_BATCH_UPSERT_CONCURRENCY;
+  }
+  return Math.max(1, Math.min(parsed, MAX_BATCH_UPSERT_CONCURRENCY));
+}
 
 /**
  * Build Orama schema with dynamic vector dimension
@@ -74,6 +89,7 @@ function buildSchemas(dimension) {
     files: {
       id: 'string',
       embedding: `vector[${dimension}]`,
+      hasVector: 'boolean',
       filePath: 'string',
       fileName: 'string',
       fileType: 'string',
@@ -172,6 +188,265 @@ class OramaVectorService extends EventEmitter {
     // Embedding sidecar store – Orama's restore() loses vector data (v3.1.x bug),
     // so we cache embeddings separately, keyed by collection name → Map<docId, number[]>.
     this._embeddingStore = {};
+
+    // Bounded concurrency for batch upsert paths to improve throughput without
+    // overwhelming DB writes or event-loop latency.
+    this._batchUpsertConcurrency = resolveBatchUpsertConcurrency();
+
+    // Tracks whether primary vector retrieval is healthy. Fallback scoring is
+    // allowed only when this health check remains degraded after repair.
+    this._vectorHealth = {
+      primaryHealthy: null,
+      lastValidatedAt: 0,
+      lastValidationReason: null,
+      lastValidationError: null,
+      lastRepairAt: 0,
+      repairAttempts: 0
+    };
+    this._vectorHealthPromise = null;
+  }
+
+  async _runBoundedBatch(items, workerFn, concurrency = this._batchUpsertConcurrency) {
+    const safeConcurrency = Math.max(
+      1,
+      Math.min(Number.isFinite(concurrency) ? Math.floor(concurrency) : 1, items.length || 1)
+    );
+    const results = new Array(items.length);
+    let cursor = 0;
+
+    const worker = async () => {
+      while (true) {
+        const index = cursor++;
+        if (index >= items.length) break;
+        try {
+          const value = await workerFn(items[index], index);
+          results[index] = { status: 'fulfilled', value };
+        } catch (error) {
+          results[index] = { status: 'rejected', reason: error };
+        }
+      }
+    };
+
+    const workers = Array.from({ length: safeConcurrency }, () => worker());
+    await Promise.all(workers);
+    return results;
+  }
+
+  /**
+   * Normalize persisted embedding payloads to plain numeric arrays.
+   * Handles Array, TypedArray, and object-with-numeric-keys shapes.
+   * @private
+   */
+  _normalizeEmbeddingVector(value, expectedDim = null) {
+    let vector = null;
+    if (Array.isArray(value)) {
+      vector = value;
+    } else if (ArrayBuffer.isView(value)) {
+      vector = Array.from(value);
+    } else if (value && typeof value === 'object') {
+      const keys = Object.keys(value);
+      if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) {
+        keys.sort((a, b) => Number(a) - Number(b));
+        vector = keys.map((k) => value[k]);
+      }
+    }
+
+    if (!Array.isArray(vector) || vector.length === 0) return null;
+    if (Number.isFinite(expectedDim) && expectedDim > 0 && vector.length !== expectedDim)
+      return null;
+
+    const normalized = vector.map((n) => Number(n));
+    if (normalized.some((n) => !Number.isFinite(n))) return null;
+    return normalized;
+  }
+
+  _getVectorHealthSnapshot() {
+    return { ...this._vectorHealth };
+  }
+
+  _setVectorHealth(update) {
+    this._vectorHealth = {
+      ...this._vectorHealth,
+      ...update
+    };
+    this.emit('vector-health', this._getVectorHealthSnapshot());
+  }
+
+  async _repairFilesVectorIndexFromCurrentState() {
+    if (!this._databases?.files) return { repaired: false, reason: 'files-db-unavailable' };
+
+    const sourceDocs = await search(this._databases.files, {
+      term: '',
+      limit: 10000
+    });
+
+    const rebuilt = await create({ schema: this._schemas.files });
+    const rebuiltEmbeddings = new Map();
+    let repairedDocs = 0;
+    let placeholders = 0;
+
+    for (const hit of sourceDocs.hits || []) {
+      const existing = hit.document || {};
+      const normalizedEmbedding = this._normalizeEmbeddingVector(
+        this._embeddingStore?.files?.get(existing.id) || existing.embedding,
+        this._dimension
+      );
+      const hasVector =
+        Array.isArray(normalizedEmbedding) &&
+        normalizedEmbedding.length === this._dimension &&
+        !(normalizedEmbedding[0] === 0 && normalizedEmbedding.every((v) => v === 0));
+      const embedding = hasVector
+        ? normalizedEmbedding
+        : Array.from({ length: this._dimension }, () => 0);
+
+      await insert(rebuilt, {
+        id: existing.id,
+        embedding,
+        hasVector,
+        filePath: existing.filePath || '',
+        fileName: existing.fileName || '',
+        fileType: existing.fileType || '',
+        analyzedAt: existing.analyzedAt || new Date().toISOString(),
+        suggestedName: existing.suggestedName || '',
+        keywords: Array.isArray(existing.keywords) ? existing.keywords : [],
+        tags: Array.isArray(existing.tags) ? existing.tags : [],
+        isOrphaned: Boolean(existing.isOrphaned),
+        orphanedAt: existing.orphanedAt || '',
+        extractionMethod: existing.extractionMethod || ''
+      });
+
+      if (hasVector) {
+        rebuiltEmbeddings.set(existing.id, embedding);
+      } else {
+        placeholders++;
+      }
+      repairedDocs++;
+    }
+
+    this._databases.files = rebuilt;
+    this._embeddingStore.files = rebuiltEmbeddings;
+    this._collectionDimensions.files = this._dimension;
+    this._clearQueryCache();
+    await this.persistAll();
+
+    return {
+      repaired: true,
+      repairedDocs,
+      placeholders,
+      embeddingsCached: rebuiltEmbeddings.size
+    };
+  }
+
+  async _ensurePrimaryVectorHealth({ reason = 'runtime', force = false, autoRepair = true } = {}) {
+    const now = Date.now();
+    if (
+      !force &&
+      this._vectorHealth.lastValidatedAt > 0 &&
+      now - this._vectorHealth.lastValidatedAt < VECTOR_PRIMARY_VALIDATION_INTERVAL_MS
+    ) {
+      return this._getVectorHealthSnapshot();
+    }
+
+    if (this._vectorHealthPromise) {
+      return this._vectorHealthPromise;
+    }
+
+    this._vectorHealthPromise = (async () => {
+      const embStore = this._embeddingStore?.files;
+      if (!(embStore instanceof Map) || embStore.size === 0) {
+        this._setVectorHealth({
+          primaryHealthy: true,
+          lastValidatedAt: Date.now(),
+          lastValidationReason: `${reason}:no-vectors`,
+          lastValidationError: null
+        });
+        return this._getVectorHealthSnapshot();
+      }
+
+      const probeEntry = Array.from(embStore.entries()).find(([_, vector]) => {
+        const normalized = this._normalizeEmbeddingVector(vector, this._dimension);
+        return (
+          Array.isArray(normalized) &&
+          normalized.length === this._dimension &&
+          !(normalized[0] === 0 && normalized.every((v) => v === 0))
+        );
+      });
+
+      if (!probeEntry) {
+        this._setVectorHealth({
+          primaryHealthy: true,
+          lastValidatedAt: Date.now(),
+          lastValidationReason: `${reason}:no-valid-probe`,
+          lastValidationError: null
+        });
+        return this._getVectorHealthSnapshot();
+      }
+
+      const [probeId, probeVector] = probeEntry;
+      const runProbe = async () => {
+        const probeResults = await search(this._databases.files, {
+          mode: 'vector',
+          vector: { value: probeVector, property: 'embedding' },
+          limit: 5,
+          where: { isOrphaned: false, hasVector: true }
+        });
+        return (probeResults.hits || []).some((hit) => hit?.document?.id === probeId);
+      };
+
+      try {
+        let healthy = await runProbe();
+        if (
+          !healthy &&
+          autoRepair &&
+          this._vectorHealth.repairAttempts < VECTOR_PRIMARY_MAX_REPAIR_ATTEMPTS
+        ) {
+          this._setVectorHealth({
+            repairAttempts: this._vectorHealth.repairAttempts + 1,
+            lastRepairAt: Date.now()
+          });
+
+          logger.warn(
+            '[OramaVectorService] Primary vector self-check failed; attempting files index repair',
+            {
+              reason,
+              probeId
+            }
+          );
+
+          const repair = await this._repairFilesVectorIndexFromCurrentState();
+          logger.info('[OramaVectorService] Files vector index repair completed', {
+            ...repair,
+            reason
+          });
+          healthy = await runProbe();
+        }
+
+        this._setVectorHealth({
+          primaryHealthy: healthy,
+          lastValidatedAt: Date.now(),
+          lastValidationReason: reason,
+          lastValidationError: null
+        });
+
+        return this._getVectorHealthSnapshot();
+      } catch (error) {
+        this._setVectorHealth({
+          primaryHealthy: false,
+          lastValidatedAt: Date.now(),
+          lastValidationReason: reason,
+          lastValidationError: error?.message || String(error)
+        });
+        logger.warn('[OramaVectorService] Primary vector self-check failed', {
+          reason,
+          error: error?.message
+        });
+        return this._getVectorHealthSnapshot();
+      }
+    })().finally(() => {
+      this._vectorHealthPromise = null;
+    });
+
+    return this._vectorHealthPromise;
   }
 
   /**
@@ -219,6 +494,12 @@ class OramaVectorService extends EventEmitter {
           dimension: this._dimension,
           embeddingModel: this._embeddingModel || AI_DEFAULTS.EMBEDDING?.MODEL || 'unknown',
           counts
+        });
+
+        await this._ensurePrimaryVectorHealth({
+          reason: 'initialize',
+          force: true,
+          autoRepair: true
         });
 
         this._isInitializing = false;
@@ -435,27 +716,77 @@ class OramaVectorService extends EventEmitter {
       const embeddingStore = new Map();
       let insertedCount = 0;
       let failedCount = 0;
+      let placeholderEmbeddingCount = 0;
+      let restoredMissingFromSidecarCount = 0;
+
+      let sidecarData = null;
+      try {
+        const sidecarPath = path.join(this._dataPath, `${name}.sidecar.json`);
+        const sidecarRaw = await fs.readFile(sidecarPath, 'utf-8');
+        const parsedSidecar = JSON.parse(sidecarRaw);
+        if (parsedSidecar && typeof parsedSidecar === 'object') {
+          const normalizedSidecar = {};
+          for (const [docId, emb] of Object.entries(parsedSidecar)) {
+            const normalized = this._normalizeEmbeddingVector(emb, this._dimension);
+            if (normalized) {
+              normalizedSidecar[docId] = normalized;
+            }
+          }
+          sidecarData = normalizedSidecar;
+        }
+      } catch {
+        // No sidecar file or parse error -- not critical
+      }
 
       for (const doc of docList) {
         try {
-          // Null / missing embeddings cause Orama insert to throw because the
-          // vector schema expects an array. Provide a zero-filled placeholder
-          // so the document's text fields are still searchable via BM25.
+          let hasVector = true;
+          // Missing embeddings are recovered from sidecar when possible.
+          // If unavailable, use a zero-vector placeholder so BM25 recall is preserved.
           if (!doc.embedding || !doc.embedding.length) {
-            doc.embedding = new Array(this._dimension).fill(0);
+            const sidecarEmbedding = sidecarData?.[doc.id];
+            if (Array.isArray(sidecarEmbedding) && sidecarEmbedding.length === this._dimension) {
+              doc.embedding = sidecarEmbedding;
+              restoredMissingFromSidecarCount++;
+            } else {
+              doc.embedding = new Array(this._dimension).fill(0);
+              hasVector = false;
+              placeholderEmbeddingCount++;
+              logger.warn(
+                `[OramaVectorService] Using zero-vector placeholder for ${name} doc missing embedding during restore`,
+                {
+                  id: doc.id
+                }
+              );
+            }
           } else if (!Array.isArray(doc.embedding)) {
-            // Ensure embedding is a plain Array (not TypedArray) for Orama insert
-            doc.embedding = Array.from(doc.embedding);
+            // Ensure embedding is a plain Array (not TypedArray/object shape) for Orama insert
+            const normalizedEmbedding = this._normalizeEmbeddingVector(
+              doc.embedding,
+              this._dimension
+            );
+            if (normalizedEmbedding) {
+              doc.embedding = normalizedEmbedding;
+            } else {
+              doc.embedding = new Array(this._dimension).fill(0);
+              hasVector = false;
+            }
+          }
+
+          const isZeroPlaceholderEmbedding =
+            doc.embedding[0] === 0 && doc.embedding.every((value) => value === 0);
+          if (isZeroPlaceholderEmbedding) {
+            hasVector = false;
+          }
+
+          if (name === 'files') {
+            doc.hasVector = hasVector;
           }
 
           await insert(db, doc);
 
-          // Only cache real embeddings (non-zero placeholder) in sidecar for clustering.
-          // A zero-filled placeholder has every element === 0; real embeddings never do.
-          // Short-circuit: real embeddings virtually never start with exactly 0,
-          // so check [0] first to avoid O(dimension) scan for every document.
-          const isZeroPlaceholder = doc.embedding[0] === 0 && doc.embedding.every((v) => v === 0);
-          if (!isZeroPlaceholder) {
+          // Do not cache zero placeholders so sidecar repair can detect and replace them.
+          if (!isZeroPlaceholderEmbedding) {
             embeddingStore.set(doc.id, doc.embedding);
           }
           insertedCount++;
@@ -475,14 +806,13 @@ class OramaVectorService extends EventEmitter {
       const lostEmbeddings = insertedCount - embeddingStore.size;
       if (lostEmbeddings > 0) {
         let repaired = 0;
-        try {
-          const sidecarPath = path.join(this._dataPath, `${name}.sidecar.json`);
-          const sidecarRaw = await fs.readFile(sidecarPath, 'utf-8');
-          const sidecarData = JSON.parse(sidecarRaw);
+        if (sidecarData && typeof sidecarData === 'object') {
           for (const [docId, emb] of Object.entries(sidecarData)) {
             if (!embeddingStore.has(docId) && Array.isArray(emb) && emb.length > 0) {
               try {
-                await update(db, docId, { embedding: emb });
+                const updateDoc =
+                  name === 'files' ? { embedding: emb, hasVector: true } : { embedding: emb };
+                await update(db, docId, updateDoc);
                 embeddingStore.set(docId, emb);
                 repaired++;
               } catch {
@@ -495,8 +825,6 @@ class OramaVectorService extends EventEmitter {
               `[OramaVectorService] ${name}: repaired ${repaired} embeddings from sidecar`
             );
           }
-        } catch {
-          // No sidecar file or parse error -- not critical
         }
 
         const stillLost = lostEmbeddings - repaired;
@@ -506,12 +834,19 @@ class OramaVectorService extends EventEmitter {
           );
         }
       }
+      if (placeholderEmbeddingCount > 0) {
+        logger.warn(
+          `[OramaVectorService] ${name}: used placeholder embeddings for ${placeholderEmbeddingCount} document(s) during restore. Re-embed to restore vector search quality.`
+        );
+      }
 
       logger.info(`[OramaVectorService] Restored ${name} database`, {
         method: 'insert',
         total: docList.length,
         inserted: insertedCount,
         failed: failedCount,
+        placeholderEmbeddings: placeholderEmbeddingCount,
+        restoredMissingFromSidecar: restoredMissingFromSidecarCount,
         embeddingsCached: embeddingStore.size
       });
 
@@ -611,6 +946,31 @@ class OramaVectorService extends EventEmitter {
     }
 
     try {
+      // Persist embedding sidecar maps before Orama JSON blobs so we always
+      // have a recoverable vector source even if persistence is interrupted.
+      for (const name of Object.keys(this._databases)) {
+        try {
+          const embMap = this._embeddingStore?.[name];
+          const sidecarPath = path.join(this._dataPath, `${name}.sidecar.json`);
+          const serializableEmbeddings = {};
+          if (embMap && typeof embMap.entries === 'function') {
+            for (const [docId, emb] of embMap.entries()) {
+              const normalized = this._normalizeEmbeddingVector(emb, this._dimension);
+              if (normalized) {
+                serializableEmbeddings[docId] = normalized;
+              }
+            }
+          }
+          const sidecarData = JSON.stringify(serializableEmbeddings);
+          await writeFileAtomic(sidecarPath, sidecarData);
+        } catch (sidecarError) {
+          logger.debug('[OramaVectorService] Failed to persist sidecar', {
+            collection: name,
+            error: sidecarError.message
+          });
+        }
+      }
+
       for (const [name, db] of Object.entries(this._databases)) {
         const persistPath = path.join(this._dataPath, `${name}.json`);
         const compressedPath = `${persistPath}.lz4`;
@@ -625,22 +985,6 @@ class OramaVectorService extends EventEmitter {
           }
         } else {
           await writeFileAtomic(persistPath, data);
-        }
-      }
-      // Persist embedding sidecar maps alongside the Orama databases.
-      // These survive the Orama v3.1.x vector-loss bug on restore.
-      for (const [name, embMap] of Object.entries(this._embeddingStore)) {
-        if (embMap && embMap.size > 0) {
-          try {
-            const sidecarPath = path.join(this._dataPath, `${name}.sidecar.json`);
-            const sidecarData = JSON.stringify(Object.fromEntries(embMap));
-            await writeFileAtomic(sidecarPath, sidecarData);
-          } catch (sidecarError) {
-            logger.debug('[OramaVectorService] Failed to persist sidecar', {
-              collection: name,
-              error: sidecarError.message
-            });
-          }
         }
       }
 
@@ -732,6 +1076,72 @@ class OramaVectorService extends EventEmitter {
     // If embedding is not present in search result, assume it's valid
     if (!Array.isArray(emb) || emb.length === 0) return false;
     return emb[0] === 0 && emb.every((v) => v === 0);
+  }
+
+  /**
+   * Request extra vector hits so placeholder filtering does not starve results.
+   * Some restored indexes can contain zero-placeholder vectors that rank highly.
+   * @private
+   */
+  _resolveVectorSearchLimit(topK) {
+    const normalizedTopK = Number.isFinite(topK) && topK > 0 ? Math.max(1, Math.floor(topK)) : 10;
+    return Math.min(200, Math.max(normalizedTopK, normalizedTopK * 4, normalizedTopK + 25));
+  }
+
+  _cosineSimilarity(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || a.length !== b.length) {
+      return -1;
+    }
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < a.length; i++) {
+      const av = a[i];
+      const bv = b[i];
+      if (!Number.isFinite(av) || !Number.isFinite(bv)) continue;
+      dot += av * bv;
+      normA += av * av;
+      normB += bv * bv;
+    }
+    if (normA <= 0 || normB <= 0) return -1;
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  }
+
+  async _fallbackQuerySimilarFiles(queryEmbedding, topK) {
+    const all = await search(this._databases.files, {
+      term: '',
+      where: { isOrphaned: false },
+      limit: 10000
+    });
+    const scored = [];
+    for (const hit of all.hits || []) {
+      const doc = hit.document;
+      const emb = this._normalizeEmbeddingVector(
+        this._embeddingStore?.files?.get(doc.id) || doc.embedding,
+        queryEmbedding.length
+      );
+      if (!Array.isArray(emb) || emb.length !== queryEmbedding.length) continue;
+      if (emb[0] === 0 && emb.every((v) => v === 0)) continue;
+      const score = this._cosineSimilarity(queryEmbedding, emb);
+      if (!Number.isFinite(score) || score <= 0) continue;
+      scored.push({ doc, score });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, topK).map(({ doc, score }) => ({
+      id: doc.id,
+      score,
+      distance: 1 - score,
+      metadata: {
+        path: doc.filePath,
+        filePath: doc.filePath,
+        fileName: doc.fileName,
+        fileType: doc.fileType,
+        analyzedAt: doc.analyzedAt,
+        suggestedName: doc.suggestedName,
+        keywords: doc.keywords,
+        tags: doc.tags
+      }
+    }));
   }
 
   /**
@@ -888,6 +1298,7 @@ class OramaVectorService extends EventEmitter {
     const doc = {
       id: file.id,
       embedding: file.vector,
+      hasVector: !(file.vector[0] === 0 && file.vector.every((v) => v === 0)),
       filePath: file.meta?.path || file.meta?.filePath || '',
       fileName: file.meta?.fileName || path.basename(file.meta?.path || ''),
       fileType: file.meta?.fileType || file.meta?.mimeType || '',
@@ -964,9 +1375,12 @@ class OramaVectorService extends EventEmitter {
 
     let successCount = 0;
     const failed = [];
-    for (const file of files) {
-      try {
-        const result = await this.upsertFile(file);
+    const upsertResults = await this._runBoundedBatch(files, (file) => this.upsertFile(file));
+    for (let i = 0; i < upsertResults.length; i++) {
+      const settled = upsertResults[i];
+      const file = files[i];
+      if (settled?.status === 'fulfilled') {
+        const result = settled.value;
         if (result?.success !== false) {
           successCount++;
         } else {
@@ -976,7 +1390,8 @@ class OramaVectorService extends EventEmitter {
             requiresRebuild: result?.requiresRebuild === true
           });
         }
-      } catch (error) {
+      } else {
+        const error = settled?.reason || new Error('upsert_failed');
         logger.warn('[OramaVectorService] Failed to upsert file in batch:', {
           fileId: file.id,
           error: error.message
@@ -1002,16 +1417,17 @@ class OramaVectorService extends EventEmitter {
     this._validateEmbedding(queryEmbedding, 'files');
 
     try {
+      const limit = this._resolveVectorSearchLimit(topK);
       const result = await search(this._databases.files, {
         mode: 'vector',
         vector: { value: queryEmbedding, property: 'embedding' },
-        limit: topK,
-        where: { isOrphaned: false }
+        limit,
+        where: { isOrphaned: false, hasVector: true }
       });
 
-      return result.hits
-        .filter((hit) => !this._isZeroPlaceholderHit(hit))
-        .map((hit) => ({
+      const filtered = result.hits.filter((hit) => !this._isZeroPlaceholderHit(hit)).slice(0, topK);
+      if (filtered.length > 0) {
+        return filtered.map((hit) => ({
           id: hit.document.id,
           score: hit.score,
           distance: 1 - hit.score, // Convert similarity to distance
@@ -1026,6 +1442,23 @@ class OramaVectorService extends EventEmitter {
             tags: hit.document.tags
           }
         }));
+      }
+
+      // On empty primary results, re-validate primary vector health and attempt
+      // repair. Only use fallback scoring if primary path remains degraded.
+      const health = await this._ensurePrimaryVectorHealth({
+        reason: 'query-empty',
+        force: true,
+        autoRepair: true
+      });
+      if (health.primaryHealthy === false) {
+        logger.warn(
+          '[OramaVectorService] Primary vector query unavailable after validation/repair; using fallback scorer',
+          { topK, health }
+        );
+        return await this._fallbackQuerySimilarFiles(queryEmbedding, topK);
+      }
+      return [];
     } catch (error) {
       throw attachErrorCode(error, ERROR_CODES.VECTOR_DB_QUERY_FAILED);
     }
@@ -1306,23 +1739,39 @@ class OramaVectorService extends EventEmitter {
         return { success: true, cloned: false };
       }
 
+      // Prefer sidecar vectors over getByID() due Orama restore/getByID vector gaps.
+      const sourceEmb = this._embeddingStore?.files?.get(sourceId);
+      const embeddingToClone = this._normalizeEmbeddingVector(
+        sourceEmb ?? source.embedding,
+        this._dimension
+      );
+      if (!Array.isArray(embeddingToClone) || embeddingToClone.length !== this._dimension) {
+        return {
+          success: false,
+          cloned: false,
+          error: 'Source file has no valid embedding to clone'
+        };
+      }
+
+      const hasVector = !(embeddingToClone[0] === 0 && embeddingToClone.every((v) => v === 0));
+
       // Only write fields that exist in the files schema (avoid clonedFrom/clonedAt
       // which are not in the Orama schema and would cause silent drops or errors)
       const { id: _id, ...sourceFields } = source;
       await insert(this._databases.files, {
         ...sourceFields,
         id: destId,
+        embedding: embeddingToClone,
+        hasVector,
         filePath: newMeta.path || source.filePath,
-        fileName: newMeta.fileName || source.fileName
+        fileName: newMeta.fileName || newMeta.name || source.fileName
       });
 
       // Clone embedding in sidecar store
-      const sourceEmb = this._embeddingStore?.files?.get(sourceId);
-      if (sourceEmb) {
-        if (!this._embeddingStore.files) this._embeddingStore.files = new Map();
-        this._embeddingStore.files.set(destId, sourceEmb);
-      }
+      if (!this._embeddingStore.files) this._embeddingStore.files = new Map();
+      this._embeddingStore.files.set(destId, [...embeddingToClone]);
 
+      this._invalidateCacheForFile(destId);
       this._schedulePersist();
       return { success: true, cloned: true };
     } catch (error) {
@@ -1447,9 +1896,14 @@ class OramaVectorService extends EventEmitter {
     const skipped = [];
     const failed = [];
 
-    for (const folder of folders) {
-      try {
-        const result = await this.upsertFolder(folder);
+    const upsertResults = await this._runBoundedBatch(folders, (folder) =>
+      this.upsertFolder(folder)
+    );
+    for (let i = 0; i < upsertResults.length; i++) {
+      const settled = upsertResults[i];
+      const folder = folders[i];
+      if (settled?.status === 'fulfilled') {
+        const result = settled.value;
         if (result?.success !== false) {
           successCount++;
         } else {
@@ -1459,7 +1913,8 @@ class OramaVectorService extends EventEmitter {
             requiresRebuild: result?.requiresRebuild === true
           });
         }
-      } catch (error) {
+      } else {
+        const error = settled?.reason || new Error('upsert_failed');
         skipped.push({ id: folder.id, error: error.message });
         failed.push({ id: folder.id, error: error.message });
       }
@@ -1483,14 +1938,16 @@ class OramaVectorService extends EventEmitter {
     this._validateEmbedding(embedding, 'folders');
 
     try {
+      const limit = this._resolveVectorSearchLimit(topK);
       const result = await search(this._databases.folders, {
         mode: 'vector',
         vector: { value: embedding, property: 'embedding' },
-        limit: topK
+        limit
       });
 
       return result.hits
         .filter((hit) => !this._isZeroPlaceholderHit(hit))
+        .slice(0, topK)
         .map((hit) => ({
           id: hit.document.id,
           score: hit.score,
@@ -1693,14 +2150,16 @@ class OramaVectorService extends EventEmitter {
     this._validateEmbedding(queryEmbedding, 'fileChunks');
 
     try {
+      const limit = this._resolveVectorSearchLimit(topK);
       const result = await search(this._databases.fileChunks, {
         mode: 'vector',
         vector: { value: queryEmbedding, property: 'embedding' },
-        limit: topK
+        limit
       });
 
       return result.hits
         .filter((hit) => !this._isZeroPlaceholderHit(hit))
+        .slice(0, topK)
         .map((hit) => ({
           id: hit.document.id,
           score: hit.score,
@@ -1893,14 +2352,16 @@ class OramaVectorService extends EventEmitter {
     if (totalCount === 0) return [];
 
     try {
+      const limit = this._resolveVectorSearchLimit(topK);
       const result = await search(this._databases.feedback, {
         mode: 'vector',
         vector: { value: queryEmbedding, property: 'embedding' },
-        limit: topK
+        limit
       });
 
       return result.hits
         .filter((hit) => !this._isZeroPlaceholderHit(hit))
+        .slice(0, topK)
         .map((hit) => {
           let metadata = {};
           try {
@@ -2056,11 +2517,12 @@ class OramaVectorService extends EventEmitter {
     let bm25Results;
     try {
       // Vector search
+      const vectorLimit = this._resolveVectorSearchLimit(topK * 2);
       vectorResults = await search(this._databases.files, {
         mode: 'vector',
         vector: { value: queryEmbedding, property: 'embedding' },
-        limit: topK * 2,
-        where: { isOrphaned: false }
+        limit: vectorLimit,
+        where: { isOrphaned: false, hasVector: true }
       });
 
       // BM25 search
@@ -2124,6 +2586,12 @@ class OramaVectorService extends EventEmitter {
     await this.resetLearningPatterns();
     // Clear all sidecar embedding stores
     this._embeddingStore = {};
+    this._setVectorHealth({
+      primaryHealthy: true,
+      lastValidatedAt: Date.now(),
+      lastValidationReason: 'reset-all',
+      lastValidationError: null
+    });
     logger.info('[OramaVectorService] All collections reset');
   }
 
@@ -2151,11 +2619,16 @@ class OramaVectorService extends EventEmitter {
       dbPath: this._dataPath,
       initialized: this._initialized,
       dimension: this._dimension,
+      vectorHealth: this._getVectorHealthSnapshot(),
       queryCache: {
         size: this._queryCache.size,
         maxSize: this._queryCacheMaxSize
       }
     };
+  }
+
+  getVectorHealth() {
+    return this._getVectorHealthSnapshot();
   }
 
   /**
@@ -2215,7 +2688,7 @@ class OramaVectorService extends EventEmitter {
    * Check health (always healthy for in-process)
    */
   async checkHealth() {
-    return true;
+    return this._vectorHealth.primaryHealthy !== false;
   }
 
   // Circuit breaker compatibility stub — required by SearchService diagnostics
@@ -2333,6 +2806,15 @@ class OramaVectorService extends EventEmitter {
     this._databases = {};
     this._initialized = false;
     this._initPromise = null;
+    this._vectorHealth = {
+      primaryHealthy: null,
+      lastValidatedAt: 0,
+      lastValidationReason: null,
+      lastValidationError: null,
+      lastRepairAt: 0,
+      repairAttempts: 0
+    };
+    this._vectorHealthPromise = null;
 
     this.removeAllListeners();
     this._cleanupInProgress = false; // Reset so re-initialization can call cleanup again

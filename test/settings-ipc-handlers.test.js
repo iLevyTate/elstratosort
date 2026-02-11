@@ -534,10 +534,13 @@ describe('Settings IPC Handlers', () => {
       await handler({});
 
       // Settings are now applied via LlamaService.updateConfig() to ensure proper model change notifications
-      expect(mockLlamaServiceUpdateConfig).toHaveBeenCalledWith({
-        textModel: 'llama3',
-        visionModel: 'llava'
-      });
+      expect(mockLlamaServiceUpdateConfig).toHaveBeenCalledWith(
+        {
+          textModel: 'llama3',
+          visionModel: 'llava'
+        },
+        { skipSave: true }
+      );
     });
   });
 
@@ -612,9 +615,12 @@ describe('Settings IPC Handlers', () => {
       await handler({}, backupPath);
 
       // Settings are now applied via LlamaService.updateConfig() to ensure proper model change notifications
-      expect(mockLlamaServiceUpdateConfig).toHaveBeenCalledWith({
-        textModel: 'restored-model'
-      });
+      expect(mockLlamaServiceUpdateConfig).toHaveBeenCalledWith(
+        {
+          textModel: 'restored-model'
+        },
+        { skipSave: true }
+      );
     });
 
     test('notifies settings changed on restore', async () => {
@@ -1044,11 +1050,14 @@ describe('Settings IPC Handlers', () => {
       // Settings are now applied via LlamaService.updateConfig() to ensure proper model change notifications
       // This is critical for embedding model changes - FolderMatchingService needs to be notified
       // to clear its cache and reset the vector DB when the embedding model changes
-      expect(mockLlamaServiceUpdateConfig).toHaveBeenCalledWith({
-        textModel: 'newmodel',
-        visionModel: 'newvision',
-        embeddingModel: 'newembedding'
-      });
+      expect(mockLlamaServiceUpdateConfig).toHaveBeenCalledWith(
+        {
+          textModel: 'newmodel',
+          visionModel: 'newvision',
+          embeddingModel: 'newembedding'
+        },
+        { skipSave: true }
+      );
     });
 
     test('notifies settings changed', async () => {
