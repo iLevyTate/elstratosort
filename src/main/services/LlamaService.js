@@ -169,6 +169,10 @@ class LlamaService extends EventEmitter {
     return { promise, resolve };
   }
 
+  _generateOperationId(prefix) {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
   _beginConfigChangeGate() {
     if (this._configChangeGate) return this._configChangeGate;
     this._configChangeGate = this._createGate();
@@ -1620,6 +1624,13 @@ class LlamaService extends EventEmitter {
             error: error.message
           });
           completed++; // Still count as completed (failed)
+          if (onProgress) {
+            onProgress({
+              current: completed,
+              total: total,
+              progress: completed / total
+            });
+          }
           return null;
         }
       });
@@ -1653,7 +1664,7 @@ class LlamaService extends EventEmitter {
         effectiveContextSize
       });
     }
-    const operationId = `text-${Date.now()}`;
+    const operationId = this._generateOperationId('text');
     await this._awaitModelReady('text');
 
     return this._coordinator.withModel(
@@ -1891,7 +1902,7 @@ class LlamaService extends EventEmitter {
       });
     }
 
-    const operationId = `vision-${Date.now()}`;
+    const operationId = this._generateOperationId('vision');
     await this._awaitModelReady('vision');
     return this._coordinator.withModel(
       'vision',
@@ -2182,6 +2193,18 @@ class LlamaService extends EventEmitter {
     this._models = { text: null, vision: null, embedding: null };
     this._contexts = { text: null, vision: null, embedding: null };
     this._modelChangeCallbacks.clear();
+    if (this._modelReloadGates?.size) {
+      // Force-resolve any leftover reload gates so future operations cannot
+      // block on stale promises after re-initialization.
+      for (const gate of this._modelReloadGates.values()) {
+        try {
+          gate?.resolve?.();
+        } catch {
+          /* ignore */
+        }
+      }
+      this._modelReloadGates.clear();
+    }
     // Note: _coordinator is intentionally NOT nulled — it has no resources to leak,
     // and fire-and-forget operations may still reference it after shutdown.
     this._degradationManager = null;

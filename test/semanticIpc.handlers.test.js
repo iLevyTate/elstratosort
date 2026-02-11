@@ -96,6 +96,7 @@ describe('Semantic IPC (Handlers)', () => {
   let ParallelEmbeddingService;
   let ClusteringService;
   let mockSearchService;
+  let mockLlamaService;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -132,7 +133,7 @@ describe('Semantic IPC (Handlers)', () => {
       generateFolderId: jest.fn()
     };
 
-    const mockLlamaService = {
+    mockLlamaService = {
       getConfig: jest.fn().mockResolvedValue({}),
       listModels: jest
         .fn()
@@ -284,6 +285,29 @@ describe('Semantic IPC (Handlers)', () => {
     expect(mockVectorDb.resetFiles).toHaveBeenCalled();
     // It might not call batchUpsertFiles if logic fails inside loop, but let's check resetFiles first
     expect(result).toEqual(expect.objectContaining({ success: true }));
+  });
+
+  test('REBUILD_FILES fails when embedding model is unavailable (ignores empty model names)', async () => {
+    const handler = getHandler(IPC_CHANNELS.EMBEDDINGS.REBUILD_FILES);
+    const originalJestWorkerId = process.env.JEST_WORKER_ID;
+    delete process.env.JEST_WORKER_ID;
+
+    mockLlamaService.getConfig.mockResolvedValueOnce({
+      embeddingModel: 'missing-embed.gguf'
+    });
+    mockLlamaService.listModels.mockResolvedValueOnce([{ filename: '' }, { name: '' }]);
+
+    try {
+      const result = await handler({}, {});
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: false,
+          errorCode: 'MODEL_NOT_AVAILABLE'
+        })
+      );
+    } finally {
+      process.env.JEST_WORKER_ID = originalJestWorkerId;
+    }
   });
 
   test('REANALYZE_ALL calls smartFolderWatcher.forceReanalyzeAll', async () => {

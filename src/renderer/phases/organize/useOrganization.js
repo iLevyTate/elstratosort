@@ -472,9 +472,16 @@ export function useOrganization({
   // FIX H-3: Use ref to track latest organizedFiles to avoid stale closure in async callbacks
   // Sync ref in useEffect instead of during render to prevent race conditions
   const organizedFilesRef = useRef(phaseData?.organizedFiles || []);
+  const isMountedRef = useRef(true);
   useEffect(() => {
     organizedFilesRef.current = phaseData?.organizedFiles || [];
   }, [phaseData?.organizedFiles]);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const handleOrganizeFiles = useCallback(
     async (filesToOrganize = null) => {
@@ -625,6 +632,7 @@ export function useOrganization({
 
         const stateCallbacks = {
           onExecute: (result) => {
+            if (!isMountedRef.current) return;
             try {
               // FIX CRIT-2: Handle chunked results for large batches (>100 files)
               // When chunkedResults is true, the actual results were sent via IPC events
@@ -721,6 +729,7 @@ export function useOrganization({
             }
           },
           onUndo: (result) => {
+            if (!isMountedRef.current) return;
             try {
               logger.info('[ORGANIZE] onUndo called', {
                 hasResult: !!result,
@@ -797,6 +806,7 @@ export function useOrganization({
             }
           },
           onRedo: (result) => {
+            if (!isMountedRef.current) return;
             try {
               logger.info('[ORGANIZE] onRedo called', {
                 hasResult: !!result,
@@ -970,11 +980,15 @@ export function useOrganization({
           message: error.message,
           stack: error.stack
         });
-        addNotification(`Organization failed: ${error.message}`, 'error');
+        if (isMountedRef.current) {
+          addNotification(`Organization failed: ${error.message}`, 'error');
+        }
       } finally {
-        setIsOrganizing(false);
-        setOrganizingState(false);
-        setBatchProgress({ current: 0, total: 0, currentFile: '' });
+        if (isMountedRef.current) {
+          setIsOrganizing(false);
+          setOrganizingState(false);
+          setBatchProgress({ current: 0, total: 0, currentFile: '' });
+        }
       }
     },
     [

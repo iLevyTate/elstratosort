@@ -99,6 +99,7 @@ describe('Semantic IPC – init state machine & handler edge cases', () => {
   let mockVectorDb;
   let mockFolderMatcher;
   let mockSearchService;
+  let mockLlamaService;
 
   function setupAndRegister({ initShouldFail = false, initDelay = 0 } = {}) {
     jest.resetModules();
@@ -141,7 +142,7 @@ describe('Semantic IPC – init state machine & handler edge cases', () => {
       getIndexStatus: jest.fn().mockReturnValue({ built: true })
     };
 
-    const mockLlamaService = {
+    mockLlamaService = {
       getConfig: jest.fn().mockResolvedValue({}),
       listModels: jest.fn().mockResolvedValue([{ name: 'nomic-embed-text-v1.5-Q8_0.gguf' }]),
       updateConfig: jest.fn().mockResolvedValue()
@@ -259,6 +260,42 @@ describe('Semantic IPC – init state machine & handler edge cases', () => {
 
     expect(r2.success).toBe(false);
     expect(r2.errorCode).toBe('REBUILD_IN_PROGRESS');
+  });
+
+  test('FULL_REBUILD applies modelOverride before rebuild', async () => {
+    setupAndRegister();
+    const handler = getHandler(IPC_CHANNELS.EMBEDDINGS.FULL_REBUILD);
+
+    const result = await handler({}, { modelOverride: 'nomic-embed-text-v1.5-Q8_0.gguf' });
+
+    expect(result.success).toBe(true);
+    expect(result.model).toBe('nomic-embed-text-v1.5-Q8_0.gguf');
+  });
+
+  test('FULL_REBUILD rolls back modelOverride when availability check fails', async () => {
+    setupAndRegister();
+    mockLlamaService.getConfig.mockResolvedValue({
+      embeddingModel: 'nomic-embed-text-v1.5-Q8_0.gguf'
+    });
+    mockLlamaService.listModels.mockResolvedValue([{ name: 'some-other-model.gguf' }]);
+
+    const handler = getHandler(IPC_CHANNELS.EMBEDDINGS.FULL_REBUILD);
+    const originalJestWorkerId = process.env.JEST_WORKER_ID;
+    delete process.env.JEST_WORKER_ID;
+    try {
+      const result = await handler({}, { modelOverride: 'missing-model.gguf' });
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('MODEL_NOT_AVAILABLE');
+      expect(mockLlamaService.updateConfig).toHaveBeenNthCalledWith(1, {
+        embeddingModel: 'missing-model.gguf'
+      });
+      expect(mockLlamaService.updateConfig).toHaveBeenNthCalledWith(2, {
+        embeddingModel: 'nomic-embed-text-v1.5-Q8_0.gguf'
+      });
+    } finally {
+      process.env.JEST_WORKER_ID = originalJestWorkerId;
+    }
   });
 
   test('REBUILD_FILES returns success with 0 files when history is empty', async () => {

@@ -24,12 +24,33 @@ describe('ipcValidator', () => {
   test('rejects oversized payloads for generic channels', () => {
     const { validateResult } = createIpcValidator();
     const huge = { value: 'x'.repeat(500001) };
-    expect(validateResult(huge, 'llama:get-models')).toBeNull();
+    expect(validateResult(huge, 'llama:get-models')).toEqual(
+      expect.objectContaining({
+        success: false
+      })
+    );
   });
 
   test('applies safe fallback for oversized select-directory payload', () => {
     const { validateResult } = createIpcValidator();
     const huge = { value: 'x'.repeat(500001) };
     expect(validateResult(huge, 'files:select-directory')).toEqual({ success: false, path: null });
+  });
+
+  test('applies undo-redo specific fallback for oversized payloads', () => {
+    const { validateResult } = createIpcValidator();
+    const huge = { value: 'x'.repeat(500001) };
+
+    expect(validateResult(huge, 'undo-redo:get-history')).toEqual([]);
+    expect(validateResult(huge, 'undo-redo:get-state')).toEqual({
+      stack: [],
+      pointer: -1,
+      canUndo: false,
+      canRedo: false
+    });
+    expect(validateResult(huge, 'undo-redo:undo')).toEqual({
+      success: false,
+      message: 'Undo/redo response rejected: payload exceeded safety limits'
+    });
   });
 });

@@ -301,6 +301,21 @@ describe('UndoRedoService', () => {
     });
   });
 
+  describe('getFullState', () => {
+    test('includes operations metadata for batch actions', async () => {
+      const operations = [
+        { source: '/in/a.txt', destination: '/out/a.txt' },
+        { source: '/in/b.txt', destination: '/out/b.txt' }
+      ];
+      await service.recordAction('BATCH_OPERATION', { operations });
+
+      const state = service.getFullState();
+      expect(state.stack).toHaveLength(1);
+      expect(state.stack[0].metadata.operationCount).toBe(2);
+      expect(state.stack[0].metadata.operations).toEqual(operations);
+    });
+  });
+
   describe('clearHistory', () => {
     test('clears all actions', async () => {
       await service.recordAction('FILE_MOVE', {
@@ -459,12 +474,48 @@ describe('UndoRedoService', () => {
       await service.initialize();
       await expect(service.undo()).rejects.toThrow('No actions to undo');
     });
+
+    test('returns clear error for truncated batch action data', async () => {
+      service.initialized = true;
+      service.actions = [
+        {
+          id: 'truncated-undo-1',
+          type: 'BATCH_OPERATION',
+          timestamp: new Date().toISOString(),
+          description: 'Truncated batch action',
+          data: {
+            truncated: true
+          }
+        }
+      ];
+      service.currentIndex = 0;
+
+      await expect(service.undo()).rejects.toThrow('Cannot undo truncated batch action data');
+    });
   });
 
   describe('redo', () => {
     test('throws when nothing to redo', async () => {
       await service.initialize();
       await expect(service.redo()).rejects.toThrow('No actions to redo');
+    });
+
+    test('returns clear error for truncated batch action data', async () => {
+      service.initialized = true;
+      service.actions = [
+        {
+          id: 'truncated-redo-1',
+          type: 'BATCH_OPERATION',
+          timestamp: new Date().toISOString(),
+          description: 'Truncated batch action',
+          data: {
+            truncated: true
+          }
+        }
+      ];
+      service.currentIndex = -1;
+
+      await expect(service.redo()).rejects.toThrow('Cannot redo truncated batch action data');
     });
   });
 });

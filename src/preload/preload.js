@@ -685,8 +685,13 @@ const listenerAuditIntervalId = setInterval(() => {
  * Throw on structured failure responses.
  */
 function throwIfFailed(result, opts = {}) {
-  const { allowCanceled = true, defaultMessage = 'Operation failed' } = opts;
-  if (!result || typeof result !== 'object') return result;
+  const { allowCanceled = true, defaultMessage = 'Operation failed', expectObject = false } = opts;
+  if (!result || typeof result !== 'object') {
+    if (expectObject) {
+      throw new Error(defaultMessage);
+    }
+    return result;
+  }
   if (!Object.prototype.hasOwnProperty.call(result, 'success')) return result;
   if (result.success !== false) return result;
   if (allowCanceled && (result.canceled === true || result.cancelled === true)) return result;
@@ -870,7 +875,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   embeddings: {
     rebuildFolders: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REBUILD_FOLDERS),
     rebuildFiles: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REBUILD_FILES),
-    fullRebuild: () => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.FULL_REBUILD),
+    fullRebuild: (options) => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.FULL_REBUILD, options),
     reanalyzeAll: (options) => secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REANALYZE_ALL, options),
     reanalyzeFile: (filePath, options = {}) =>
       secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REANALYZE_FILE, { filePath, ...options }),
@@ -1090,23 +1095,42 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Settings
   settings: {
-    get: async () => throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET)),
+    get: async () =>
+      throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET), {
+        expectObject: true,
+        defaultMessage: 'Failed to load settings'
+      }),
     save: async (settings) =>
-      throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.SAVE, settings)),
+      throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.SAVE, settings), {
+        expectObject: true,
+        defaultMessage: 'Failed to save settings'
+      }),
     getConfigurableLimits: () =>
       secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET_CONFIGURABLE_LIMITS),
     getLogsInfo: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.GET_LOGS_INFO),
     openLogsFolder: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.OPEN_LOGS_FOLDER),
     export: async (exportPath) =>
-      throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.EXPORT, exportPath)),
+      throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.EXPORT, exportPath), {
+        expectObject: true,
+        defaultMessage: 'Failed to export settings'
+      }),
     import: async (importPath) =>
-      throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.IMPORT, importPath)),
+      throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.IMPORT, importPath), {
+        expectObject: true,
+        defaultMessage: 'Failed to import settings'
+      }),
     createBackup: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.CREATE_BACKUP),
     listBackups: () => secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.LIST_BACKUPS),
     restoreBackup: async (backupPath) =>
-      throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.RESTORE_BACKUP, backupPath)),
+      throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.RESTORE_BACKUP, backupPath), {
+        expectObject: true,
+        defaultMessage: 'Failed to restore settings backup'
+      }),
     deleteBackup: async (backupPath) =>
-      throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.DELETE_BACKUP, backupPath))
+      throwIfFailed(await secureIPC.safeInvoke(IPC_CHANNELS.SETTINGS.DELETE_BACKUP, backupPath), {
+        expectObject: true,
+        defaultMessage: 'Failed to delete settings backup'
+      })
   }
 
   // Deprecated APIs removed - in-process stack only

@@ -183,6 +183,37 @@ describe('LlamaService – inference methods', () => {
         service.generateText({ prompt: 'test', signal: controller.signal })
       ).rejects.toThrow('Operation aborted');
     });
+
+    test('uses unique operation IDs across same-millisecond calls', async () => {
+      const service = createTestService();
+      const capturedOptions = [];
+      service._coordinator = {
+        withModel: jest.fn((_, fn, options) => {
+          capturedOptions.push(options);
+          return fn();
+        })
+      };
+
+      const dateNowSpy = jest.spyOn(Date, 'now').mockReturnValue(1234567890);
+      const mathRandomSpy = jest
+        .spyOn(Math, 'random')
+        .mockReturnValueOnce(0.111111)
+        .mockReturnValueOnce(0.222222);
+
+      const { withLlamaResilience } = require('../src/main/services/LlamaResilience');
+      withLlamaResilience.mockImplementation(async () => ({ response: 'ok' }));
+
+      try {
+        await service.generateText({ prompt: 'first' });
+        await service.generateText({ prompt: 'second' });
+
+        expect(capturedOptions).toHaveLength(2);
+        expect(capturedOptions[0].operationId).not.toBe(capturedOptions[1].operationId);
+      } finally {
+        dateNowSpy.mockRestore();
+        mathRandomSpy.mockRestore();
+      }
+    });
   });
 
   describe('analyzeText', () => {
@@ -255,6 +286,37 @@ describe('LlamaService – inference methods', () => {
       jest.spyOn(fs, 'access').mockResolvedValue(undefined);
 
       await expect(service.analyzeImage({ imagePath: '/test.jpg' })).rejects.toThrow(/projector/i);
+    });
+
+    test('uses unique vision operation IDs across same-millisecond calls', async () => {
+      const service = createTestService();
+      const capturedOptions = [];
+      service._coordinator = {
+        withModel: jest.fn((_, fn, options) => {
+          capturedOptions.push(options);
+          return fn();
+        })
+      };
+
+      const dateNowSpy = jest.spyOn(Date, 'now').mockReturnValue(987654321);
+      const mathRandomSpy = jest
+        .spyOn(Math, 'random')
+        .mockReturnValueOnce(0.333333)
+        .mockReturnValueOnce(0.444444);
+
+      const { withLlamaResilience } = require('../src/main/services/LlamaResilience');
+      withLlamaResilience.mockImplementation(async () => ({ response: 'vision-ok' }));
+
+      try {
+        await service.analyzeImage({ imagePath: '/a.jpg', prompt: 'describe' });
+        await service.analyzeImage({ imagePath: '/b.jpg', prompt: 'describe' });
+
+        expect(capturedOptions).toHaveLength(2);
+        expect(capturedOptions[0].operationId).not.toBe(capturedOptions[1].operationId);
+      } finally {
+        dateNowSpy.mockRestore();
+        mathRandomSpy.mockRestore();
+      }
     });
   });
 
@@ -338,6 +400,27 @@ describe('LlamaService – inference methods', () => {
       await service.batchGenerateEmbeddings(['a', 'b'], { onProgress: progress });
 
       expect(progress).toHaveBeenCalled();
+    });
+
+    test('reports progress for failed items too', async () => {
+      const service = createTestService();
+      service.generateEmbedding = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('failed item'))
+        .mockResolvedValueOnce({ embedding: [0.2], dimensions: 1 });
+
+      const progress = jest.fn();
+      const result = await service.batchGenerateEmbeddings(['a', 'b'], { onProgress: progress });
+
+      expect(result.embeddings).toHaveLength(2);
+      expect(progress).toHaveBeenCalled();
+      expect(progress).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          current: 2,
+          total: 2,
+          progress: 1
+        })
+      );
     });
   });
 });

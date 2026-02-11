@@ -59,9 +59,12 @@ function _isOllamaStyleName(name) {
   return typeof name === 'string' && name.includes(':') && !name.endsWith('.gguf');
 }
 
-async function verifyEmbeddingModelAvailable(logger) {
+async function verifyEmbeddingModelAvailable(logger, preferredModel = null) {
   const cfg = await getLlamaService().getConfig();
-  let model = cfg.embeddingModel || AI_DEFAULTS.EMBEDDING.MODEL;
+  let model =
+    typeof preferredModel === 'string' && preferredModel.trim()
+      ? preferredModel.trim()
+      : cfg.embeddingModel || AI_DEFAULTS.EMBEDDING.MODEL;
 
   // Replace Ollama-era names with the GGUF default and persist the correction
   if (_isOllamaStyleName(model)) {
@@ -84,9 +87,11 @@ async function verifyEmbeddingModelAvailable(logger) {
 
   try {
     const models = await getLlamaService().listModels();
+    const modelNames = models
+      .map((m) => (m?.name || m?.filename || '').toLowerCase().trim())
+      .filter(Boolean);
 
     // Check if the configured model (or a variant) is installed
-    const modelNames = models.map((m) => (m.name || '').toLowerCase());
     const normalizedModel = model.toLowerCase();
 
     const isAvailable = modelNames.includes(normalizedModel);
@@ -140,10 +145,17 @@ async function verifyEmbeddingModelAvailable(logger) {
 function isModelAvailable(modelNames, model) {
   const normalizedModel = String(model || '').toLowerCase();
   if (!normalizedModel) return false;
+  const validModelNames = (Array.isArray(modelNames) ? modelNames : [])
+    .map((m) =>
+      String(m || '')
+        .toLowerCase()
+        .trim()
+    )
+    .filter(Boolean);
   // Exact match
-  if (modelNames.includes(normalizedModel)) return true;
+  if (validModelNames.includes(normalizedModel)) return true;
   // Fuzzy match: handles stale Ollama-era names (e.g. 'mistral' matches 'mistral-7b-instruct-v0.3-q4_k_m.gguf')
-  return modelNames.some((m) => m.includes(normalizedModel) || normalizedModel.includes(m));
+  return validModelNames.some((m) => m.includes(normalizedModel) || normalizedModel.includes(m));
 }
 
 async function verifyReanalyzeModelsAvailable(logger) {
@@ -182,7 +194,9 @@ async function verifyReanalyzeModelsAvailable(logger) {
 
   try {
     const models = await getLlamaService().listModels();
-    const modelNames = models.map((m) => (m.name || '').toLowerCase());
+    const modelNames = models
+      .map((m) => (m?.name || m?.filename || '').toLowerCase().trim())
+      .filter(Boolean);
 
     if (!isModelAvailable(modelNames, textModel)) {
       return {
@@ -267,13 +281,15 @@ function getClusteringServiceInstance() {
 let _rebuildLock = {
   isLocked: false,
   operation: null,
-  startedAt: null
+  startedAt: null,
+  token: null
 };
+let _rebuildLockSeq = 0;
 
 /**
  * Acquire rebuild lock for an operation
  * @param {string} operation - Name of the operation (e.g., 'REBUILD_FILES', 'FULL_REBUILD')
- * @returns {{ acquired: boolean, reason?: string }}
+ * @returns {{ acquired: boolean, token?: string, reason?: string }}
  */
 function acquireRebuildLock(operation) {
   if (_rebuildLock.isLocked) {
@@ -293,20 +309,31 @@ function acquireRebuildLock(operation) {
   _rebuildLock = {
     isLocked: true,
     operation,
-    startedAt: Date.now()
+    startedAt: Date.now(),
+    token: `${operation}:${Date.now()}:${++_rebuildLockSeq}`
   };
-  return { acquired: true };
+  return { acquired: true, token: _rebuildLock.token };
 }
 
 /**
  * Release the rebuild lock
  */
-function releaseRebuildLock() {
+function releaseRebuildLock(token) {
+  if (token && _rebuildLock.token && token !== _rebuildLock.token) {
+    _moduleLogger.warn('[SEMANTIC] Ignoring rebuild lock release from stale holder', {
+      token,
+      activeToken: _rebuildLock.token,
+      operation: _rebuildLock.operation
+    });
+    return false;
+  }
   _rebuildLock = {
     isLocked: false,
     operation: null,
-    startedAt: null
+    startedAt: null,
+    token: null
   };
+  return true;
 }
 
 function registerEmbeddingsIpc(servicesOrParams) {
@@ -500,16 +527,18 @@ function registerEmbeddingsIpc(servicesOrParams) {
   // FIX: Store timer ID so it can be cleared if the module is torn down
   // before the pre-warm fires (prevents stale callback after shutdown).
   let _preWarmTimerId = null;
-  setImmediate(() => {
-    // Use setImmediate to ensure IPC handlers are registered first
-    _preWarmTimerId = setTimeout(() => {
-      _preWarmTimerId = null;
-      ensureInitialized().catch((error) => {
-        logger.warn('[SEMANTIC] Background pre-warm failed (non-fatal):', error.message);
-        // Non-fatal - handlers will retry with proper backoff when called
-      });
-    }, 1000); // 1 second delay for pre-warming, handlers use retries if called earlier
-  });
+  if (process.env.NODE_ENV !== 'test') {
+    setImmediate(() => {
+      // Use setImmediate to ensure IPC handlers are registered first
+      _preWarmTimerId = setTimeout(() => {
+        _preWarmTimerId = null;
+        ensureInitialized().catch((error) => {
+          logger.warn('[SEMANTIC] Background pre-warm failed (non-fatal):', error.message);
+          // Non-fatal - handlers will retry with proper backoff when called
+        });
+      }, 1000); // 1 second delay for pre-warming, handlers use retries if called earlier
+    });
+  }
 
   // Reusable Zod schemas for handler validation
   const context = 'Semantic';
@@ -675,7 +704,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
           };
         } finally {
           // FIX P0-2: Always release lock when done
-          releaseRebuildLock();
+          releaseRebuildLock(lockResult.token);
         }
       }
     })
@@ -1066,7 +1095,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
           };
         } finally {
           // FIX P0-2: Always release lock when done
-          releaseRebuildLock();
+          releaseRebuildLock(lockResult.token);
         }
       }
     })
@@ -1084,8 +1113,8 @@ function registerEmbeddingsIpc(servicesOrParams) {
     createHandler({
       logger,
       context,
-      schema: schemaVoid,
-      handler: async () => {
+      schema: schemaObjectOptional,
+      handler: async (_event, options = {}) => {
         const initErr = await safeEnsureInit();
         if (initErr) return initErr;
         // FIX P0-2: Acquire rebuild lock to prevent concurrent rebuilds
@@ -1106,6 +1135,9 @@ function registerEmbeddingsIpc(servicesOrParams) {
           model: null,
           errors: []
         };
+        let previousEmbeddingModel = null;
+        let overrideApplied = false;
+        let rebuildSucceeded = false;
 
         try {
           const embeddingService = getParallelEmbeddingService();
@@ -1117,8 +1149,30 @@ function registerEmbeddingsIpc(servicesOrParams) {
             };
           }
 
+          const requestedModelOverride =
+            typeof options?.modelOverride === 'string' ? options.modelOverride.trim() : '';
+          if (requestedModelOverride) {
+            try {
+              const cfg = await getLlamaService().getConfig();
+              previousEmbeddingModel = cfg?.embeddingModel || AI_DEFAULTS.EMBEDDING.MODEL;
+              if (previousEmbeddingModel !== requestedModelOverride) {
+                await getLlamaService().updateConfig({ embeddingModel: requestedModelOverride });
+                overrideApplied = true;
+              }
+            } catch (switchError) {
+              return {
+                success: false,
+                error: `Failed to set embedding model for rebuild: ${switchError.message}`,
+                errorCode: 'MODEL_SWITCH_FAILED'
+              };
+            }
+          }
+
           // Step 1: Verify embedding model is available
-          const modelCheck = await verifyEmbeddingModelAvailable(logger);
+          const modelCheck = await verifyEmbeddingModelAvailable(
+            logger,
+            requestedModelOverride || null
+          );
           if (!modelCheck.available) {
             return {
               success: false,
@@ -1372,6 +1426,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
             bm25: results.bm25
           });
 
+          rebuildSucceeded = true;
           return {
             success: true,
             folders: results.folders.success,
@@ -1391,8 +1446,18 @@ function registerEmbeddingsIpc(servicesOrParams) {
             partialResults: results
           };
         } finally {
+          if (overrideApplied && previousEmbeddingModel && !rebuildSucceeded) {
+            try {
+              await getLlamaService().updateConfig({ embeddingModel: previousEmbeddingModel });
+            } catch (rollbackError) {
+              logger.error(
+                '[EMBEDDINGS] Failed to rollback embedding model after rebuild failure:',
+                rollbackError?.message
+              );
+            }
+          }
           // FIX P0-2: Always release lock when done
-          releaseRebuildLock();
+          releaseRebuildLock(lockResult.token);
         }
       }
     })
@@ -1511,7 +1576,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
           };
         } finally {
           // FIX P0-2: Always release lock when done
-          releaseRebuildLock();
+          releaseRebuildLock(lockResult.token);
         }
       }
     })

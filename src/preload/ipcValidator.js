@@ -120,8 +120,21 @@ function createIpcValidator({ log: _log } = {}) {
           return { success: false, path: null };
         case 'smart-folders:get-custom':
           return [];
+        case 'undo-redo:get-history':
+          return [];
+        case 'undo-redo:get-state':
+          return { stack: [], pointer: -1, canUndo: false, canRedo: false };
+        case 'undo-redo:undo':
+        case 'undo-redo:redo':
+          return {
+            success: false,
+            message: 'Undo/redo response rejected: payload exceeded safety limits'
+          };
         default:
-          return null;
+          return {
+            success: false,
+            error: 'IPC response rejected: payload exceeded safety limits'
+          };
       }
     }
 

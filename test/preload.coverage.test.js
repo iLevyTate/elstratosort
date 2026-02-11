@@ -435,6 +435,11 @@ describe('Preload Coverage', () => {
       const result = await electronAPI.settings.save({});
       expect(result.cancelled).toBe(true);
     });
+
+    test('settings.get throws when result is null', async () => {
+      mockInvoke.mockResolvedValue(null);
+      await expect(electronAPI.settings.get()).rejects.toThrow('Failed to load settings');
+    });
   });
 
   describe('events.sendError', () => {

@@ -12,23 +12,7 @@ const { createHandler, safeHandle, safeSend, z } = require('./ipcWrappers');
 const { container: serviceContainer, ServiceIds } = require('../services/ServiceContainer');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { AI_DEFAULTS } = require('../../shared/constants');
-
-/**
- * Helper to add timeout to async operations
- */
-async function withTimeout(promise, timeoutMs, operation) {
-  let timeoutId;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`${operation} timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
+const { withTimeout } = require('../../shared/promiseUtils');
 
 /**
  * Register Llama IPC handlers
@@ -85,8 +69,7 @@ function registerLlamaIpc(servicesOrParams) {
     'threads',
     // Backward-compatible field names used in settings payloads
     'llamaGpuLayers',
-    'llamaContextSize',
-    'vectorDbPersistPath'
+    'llamaContextSize'
   ]);
   const schemaUpdateConfig = z
     ? z
@@ -289,11 +272,8 @@ function registerLlamaIpc(servicesOrParams) {
         try {
           const service = getLlamaService();
           await withTimeout(service.initialize(), TIMEOUTS.SERVICE_STARTUP, 'Llama initialization');
-          const health = await withTimeout(
-            service.getHealthStatus(),
-            TIMEOUTS.HEALTH_CHECK,
-            'Llama health check'
-          );
+          // getHealthStatus is synchronous; timeout wrappers apply only to async operations.
+          const health = service.getHealthStatus();
 
           const now = Date.now();
           systemAnalytics.llamaHealth = {

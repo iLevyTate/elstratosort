@@ -437,5 +437,21 @@ describe('LlamaService', () => {
 
       expect(service._modelMemoryManager.unloadAll).toHaveBeenCalled();
     });
+
+    test('clears stale model reload gates during shutdown', async () => {
+      const service = new LlamaService();
+      service._metrics = { destroy: jest.fn() };
+      service._modelMemoryManager = { unloadAll: jest.fn() };
+      service._llama = { dispose: jest.fn() };
+      service._waitForIdleOperations = jest.fn().mockResolvedValue(true);
+
+      service._beginModelReloadGate('text');
+      service._beginModelReloadGate('vision');
+      expect(service._modelReloadGates.size).toBe(2);
+
+      await service.shutdown();
+
+      expect(service._modelReloadGates.size).toBe(0);
+    }, 15000);
   });
 });

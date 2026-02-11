@@ -137,24 +137,37 @@ async function acquireBatchLock(batchId, timeout = BATCH_LOCK_ACQUIRE_TIMEOUT) {
  * @param {string} batchId - Batch ID that should hold the lock
  */
 function releaseBatchLock(batchId) {
-  if (batchOperationLock && batchOperationLock.batchId === batchId) {
-    batchOperationLock = null;
-
-    // Find the first waiter that hasn't already timed out
-    while (batchLockWaiters.length > 0) {
-      const waiter = batchLockWaiters.shift();
-      if (waiter.clearTimeout) {
-        waiter.clearTimeout();
-      } else if (waiter.timeoutId) {
-        clearTimeout(waiter.timeoutId);
-      }
-      // Skip waiters that already timed out (settled by timeout handler)
-      if (waiter.settled) continue;
-      batchOperationLock = { batchId: waiter.batchId, acquiredAt: Date.now() };
-      waiter.resolve(true);
-      break;
-    }
+  if (!batchOperationLock) return;
+  if (batchOperationLock.batchId !== batchId) {
+    logger.warn('[FILE-OPS] releaseBatchLock called by non-holder batch', {
+      callerBatchId: batchId,
+      holderBatchId: batchOperationLock.batchId
+    });
+    return;
   }
+
+  // Transfer ownership directly to the next valid waiter.
+  // Only clear the lock if no waiter is eligible to receive handoff.
+  let nextWaiter = null;
+  while (batchLockWaiters.length > 0) {
+    const waiter = batchLockWaiters.shift();
+    if (waiter.clearTimeout) {
+      waiter.clearTimeout();
+    } else if (waiter.timeoutId) {
+      clearTimeout(waiter.timeoutId);
+    }
+    if (waiter.settled) continue;
+    nextWaiter = waiter;
+    break;
+  }
+
+  if (nextWaiter) {
+    batchOperationLock = { batchId: nextWaiter.batchId, acquiredAt: Date.now() };
+    nextWaiter.resolve(true);
+    return;
+  }
+
+  batchOperationLock = null;
 }
 
 module.exports = {

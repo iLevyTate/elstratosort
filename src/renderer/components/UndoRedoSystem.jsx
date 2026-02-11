@@ -16,6 +16,9 @@ import { createLogger } from '../../shared/logger';
 import Modal, { ConfirmModal } from './ui/Modal';
 import { useNotification } from '../contexts/NotificationContext';
 import { ACTION_TYPES as SHARED_ACTION_TYPES } from '../../shared/constants';
+import { useDispatch } from 'react-redux';
+import { updateResultPathsAfterMove } from '../store/slices/analysisSlice';
+import { removeOrganizedFiles, updateFilePathsAfterMove } from '../store/slices/filesSlice';
 import Button from './ui/Button';
 import StateMessage from './ui/StateMessage';
 import { Text } from './ui/Typography';
@@ -30,6 +33,29 @@ const generateSecureId = () => {
 
 const UndoRedoContext = createContext();
 const ACTION_TYPES = SHARED_ACTION_TYPES;
+let globalBatchStateCallbacks = null;
+
+function registerGlobalBatchStateCallbacks(callbacks) {
+  globalBatchStateCallbacks = callbacks || null;
+  return () => {
+    if (globalBatchStateCallbacks === callbacks) {
+      globalBatchStateCallbacks = null;
+    }
+  };
+}
+
+function invokeBatchStateCallback(type, result) {
+  const cb = globalBatchStateCallbacks?.[type];
+  if (typeof cb !== 'function') return;
+  try {
+    cb(result);
+  } catch (error) {
+    logger.warn('[UndoRedo] Global batch state callback failed', {
+      type,
+      error: error?.message
+    });
+  }
+}
 
 const ACTION_METADATA = {
   [ACTION_TYPES.FILE_MOVE]: {
@@ -147,6 +173,8 @@ export const createOrganizeBatchAction = (description, operations, stateCallback
       } catch {
         // Non-fatal if state callback fails
       }
+    } else {
+      invokeBatchStateCallback('onExecute', result);
     }
     return result;
   },
@@ -167,6 +195,8 @@ export const createOrganizeBatchAction = (description, operations, stateCallback
       } catch {
         // Non-fatal if state callback fails
       }
+    } else {
+      invokeBatchStateCallback('onUndo', result);
     }
     return result;
   },
@@ -183,6 +213,8 @@ export const createOrganizeBatchAction = (description, operations, stateCallback
       } catch {
         // Non-fatal if state callback fails
       }
+    } else {
+      invokeBatchStateCallback('onRedo', result);
     }
     return result;
   },
@@ -196,7 +228,7 @@ const rehydrateAction = (serializedAction) => {
   const { type, metadata, description } = serializedAction;
 
   try {
-    if (type === ACTION_TYPES.BATCH_OPERATION) {
+    if (type === ACTION_TYPES.BATCH_OPERATION || type === 'BATCH_ORGANIZE') {
       if (metadata && metadata.operations) {
         return createOrganizeBatchAction(description, metadata.operations);
       }
@@ -332,7 +364,12 @@ class UndoStack {
   load(savedStack, savedPointer) {
     if (Array.isArray(savedStack)) {
       this.stack = savedStack;
-      this.pointer = typeof savedPointer === 'number' ? savedPointer : savedStack.length - 1;
+      if (typeof savedPointer === 'number') {
+        const maxPointer = savedStack.length - 1;
+        this.pointer = Math.min(Math.max(savedPointer, -1), maxPointer);
+      } else {
+        this.pointer = savedStack.length - 1;
+      }
       this.notifyListeners();
     }
   }
@@ -351,6 +388,7 @@ class UndoStack {
 }
 
 export function UndoRedoProvider({ children }) {
+  const dispatch = useDispatch();
   const [undoStack] = useState(() => new UndoStack());
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -380,6 +418,9 @@ export function UndoRedoProvider({ children }) {
 
           if (rehydratedStack.length > 0) {
             undoStack.load(rehydratedStack, state.pointer);
+          } else {
+            // If actions can't be rehydrated (schema drift/corruption), avoid invalid pointer state.
+            undoStack.load([], -1);
           }
         } else {
           undoStack.clear();
@@ -524,10 +565,64 @@ export function UndoRedoProvider({ children }) {
     }
   }, [undoStack]);
 
+  const applyBatchPathSync = useCallback(
+    (result, direction) => {
+      const rows = Array.isArray(result?.results) ? result.results.filter((r) => r?.success) : [];
+      if (rows.length === 0) return;
+
+      const pairs = rows
+        .map((r) => {
+          if (direction === 'undo') {
+            return {
+              from: r.source || r.newPath,
+              to: r.destination || r.originalPath || r.oldPath
+            };
+          }
+          return {
+            from: r.source || r.originalPath || r.oldPath,
+            to: r.destination || r.newPath
+          };
+        })
+        .filter((p) => typeof p.from === 'string' && p.from && typeof p.to === 'string' && p.to);
+
+      if (pairs.length === 0) return;
+
+      const oldPaths = pairs.map((p) => p.from);
+      const newPaths = pairs.map((p) => p.to);
+      dispatch(updateResultPathsAfterMove({ oldPaths, newPaths }));
+      dispatch(updateFilePathsAfterMove({ oldPaths, newPaths }));
+      if (direction === 'undo') {
+        dispatch(removeOrganizedFiles(newPaths));
+      }
+    },
+    [dispatch]
+  );
+
   useEffect(() => {
     undoStack.addListener(updateState);
     return () => undoStack.removeListener(updateState);
   }, [undoStack, updateState]);
+
+  useEffect(() => {
+    return registerGlobalBatchStateCallbacks({
+      onExecute: (result) => applyBatchPathSync(result, 'execute'),
+      onUndo: (result) => applyBatchPathSync(result, 'undo'),
+      onRedo: (result) => applyBatchPathSync(result, 'redo')
+    });
+  }, [applyBatchPathSync]);
+
+  const assertSuccessfulUndoRedoResult = useCallback((result, actionLabel) => {
+    if (
+      result &&
+      typeof result === 'object' &&
+      Object.prototype.hasOwnProperty.call(result, 'success') &&
+      result.success !== true
+    ) {
+      const detail = result.message || result.error || `Main process ${actionLabel} failed`;
+      throw new Error(detail);
+    }
+    return result;
+  }, []);
 
   const executeAction = useCallback(
     async (actionConfig) => {
@@ -614,16 +709,18 @@ export function UndoRedoProvider({ children }) {
     }
 
     try {
-      await undoAction.undo(undoAction);
+      const result = await undoAction.undo(undoAction);
+      assertSuccessfulUndoRedoResult(result, 'undo');
       showSuccess(`Undid: ${undoAction.description}`);
     } catch (error) {
       undoStack.revertUndo();
-      showError(`Failed to undo ${undoAction.description}: ${error?.message || String(error)}`);
+      const actionDescription = undoAction?.description || 'action';
+      showError(`Failed to undo ${actionDescription}: ${error?.message || String(error)}`);
     } finally {
       actionMutexRef.current = false;
       if (isMountedRef.current) setIsExecuting(false);
     }
-  }, [undoStack, showInfo, showConfirm, showSuccess, showError]);
+  }, [undoStack, showInfo, showConfirm, showSuccess, showError, assertSuccessfulUndoRedoResult]);
 
   const redo = useCallback(async () => {
     if (actionMutexRef.current) {
@@ -642,16 +739,18 @@ export function UndoRedoProvider({ children }) {
     }
 
     try {
-      await action.redo(action);
+      const result = await action.redo(action);
+      assertSuccessfulUndoRedoResult(result, 'redo');
       showSuccess(`Redid: ${action.description}`);
     } catch (error) {
       undoStack.revertRedo();
-      showError(`Failed to redo ${action.description}: ${error?.message || String(error)}`);
+      const actionDescription = action?.description || 'action';
+      showError(`Failed to redo ${actionDescription}: ${error?.message || String(error)}`);
     } finally {
       actionMutexRef.current = false;
       if (isMountedRef.current) setIsExecuting(false);
     }
-  }, [undoStack, showInfo, showSuccess, showError]);
+  }, [undoStack, showInfo, showSuccess, showError, assertSuccessfulUndoRedoResult]);
 
   const getActionDescription = useCallback((action) => {
     const metadata = ACTION_METADATA[action.type];
@@ -705,15 +804,22 @@ export function UndoRedoProvider({ children }) {
             try {
               const action = undoStack.undo();
               if (action) {
-                await action.undo(action);
+                const result = await action.undo(action);
+                assertSuccessfulUndoRedoResult(result, 'undo');
               }
               completedSteps++;
             } catch (stepError) {
-              // Pointer was already moved by undo(), restore it to keep stack consistent
-              try {
-                undoStack.redo();
-              } catch {
-                /* ignore restore failure */
+              // Roll back already-completed jump steps to keep renderer/main process in sync.
+              for (let rollbackStep = 0; rollbackStep < completedSteps; rollbackStep++) {
+                const rollbackAction = undoStack.redo();
+                if (!rollbackAction) break;
+                try {
+                  const rollbackResult = await rollbackAction.redo(rollbackAction);
+                  assertSuccessfulUndoRedoResult(rollbackResult, 'redo rollback');
+                } catch (rollbackError) {
+                  logger.error('Jump rollback failed after undo error', rollbackError);
+                  break;
+                }
               }
               showError(
                 `Jump failed at step ${completedSteps + 1}/${stepsToUndo}: ${stepError?.message || String(stepError)}`
@@ -731,15 +837,22 @@ export function UndoRedoProvider({ children }) {
             try {
               const action = undoStack.redo();
               if (action) {
-                await action.redo(action);
+                const result = await action.redo(action);
+                assertSuccessfulUndoRedoResult(result, 'redo');
               }
               completedSteps++;
             } catch (stepError) {
-              // Pointer was already moved by redo(), restore it to keep stack consistent
-              try {
-                undoStack.undo();
-              } catch {
-                /* ignore restore failure */
+              // Roll back already-completed jump steps to keep renderer/main process in sync.
+              for (let rollbackStep = 0; rollbackStep < completedSteps; rollbackStep++) {
+                const rollbackAction = undoStack.undo();
+                if (!rollbackAction) break;
+                try {
+                  const rollbackResult = await rollbackAction.undo(rollbackAction);
+                  assertSuccessfulUndoRedoResult(rollbackResult, 'undo rollback');
+                } catch (rollbackError) {
+                  logger.error('Jump rollback failed after redo error', rollbackError);
+                  break;
+                }
               }
               showError(
                 `Jump failed at step ${completedSteps + 1}/${stepsToRedo}: ${stepError?.message || String(stepError)}`
@@ -756,7 +869,7 @@ export function UndoRedoProvider({ children }) {
         if (isMountedRef.current) setIsExecuting(false);
       }
     },
-    [undoStack, showInfo, showSuccess, showError]
+    [undoStack, showInfo, showSuccess, showError, assertSuccessfulUndoRedoResult]
   );
 
   const contextValue = useMemo(

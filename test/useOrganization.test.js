@@ -537,6 +537,37 @@ describe('useOrganization', () => {
         // Code: if (uniqueResults.length > 0) { ... }
         expect(options.addOrganizedFiles).not.toHaveBeenCalled();
       });
+
+      test('state callbacks are no-op after unmount', async () => {
+        jest.useFakeTimers();
+        const options = createMockOptions();
+        options.executeAction.mockImplementation(
+          (action) =>
+            new Promise((resolve) => {
+              setTimeout(() => {
+                action.callbacks.onExecute({
+                  results: [
+                    { success: true, source: '/test.txt', destination: '/Documents/test.txt' }
+                  ]
+                });
+                resolve({ results: [{ success: true }] });
+              }, 10);
+            })
+        );
+
+        const { result, unmount } = renderHook(() => useOrganization(options));
+
+        await act(async () => {
+          const pending = result.current.handleOrganizeFiles();
+          unmount();
+          jest.advanceTimersByTime(20);
+          await pending;
+        });
+
+        expect(options.addOrganizedFiles).not.toHaveBeenCalled();
+        expect(options.markFilesAsProcessed).not.toHaveBeenCalled();
+        jest.useRealTimers();
+      });
     });
   });
 });

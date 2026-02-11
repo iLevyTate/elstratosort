@@ -102,7 +102,10 @@ function registerUndoRedoIpc(servicesOrParams) {
       fallbackResponse: [],
       handler: async (event, payload, service) => {
         try {
-          const limit = payload && typeof payload === 'number' ? payload : 50;
+          const parsedLimit = Number(payload);
+          const limit = Number.isFinite(parsedLimit)
+            ? Math.min(200, Math.max(1, Math.floor(parsedLimit)))
+            : 50;
           return (await service.getActionHistory(limit)) || [];
         } catch (error) {
           logger.error('Failed to get action history:', error);

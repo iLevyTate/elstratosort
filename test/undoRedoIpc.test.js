@@ -236,6 +236,30 @@ describe('Undo/Redo IPC Handlers', () => {
 
       expect(result).toEqual([]);
     });
+
+    test('normalizes invalid and string limits', async () => {
+      setupHandlers();
+      mockUndoRedoService.getActionHistory.mockResolvedValue([]);
+      const handler = handlers['undo-redo:get-history'];
+
+      await handler({}, '100');
+      expect(mockUndoRedoService.getActionHistory).toHaveBeenLastCalledWith(100);
+
+      await handler({}, -25);
+      expect(mockUndoRedoService.getActionHistory).toHaveBeenLastCalledWith(1);
+
+      await handler({}, Number.NaN);
+      expect(mockUndoRedoService.getActionHistory).toHaveBeenLastCalledWith(50);
+    });
+
+    test('clamps excessively large limits', async () => {
+      setupHandlers();
+      mockUndoRedoService.getActionHistory.mockResolvedValue([]);
+      const handler = handlers['undo-redo:get-history'];
+
+      await handler({}, 10000);
+      expect(mockUndoRedoService.getActionHistory).toHaveBeenCalledWith(200);
+    });
   });
 
   describe('getState handler', () => {

@@ -99,15 +99,32 @@ function ModelSelectionSection({
   };
 
   const confirmChangeAndRebuild = async () => {
+    const targetModel = pendingModel;
+    if (!targetModel) return;
     setIsRebuilding(true);
     try {
-      setSettings((prev) => ({ ...prev, embeddingModel: pendingModel }));
-      if (window.electronAPI?.embeddings?.fullRebuild) {
-        await window.electronAPI.embeddings.fullRebuild();
+      if (!window.electronAPI?.embeddings?.fullRebuild) {
+        throw new Error('Embeddings rebuild API is unavailable');
       }
-      if (isMountedRef.current) setEmbeddingModelChanged(false);
+      const rebuildResult = await window.electronAPI.embeddings.fullRebuild({
+        modelOverride: targetModel
+      });
+      if (!rebuildResult || typeof rebuildResult !== 'object') {
+        throw new Error('Embeddings rebuild returned an invalid response');
+      }
+      if (rebuildResult.success !== true) {
+        throw new Error(rebuildResult.error || 'Embeddings rebuild failed');
+      }
+      if (isMountedRef.current) {
+        setSettings((prev) => ({ ...prev, embeddingModel: targetModel }));
+        setEmbeddingModelChanged(false);
+      }
     } catch (error) {
       logger.error('Failed to rebuild embeddings', error);
+      if (isMountedRef.current) {
+        // Keep warning visible so user can retry rebuild or choose change-only.
+        setEmbeddingModelChanged(true);
+      }
     } finally {
       if (isMountedRef.current) {
         setIsRebuilding(false);

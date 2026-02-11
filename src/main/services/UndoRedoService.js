@@ -525,10 +525,17 @@ class UndoRedoService {
       case 'BATCH_OPERATION': {
         // Backwards/forwards compatibility with shared ACTION_TYPES
         // Reverse each file operation in the batch with result tracking
+        const operations = Array.isArray(action.data?.operations) ? action.data.operations : null;
+        if (!operations) {
+          const reason = action.data?.truncated
+            ? 'Cannot undo truncated batch action data'
+            : 'Cannot undo batch action with invalid operations data';
+          throw new Error(reason);
+        }
         const pathChanges = [];
         const operationResults = [];
 
-        for (const operation of [...action.data.operations].reverse()) {
+        for (const operation of [...operations].reverse()) {
           try {
             const result = await this.reverseFileOperation(operation);
             operationResults.push({
@@ -604,10 +611,17 @@ class UndoRedoService {
       case 'BATCH_OPERATION': {
         // Backwards/forwards compatibility with shared ACTION_TYPES
         // Re-execute each file operation in the batch with result tracking
+        const operations = Array.isArray(action.data?.operations) ? action.data.operations : null;
+        if (!operations) {
+          const reason = action.data?.truncated
+            ? 'Cannot redo truncated batch action data'
+            : 'Cannot redo batch action with invalid operations data';
+          throw new Error(reason);
+        }
         const pathChanges = [];
         const operationResults = [];
 
-        for (const operation of action.data.operations) {
+        for (const operation of operations) {
           try {
             await this.executeFileOperation(operation);
             operationResults.push({
@@ -1005,7 +1019,12 @@ class UndoRedoService {
           ? {
               source: action.data.originalPath,
               destination: action.data.newPath,
-              operationCount: action.data.operations?.length
+              operationCount: action.data.operations?.length,
+              operations: Array.isArray(action.data.operations)
+                ? action.data.operations
+                : undefined,
+              newSettings: action.data.newSettings,
+              oldSettings: action.data.oldSettings
             }
           : {}
       })),
