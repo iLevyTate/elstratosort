@@ -64,7 +64,7 @@ npm run dist:win         # Build Windows installer
 ## Conventions
 
 - **IPC channels** are defined in `src/shared/constants.js` and validated in preload. Run
-  `npm run preload:check` to verify channel consistency.
+  `npm run generate:channels:check` to verify channel consistency.
 - **Services** follow dependency injection patterns documented in `docs/DI_PATTERNS.md`.
 - **Error handling** uses custom error types in `src/main/errors/` with a centralized error
   classifier.
@@ -83,7 +83,7 @@ These are tracked gaps that the project slash commands help address:
 
 1. **Sandbox disabled** in renderer (`src/main/core/createWindow.js:130`) - preload uses `require()`
    for shared modules
-2. **CSP allows 'unsafe-eval'** (`src/main/core/createWindow.js:260`)
+2. ~~**CSP allows 'unsafe-eval'**~~ — Resolved: `script-src 'self'` (no unsafe-eval)
 3. **No crash reporting** - errors logged locally only, no Sentry/BugSnag
 4. **No code signing** - electron-builder.json has no certificate config
 5. **No macOS notarization** - `@electron/notarize` installed but not configured

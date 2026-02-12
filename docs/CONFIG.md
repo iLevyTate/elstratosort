@@ -38,7 +38,7 @@ ollama pull mxbai-embed-large     # Embedding model (default)
 # - Embedding: embeddinggemma:latest, nomic-embed-text:latest
 ```
 
-#### 3. Install ChromaDB (Requires Python 3.8+)
+#### 3. Install ChromaDB (Requires Python 3.9+)
 
 ```bash
 # Windows

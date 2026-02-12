@@ -64,8 +64,8 @@ find the right documentation for your needs.
 
 ## Active Development
 
-- **[GRAPH_INTEGRATION_PLAN.md](./GRAPH_INTEGRATION_PLAN.md)** - Graph visualization feature roadmap
-  and implementation status
+- **[FEATURES_GRAPH.md](./FEATURES_GRAPH.md)** - Graph visualization feature roadmap and
+  implementation status
 
 ## Configuration
 
@@ -85,7 +85,7 @@ docs/
 ├── CONFIG.md                            # Environment variables
 ├── DI_PATTERNS.md                       # Dependency injection
 ├── ERROR_HANDLING_GUIDE.md              # Error patterns
-├── GRAPH_INTEGRATION_PLAN.md            # Graph feature roadmap
+├── FEATURES_GRAPH.md                    # Graph feature roadmap
 └── LEARNING_GUIDE.md                    # Developer onboarding (glossary + examples)
 ```
 
