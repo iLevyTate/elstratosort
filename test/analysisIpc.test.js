@@ -4,6 +4,7 @@
  */
 
 const mockRecognizeIfAvailable = jest.fn();
+const mockBatchAnalyzeFiles = jest.fn();
 
 // Mock logger
 jest.mock('../src/shared/logger', () => {
@@ -50,6 +51,16 @@ jest.mock('../src/main/utils/tesseractUtils', () => ({
   recognizeIfAvailable: (...args) => mockRecognizeIfAvailable(...args)
 }));
 
+jest.mock('../src/main/services/BatchAnalysisService', () =>
+  jest.fn().mockImplementation(() => ({
+    analyzeFiles: (...args) => mockBatchAnalyzeFiles(...args)
+  }))
+);
+
+jest.mock('../src/main/ipc/files/batchProgressReporter', () => ({
+  sendOperationProgress: jest.fn()
+}));
+
 describe('registerAnalysisIpc', () => {
   let registerAnalysisIpc;
   let mockIpcMain;
@@ -92,6 +103,14 @@ describe('registerAnalysisIpc', () => {
     });
 
     mockRecognizeIfAvailable.mockReset();
+    mockBatchAnalyzeFiles.mockReset();
+    mockBatchAnalyzeFiles.mockResolvedValue({
+      success: true,
+      results: [],
+      errors: [],
+      total: 0,
+      successful: 0
+    });
 
     mockSystemAnalytics = {
       recordProcessingTime: jest.fn(),
@@ -143,10 +162,54 @@ describe('registerAnalysisIpc', () => {
       getCustomFolders: mockGetCustomFolders
     });
 
-    expect(mockIpcMain.handle).toHaveBeenCalledTimes(3);
+    expect(mockIpcMain.handle).toHaveBeenCalledTimes(4);
     expect(handlers[ANALYSIS_CHANNELS.ANALYZE_DOCUMENT]).toBeDefined();
     expect(handlers[ANALYSIS_CHANNELS.ANALYZE_IMAGE]).toBeDefined();
+    expect(handlers[ANALYSIS_CHANNELS.ANALYZE_BATCH]).toBeDefined();
     expect(handlers[ANALYSIS_CHANNELS.EXTRACT_IMAGE_TEXT]).toBeDefined();
+  });
+
+  describe('batch analysis handler', () => {
+    beforeEach(() => {
+      registerAnalysisIpc({
+        ipcMain: mockIpcMain,
+        IPC_CHANNELS,
+        logger: mockLogger,
+        systemAnalytics: mockSystemAnalytics,
+        analyzeDocumentFile: mockAnalyzeDocumentFile,
+        analyzeImageFile: mockAnalyzeImageFile,
+        getServiceIntegration: mockGetServiceIntegration,
+        getCustomFolders: mockGetCustomFolders
+      });
+    });
+
+    test('analyzes files via batch service', async () => {
+      mockBatchAnalyzeFiles.mockResolvedValueOnce({
+        success: true,
+        results: [
+          { filePath: '/test/doc.pdf', success: true, result: { suggestedName: 'doc.pdf' } }
+        ],
+        errors: [],
+        total: 1,
+        successful: 1
+      });
+
+      const result = await handlers[ANALYSIS_CHANNELS.ANALYZE_BATCH](
+        {},
+        { filePaths: ['/test/doc.pdf'] }
+      );
+
+      expect(mockBatchAnalyzeFiles).toHaveBeenCalledWith(
+        [expect.stringContaining('doc.pdf')],
+        expect.any(Array),
+        expect.objectContaining({
+          concurrency: undefined,
+          sectionOrder: undefined
+        })
+      );
+      expect(result.success).toBe(true);
+      expect(result.total).toBe(1);
+    });
   });
 
   describe('document analysis handler', () => {

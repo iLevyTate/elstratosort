@@ -125,6 +125,7 @@ jest.mock('../src/shared/constants', () => ({
     ANALYSIS: {
       ANALYZE_DOCUMENT: 'analysis:document',
       ANALYZE_IMAGE: 'analysis:image',
+      ANALYZE_BATCH: 'analysis:batch',
       EXTRACT_IMAGE_TEXT: 'analysis:extract-text'
     },
     SETTINGS: {
@@ -559,6 +560,7 @@ describe('Preload Coverage', () => {
       expect(electronAPI.analysis).toBeDefined();
       expect(typeof electronAPI.analysis.document).toBe('function');
       expect(typeof electronAPI.analysis.image).toBe('function');
+      expect(typeof electronAPI.analysis.batch).toBe('function');
     });
 
     test('exposes embeddings API', () => {

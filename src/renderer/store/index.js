@@ -320,10 +320,27 @@ const store = configureStore({
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
+      immutableCheck: {
+        // Large analysis result sets can exceed the default 32ms dev warning budget.
+        // Keep immutability checks enabled, but tune hot large collections.
+        warnAfter: 128,
+        ignoredPaths: [
+          'analysis.results',
+          'files.selectedFiles',
+          'files.organizedFiles',
+          'files.fileStates'
+        ]
+      },
       serializableCheck: {
+        // Keep serializable safety checks on in development, but relax the threshold
+        // and skip known large, frequently-updated analysis payloads.
+        warnAfter: 128,
         // Ignore non-serializable values in actions if needed (e.g. Error objects)
         ignoredActions: [
           'analysis/analysisFailure',
+          'analysis/startAnalysis',
+          'analysis/updateProgress',
+          'analysis/setAnalysisResults',
           'files/setSelectedFiles',
           'files/addSelectedFiles',
           'files/setFileStates',
@@ -338,10 +355,17 @@ const store = configureStore({
           'payload.mtime',
           'payload.atime',
           'payload.ctime',
+          'payload.analysis',
+          'payload.results',
+          'payload.fileStates',
           'meta.arg'
         ],
         ignoredPaths: [
           'analysis.results.error',
+          'analysis.results',
+          'files.selectedFiles',
+          'files.organizedFiles',
+          'files.fileStates',
           // File date fields - these are serialized but might briefly contain Date objects during IPC
           /files\.selectedFiles\.\d+\.(created|modified|accessed|birthtime|mtime|atime|ctime)/,
           /files\.organizedFiles\.\d+\.(created|modified|accessed|birthtime|mtime|atime|ctime)/,

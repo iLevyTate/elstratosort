@@ -49,6 +49,9 @@ const mockElectronAPI = {
   files: {
     analyze: jest.fn()
   },
+  analysis: {
+    batch: jest.fn()
+  },
   settings: {
     get: jest.fn()
   }
@@ -114,6 +117,13 @@ describe('useAnalysis', () => {
     mockElectronAPI.files.analyze.mockResolvedValue({
       category: 'documents',
       suggestedName: 'test-document.txt'
+    });
+    mockElectronAPI.analysis.batch.mockResolvedValue({
+      success: true,
+      results: [],
+      errors: [],
+      total: 0,
+      successful: 0
     });
     mockElectronAPI.settings.get.mockResolvedValue({
       maxConcurrentAnalysis: 3
@@ -233,6 +243,60 @@ describe('useAnalysis', () => {
 
       // Should not start analysis when already analyzing
       expect(mockSetIsAnalyzing).not.toHaveBeenCalledWith(true);
+    });
+
+    test('uses batch analysis route for large runs', async () => {
+      const { result } = renderHook(() => useAnalysis(createMockOptions()));
+      const files = Array.from({ length: 40 }, (_, index) => ({
+        path: `/batch/file-${index}.txt`,
+        name: `file-${index}.txt`
+      }));
+
+      mockElectronAPI.analysis.batch.mockResolvedValueOnce({
+        success: true,
+        results: files.map((file) => ({
+          filePath: file.path,
+          success: true,
+          result: {
+            category: 'documents',
+            suggestedName: `${file.name}-done`
+          }
+        })),
+        errors: [],
+        total: files.length,
+        successful: files.length
+      });
+
+      await act(async () => {
+        const promise = result.current.analyzeFiles(files);
+        jest.advanceTimersByTime(50);
+        await promise;
+      });
+
+      expect(mockElectronAPI.analysis.batch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filePaths: files.map((file) => file.path)
+        })
+      );
+    });
+
+    test('falls back to per-file analysis when batch route fails', async () => {
+      const { result } = renderHook(() => useAnalysis(createMockOptions()));
+      const files = Array.from({ length: 40 }, (_, index) => ({
+        path: `/fallback/file-${index}.txt`,
+        name: `file-${index}.txt`
+      }));
+
+      mockElectronAPI.analysis.batch.mockRejectedValueOnce(new Error('Batch route failed'));
+
+      await act(async () => {
+        const promise = result.current.analyzeFiles(files);
+        jest.advanceTimersByTime(50);
+        await promise;
+      });
+
+      expect(mockElectronAPI.analysis.batch).toHaveBeenCalled();
+      expect(mockElectronAPI.files.analyze).toHaveBeenCalled();
     });
   });
 

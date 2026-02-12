@@ -307,12 +307,31 @@ class ModelAccessCoordinator {
   getStatus() {
     return {
       activeOperations: this._activeOperations.size,
+      queues: this.getQueueStats(),
       operations: Array.from(this._activeOperations.entries()).map(([id, data]) => ({
         id,
         modelType: data.modelType,
         runningMs: Date.now() - data.startTime
       }))
     };
+  }
+
+  /**
+   * Get per-model queue pressure snapshot for adaptive callers.
+   * @returns {Record<string, { queued: number, pending: number, concurrency: number }>}
+   */
+  getQueueStats() {
+    const snapshot = {};
+    for (const type of MODEL_TYPES) {
+      const queue = this._inferenceQueues[type];
+      if (!queue) continue;
+      snapshot[type] = {
+        queued: queue.size,
+        pending: queue.pending,
+        concurrency: queue.concurrency
+      };
+    }
+    return snapshot;
   }
 }
 

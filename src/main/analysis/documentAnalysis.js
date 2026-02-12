@@ -137,6 +137,12 @@ const { FileProcessingError } = require('../errors/AnalysisError');
 
 // Set logger context for this module
 const logger = createLogger('DocumentAnalysis');
+
+function isPdfNoTextError(error) {
+  if (error?.code === 'PDF_NO_TEXT_CONTENT') return true;
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('no extractable text') || message.includes('no text content');
+}
 /**
  * Analyzes a document file using AI or fallback methods
  * @param {string} filePath - Path to the document file
@@ -247,6 +253,8 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
   // Step 2: Main content extraction and analysis (errors handled separately)
   try {
     let extractedText = null;
+    let pdfNoTextFallback = false;
+    let pdfOriginalError = null;
 
     if (fileExtension === '.pdf') {
       try {
@@ -261,26 +269,46 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
           extractedText = ocrText || '';
         }
       } catch (pdfError) {
-        logger.error(`Error parsing PDF`, {
-          fileName,
-          error: pdfError.message
-        });
+        pdfOriginalError = pdfError?.message || 'Unknown PDF extraction error';
+        pdfNoTextFallback = isPdfNoTextError(pdfError);
+        if (pdfNoTextFallback) {
+          logger.info(`[PDF] No extractable text from parser, attempting OCR fallback`, {
+            fileName
+          });
+        } else {
+          logger.error(`Error parsing PDF`, {
+            fileName,
+            error: pdfOriginalError
+          });
+        }
         // Attempt OCR fallback before giving up (has internal 180s timeout)
         try {
           const ocrText = await ocrPdfIfNeeded(filePath);
           if (ocrText && ocrText.trim().length > 0) {
             extractedText = ocrText;
+          } else if (pdfNoTextFallback) {
+            // Scanned/image-only PDFs can legitimately produce no OCR text.
+            // Continue to downstream fallback without logging as a hard error.
+            extractedText = '';
           } else {
             throw new FileProcessingError('PDF_PROCESSING_FAILURE', fileName, {
-              originalError: pdfError.message,
+              originalError: pdfOriginalError,
               suggestion: 'PDF may be corrupted, password-protected, or image-based'
             });
           }
-        } catch {
-          throw new FileProcessingError('PDF_PROCESSING_FAILURE', fileName, {
-            originalError: pdfError.message,
-            suggestion: 'PDF may be corrupted, password-protected, or image-based'
-          });
+        } catch (ocrError) {
+          if (pdfNoTextFallback) {
+            logger.warn(`[PDF] OCR fallback failed for no-text PDF`, {
+              fileName,
+              error: ocrError?.message || 'unknown OCR error'
+            });
+            extractedText = '';
+          } else {
+            throw new FileProcessingError('PDF_PROCESSING_FAILURE', fileName, {
+              originalError: pdfOriginalError,
+              suggestion: 'PDF may be corrupted, password-protected, or image-based'
+            });
+          }
         }
       }
     } else if ([...SUPPORTED_TEXT_EXTENSIONS, '.doc'].includes(fileExtension)) {
@@ -667,19 +695,31 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
       );
     }
 
-    logger.error(`[EXTRACTION-FAILED] Could not extract any text content`, {
-      fileName
-    });
+    if (fileExtension === '.pdf' && pdfNoTextFallback) {
+      logger.warn(`[PDF] No text extracted after OCR fallback; using filename fallback`, {
+        fileName
+      });
+    } else {
+      logger.error(`[EXTRACTION-FAILED] Could not extract any text content`, {
+        fileName
+      });
+    }
     const result = createFallbackAnalysis({
       fileName,
       fileExtension,
-      reason: 'extraction failed',
+      reason:
+        fileExtension === '.pdf' && pdfNoTextFallback
+          ? 'scanned pdf had no extractable text'
+          : 'extraction failed',
       smartFolders,
       confidence: 50,
       type: 'document',
       options: {
-        extractionMethod: 'failed',
-        error: 'Could not extract text or analyze document.'
+        extractionMethod: fileExtension === '.pdf' && pdfNoTextFallback ? 'pdf_no_text' : 'failed',
+        error:
+          fileExtension === '.pdf' && pdfNoTextFallback
+            ? pdfOriginalError || 'PDF contained no extractable text.'
+            : 'Could not extract text or analyze document.'
       }
     });
     // Use pre-computed signature if available, otherwise skip caching

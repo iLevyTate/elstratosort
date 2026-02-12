@@ -1228,6 +1228,48 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       }
     }
 
+    if (analysis?.error && !isModelNotAvailableError(analysis.error)) {
+      const initialVisionError = String(analysis.error);
+      logger.warn('[IMAGE] Vision analysis returned error, retrying once with fresh request', {
+        error: initialVisionError,
+        filePath
+      });
+      try {
+        const retriedAnalysis = await analyzeImageWithLlama(
+          imageBase64,
+          fileName,
+          smartFolders,
+          extractedText,
+          namingContext,
+          { bypassCache: true, visionModel: visionModelName }
+        );
+        if (retriedAnalysis && !retriedAnalysis.error) {
+          analysis = retriedAnalysis;
+          logger.info('[IMAGE] Vision retry succeeded', { filePath });
+        } else if (retriedAnalysis?.error) {
+          analysis = retriedAnalysis;
+        }
+      } catch (retryError) {
+        logger.warn('[IMAGE] Vision retry failed', {
+          filePath,
+          error: retryError?.message || String(retryError)
+        });
+      }
+    }
+
+    if (analysis?.error) {
+      logger.warn('[IMAGE] Attempting final OCR/text fallback after vision error', {
+        error: analysis.error,
+        filePath
+      });
+      const finalTextFallback = await attemptTextFallback();
+      if (finalTextFallback && !finalTextFallback.error) {
+        finalTextFallback.analysisWarning = analysis.error;
+        analysis = finalTextFallback;
+        logger.info('[IMAGE] Final OCR/text fallback succeeded', { filePath });
+      }
+    }
+
     // Merge EXIF date if available and AI didn't return a valid date (or override it?)
     // The plan says "populate the date field without asking LLM".
     // We'll trust EXIF over LLM hallucination if EXIF is present.
@@ -1516,10 +1558,11 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
     const result = createFallbackAnalysis({
       fileName,
       fileExtension,
-      reason: 'AI engine failed',
+      reason: analysis?.error ? 'vision analysis unavailable' : 'AI engine failed',
       smartFolders,
       confidence: 60,
-      type: 'image'
+      type: 'image',
+      options: analysis?.error ? { error: String(analysis.error) } : {}
     });
     result.isFallback = true;
     if (analysis?.error) {

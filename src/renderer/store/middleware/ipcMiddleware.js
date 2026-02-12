@@ -1,8 +1,7 @@
-import { updateProgress, stopAnalysis } from '../slices/analysisSlice';
+import { updateProgress } from '../slices/analysisSlice';
 import { updateMetrics, updateHealth, addNotification } from '../slices/systemSlice';
 import { atomicUpdateFilePathsAfterMove, atomicRemoveFilesWithCleanup } from '../slices/filesSlice';
 import { logger } from '../../../shared/logger';
-import { mapErrorToNotification } from '../../utils/errorMapping';
 import { IPC_CHANNELS } from '../../../shared/constants';
 import { validateEventPayload, hasEventSchema } from '../../../shared/ipcEventSchemas';
 
@@ -49,7 +48,6 @@ let storeRef = null;
 const MAX_EVENT_QUEUE_SIZE = 300;
 const CRITICAL_ACTION_CREATORS = new Set([
   updateProgress,
-  stopAnalysis,
   updateMetrics,
   updateHealth,
   addNotification
@@ -283,58 +281,6 @@ const ipcMiddleware = (store) => {
       if (metricsCleanup) cleanupFunctions.push(metricsCleanup);
     } else {
       logger.debug('[IPC] onSystemMetrics handler unavailable');
-    }
-
-    // FIX: Subscribe to operation complete events for batch operations
-    if (window.electronAPI.events.onOperationComplete) {
-      const completeCleanup = window.electronAPI.events.onOperationComplete((data) => {
-        const { valid, data: validatedData } = validateIncomingEvent('operation-complete', data);
-        if (!valid) return;
-        logger.info('[IPC] Operation complete event received', {
-          type: validatedData.operationType
-        });
-
-        // Show success notification
-        const fileCount = validatedData.affectedFiles?.length || 0;
-        if (fileCount > 0) {
-          safeDispatch(addNotification, {
-            message: `${validatedData.operationType || 'Operation'} complete: ${fileCount} file(s)`,
-            severity: 'success',
-            duration: 3000
-          });
-        }
-      });
-      if (completeCleanup) cleanupFunctions.push(completeCleanup);
-    }
-
-    // FIX: Subscribe to operation error events
-    if (window.electronAPI.events.onOperationError) {
-      const errorCleanup = window.electronAPI.events.onOperationError((data) => {
-        const { valid, data: validatedData } = validateIncomingEvent('operation-error', data);
-        if (!valid) return;
-        logger.error('[IPC] Operation error event received', {
-          type: validatedData.operationType,
-          error: validatedData.error
-        });
-
-        // Show error notification
-        const notification = mapErrorToNotification({
-          error: validatedData.error,
-          errorCode: validatedData.code,
-          errorType: validatedData.errorType,
-          operationType: validatedData.operationType || 'Operation'
-        });
-        safeDispatch(addNotification, notification);
-
-        // Stop analysis if it was an analysis operation
-        if (
-          validatedData.operationType === 'analyze' ||
-          validatedData.operationType === 'batch_analyze'
-        ) {
-          safeDispatch(stopAnalysis, undefined);
-        }
-      });
-      if (errorCleanup) cleanupFunctions.push(errorCleanup);
     }
 
     // FIX: Subscribe to file operation complete events (moves, deletes)

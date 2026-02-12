@@ -56,8 +56,7 @@ module.exports = {
     '(.*)services/OrganizationSuggestionService$': '$1services/organization',
     '(.*)services/StartupManager$': '$1services/startup',
     '(.*)analysis/EmbeddingQueue$': '$1analysis/embeddingQueue',
-    '(.*)shared/config$': '$1shared/config',
-    '(.*)shared/utils$': '$1shared/edgeCaseUtils'
+    '(.*)shared/config$': '$1shared/config'
   },
 
   // Global setup for DOM-dependent packages

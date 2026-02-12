@@ -12,6 +12,17 @@ const {
   recordAnalysisResult,
   getFolderCategories
 } = require('./analysisUtils');
+const BatchAnalysisService = require('../services/BatchAnalysisService');
+const { sendOperationProgress } = require('./files/batchProgressReporter');
+
+let batchAnalysisService = null;
+
+function getBatchAnalysisService() {
+  if (!batchAnalysisService) {
+    batchAnalysisService = new BatchAnalysisService();
+  }
+  return batchAnalysisService;
+}
 
 function registerAnalysisIpc(servicesOrParams) {
   let container;
@@ -25,8 +36,23 @@ function registerAnalysisIpc(servicesOrParams) {
   const { analyzeDocumentFile, analyzeImageFile } = container.analysis;
   const { systemAnalytics, getServiceIntegration } = container;
   const { getCustomFolders } = container.folders;
+  const getMainWindow = container.electron?.getMainWindow;
 
   const stringSchema = z ? z.string().min(1) : null;
+  const analyzeBatchSchema = z
+    ? z.object({
+        filePaths: z.array(z.string().min(1)).min(1),
+        smartFolders: z.array(z.any()).optional(),
+        options: z
+          .object({
+            concurrency: z.number().int().min(1).max(8).optional(),
+            stopOnError: z.boolean().optional(),
+            sectionOrder: z.enum(['documents-first', 'images-first']).optional(),
+            enableVisionBatchMode: z.boolean().optional()
+          })
+          .optional()
+      })
+    : null;
   const LOG_PREFIX = '[IPC-ANALYSIS]';
 
   async function validateAnalysisPath(filePath) {
@@ -180,6 +206,139 @@ function registerAnalysisIpc(servicesOrParams) {
   });
 
   safeHandle(ipcMain, IPC_CHANNELS.ANALYSIS.ANALYZE_IMAGE, analyzeImageHandler);
+
+  const analyzeBatchHandler = createHandler({
+    logger,
+    context: 'Analysis',
+    schema: analyzeBatchSchema,
+    handler: async (event, payload) => {
+      const serviceIntegration = getServiceIntegration?.();
+      const startedAt = performance.now();
+
+      const normalizedPayload = Array.isArray(payload) ? { filePaths: payload } : payload || {};
+      const rawPaths = Array.isArray(normalizedPayload.filePaths)
+        ? normalizedPayload.filePaths
+        : [];
+      const options = normalizedPayload.options || {};
+      const batchId = `analysis_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+      if (rawPaths.length === 0) {
+        return {
+          success: true,
+          results: [],
+          errors: [],
+          total: 0
+        };
+      }
+
+      const validatedPaths = await Promise.all(
+        rawPaths.map((filePath) => validateAnalysisPath(filePath))
+      );
+      let folderCategories = [];
+      if (
+        Array.isArray(normalizedPayload.smartFolders) &&
+        normalizedPayload.smartFolders.length > 0
+      ) {
+        try {
+          folderCategories = mapFoldersToCategories(normalizedPayload.smartFolders);
+        } catch (folderError) {
+          logger.warn(`${LOG_PREFIX} Failed to normalize provided smart folders`, {
+            error: folderError?.message
+          });
+        }
+      }
+      if (!Array.isArray(folderCategories) || folderCategories.length === 0) {
+        folderCategories = getFolderCategories(getCustomFolders, mapFoldersToCategories, logger);
+      }
+
+      logger.info(`${LOG_PREFIX} Starting batch analysis`, {
+        totalFiles: validatedPaths.length,
+        folders: folderCategories.length,
+        sectionOrder: options.sectionOrder || 'documents-first'
+      });
+
+      const batchResult = await getBatchAnalysisService().analyzeFiles(
+        validatedPaths,
+        folderCategories,
+        {
+          concurrency: options.concurrency,
+          stopOnError: options.stopOnError,
+          sectionOrder: options.sectionOrder,
+          enableVisionBatchMode: options.enableVisionBatchMode,
+          onProgress: (progress) => {
+            if (typeof getMainWindow === 'function') {
+              sendOperationProgress(getMainWindow, {
+                type: 'batch_analyze',
+                batchId,
+                ...progress
+              });
+            }
+          },
+          documentAnalyzer: async (filePath, smartFolders) => {
+            return withProcessingState({
+              filePath,
+              processingState: serviceIntegration?.processingState,
+              logger,
+              logPrefix: LOG_PREFIX,
+              fn: async () => {
+                const started = performance.now();
+                const result = await analyzeDocumentFile(filePath, smartFolders);
+                const processingTime = performance.now() - started;
+                await recordAnalysisResult({
+                  filePath,
+                  result,
+                  processingTime,
+                  modelType: 'llm',
+                  analysisHistory: serviceIntegration?.analysisHistory,
+                  logger
+                });
+                return result;
+              }
+            });
+          },
+          imageAnalyzer: async (filePath, smartFolders) => {
+            return withProcessingState({
+              filePath,
+              processingState: serviceIntegration?.processingState,
+              logger,
+              logPrefix: '[IPC-IMAGE-ANALYSIS]',
+              fn: async () => {
+                const started = performance.now();
+                const result = await analyzeImageFile(filePath, smartFolders);
+                const processingTime = performance.now() - started;
+                await recordAnalysisResult({
+                  filePath,
+                  result,
+                  processingTime,
+                  modelType: 'vision',
+                  analysisHistory: serviceIntegration?.analysisHistory,
+                  logger
+                });
+                return result;
+              }
+            });
+          }
+        }
+      );
+
+      const duration = performance.now() - startedAt;
+      systemAnalytics.recordProcessingTime(duration);
+
+      logger.info(`${LOG_PREFIX} Batch analysis complete`, {
+        totalFiles: batchResult.total,
+        successful: batchResult.successful,
+        failed: batchResult.errors?.length || 0,
+        durationMs: Math.round(duration)
+      });
+
+      return {
+        ...batchResult,
+        batchId
+      };
+    }
+  });
+
+  safeHandle(ipcMain, IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH, analyzeBatchHandler);
 
   async function runOcr(filePath) {
     const cleanPath = await validateAnalysisPath(filePath);

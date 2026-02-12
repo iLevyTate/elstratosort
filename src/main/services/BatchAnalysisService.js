@@ -12,6 +12,8 @@ const path = require('path');
 const os = require('os');
 const { get: getConfig } = require('../../shared/config/index');
 const { getInstance: getLlamaService } = require('./LlamaService');
+const { getRecommendedConcurrency } = require('./PerformanceService');
+const { getInstance: getModelAccessCoordinator } = require('./ModelAccessCoordinator');
 
 const { getFileTypeCategory } = require('./autoOrganize/fileTypeUtils');
 
@@ -51,6 +53,9 @@ class BatchAnalysisService {
     // FIX: Track embedding progress for comprehensive reporting
     this._embeddingProgressUnsubscribe = null;
     this._backpressureWaitPromise = null;
+    this._adaptiveRecommendation = null;
+    this._adaptiveRecommendationAt = 0;
+    this._adaptiveRecommendationTtlMs = 30000;
 
     logger.info('[BATCH-ANALYSIS] Service initialized', {
       concurrency: this.concurrency,
@@ -95,6 +100,107 @@ class BatchAnalysisService {
   }
 
   /**
+   * Deterministically partition files into document and image sections.
+   * Preserves input order inside each modality lane.
+   * @param {string[]} filePaths
+   * @returns {{ documents: string[], images: string[] }}
+   */
+  partitionFilesByModality(filePaths) {
+    const documents = [];
+    const images = [];
+
+    for (const filePath of filePaths) {
+      const extension = path.extname(filePath).toLowerCase();
+      if (this.isImageFile(extension)) {
+        images.push(filePath);
+      } else {
+        documents.push(filePath);
+      }
+    }
+
+    return { documents, images };
+  }
+
+  _resolveSectionOrder(option) {
+    if (option === 'images-first') {
+      return ['images', 'documents'];
+    }
+    return ['documents', 'images'];
+  }
+
+  _safeCoordinatorQueueStats() {
+    try {
+      return getModelAccessCoordinator()?.getQueueStats?.() || null;
+    } catch (error) {
+      logger.debug('[BATCH-ANALYSIS] Failed to read coordinator queue stats', {
+        error: error?.message
+      });
+      return null;
+    }
+  }
+
+  async _getAdaptiveConcurrency(requestedConcurrency) {
+    let capped = requestedConcurrency;
+    let perfRecommendation = null;
+
+    try {
+      const now = Date.now();
+      if (
+        this._adaptiveRecommendation &&
+        now - this._adaptiveRecommendationAt < this._adaptiveRecommendationTtlMs
+      ) {
+        perfRecommendation = this._adaptiveRecommendation;
+      } else {
+        perfRecommendation = await getRecommendedConcurrency();
+        this._adaptiveRecommendation = perfRecommendation;
+        this._adaptiveRecommendationAt = now;
+      }
+
+      if (
+        Number.isFinite(perfRecommendation?.maxConcurrent) &&
+        perfRecommendation.maxConcurrent > 0
+      ) {
+        capped = Math.min(capped, perfRecommendation.maxConcurrent);
+      }
+    } catch (error) {
+      logger.debug('[BATCH-ANALYSIS] Performance-based concurrency recommendation unavailable', {
+        error: error?.message
+      });
+    }
+
+    const queueStats = this._safeCoordinatorQueueStats();
+    if (queueStats) {
+      const modelTypes = Object.keys(queueStats);
+      const totalQueued = modelTypes.reduce(
+        (sum, type) => sum + (Number(queueStats[type]?.queued) || 0),
+        0
+      );
+      const totalPending = modelTypes.reduce(
+        (sum, type) => sum + (Number(queueStats[type]?.pending) || 0),
+        0
+      );
+      const visionPressure =
+        (Number(queueStats.vision?.queued) || 0) + (Number(queueStats.vision?.pending) || 0);
+
+      if (visionPressure > 0) {
+        capped = Math.min(capped, 1);
+      } else if (totalQueued + totalPending >= 4) {
+        capped = Math.min(capped, 2);
+      }
+    }
+
+    const adaptiveConcurrency = Math.max(1, Math.min(Number(capped) || 1, 8));
+
+    logger.debug('[BATCH-ANALYSIS] Adaptive concurrency resolved', {
+      requestedConcurrency,
+      adaptiveConcurrency,
+      perfMaxConcurrent: perfRecommendation?.maxConcurrent ?? null
+    });
+
+    return adaptiveConcurrency;
+  }
+
+  /**
    * Analyze multiple files in parallel
    * FIX: Enhanced with improved progress tracking and embedding statistics
    * @param {Array} filePaths - Array of file paths to analyze
@@ -107,17 +213,21 @@ class BatchAnalysisService {
       onProgress = null,
       onEmbeddingProgress = null,
       stopOnError = false,
-      concurrency: rawConcurrency = this.concurrency
+      concurrency: rawConcurrency = this.concurrency,
+      sectionOrder = 'documents-first',
+      documentAnalyzer = null,
+      imageAnalyzer = null,
+      onFileComplete = null,
+      disableAdaptiveConcurrency = false
     } = options;
 
-    // FIX: Validate concurrency to prevent invalid values (0, negative, NaN)
-    const concurrency = Math.max(
+    const requestedConcurrency = Math.max(
       1,
-      Math.min(
-        Number.isFinite(rawConcurrency) ? rawConcurrency : this.concurrency,
-        8 // Cap at 8 to prevent overwhelming system
-      )
+      Math.min(Number.isFinite(rawConcurrency) ? rawConcurrency : this.concurrency, 8)
     );
+    const concurrency = disableAdaptiveConcurrency
+      ? requestedConcurrency
+      : await this._getAdaptiveConcurrency(requestedConcurrency);
 
     if (!Array.isArray(filePaths) || filePaths.length === 0) {
       return {
@@ -128,89 +238,177 @@ class BatchAnalysisService {
       };
     }
 
+    const partitioned = this.partitionFilesByModality(filePaths);
+    const orderedSections = this._resolveSectionOrder(sectionOrder).filter(
+      (section) => partitioned[section]?.length > 0
+    );
+
     logger.info('[BATCH-ANALYSIS] Starting batch file analysis', {
       fileCount: filePaths.length,
+      requestedConcurrency,
       concurrency,
+      sectionOrder: orderedSections,
+      documentCount: partitioned.documents.length,
+      imageCount: partitioned.images.length,
       smartFolders: smartFolders.length
     });
 
     const startTime = Date.now();
-    const imageCount = filePaths.filter((filePath) =>
-      this.isImageFile(path.extname(filePath).toLowerCase())
-    ).length;
-    const visionBatchModeEnabled = options.enableVisionBatchMode ?? process.env.NODE_ENV !== 'test';
-    const shouldUseVisionBatchMode = visionBatchModeEnabled && imageCount > 1;
-    let visionBatchModeEntered = false;
+    const progressState = {
+      total: filePaths.length,
+      completed: 0,
+      documentsTotal: partitioned.documents.length,
+      imagesTotal: partitioned.images.length,
+      documentsCompleted: 0,
+      imagesCompleted: 0,
+      docInFlight: 0,
+      imageInFlight: 0
+    };
+    const sectionStats = {
+      documents: { total: partitioned.documents.length, durationMs: 0, successful: 0, failed: 0 },
+      images: { total: partitioned.images.length, durationMs: 0, successful: 0, failed: 0 }
+    };
+    const embeddingStats = {
+      startQueueSize: analysisQueue.getStats().queueLength,
+      embeddings: 0
+    };
 
-    // Subscribe to embedding queue progress if callback provided
-    // Use local variable to avoid race condition with concurrent analyzeFiles calls
     let embeddingProgressUnsubscribe = null;
     if (onEmbeddingProgress) {
       embeddingProgressUnsubscribe = analysisQueue.onProgress(onEmbeddingProgress);
     }
 
     try {
-      if (shouldUseVisionBatchMode) {
+      if (onProgress) {
+        onProgress({
+          ...this._buildProgressSnapshot(progressState, 'partitioned'),
+          message: `Partitioned ${partitioned.documents.length} documents and ${partitioned.images.length} images`,
+          sectionOrder: orderedSections
+        });
+      }
+
+      const sectionResults = [];
+      for (const section of orderedSections) {
+        const sectionFiles = partitioned[section];
+        const sectionIsImage = section === 'images';
+        const sectionConcurrency = Math.max(1, Math.min(concurrency, sectionFiles.length || 1));
+        const sectionStart = Date.now();
+        const visionBatchModeEnabled =
+          options.enableVisionBatchMode ?? process.env.NODE_ENV !== 'test';
+        const shouldUseVisionBatchMode =
+          sectionIsImage && visionBatchModeEnabled && sectionFiles.length > 1;
+        let visionBatchModeEntered = false;
+
+        if (shouldUseVisionBatchMode) {
+          try {
+            await getLlamaService().enterVisionBatchMode();
+            visionBatchModeEntered = true;
+            logger.info('[BATCH-ANALYSIS] Entered vision batch mode for image section', {
+              imageCount: sectionFiles.length
+            });
+          } catch (error) {
+            logger.warn('[BATCH-ANALYSIS] Failed to enter vision batch mode, continuing', {
+              error: error?.message
+            });
+          }
+        }
+
         try {
-          await getLlamaService().enterVisionBatchMode();
-          visionBatchModeEntered = true;
-          logger.info('[BATCH-ANALYSIS] Entered vision batch mode', { imageCount });
-        } catch (error) {
-          logger.warn('[BATCH-ANALYSIS] Failed to enter vision batch mode, continuing', {
-            error: error?.message
+          const sectionResult = await this._analyzeSection(sectionFiles, smartFolders, {
+            section,
+            sectionConcurrency,
+            stopOnError,
+            onProgress,
+            onFileComplete,
+            progressState,
+            embeddingStats,
+            analyzers: {
+              document: documentAnalyzer,
+              image: imageAnalyzer
+            }
           });
+
+          sectionResults.push(sectionResult);
+          sectionStats[section].durationMs = Date.now() - sectionStart;
+          sectionStats[section].successful = sectionResult.successful;
+          sectionStats[section].failed = sectionResult.errors.length;
+
+          if (stopOnError && sectionResult.errors.length > 0) {
+            logger.warn('[BATCH-ANALYSIS] Stopping early after section error', {
+              section,
+              failed: sectionResult.errors.length
+            });
+            break;
+          }
+        } finally {
+          if (visionBatchModeEntered) {
+            try {
+              await getLlamaService().exitVisionBatchMode();
+              logger.info('[BATCH-ANALYSIS] Exited vision batch mode after image section');
+            } catch (error) {
+              logger.warn('[BATCH-ANALYSIS] Failed to exit vision batch mode', {
+                error: error?.message
+              });
+            }
+          }
         }
       }
 
-      return await this._executeAnalysis(filePaths, smartFolders, {
-        concurrency,
-        onProgress,
-        stopOnError,
-        startTime
-      });
-    } finally {
-      if (visionBatchModeEntered) {
-        try {
-          await getLlamaService().exitVisionBatchMode();
-          logger.info('[BATCH-ANALYSIS] Exited vision batch mode');
-        } catch (error) {
-          logger.warn('[BATCH-ANALYSIS] Failed to exit vision batch mode', {
-            error: error?.message
-          });
+      const combinedResults = sectionResults.flatMap((result) => result.results || []);
+      const combinedErrors = sectionResults.flatMap((result) => result.errors || []);
+      const resultByPath = new Map();
+      for (const result of combinedResults) {
+        if (result?.filePath) {
+          resultByPath.set(result.filePath, result);
         }
       }
-      // Always unsubscribe from embedding progress, even on error
+      const orderedResults = filePaths
+        .map((filePath) => resultByPath.get(filePath))
+        .filter(Boolean);
+      const successful = orderedResults.filter((result) => result.success).length;
+
+      return await this._finalizeBatch({
+        filePaths,
+        startTime,
+        onProgress,
+        embeddingStats,
+        orderedResults,
+        combinedErrors,
+        successful,
+        concurrency,
+        requestedConcurrency,
+        sectionStats
+      });
+    } finally {
       if (embeddingProgressUnsubscribe) {
         embeddingProgressUnsubscribe();
       }
     }
   }
 
-  /**
-   * Internal method that executes the actual analysis
-   * Separated to allow try-finally cleanup in analyzeFiles()
-   * @private
-   */
-  async _executeAnalysis(filePaths, smartFolders, options) {
-    const { concurrency, onProgress, stopOnError, startTime } = options;
+  async _analyzeSection(filePaths, smartFolders, options) {
+    const {
+      section,
+      sectionConcurrency,
+      stopOnError,
+      onProgress,
+      onFileComplete,
+      progressState,
+      embeddingStats,
+      analyzers
+    } = options;
+    const isImageSection = section === 'images';
 
-    // FIX P3-1: Backpressure control constants
-    const BACKPRESSURE_TIMEOUT_MS = 60000; // Max 60 seconds wait
+    const analyzer =
+      (isImageSection ? analyzers?.image : analyzers?.document) ||
+      (isImageSection ? analyzeImageFile : analyzeDocumentFile);
+
+    const BACKPRESSURE_TIMEOUT_MS = 60000;
     const BACKPRESSURE_INITIAL_DELAY_MS = 500;
     const BACKPRESSURE_MAX_DELAY_MS = 5000;
 
-    // FIX: Track embedding statistics for this batch
-    const embeddingStats = {
-      startQueueSize: analysisQueue.getStats().queueLength,
-      embeddings: 0
-    };
-
     const checkBackpressure = async () => {
-      // FIX P3-1: Check backpressure using Mutex-guarded check
-      // Release lock between poll iterations to prevent deadlock (Bug #20)
       let shouldWait = false;
-
-      // First check (hold lock briefly)
       await this.backpressureLock.acquire();
       try {
         const stats = analysisQueue.getStats();
@@ -225,146 +423,180 @@ class BatchAnalysisService {
         this.backpressureLock.release();
       }
 
-      if (shouldWait) {
-        // Coalesce waiters so only one worker polls queue capacity.
-        if (!this._backpressureWaitPromise) {
-          this._backpressureWaitPromise = (async () => {
-            const backpressureStart = Date.now();
-            let backpressureDelay = BACKPRESSURE_INITIAL_DELAY_MS;
-            let iterations = 0;
-
-            while (true) {
-              const elapsed = Date.now() - backpressureStart;
-              if (elapsed >= BACKPRESSURE_TIMEOUT_MS) {
-                logger.warn('[BATCH-ANALYSIS] Backpressure timeout reached, continuing anyway', {
-                  elapsed
-                });
-                break;
-              }
-
-              await delay(backpressureDelay);
-              // Exponential backoff with cap
-              backpressureDelay = Math.min(backpressureDelay * 1.5, BACKPRESSURE_MAX_DELAY_MS);
-              iterations++;
-
-              // Check again (acquire lock briefly)
-              let stillFull = false;
-              await this.backpressureLock.acquire();
-              try {
-                const currentStats = analysisQueue.getStats();
-                if (currentStats.capacityPercent > 50) {
-                  stillFull = true;
-                  if (iterations % 10 === 0) {
-                    logger.debug('[BATCH-ANALYSIS] Waiting for embedding queue to drain', {
-                      elapsed,
-                      capacityPercent: currentStats.capacityPercent,
-                      iterations
-                    });
-                  }
-                }
-              } finally {
-                this.backpressureLock.release();
-              }
-
-              if (!stillFull) {
-                logger.info('[BATCH-ANALYSIS] Embedding queue drained, resuming analysis', {
-                  waitTime: Date.now() - backpressureStart
-                });
-                break;
-              }
-            }
-          })().finally(() => {
-            this._backpressureWaitPromise = null;
-          });
-        }
-        await this._backpressureWaitPromise;
+      if (!shouldWait) {
+        return;
       }
+
+      if (!this._backpressureWaitPromise) {
+        this._backpressureWaitPromise = (async () => {
+          const backpressureStart = Date.now();
+          let backpressureDelay = BACKPRESSURE_INITIAL_DELAY_MS;
+          let iterations = 0;
+
+          while (true) {
+            const elapsed = Date.now() - backpressureStart;
+            if (elapsed >= BACKPRESSURE_TIMEOUT_MS) {
+              logger.warn('[BATCH-ANALYSIS] Backpressure timeout reached, continuing anyway', {
+                elapsed
+              });
+              break;
+            }
+
+            await delay(backpressureDelay);
+            backpressureDelay = Math.min(backpressureDelay * 1.5, BACKPRESSURE_MAX_DELAY_MS);
+            iterations++;
+
+            let stillFull = false;
+            await this.backpressureLock.acquire();
+            try {
+              const currentStats = analysisQueue.getStats();
+              if (currentStats.capacityPercent > 50) {
+                stillFull = true;
+                if (iterations % 10 === 0) {
+                  logger.debug('[BATCH-ANALYSIS] Waiting for embedding queue to drain', {
+                    elapsed,
+                    capacityPercent: currentStats.capacityPercent,
+                    iterations
+                  });
+                }
+              }
+            } finally {
+              this.backpressureLock.release();
+            }
+
+            if (!stillFull) {
+              logger.info('[BATCH-ANALYSIS] Embedding queue drained, resuming analysis', {
+                waitTime: Date.now() - backpressureStart
+              });
+              break;
+            }
+          }
+        })().finally(() => {
+          this._backpressureWaitPromise = null;
+        });
+      }
+
+      await this._backpressureWaitPromise;
     };
 
-    // Process each file
     const processFile = async (filePath, index) => {
+      const inFlightKey = isImageSection ? 'imageInFlight' : 'docInFlight';
+      const completedKey = isImageSection ? 'imagesCompleted' : 'documentsCompleted';
+
+      progressState[inFlightKey] += 1;
+      this._emitProgressUpdate(onProgress, progressState, 'analysis', {
+        section,
+        currentFile: filePath,
+        sectionCurrent: index + 1,
+        sectionTotal: filePaths.length
+      });
+
       try {
-        // FIX P3-1: Check backpressure using Mutex-guarded check
         await checkBackpressure();
+        const result = await analyzer(filePath, smartFolders);
+        embeddingStats.embeddings += 1;
 
-        const extension = path.extname(filePath).toLowerCase();
-        const isImage = this.isImageFile(extension);
-
-        logger.debug('[BATCH-ANALYSIS] Processing file', {
-          index,
-          path: filePath,
-          type: isImage ? 'image' : 'document'
-        });
-
-        let result;
-        if (isImage) {
-          result = await analyzeImageFile(filePath, smartFolders);
-        } else {
-          result = await analyzeDocumentFile(filePath, smartFolders);
-        }
-
-        // Track embedding count
-        embeddingStats.embeddings++;
-
-        // No semaphore release needed here as we used a lock-and-wait backpressure model
-
-        return {
+        const normalized = {
           filePath,
           success: true,
           result,
-          type: isImage ? 'image' : 'document'
+          type: isImageSection ? 'image' : 'document'
         };
+
+        if (typeof onFileComplete === 'function') {
+          onFileComplete(normalized);
+        }
+
+        return normalized;
       } catch (error) {
-        // No semaphore release needed here as we used a lock-and-wait backpressure model
+        const normalized = {
+          filePath,
+          success: false,
+          error: error?.message || 'Unknown error',
+          result: null,
+          type: isImageSection ? 'image' : 'document'
+        };
 
         logger.error('[BATCH-ANALYSIS] File analysis failed', {
           index,
           path: filePath,
-          error: error.message
+          section,
+          error: normalized.error
         });
 
-        return {
-          filePath,
-          success: false,
-          error: error.message,
-          result: null
-        };
+        if (typeof onFileComplete === 'function') {
+          onFileComplete(normalized);
+        }
+
+        return normalized;
+      } finally {
+        progressState[inFlightKey] = Math.max(0, progressState[inFlightKey] - 1);
+        progressState[completedKey] += 1;
+        progressState.completed += 1;
+        this._emitProgressUpdate(onProgress, progressState, 'analysis', {
+          section,
+          currentFile: filePath,
+          sectionCurrent: Math.min(progressState[completedKey], filePaths.length),
+          sectionTotal: filePaths.length
+        });
       }
     };
 
-    // Use batch processor for parallel processing
     const batchResult = await this.batchProcessor.processBatch(filePaths, processFile, {
-      concurrency,
-      onProgress: onProgress
-        ? (progress) => {
-            // FIX: Enhanced progress with embedding info
-            const queueStats = analysisQueue.getStats();
-            onProgress({
-              ...progress,
-              phase: 'analysis',
-              embeddingQueueSize: queueStats.queueLength,
-              embeddingQueueCapacity: queueStats.capacityPercent
-            });
-          }
-        : null,
+      concurrency: sectionConcurrency,
       stopOnError
     });
 
-    const analysisDuration = Date.now() - startTime;
+    const failedResults = (batchResult.results || []).filter((result) => result?.success === false);
+    const normalizedErrors = [
+      ...(batchResult.errors || []),
+      ...failedResults.map((result) => ({
+        filePath: result.filePath,
+        error: result.error
+      }))
+    ];
+    const successful = (batchResult.results || []).filter((result) => result?.success).length;
 
-    // FIX: Report analysis phase complete
-    if (onProgress) {
-      onProgress({
-        phase: 'flushing_embeddings',
-        completed: filePaths.length,
-        total: filePaths.length,
-        percent: 100,
-        message: 'Flushing embeddings to database...'
-      });
-    }
+    return {
+      ...batchResult,
+      successful,
+      errors: normalizedErrors
+    };
+  }
 
-    // CRITICAL FIX: Flush any remaining embeddings in queue after batch analysis completes
-    // This ensures all embeddings are persisted even if batch size wasn't reached
+  _buildProgressSnapshot(progressState, phase) {
+    const queueStats = analysisQueue.getStats();
+    const percent =
+      progressState.total > 0
+        ? Math.round((progressState.completed / progressState.total) * 100)
+        : 0;
+
+    return {
+      phase,
+      completed: progressState.completed,
+      total: progressState.total,
+      percent,
+      percentage: percent,
+      docCompleted: progressState.documentsCompleted,
+      imageCompleted: progressState.imagesCompleted,
+      documentsTotal: progressState.documentsTotal,
+      imagesTotal: progressState.imagesTotal,
+      docInFlight: progressState.docInFlight,
+      imageInFlight: progressState.imageInFlight,
+      embeddingQueueSize: queueStats.queueLength,
+      embeddingQueueCapacity: queueStats.capacityPercent
+    };
+  }
+
+  _emitProgressUpdate(onProgress, progressState, phase, extra = {}) {
+    if (!onProgress) return;
+    onProgress({
+      ...this._buildProgressSnapshot(progressState, phase),
+      ...extra
+    });
+  }
+
+  async _flushEmbeddings() {
     const flushStartTime = Date.now();
     try {
       const {
@@ -372,7 +604,6 @@ class BatchAnalysisService {
       } = require('../analysis/documentAnalysis');
       const { flushAllEmbeddings: flushImageEmbeddings } = require('../analysis/imageAnalysis');
 
-      // Flush both queues to ensure all embeddings are persisted
       await Promise.allSettled([
         flushDocumentEmbeddings().catch((error) => {
           logger.warn('[BATCH-ANALYSIS] Failed to flush document embeddings', {
@@ -386,51 +617,74 @@ class BatchAnalysisService {
         })
       ]);
     } catch (error) {
-      // Non-fatal - log but don't fail batch
       logger.warn('[BATCH-ANALYSIS] Error flushing embedding queues', {
         error: error.message
       });
     }
-    const flushDuration = Date.now() - flushStartTime;
+    return Date.now() - flushStartTime;
+  }
 
-    // NOTE: Unsubscribe is now handled by try-finally in analyzeFiles() - see FIX P1-5
+  async _finalizeBatch({
+    filePaths,
+    startTime,
+    onProgress,
+    embeddingStats,
+    orderedResults,
+    combinedErrors,
+    successful,
+    concurrency,
+    requestedConcurrency,
+    sectionStats
+  }) {
+    const analysisDuration = Date.now() - startTime;
 
+    if (onProgress) {
+      onProgress({
+        phase: 'flushing_embeddings',
+        completed: filePaths.length,
+        total: filePaths.length,
+        percent: 100,
+        percentage: 100,
+        message: 'Flushing embeddings to database...'
+      });
+    }
+
+    const flushDuration = await this._flushEmbeddings();
     const totalDuration = Date.now() - startTime;
-    const avgTime = totalDuration / filePaths.length;
-
-    // FIX: Get final embedding stats
+    const avgTime = filePaths.length > 0 ? totalDuration / filePaths.length : 0;
     const finalQueueStats = analysisQueue.getStats();
     const embeddingServiceStats = getParallelEmbeddingService().getStats();
 
-    // Aggregate error details for better debugging
-    const errorDetails = batchResult.results
-      .filter((r) => !r.success || r.error)
-      .map((r) => ({
-        file: r.filePath || r.path || r.name,
-        error: r.error?.message || r.error || 'Unknown error',
-        code: r.error?.code
+    const errorDetails = orderedResults
+      .filter((result) => !result?.success || result?.error)
+      .map((result) => ({
+        file: result?.filePath || result?.path || result?.name,
+        error: result?.error?.message || result?.error || 'Unknown error',
+        code: result?.error?.code
       }));
 
     if (errorDetails.length > 0) {
       logger.warn(`[BATCH-ANALYSIS] ${errorDetails.length} files failed analysis`, {
         failedCount: errorDetails.length,
-        errors: errorDetails.slice(0, 10) // Log first 10 for brevity
+        errors: errorDetails.slice(0, 10)
       });
     }
 
     logger.info('[BATCH-ANALYSIS] Batch analysis complete', {
       total: filePaths.length,
-      successful: batchResult.successful,
-      failed: batchResult.errors.length,
+      successful,
+      failed: combinedErrors.length,
+      requestedConcurrency,
+      effectiveConcurrency: concurrency,
       analysisDuration: `${analysisDuration}ms`,
       flushDuration: `${flushDuration}ms`,
       totalDuration: `${totalDuration}ms`,
       avgPerFile: `${Math.round(avgTime)}ms`,
-      // FIX H-3: Guard against division by zero when processing is instant
       throughput:
         totalDuration > 0
           ? `${(filePaths.length / (totalDuration / 1000)).toFixed(2)} files/sec`
           : 'instant',
+      sectionStats,
       embeddingStats: {
         queueProcessed: embeddingStats.startQueueSize - finalQueueStats.queueLength,
         remainingInQueue: finalQueueStats.queueLength,
@@ -439,20 +693,22 @@ class BatchAnalysisService {
     });
 
     return {
-      success: batchResult.errors.length === 0,
-      results: batchResult.results,
-      errors: batchResult.errors,
+      success: combinedErrors.length === 0,
+      results: orderedResults,
+      errors: combinedErrors,
       total: filePaths.length,
-      successful: batchResult.successful,
-      hasErrors: batchResult.errors.length > 0,
+      successful,
+      hasErrors: combinedErrors.length > 0,
       errorSummary: errorDetails,
       stats: {
+        requestedConcurrency,
+        effectiveConcurrency: concurrency,
         totalDuration,
         analysisDuration,
         flushDuration,
         avgPerFile: avgTime,
-        // FIX H-3: Guard against division by zero
         filesPerSecond: totalDuration > 0 ? filePaths.length / (totalDuration / 1000) : Infinity,
+        modalities: sectionStats,
         embedding: {
           queueSize: finalQueueStats.queueLength,
           failedItems: finalQueueStats.failedItemsCount,

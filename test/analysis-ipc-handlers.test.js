@@ -7,6 +7,7 @@ jest.mock('perf_hooks', () => ({
 }));
 
 const mockRecognizeIfAvailable = jest.fn();
+const mockBatchAnalyzeFiles = jest.fn();
 
 // Mock IPC wrappers
 const mockIpcWrappers = {
@@ -53,6 +54,16 @@ jest.mock('../src/main/utils/tesseractUtils', () => ({
   recognizeIfAvailable: (...args) => mockRecognizeIfAvailable(...args)
 }));
 
+jest.mock('../src/main/services/BatchAnalysisService', () =>
+  jest.fn().mockImplementation(() => ({
+    analyzeFiles: (...args) => mockBatchAnalyzeFiles(...args)
+  }))
+);
+
+jest.mock('../src/main/ipc/files/batchProgressReporter', () => ({
+  sendOperationProgress: jest.fn()
+}));
+
 // Mock System Analytics
 const mockSystemAnalytics = {
   recordProcessingTime: jest.fn(),
@@ -75,6 +86,7 @@ describe('Analysis IPC Handlers', () => {
     ANALYSIS: {
       ANALYZE_DOCUMENT: 'analyze-document',
       ANALYZE_IMAGE: 'analyze-image',
+      ANALYZE_BATCH: 'analyze-batch',
       EXTRACT_IMAGE_TEXT: 'extract-image-text'
     }
   };
@@ -83,6 +95,14 @@ describe('Analysis IPC Handlers', () => {
     jest.clearAllMocks();
     registeredHandlers = {};
     mockRecognizeIfAvailable.mockReset();
+    mockBatchAnalyzeFiles.mockReset();
+    mockBatchAnalyzeFiles.mockResolvedValue({
+      success: true,
+      results: [],
+      errors: [],
+      total: 0,
+      successful: 0
+    });
 
     mockIpcMain = {
       handle: jest.fn((channel, handler) => {
@@ -264,6 +284,28 @@ describe('Analysis IPC Handlers', () => {
       expect(mockLogger.error).toHaveBeenCalledWith('OCR failed:', error);
       expect(mockSystemAnalytics.recordFailure).toHaveBeenCalledWith(error);
       expect(result).toEqual({ success: false, error: 'OCR failed' });
+    });
+  });
+
+  describe('ANALYZE_BATCH', () => {
+    test('uses batch analysis service', async () => {
+      const handler = registeredHandlers[IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH];
+      expect(handler).toBeDefined();
+
+      mockBatchAnalyzeFiles.mockResolvedValueOnce({
+        success: true,
+        results: [
+          { filePath: '/path/to/doc.pdf', success: true, result: { suggestedName: 'doc' } }
+        ],
+        errors: [],
+        total: 1,
+        successful: 1
+      });
+
+      const result = await handler({}, { filePaths: ['/path/to/doc.pdf'] });
+      expect(mockBatchAnalyzeFiles).toHaveBeenCalled();
+      expect(result.success).toBe(true);
+      expect(result.total).toBe(1);
     });
   });
 });

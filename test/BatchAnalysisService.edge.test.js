@@ -25,6 +25,29 @@ jest.mock('../src/main/utils/llmOptimization', () => ({
   globalBatchProcessor: mockBatchProcessor
 }));
 
+jest.mock('../src/main/services/PerformanceService', () => ({
+  getRecommendedConcurrency: jest.fn().mockResolvedValue({
+    maxConcurrent: 2
+  })
+}));
+
+jest.mock('../src/main/services/ModelAccessCoordinator', () => ({
+  getInstance: jest.fn(() => ({
+    getQueueStats: jest.fn(() => ({
+      text: { queued: 0, pending: 0, concurrency: 1 },
+      vision: { queued: 0, pending: 0, concurrency: 1 },
+      embedding: { queued: 0, pending: 0, concurrency: 1 }
+    }))
+  }))
+}));
+
+jest.mock('../src/main/services/LlamaService', () => ({
+  getInstance: jest.fn(() => ({
+    enterVisionBatchMode: jest.fn().mockResolvedValue(undefined),
+    exitVisionBatchMode: jest.fn().mockResolvedValue(undefined)
+  }))
+}));
+
 jest.mock('../src/main/analysis/documentAnalysis', () => ({
   analyzeDocumentFile: jest.fn(),
   flushAllEmbeddings: jest.fn()
@@ -49,6 +72,11 @@ const mockAnalysisQueue = {
 
 jest.mock('../src/main/analysis/embeddingQueue/stageQueues', () => ({
   analysisQueue: mockAnalysisQueue
+}));
+
+jest.mock('../src/main/analysis/embeddingQueue/queueManager', () => ({
+  forceFlush: jest.fn().mockResolvedValue(undefined),
+  shutdown: jest.fn().mockResolvedValue(undefined)
 }));
 
 jest.mock('../src/main/services/autoOrganize/fileTypeUtils', () => ({
@@ -181,5 +209,26 @@ describe('BatchAnalysisService (edge)', () => {
     const res = await service.analyzeFilesGrouped(['C:\\a.pdf', 'C:\\b.jpg'], [], {});
     expect(res.total).toBe(2);
     expect(res.results.length).toBe(1); // only pdf fulfilled
+  });
+
+  test('runs documents section before images by default', async () => {
+    const { analyzeDocumentFile } = require('../src/main/analysis/documentAnalysis');
+    const { analyzeImageFile } = require('../src/main/analysis/imageAnalysis');
+    const sequence = [];
+
+    analyzeDocumentFile.mockImplementation(async (filePath) => {
+      sequence.push(`doc:${filePath}`);
+      return { ok: true };
+    });
+    analyzeImageFile.mockImplementation(async (filePath) => {
+      sequence.push(`img:${filePath}`);
+      return { ok: true };
+    });
+
+    const BatchAnalysisService = require('../src/main/services/BatchAnalysisService');
+    const service = new BatchAnalysisService({ concurrency: 2 });
+    await service.analyzeFiles(['C:\\a.jpg', 'C:\\b.pdf', 'C:\\c.jpg', 'C:\\d.txt'], [], {});
+
+    expect(sequence).toEqual(['doc:C:\\b.pdf', 'doc:C:\\d.txt', 'img:C:\\a.jpg', 'img:C:\\c.jpg']);
   });
 });

@@ -20,6 +20,8 @@ import {
 } from './namingUtils';
 
 const logger = createLogger('DiscoverPhase:Analysis');
+const BATCH_ANALYSIS_MIN_FILES = 40;
+const BATCH_ANALYSIS_PROGRESS_EVENT = 'operation-progress';
 // FIX Issue 4: Removed module-level pendingAutoAdvanceTimeoutId
 // Auto-advance timeout is now stored in a ref within the hook to prevent
 // cross-component interference when hook unmounts and remounts
@@ -74,6 +76,12 @@ async function analyzeWithRetry(filePath, attempt = 1, abortSignal = null) {
     }
     throw error;
   }
+}
+
+function shouldUseBatchAnalysis(fileCount, concurrency) {
+  if (!Number.isFinite(fileCount) || fileCount <= 0) return false;
+  if (fileCount < BATCH_ANALYSIS_MIN_FILES) return false;
+  return Number(concurrency) <= 2;
 }
 
 function withTimeout(promise, timeoutMs, label) {
@@ -464,6 +472,75 @@ export function useAnalysis(options = {}) {
     [namingSettings]
   );
 
+  const applyAnalysisOutcome = useCallback(
+    (fileInfo, rawAnalysis, explicitError = null) => {
+      const fileName = fileInfo?.name || extractFileName(fileInfo?.path || '');
+      const analyzedAt = new Date().toISOString();
+
+      if (explicitError) {
+        recordAnalysisResult({
+          ...fileInfo,
+          analysis: null,
+          error: explicitError,
+          status: FILE_STATES.ERROR,
+          analyzedAt
+        });
+        updateFileState(fileInfo.path, 'error', {
+          error: explicitError,
+          analyzedAt
+        });
+        return;
+      }
+
+      const analysisForUi = normalizeAnalysisForUi(rawAnalysis);
+      const shouldTreatAsReady =
+        analysisForUi && (!analysisForUi.hadError || hasFallbackSuggestion(analysisForUi));
+
+      if (shouldTreatAsReady) {
+        const baseSuggestedName = analysisForUi.suggestedName || fileName;
+        const enhancedAnalysis = {
+          ...analysisForUi,
+          originalSuggestedName: baseSuggestedName,
+          suggestedName: generateSuggestedName(fileName, analysisForUi, {
+            created: fileInfo.created,
+            modified: fileInfo.modified
+          }),
+          namingConvention: namingSettings
+        };
+
+        recordAnalysisResult({
+          ...fileInfo,
+          analysis: enhancedAnalysis,
+          status: FILE_STATES.CATEGORIZED,
+          analyzedAt
+        });
+        updateFileState(fileInfo.path, 'ready', {
+          analysis: enhancedAnalysis,
+          analyzedAt,
+          name: fileInfo.name,
+          size: fileInfo.size,
+          created: fileInfo.created,
+          modified: fileInfo.modified
+        });
+        return;
+      }
+
+      const errorMessage = analysisForUi?.warning || rawAnalysis?.error || 'Analysis failed';
+      recordAnalysisResult({
+        ...fileInfo,
+        analysis: null,
+        error: errorMessage,
+        status: FILE_STATES.ERROR,
+        analyzedAt
+      });
+      updateFileState(fileInfo.path, 'error', {
+        error: errorMessage,
+        analyzedAt
+      });
+    },
+    [generateSuggestedName, namingSettings, recordAnalysisResult, updateFileState]
+  );
+
   /**
    * Re-apply naming convention to existing analyses when settings change.
    * Keeps Discover and Organize screens in sync with the user-selected naming.
@@ -738,10 +815,18 @@ export function useAnalysis(options = {}) {
       // - inactivity timeout: reset only when there is no progress for GLOBAL_ANALYSIS window
       // - hard cap timeout: absolute upper bound to avoid runaway background loops
       const analysisStartedAt = Date.now();
-      const hardCapMs = Math.max(TIMEOUTS.GLOBAL_ANALYSIS * 3, 30 * 60 * 1000);
+      const fallbackPerFileMs = 45000;
+      const maxHardCapMs = 6 * 60 * 60 * 1000;
+      const baselineHardCapMs = Math.max(TIMEOUTS.GLOBAL_ANALYSIS * 6, 60 * 60 * 1000);
+      let hardCapMs = baselineHardCapMs;
+      let hardCapLabel = `${Math.round(hardCapMs / 60000)} min`;
       const windowLabel = `${Math.round(TIMEOUTS.GLOBAL_ANALYSIS / 60000)} min`;
       const stopAnalysisForTimeout = (reason) => {
-        logger.warn('Global analysis timeout', { reason, windowLabel });
+        logger.warn('Global analysis timeout', {
+          reason,
+          windowLabel,
+          hardCapLabel
+        });
         if (analysisRunIdRef.current === runId) {
           analysisRunIdRef.current += 1;
         }
@@ -766,12 +851,11 @@ export function useAnalysis(options = {}) {
         setAnalysisProgress({ current: 0, total: 0, lastActivity: 0 });
         setCurrentAnalysisFile('');
         actions.setPhaseData('currentAnalysisFile', '');
-        addNotification(
-          'Analysis was stopped due to inactivity. If processing is still progressing, restart and monitor logs.',
-          'warning',
-          5000,
-          'analysis-timeout'
-        );
+        const timeoutMessage =
+          reason === 'hard_cap'
+            ? `Analysis exceeded the safety window (${hardCapLabel}). Consider reducing file count per run.`
+            : `Analysis was stopped after no progress for ${windowLabel}.`;
+        addNotification(timeoutMessage, 'warning', 5000, 'analysis-timeout');
       };
       const scheduleGlobalTimeoutCheck = () => {
         analysisTimeoutRef.current = setTimeout(() => {
@@ -863,8 +947,19 @@ export function useAnalysis(options = {}) {
         CONCURRENCY.MIN_WORKERS,
         Math.min(Number(maxConcurrent) || CONCURRENCY.DEFAULT_WORKERS, CONCURRENCY.MAX_WORKERS)
       );
+      const projectedMs =
+        Math.ceil(uniqueFiles.length / Math.max(1, concurrency)) * fallbackPerFileMs +
+        15 * 60 * 1000;
+      hardCapMs = Math.min(Math.max(baselineHardCapMs, projectedMs), maxHardCapMs);
+      hardCapLabel = `${Math.round(hardCapMs / 60000)} min`;
 
       try {
+        logger.info('Configured global analysis watchdog', {
+          fileCount: uniqueFiles.length,
+          concurrency,
+          inactivityWindowMin: Math.round(TIMEOUTS.GLOBAL_ANALYSIS / 60000),
+          hardCapMin: Math.round(hardCapMs / 60000)
+        });
         logger.info(`Starting analysis of ${uniqueFiles.length} files`);
         addNotification(
           `Starting AI analysis of ${uniqueFiles.length} files...`,
@@ -877,6 +972,110 @@ export function useAnalysis(options = {}) {
         const fileQueue = [...uniqueFiles];
         // FIX CRIT-2: Reset atomic counter at start of new batch
         completedCountRef.current = 0;
+        const fileByPath = new Map(uniqueFiles.map((file) => [file.path, file]));
+
+        const runBatchPath = async () => {
+          const batchApi = window?.electronAPI?.analysis?.batch;
+          if (typeof batchApi !== 'function') {
+            throw new Error('Batch analysis API not available');
+          }
+
+          for (const file of uniqueFiles) {
+            const fileName = file.name || file.path.split(/[\\/]/).pop();
+            updateFileState(file.path, 'analyzing', { fileName });
+          }
+
+          let activeBatchId = null;
+          const onBatchProgress = (event) => {
+            if (!isActiveRun() || abortSignal.aborted) return;
+            const payload = event?.detail;
+            if (!payload || payload.type !== 'batch_analyze') return;
+            if (activeBatchId && payload.batchId && payload.batchId !== activeBatchId) return;
+
+            if (!activeBatchId && payload.batchId) {
+              activeBatchId = payload.batchId;
+            }
+
+            const current = Math.min(Number(payload.completed) || 0, uniqueFiles.length);
+            const total = Math.max(1, Number(payload.total) || uniqueFiles.length);
+            completedCountRef.current = current;
+            lastProgressAtRef.current = Date.now();
+
+            const currentFileName = payload.currentFile ? extractFileName(payload.currentFile) : '';
+            if (currentFileName) {
+              setCurrentAnalysisFile(currentFileName);
+              actions.setPhaseData('currentAnalysisFile', currentFileName);
+            }
+
+            const progress = {
+              current,
+              total,
+              currentFile: currentFileName || undefined,
+              lastActivity: Date.now()
+            };
+            if (validateProgressState(progress)) {
+              setAnalysisProgress(progress);
+            }
+          };
+
+          window.addEventListener(BATCH_ANALYSIS_PROGRESS_EVENT, onBatchProgress);
+          try {
+            const batchResult = await withTimeout(
+              batchApi({
+                filePaths: uniqueFiles.map((file) => file.path),
+                options: {
+                  concurrency,
+                  sectionOrder: 'documents-first',
+                  enableVisionBatchMode: true
+                }
+              }),
+              TIMEOUTS.AI_ANALYSIS_BATCH,
+              `Batch analysis for ${uniqueFiles.length} files`
+            );
+
+            if (!batchResult || !Array.isArray(batchResult.results)) {
+              throw new Error('Batch analysis returned an invalid result payload');
+            }
+
+            const totalResults = batchResult.results.length;
+            for (let i = 0; i < totalResults; i += 1) {
+              if (!isActiveRun() || abortSignal.aborted) return;
+              const item = batchResult.results[i];
+              const filePath = item?.filePath;
+              const fileInfoRaw = fileByPath.get(filePath) || { path: filePath || '' };
+              const fileInfo = {
+                ...fileInfoRaw,
+                size: fileInfoRaw.size || 0,
+                created: fileInfoRaw.created,
+                modified: fileInfoRaw.modified
+              };
+              if (!fileInfo.path) {
+                continue;
+              }
+              const resultPayload = item?.result ?? null;
+              const explicitError =
+                item?.success === false
+                  ? item?.error || resultPayload?.error || 'Analysis failed'
+                  : null;
+
+              applyAnalysisOutcome(fileInfo, resultPayload, explicitError);
+
+              const newCompletedCount = Math.min(i + 1, uniqueFiles.length);
+              completedCountRef.current = newCompletedCount;
+              lastProgressAtRef.current = Date.now();
+              const progress = {
+                current: newCompletedCount,
+                total: uniqueFiles.length,
+                lastActivity: Date.now()
+              };
+              if (validateProgressState(progress)) {
+                setAnalysisProgress(progress);
+              }
+            }
+          } finally {
+            window.removeEventListener(BATCH_ANALYSIS_PROGRESS_EVENT, onBatchProgress);
+          }
+        };
 
         const processFile = async (file) => {
           if (!isActiveRun() || abortSignal.aborted) return;
@@ -943,48 +1142,8 @@ export function useAnalysis(options = {}) {
               setAnalysisProgress(progress);
             }
 
-            const analysisForUi = normalizeAnalysisForUi(analysis);
-            const shouldTreatAsReady =
-              analysisForUi && (!analysisForUi.hadError || hasFallbackSuggestion(analysisForUi));
-
-            if (shouldTreatAsReady && isActiveRun()) {
-              const baseSuggestedName = analysisForUi.suggestedName || fileName;
-              const enhancedAnalysis = {
-                ...analysisForUi,
-                // Preserve the raw suggestion so we can re-apply naming changes later
-                originalSuggestedName: baseSuggestedName,
-                suggestedName: generateSuggestedName(fileName, analysisForUi, {
-                  created: fileInfo.created,
-                  modified: fileInfo.modified
-                }),
-                namingConvention: namingSettings
-              };
-              recordAnalysisResult({
-                ...fileInfo,
-                analysis: enhancedAnalysis,
-                status: FILE_STATES.CATEGORIZED,
-                analyzedAt: new Date().toISOString()
-              });
-              updateFileState(file.path, 'ready', {
-                analysis: enhancedAnalysis,
-                analyzedAt: new Date().toISOString(),
-                name: fileInfo.name,
-                size: fileInfo.size,
-                created: fileInfo.created,
-                modified: fileInfo.modified
-              });
-            } else if (isActiveRun()) {
-              recordAnalysisResult({
-                ...fileInfo,
-                analysis: null,
-                error: analysis?.error || 'Analysis failed',
-                status: FILE_STATES.ERROR,
-                analyzedAt: new Date().toISOString()
-              });
-              updateFileState(file.path, 'error', {
-                error: analysis?.error || 'Analysis failed',
-                analyzedAt: new Date().toISOString()
-              });
+            if (isActiveRun()) {
+              applyAnalysisOutcome(fileInfo, analysis);
             }
           } catch (error) {
             if (!isActiveRun() || abortSignal.aborted) return;
@@ -1007,14 +1166,7 @@ export function useAnalysis(options = {}) {
             }
 
             if (!isActiveRun()) return;
-            recordAnalysisResult({
-              ...file,
-              analysis: null,
-              error: error.message,
-              status: 'failed',
-              analyzedAt: new Date().toISOString()
-            });
-            updateFileState(file.path, 'error', { error: error.message });
+            applyAnalysisOutcome(fileInfo, null, error.message);
           }
         };
 
@@ -1058,7 +1210,35 @@ export function useAnalysis(options = {}) {
           }
         };
 
-        await runWorkerPool();
+        const useBatchPath = shouldUseBatchAnalysis(uniqueFiles.length, concurrency);
+        if (useBatchPath) {
+          try {
+            logger.info('Using batch analysis path for large run', {
+              fileCount: uniqueFiles.length,
+              concurrency
+            });
+            await runBatchPath();
+          } catch (batchError) {
+            const isLegacyBatchTimeout =
+              String(batchError?.message || '').includes('30000ms') &&
+              String(batchError?.message || '').includes('analysis:analyze-batch');
+            logger.warn('Batch analysis path failed, falling back to per-file worker pool', {
+              error: batchError?.message,
+              legacyTimeoutDetected: isLegacyBatchTimeout
+            });
+            addNotification(
+              isLegacyBatchTimeout
+                ? 'Batch analysis timed out at legacy 30s timeout. Falling back to per-file mode; restart app to load updated preload timeouts.'
+                : 'Batch analysis encountered an issue. Falling back to per-file processing.',
+              'warning',
+              isLegacyBatchTimeout ? 7000 : 3500,
+              'analysis-batch-fallback'
+            );
+            await runWorkerPool();
+          }
+        } else {
+          await runWorkerPool();
+        }
 
         if (!isActiveRun()) return;
 
@@ -1193,11 +1373,9 @@ export function useAnalysis(options = {}) {
       actions,
       setGlobalAnalysisActive,
       flushPendingResults,
-      generateSuggestedName,
-      namingSettings,
+      applyAnalysisOutcome,
       resetAnalysisState,
-      getCurrentPhase,
-      recordAnalysisResult
+      getCurrentPhase
     ]
   );
 
@@ -1236,11 +1414,7 @@ export function useAnalysis(options = {}) {
       clearTimeout(pendingFilesTimeoutRef.current);
       pendingFilesTimeoutRef.current = null;
     }
-    if (window.electronAPI?.analysis?.cancel) {
-      window.electronAPI.analysis.cancel().catch((error) => {
-        logger.debug('Failed to cancel main analysis', { error: error?.message });
-      });
-    }
+    // Cancellation is renderer-local for now; no main-process abort IPC exists.
     flushPendingResults(true);
     // Clear any pending files when cancelling
     pendingFilesRef.current = [];

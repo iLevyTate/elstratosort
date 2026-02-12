@@ -338,9 +338,6 @@ const ALLOWED_RECEIVE_CHANNELS = [
   'menu-action',
   'open-semantic-search',
   'settings-changed-external',
-  'operation-error', // Dead: schema+preload exist but no safeSend from main process
-  'operation-complete', // Dead: schema+preload exist but no safeSend from main process
-  'operation-failed', // Dead: schema+preload exist but no safeSend from main process
   'file-operation-complete', // File move/delete notifications for search invalidation
   'vectordb:status-changed', // Reserved: defined in constants but not yet sent from main
   'notification', // Toast notifications from main process

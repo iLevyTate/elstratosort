@@ -34,6 +34,35 @@ jest.mock('../src/main/utils/llmOptimization', () => ({
   globalBatchProcessor: mockBatchProcessor
 }));
 
+jest.mock('../src/main/services/PerformanceService', () => ({
+  getRecommendedConcurrency: jest.fn().mockResolvedValue({
+    maxConcurrent: 3,
+    reason: 'test',
+    vramMB: 24000
+  })
+}));
+
+const mockCoordinator = {
+  getQueueStats: jest.fn().mockReturnValue({
+    text: { queued: 0, pending: 0, concurrency: 1 },
+    vision: { queued: 0, pending: 0, concurrency: 1 },
+    embedding: { queued: 0, pending: 0, concurrency: 1 }
+  })
+};
+
+jest.mock('../src/main/services/ModelAccessCoordinator', () => ({
+  getInstance: jest.fn(() => mockCoordinator)
+}));
+
+const mockLlamaService = {
+  enterVisionBatchMode: jest.fn().mockResolvedValue(undefined),
+  exitVisionBatchMode: jest.fn().mockResolvedValue(undefined)
+};
+
+jest.mock('../src/main/services/LlamaService', () => ({
+  getInstance: jest.fn(() => mockLlamaService)
+}));
+
 // Mock analysis modules
 jest.mock('../src/main/analysis/documentAnalysis', () => ({
   analyzeDocumentFile: jest.fn(),
@@ -60,7 +89,7 @@ jest.mock('../src/main/services/ParallelEmbeddingService', () => ({
   getInstance: jest.fn(() => mockEmbeddingService)
 }));
 
-// Mock embeddingQueue
+// Mock embedding queue + manager
 const mockEmbeddingQueue = {
   getStats: jest.fn().mockReturnValue({
     queueLength: 0,
@@ -73,7 +102,14 @@ const mockEmbeddingQueue = {
   shutdown: jest.fn().mockResolvedValue(undefined)
 };
 
-jest.mock('../src/main/analysis/embeddingQueue', () => mockEmbeddingQueue);
+jest.mock('../src/main/analysis/embeddingQueue/stageQueues', () => ({
+  analysisQueue: mockEmbeddingQueue
+}));
+
+jest.mock('../src/main/analysis/embeddingQueue/queueManager', () => ({
+  forceFlush: jest.fn().mockResolvedValue(undefined),
+  shutdown: jest.fn().mockResolvedValue(undefined)
+}));
 
 describe('BatchAnalysisService', () => {
   let BatchAnalysisService;
@@ -206,6 +242,18 @@ describe('BatchAnalysisService', () => {
       expect(result.total).toBe(2);
     });
 
+    test('partitions files by modality deterministically', () => {
+      const partitioned = service.partitionFilesByModality([
+        '/path/to/a.jpg',
+        '/path/to/b.pdf',
+        '/path/to/c.png',
+        '/path/to/d.txt'
+      ]);
+
+      expect(partitioned.images).toEqual(['/path/to/a.jpg', '/path/to/c.png']);
+      expect(partitioned.documents).toEqual(['/path/to/b.pdf', '/path/to/d.txt']);
+    });
+
     test('reports progress via callback', async () => {
       const onProgress = jest.fn();
       const files = ['/path/to/doc1.pdf', '/path/to/doc2.pdf'];
@@ -304,6 +352,36 @@ describe('BatchAnalysisService', () => {
       expect(result.stats.avgPerFile).toBeDefined();
       expect(result.stats.filesPerSecond).toBeDefined();
       expect(result.stats.embedding).toBeDefined();
+      expect(result.stats.modalities).toBeDefined();
+    });
+
+    test('emits modality-aware progress telemetry', async () => {
+      const onProgress = jest.fn();
+      const files = ['/path/to/doc.pdf', '/path/to/image.jpg'];
+
+      await service.analyzeFiles(files, [], { onProgress });
+
+      expect(onProgress).toHaveBeenCalledWith(
+        expect.objectContaining({
+          docInFlight: expect.any(Number),
+          imageInFlight: expect.any(Number),
+          docCompleted: expect.any(Number),
+          imageCompleted: expect.any(Number)
+        })
+      );
+    });
+
+    test('keeps vision runtime warm for image section', async () => {
+      const files = ['/path/to/doc.pdf', '/path/to/image.jpg', '/path/to/image2.png'];
+
+      await service.analyzeFiles(files, [], {
+        enableVisionBatchMode: true,
+        disableAdaptiveConcurrency: true,
+        concurrency: 2
+      });
+
+      expect(mockLlamaService.enterVisionBatchMode).toHaveBeenCalledTimes(1);
+      expect(mockLlamaService.exitVisionBatchMode).toHaveBeenCalledTimes(1);
     });
 
     test('subscribes to embedding progress when callback provided', async () => {
@@ -487,17 +565,19 @@ describe('BatchAnalysisService', () => {
 
   describe('flushEmbeddings', () => {
     test('forces embedding queue flush', async () => {
+      const queueManager = require('../src/main/analysis/embeddingQueue/queueManager');
       await service.flushEmbeddings();
 
-      expect(mockEmbeddingQueue.forceFlush).toHaveBeenCalled();
+      expect(queueManager.forceFlush).toHaveBeenCalled();
     });
   });
 
   describe('shutdown', () => {
     test('shuts down embedding queue', async () => {
+      const queueManager = require('../src/main/analysis/embeddingQueue/queueManager');
       await service.shutdown();
 
-      expect(mockEmbeddingQueue.shutdown).toHaveBeenCalled();
+      expect(queueManager.shutdown).toHaveBeenCalled();
     });
 
     test('unsubscribes from progress events', async () => {

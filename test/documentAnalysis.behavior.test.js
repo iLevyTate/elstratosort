@@ -164,6 +164,27 @@ describe('documentAnalysis (behavior)', () => {
     );
   });
 
+  test('treats PDF_NO_TEXT_CONTENT as expected fallback without hard error logging', async () => {
+    const filePath = 'scan-only.pdf';
+    const noTextError = new Error('PDF contains no extractable text');
+    noTextError.code = 'PDF_NO_TEXT_CONTENT';
+    extractors.extractTextFromPdf.mockRejectedValue(noTextError);
+    extractors.ocrPdfIfNeeded.mockResolvedValue('');
+
+    const result = await analyzeDocumentFile(filePath);
+    const logger = require('../src/shared/logger').createLogger();
+
+    expect(extractors.ocrPdfIfNeeded).toHaveBeenCalledWith(filePath);
+    expect(result).toEqual(
+      expect.objectContaining({
+        category: 'Documents',
+        confidence: 0
+      })
+    );
+    expect(result.error).toMatch(/no extractable text|scanned pdf/i);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
   test('skips AI for video files and uses extension-based fallback', async () => {
     const filePath = 'movie.mp4';
 

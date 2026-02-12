@@ -446,10 +446,14 @@ async function extractTextFromPdf(filePath, fileName) {
     // Fixed: Truncate text to prevent memory issues and clean up buffer
     return truncateText(cleanWhitespace(pdfText));
   } catch (error) {
-    logger.warn('[PDF] Extraction failed:', {
-      fileName,
-      error: error?.message
-    });
+    if (error?.code === 'PDF_NO_TEXT_CONTENT') {
+      logger.info('[PDF] No extractable text from PDF parser', { fileName });
+    } else {
+      logger.warn('[PDF] Extraction failed:', {
+        fileName,
+        error: error?.message
+      });
+    }
     throw error;
   } finally {
     // Ensure buffer is dereferenced even on error

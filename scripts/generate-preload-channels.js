@@ -51,19 +51,23 @@ function generateChannelsCode(channels) {
   code += `// Run 'npm run generate:channels' to update\n`;
   code += `const IPC_CHANNELS = {\n`;
 
-  for (const [category, endpoints] of Object.entries(channels)) {
+  const categories = Object.entries(channels);
+  categories.forEach(([category, endpoints], categoryIndex) => {
+    const isLastCategory = categoryIndex === categories.length - 1;
     code += `${indent}// ${category}\n`;
     code += `${indent}${category}: {\n`;
 
-    for (const [name, channel] of Object.entries(endpoints)) {
-      code += `${indent}${indent}${name}: '${channel}',\n`;
+    const endpointEntries = Object.entries(endpoints);
+    endpointEntries.forEach(([name, channel], endpointIndex) => {
+      const isLastEndpoint = endpointIndex === endpointEntries.length - 1;
+      code += `${indent}${indent}${name}: '${channel}'${isLastEndpoint ? '' : ','}\n`;
+    });
+
+    code += `${indent}}${isLastCategory ? '' : ','}\n`;
+    if (!isLastCategory) {
+      code += `\n`;
     }
-
-    code += `${indent}},\n\n`;
-  }
-
-  // Remove trailing newline from last category
-  code = code.slice(0, -1);
+  });
   code += `};\n`;
   code += `${END_MARKER}`;
 

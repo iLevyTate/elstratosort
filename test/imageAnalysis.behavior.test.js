@@ -259,6 +259,42 @@ describe('Image Analysis Behavior', () => {
     expect(result.reason).not.toBe('AI engine failed');
   });
 
+  test('routes non-recoverable vision error payloads through final OCR/text fallback', async () => {
+    mockLlamaService.analyzeImage
+      .mockResolvedValueOnce({
+        response: JSON.stringify({
+          error: 'gpu overload',
+          confidence: 60
+        })
+      })
+      .mockResolvedValueOnce({
+        response: JSON.stringify({
+          error: 'gpu overload',
+          confidence: 60
+        })
+      });
+
+    const { recognizeIfAvailable } = require('../src/main/utils/tesseractUtils');
+    recognizeIfAvailable.mockResolvedValueOnce({
+      success: true,
+      text: 'Invoice #987 subtotal tax total due'
+    });
+
+    const { analyzeTextWithLlama } = require('../src/main/analysis/documentLlm');
+    analyzeTextWithLlama.mockResolvedValueOnce({
+      category: 'Financial',
+      keywords: ['invoice', 'total'],
+      confidence: 82,
+      suggestedName: 'invoice_987'
+    });
+
+    const result = await analyzeImageFile('/path/to/invoice_photo.png');
+
+    expect(result.error).toBeUndefined();
+    expect(result.category).toBe('Financial');
+    expect(result.analysisWarning).toMatch(/gpu overload/i);
+  });
+
   test('detects hallucination (financial doc -> landscape)', async () => {
     // Filename suggests financial, AI suggests landscape
     const aiResponse = {

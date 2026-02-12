@@ -191,9 +191,9 @@ describe('SmartFolderWatcher - Migration Tests', () => {
     watcher = new SmartFolderWatcher(mockDeps);
   });
 
-  afterEach(() => {
-    if (watcher?.isRunning) {
-      watcher.stop();
+  afterEach(async () => {
+    if (watcher?.stop) {
+      await watcher.stop();
     }
   });
 

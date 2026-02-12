@@ -52,6 +52,10 @@ class AnalysisResultsErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
+      if (typeof this.props.fallbackRender === 'function') {
+        const fallbackNode = this.props.fallbackRender(this.state.error);
+        if (fallbackNode) return fallbackNode;
+      }
       return (
         <StateMessage
           icon={AlertTriangle}
@@ -80,7 +84,8 @@ class AnalysisResultsErrorBoundary extends Component {
 }
 
 AnalysisResultsErrorBoundary.propTypes = {
-  children: PropTypes.node.isRequired
+  children: PropTypes.node.isRequired,
+  fallbackRender: PropTypes.func
 };
 
 const ITEM_HEIGHT = UI_VIRTUALIZATION.ANALYSIS_RESULTS_ITEM_HEIGHT;
@@ -405,7 +410,12 @@ AnalysisResultRow.propTypes = {
   }).isRequired
 };
 
-function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }) {
+function AnalysisResultsList({
+  results = [],
+  onFileAction,
+  getFileStateDisplay,
+  forceDisableVirtualization = false
+}) {
   // PERF: Use memoized selector instead of inline Boolean coercion
   const redactPaths = useSelector(selectRedactPaths);
   const defaultEmbeddingPolicy = useSelector(selectDefaultEmbeddingPolicy);
@@ -476,7 +486,7 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
     };
   }, [containerNode]);
 
-  const shouldVirtualize = items.length > VIRTUALIZATION_THRESHOLD;
+  const shouldVirtualize = !forceDisableVirtualization && items.length > VIRTUALIZATION_THRESHOLD;
 
   const rowProps = useMemo(
     () => ({
@@ -533,16 +543,14 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
           Showing {items.length} files
         </Text>
         <List
-          itemCount={items.length}
-          itemSize={ITEM_HEIGHT + ITEM_GAP}
-          itemData={listItemData}
+          rowCount={items.length}
+          rowHeight={ITEM_HEIGHT + ITEM_GAP}
+          rowComponent={AnalysisResultRow}
+          rowProps={safeRowProps}
           overscanCount={5}
-          height={dimensions.height || 600}
-          width="100%"
+          style={{ height: dimensions.height || 600, width: '100%' }}
           className="scrollbar-thin scrollbar-thumb-system-gray-300 scrollbar-track-transparent"
-        >
-          {AnalysisResultRow}
-        </List>
+        />
       </div>
     );
   }
@@ -564,14 +572,32 @@ function AnalysisResultsList({ results = [], onFileAction, getFileStateDisplay }
 AnalysisResultsList.propTypes = {
   results: PropTypes.arrayOf(PropTypes.object),
   onFileAction: PropTypes.func.isRequired,
-  getFileStateDisplay: PropTypes.func.isRequired
+  getFileStateDisplay: PropTypes.func.isRequired,
+  forceDisableVirtualization: PropTypes.bool
 };
 
 const MemoizedAnalysisResultsList = memo(AnalysisResultsList);
 
 function AnalysisResultsListWithErrorBoundary(props) {
   return (
-    <AnalysisResultsErrorBoundary>
+    <AnalysisResultsErrorBoundary
+      fallbackRender={(error) => (
+        <div className="space-y-default">
+          <StateMessage
+            icon={AlertTriangle}
+            tone="warning"
+            variant="card"
+            align="left"
+            size="sm"
+            title="Virtualized list failed, switched to compatibility mode"
+            description={error?.message || 'Using non-virtualized rendering for this session.'}
+            className="p-4"
+            role="alert"
+          />
+          <MemoizedAnalysisResultsList {...props} forceDisableVirtualization />
+        </div>
+      )}
+    >
       <MemoizedAnalysisResultsList {...props} />
     </AnalysisResultsErrorBoundary>
   );

@@ -57,6 +57,7 @@ const IPC_CHANNELS = {
   ANALYSIS: {
     ANALYZE_DOCUMENT: 'analysis:analyze-document',
     ANALYZE_IMAGE: 'analysis:analyze-image',
+    ANALYZE_BATCH: 'analysis:analyze-batch',
     EXTRACT_IMAGE_TEXT: 'analysis:extract-image-text'
   },
 
@@ -338,6 +339,7 @@ class SecureIPCManager {
     if (
       channel === IPC_CHANNELS.ANALYSIS.ANALYZE_IMAGE ||
       channel === IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT ||
+      channel === IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH ||
       channel === IPC_CHANNELS.CHAT.QUERY ||
       channel === IPC_CHANNELS.SUGGESTIONS.GET_BATCH_SUGGESTIONS ||
       channel === IPC_CHANNELS.SUGGESTIONS.GET_FILE_SUGGESTIONS ||
@@ -894,6 +896,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   analysis: {
     document: (filePath) => secureIPC.safeInvoke(IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT, filePath),
     image: (filePath) => secureIPC.safeInvoke(IPC_CHANNELS.ANALYSIS.ANALYZE_IMAGE, filePath),
+    batch: (payload) => secureIPC.safeInvoke(IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH, payload),
     extractText: (filePath) =>
       secureIPC.safeInvoke(IPC_CHANNELS.ANALYSIS.EXTRACT_IMAGE_TEXT, filePath)
   },
@@ -1113,9 +1116,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onSystemMetrics: (callback) => secureIPC.safeOn('system-metrics', callback),
     onMenuAction: (callback) => secureIPC.safeOn('menu-action', callback),
     onSettingsChanged: (callback) => secureIPC.safeOn('settings-changed-external', callback),
-    onOperationError: (callback) => secureIPC.safeOn('operation-error', callback),
-    onOperationComplete: (callback) => secureIPC.safeOn('operation-complete', callback),
-    onOperationFailed: (callback) => secureIPC.safeOn('operation-failed', callback),
     onFileOperationComplete: (callback) => secureIPC.safeOn('file-operation-complete', callback),
     onNotification: (callback) => secureIPC.safeOn('notification', callback),
     onBatchResultsChunk: (callback) => secureIPC.safeOn('batch-results-chunk', callback),

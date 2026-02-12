@@ -6,8 +6,7 @@
 
 // Mock dependencies
 jest.mock('../src/renderer/store/slices/analysisSlice', () => ({
-  updateProgress: jest.fn((data) => ({ type: 'analysis/updateProgress', payload: data })),
-  stopAnalysis: jest.fn(() => ({ type: 'analysis/stopAnalysis' }))
+  updateProgress: jest.fn((data) => ({ type: 'analysis/updateProgress', payload: data }))
 }));
 
 jest.mock('../src/renderer/store/slices/systemSlice', () => ({
@@ -24,14 +23,6 @@ jest.mock('../src/renderer/store/slices/filesSlice', () => ({
   atomicRemoveFilesWithCleanup: jest.fn((data) => ({
     type: 'files/atomicRemoveFiles',
     payload: data
-  }))
-}));
-
-jest.mock('../src/renderer/utils/errorMapping', () => ({
-  mapErrorToNotification: jest.fn((data) => ({
-    message: data.error || 'Error',
-    severity: 'error',
-    duration: 5000
   }))
 }));
 
@@ -81,8 +72,6 @@ describe('ipcMiddleware extended coverage', () => {
       events: {
         onOperationProgress: createMockListener('operationProgress'),
         onSystemMetrics: createMockListener('systemMetrics'),
-        onOperationComplete: createMockListener('operationComplete'),
-        onOperationError: createMockListener('operationError'),
         onFileOperationComplete: createMockListener('fileOperationComplete'),
         onNotification: createMockListener('notification'),
         onBatchResultsChunk: createMockListener('batchResultsChunk'),
@@ -147,93 +136,11 @@ describe('ipcMiddleware extended coverage', () => {
 
     expect(handlers.operationProgress).toBeDefined();
     expect(handlers.systemMetrics).toBeDefined();
-    expect(handlers.operationComplete).toBeDefined();
-    expect(handlers.operationError).toBeDefined();
     expect(handlers.fileOperationComplete).toBeDefined();
     expect(handlers.notification).toBeDefined();
     expect(handlers.batchResultsChunk).toBeDefined();
     expect(handlers.appError).toBeDefined();
     expect(handlers.vectorStatusChanged).toBeDefined();
-  });
-
-  describe('onOperationComplete handler', () => {
-    test('dispatches success notification with file count', () => {
-      ipcMiddleware(mockStore);
-      markStoreReady();
-
-      handlers.operationComplete({
-        operationType: 'move',
-        affectedFiles: ['a.pdf', 'b.pdf']
-      });
-
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'system/addNotification',
-          payload: expect.objectContaining({
-            message: expect.stringContaining('2 file(s)')
-          })
-        })
-      );
-    });
-
-    test('does not notify when no files affected', () => {
-      ipcMiddleware(mockStore);
-      markStoreReady();
-      mockDispatch.mockClear();
-
-      handlers.operationComplete({ operationType: 'cleanup', affectedFiles: [] });
-
-      // Only the notification from markStoreReady, not from the operationComplete
-      const notifCalls = mockDispatch.mock.calls.filter(
-        (c) =>
-          c[0]?.type === 'system/addNotification' && c[0]?.payload?.message?.includes('file(s)')
-      );
-      expect(notifCalls).toHaveLength(0);
-    });
-  });
-
-  describe('onOperationError handler', () => {
-    test('dispatches error notification', () => {
-      ipcMiddleware(mockStore);
-      markStoreReady();
-
-      handlers.operationError({
-        operationType: 'move',
-        error: 'Permission denied'
-      });
-
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'system/addNotification' })
-      );
-    });
-
-    test('stops analysis for analyze operation type', () => {
-      ipcMiddleware(mockStore);
-      markStoreReady();
-
-      handlers.operationError({
-        operationType: 'analyze',
-        error: 'Model failed'
-      });
-
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'analysis/stopAnalysis' })
-      );
-    });
-
-    test('stops analysis for batch_analyze operation type', () => {
-      ipcMiddleware(mockStore);
-      markStoreReady();
-
-      handlers.operationError({
-        operationType: 'batch_analyze',
-        error: 'Batch failed'
-      });
-
-      expect(mockDispatch).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'analysis/stopAnalysis' })
-      );
-    });
   });
 
   describe('onFileOperationComplete handler', () => {

@@ -563,6 +563,10 @@ class SmartFolderWatcher {
    * @param {{filePath: string, mtime: number, eventType: string, queuedAt: number}} item
    */
   _enqueueAnalysisItem(item) {
+    if (this._isStopping) {
+      return;
+    }
+
     const { filePath } = item;
 
     // If already queued, replace the existing entry with the latest metadata.
@@ -729,21 +733,23 @@ class SmartFolderWatcher {
       tracker.recordOperation(filePath, 'move', 'smartFolderWatcher');
 
       // Invalidate BM25 index so searches reflect the new path
-      try {
-        const { getSearchServiceInstance } = require('../ipc/semantic');
-        const searchService = getSearchServiceInstance?.();
-        if (searchService?.invalidateIndex) {
-          searchService.invalidateIndex({
-            reason: 'smart-folder-move',
-            oldPath: match.oldPath,
-            newPath: filePath
-          });
+      if (!this._isStopping) {
+        try {
+          const { getSearchServiceInstance } = require('../ipc/semantic');
+          const searchService = getSearchServiceInstance?.();
+          if (searchService?.invalidateIndex) {
+            searchService.invalidateIndex({
+              reason: 'smart-folder-move',
+              oldPath: match.oldPath,
+              newPath: filePath
+            });
+          }
+        } catch (indexErr) {
+          logger.debug(
+            '[SMART-FOLDER-WATCHER] Could not invalidate search index after move:',
+            indexErr.message
+          );
         }
-      } catch (indexErr) {
-        logger.debug(
-          '[SMART-FOLDER-WATCHER] Could not invalidate search index after move:',
-          indexErr.message
-        );
       }
 
       this.stats.lastActivity = new Date().toISOString();
@@ -850,7 +856,7 @@ class SmartFolderWatcher {
    * @private
    */
   async _processQueue() {
-    if (this.isProcessingQueue || this.analysisQueue.length === 0) {
+    if (this._isStopping || this.isProcessingQueue || this.analysisQueue.length === 0) {
       return;
     }
 
@@ -948,7 +954,7 @@ class SmartFolderWatcher {
     } finally {
       this.isProcessingQueue = false;
       // Immediately re-trigger if more items remain instead of waiting for next 2s interval
-      if (this.analysisQueue.length > 0 && !this._isStopping) {
+      if (this.analysisQueue.length > 0 && !this._isStopping && this.isRunning) {
         setImmediate(() => this._processQueue());
       }
     }
@@ -1254,19 +1260,21 @@ class SmartFolderWatcher {
 
             // FIX P1-2: Invalidate BM25 index after analysis so new files are searchable immediately
             // This triggers a rebuild on the next search instead of waiting 15 minutes
-            try {
-              const { getSearchServiceInstance } = require('../ipc/semantic');
-              const searchService = getSearchServiceInstance?.();
-              if (searchService?.invalidateIndex) {
-                searchService.invalidateIndex();
-                logger.debug('[SMART-FOLDER-WATCHER] Invalidated BM25 index for new analysis');
+            if (!this._isStopping) {
+              try {
+                const { getSearchServiceInstance } = require('../ipc/semantic');
+                const searchService = getSearchServiceInstance?.();
+                if (searchService?.invalidateIndex) {
+                  searchService.invalidateIndex();
+                  logger.debug('[SMART-FOLDER-WATCHER] Invalidated BM25 index for new analysis');
+                }
+              } catch (invalidateErr) {
+                // Non-fatal - search will still work with stale index
+                logger.debug(
+                  '[SMART-FOLDER-WATCHER] Could not invalidate BM25 index:',
+                  invalidateErr.message
+                );
               }
-            } catch (invalidateErr) {
-              // Non-fatal - search will still work with stale index
-              logger.debug(
-                '[SMART-FOLDER-WATCHER] Could not invalidate BM25 index:',
-                invalidateErr.message
-              );
             }
           }
         } // end else (non-fallback: persist to history)
@@ -1904,14 +1912,19 @@ class SmartFolderWatcher {
       }
 
       // Invalidate BM25 search index
-      try {
-        const { getSearchServiceInstance } = require('../ipc/semantic');
-        const searchService = getSearchServiceInstance?.();
-        if (searchService?.invalidateIndex) {
-          searchService.invalidateIndex({ reason: 'external-deletion', oldPath: filePath });
+      if (!this._isStopping) {
+        try {
+          const { getSearchServiceInstance } = require('../ipc/semantic');
+          const searchService = getSearchServiceInstance?.();
+          if (searchService?.invalidateIndex) {
+            searchService.invalidateIndex({ reason: 'external-deletion', oldPath: filePath });
+          }
+        } catch (indexErr) {
+          logger.debug(
+            '[SMART-FOLDER-WATCHER] Could not invalidate search index:',
+            indexErr.message
+          );
         }
-      } catch (indexErr) {
-        logger.debug('[SMART-FOLDER-WATCHER] Could not invalidate search index:', indexErr.message);
       }
 
       this.stats.lastActivity = new Date().toISOString();
