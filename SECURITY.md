@@ -5,6 +5,10 @@
   <img src="https://img.shields.io/badge/local--only-no%20cloud-green?style=flat-square" alt="Local Only" />
 </p>
 
+> **Repository scope:** This policy covers the current `elstratosort` repository (StratoSort
+> Stack/StratoStack). A future StratoSort Core/StratoCore repository will maintain its own security
+> policy when created.
+
 ## Supported Versions
 
 | Version | Supported          |

@@ -7,6 +7,10 @@
 
 This guide will walk you through setting up **El StratoSort** on your local machine.
 
+> **Repository naming note:** This setup guide targets the current `elstratosort` repository (the
+> full app stack, also called StratoSort Stack/StratoStack). A future StratoSort Core/StratoCore
+> repository is planned separately and is not covered here.
+
 ## Table of Contents
 
 - [System Requirements](#system-requirements)

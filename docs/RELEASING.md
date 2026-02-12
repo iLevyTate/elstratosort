@@ -3,6 +3,10 @@
 This guide documents the release process and best practices for Windows builds. It is designed to
 ensure releases are reproducible, include bundled runtimes, and publish checksums + clear notes.
 
+> **Release scope:** This release process applies to `elstratosort` (StratoSort Stack/StratoStack).
+> If StratoSort Core/StratoCore is published as a separate repository, it should use its own release
+> workflow and version stream.
+
 ## Release Checklist (Windows)
 
 1. **Update versions**

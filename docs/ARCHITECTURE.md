@@ -17,6 +17,10 @@
 
 # Stratosort Architecture
 
+> **Repository naming note:** This architecture document describes the current `elstratosort`
+> repository (full app stack; StratoSort Stack/StratoStack). StratoSort Core/StratoCore is a planned
+> separate repository and not represented here yet.
+
 ## High-Level Information Flow
 
 This diagram illustrates the flow of data through the application, highlighting the separation

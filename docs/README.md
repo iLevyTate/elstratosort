@@ -3,6 +3,13 @@
 This directory contains comprehensive documentation for the StratoSort codebase. Use this guide to
 find the right documentation for your needs.
 
+## Repository Naming
+
+- **`elstratosort` (this repo):** active app repository and source of truth for the current stack.
+- **StratoSort Stack / StratoStack:** shorthand for the full application stack in this repository.
+- **StratoSort Core / StratoCore:** planned future repository for extracted core modules; not part
+  of this repo yet.
+
 ## Quick Links
 
 | Document                                                 | Description                                           | Audience       |
