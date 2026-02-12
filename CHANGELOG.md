@@ -10,6 +10,10 @@ All notable changes to El StratoSort will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+> **Naming scope:** This changelog tracks releases for `elstratosort` (the current StratoSort
+> Stack/StratoStack repository). Planned StratoSort Core/StratoCore work will be versioned in its
+> own future repository.
+
 ## [Unreleased]
 
 ## Release Checklist

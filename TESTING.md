@@ -3,6 +3,10 @@
 **Version:** 2.0.0 **Date:** 2026-01-18 **Purpose:** The single source of truth for testing
 ElStratoSort—from quick manual checks to deep automated regression suites.
 
+> **Naming note:** This testing guide applies to the `elstratosort` repository (the full app stack,
+> also referred to as StratoSort Stack/StratoStack). StratoSort Core/StratoCore is planned as a
+> separate future repository.
+
 ---
 
 ## ⚡ 1. Quick Manual Checklist (QA)

@@ -8,6 +8,14 @@
 Thanks for your interest in contributing! This guide covers how to set up the repo, make changes,
 and submit a high-quality pull request.
 
+## Repo Scope and Naming
+
+- Contributions here apply to **`elstratosort`**, the current full application repository.
+- The terms **StratoSort Stack** and **StratoStack** refer to this repository's full
+  runtime/application stack.
+- **StratoSort Core / StratoCore** is planned as a separate future repository; work for that
+  codebase should be tracked separately when it exists.
+
 ## Table of Contents
 
 - [Code of Conduct](#code-of-conduct)
